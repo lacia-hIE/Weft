@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { createRuntime, credentials, send, type EventRecord, type SessionResponse } from './helpers/miniflare.ts';
+import { createRuntime, users, tenantId, url, sessionPath, send, type EventRecord, type SessionResponse } from './helpers/miniflare.ts';
 
 function assertContinuous(events: EventRecord[]): void {
   assert.deepEqual(events.map(event => event.seq), events.map((_event, index) => index));
@@ -19,11 +19,11 @@ test('upstream AgentLoop runs two model steps and a real registered tool inside 
     assert.equal(events.filter(event => event.type === 'step/start').length, 2);
     assert.equal(events.filter(event => event.type === 'tool/call').length, 1);
     const result = events.find(event => event.type === 'tool/result');
-    assert.deepEqual(result?.data.message?.content, [{ type: 'text', text: 'alpha' }]);
+    assert.deepEqual(result?.data.message?.content, [{ type: 'text', text: tenantId('alpha') }]);
     assert.equal(events.at(-1)?.type, 'turn/end');
     assert.equal(events.at(-1)?.data.reason?.kind, 'completed');
     const reply = events.findLast(event => event.type === 'assistant/message');
-    assert.deepEqual(reply?.data.message?.content, [{ type: 'text', text: 'Tenant: alpha' }]);
+    assert.deepEqual(reply?.data.message?.content, [{ type: 'text', text: `Tenant: ${tenantId('alpha')}` }]);
   } finally { await runtime.dispose(); }
 });
 
@@ -38,29 +38,65 @@ test('tenants using the same session id retain separate prompts, logs and tool i
       assert.equal(response.status, 200);
       return response.text();
     }));
-    assert.match(bodies[0]!, /Alpha private instructions/);
+    assert.ok(bodies[0]!.includes(`assistant for tenant ${tenantId('alpha')}`));
     assert.match(bodies[0]!, /alpha private input/);
-    assert.doesNotMatch(bodies[0]!, /Beta private instructions|beta private input|Tenant: beta/);
-    assert.match(bodies[1]!, /Beta private instructions/);
-    assert.doesNotMatch(bodies[1]!, /Alpha private instructions|alpha private input|Tenant: alpha/);
-    for (const credential of credentials) for (const body of bodies) assert.ok(!body.includes(credential.token));
+    assert.doesNotMatch(bodies[0]!, /beta private input/);
+    assert.ok(!bodies[0]!.includes(tenantId('beta')));
+    assert.ok(bodies[1]!.includes(`assistant for tenant ${tenantId('beta')}`));
+    assert.doesNotMatch(bodies[1]!, /alpha private input/);
+    assert.ok(!bodies[1]!.includes(tenantId('alpha')));
+    for (const user of Object.values(users)) for (const body of bodies) assert.ok(!body.includes(user.email));
   } finally { await runtime.dispose(); }
 });
 
-test('unauthenticated and cross-tenant requests are rejected before session access', async () => {
+test('only trusted Access users of this application can reach sessions', async () => {
   const runtime = createRuntime();
   try {
-    const noAuth = await runtime.dispatchFetch('http://localhost/v1/tenants/alpha/sessions/x/events');
-    assert.equal(noAuth.status, 401);
-    assert.equal((await send(runtime, 'beta', 'x', 'attempt', credentials[0]!.token)).status, 403);
-    const read = await runtime.dispatchFetch('http://localhost/v1/tenants/beta/sessions/x/events', {
-      headers: { authorization: `Bearer ${credentials[0]!.token}`, 'x-tenant-id': 'beta' },
-    });
+    for (const profile of ['anonymous', 'wrong-app', 'service', 'no-user-id']) {
+      const response = await runtime.dispatchFetch(url(profile, sessionPath('alpha', 'x', 'events')), {
+        headers: { authorization: 'Bearer validation-alpha-token', 'cf-access-authenticated-user-email': users.alpha.email,
+          'cf-access-jwt-assertion': 'forged', 'x-tenant-id': tenantId('alpha') },
+      });
+      assert.equal(response.status, 401, profile);
+      assert.equal((await runtime.dispatchFetch(url(profile, '/health'))).status, 401);
+    }
+    assert.equal((await send(runtime, 'beta', 'x', 'attempt', 'alpha')).status, 403);
+    const read = await runtime.dispatchFetch(url('alpha', sessionPath('beta', 'x', 'events')));
     assert.equal(read.status, 403);
-    const missing = await runtime.dispatchFetch('http://localhost/v1/tenants/beta/sessions/x/events', {
-      headers: { authorization: `Bearer ${credentials[1]!.token}` },
-    });
+    const missing = await runtime.dispatchFetch(url('beta', sessionPath('beta', 'x', 'events')));
     assert.equal(missing.status, 404);
+  } finally { await runtime.dispose(); }
+});
+
+test('identity discovery stays stable across email changes and accepts runtime subject claims', async () => {
+  const runtime = createRuntime();
+  try {
+    for (const profile of ['alpha', 'renamed', 'claims']) {
+      const response = await runtime.dispatchFetch(url(profile, '/v1/me'));
+      assert.equal(response.status, 200, await response.clone().text());
+      assert.equal(response.headers.get('cache-control'), 'private, no-store');
+      const body = await response.json() as { tenantId: string; user: { id: string; email: string } };
+      assert.equal(body.tenantId, tenantId('alpha'));
+      assert.equal(body.user.id, users.alpha.user_uuid);
+      assert.equal(body.user.email, profile === 'renamed' ? 'renamed@example.com' : users.alpha.email);
+    }
+  } finally { await runtime.dispose(); }
+});
+
+test('cookie-authenticated writes reject cross-origin requests', async () => {
+  const runtime = createRuntime();
+  try {
+    for (const headers of [{ origin: 'https://evil.example' }, { 'sec-fetch-site': 'cross-site' }]) {
+      const response = await runtime.dispatchFetch(url('alpha', sessionPath('alpha', 'csrf', 'messages')), {
+        method: 'POST', headers: { ...headers, 'content-type': 'application/json' }, body: JSON.stringify({ text: 'attack' }),
+      });
+      assert.equal(response.status, 403);
+    }
+    assert.equal((await runtime.dispatchFetch(url('alpha', sessionPath('alpha', 'csrf', 'events')))).status, 404);
+    const allowed = await runtime.dispatchFetch(url('alpha', sessionPath('alpha', 'csrf', 'messages')), {
+      method: 'POST', headers: { origin: 'http://alpha.local', 'content-type': 'application/json' }, body: JSON.stringify({ text: 'safe' }),
+    });
+    assert.equal(allowed.status, 200);
   } finally { await runtime.dispose(); }
 });
 
@@ -68,19 +104,17 @@ test('invalid input and attempted tenant overrides do not enter Harness history'
   const runtime = createRuntime();
   try {
     for (const body of ['{', JSON.stringify({ text: 'x', tenantId: 'beta' }), JSON.stringify({ text: '' })]) {
-      const response = await runtime.dispatchFetch('http://localhost/v1/tenants/alpha/sessions/input/messages', {
-        method: 'POST', headers: { authorization: `Bearer ${credentials[0]!.token}`, 'content-type': 'application/json' }, body,
+      const response = await runtime.dispatchFetch(url('alpha', sessionPath('alpha', 'input', 'messages')), {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body,
       });
       assert.equal(response.status, 400);
     }
-    const oversized = await runtime.dispatchFetch('http://localhost/v1/tenants/alpha/sessions/input/messages', {
-      method: 'POST', headers: { authorization: `Bearer ${credentials[0]!.token}`, 'content-type': 'application/json' },
+    const oversized = await runtime.dispatchFetch(url('alpha', sessionPath('alpha', 'input', 'messages')), {
+      method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ text: 'x'.repeat(20_000) }),
     });
     assert.equal(oversized.status, 413);
-    const events = await runtime.dispatchFetch('http://localhost/v1/tenants/alpha/sessions/input/events', {
-      headers: { authorization: `Bearer ${credentials[0]!.token}` },
-    });
+    const events = await runtime.dispatchFetch(url('alpha', sessionPath('alpha', 'input', 'events')));
     assert.equal(events.status, 404);
   } finally { await runtime.dispose(); }
 });
@@ -93,9 +127,7 @@ test('concurrent sends to one session complete as separate ordered turns', async
       send(runtime, 'alpha', 'concurrent', 'second input'),
     ]);
     for (const response of responses) assert.equal(response.status, 200, await response.clone().text());
-    const read = await runtime.dispatchFetch('http://localhost/v1/tenants/alpha/sessions/concurrent/events', {
-      headers: { authorization: `Bearer ${credentials[0]!.token}` },
-    });
+    const read = await runtime.dispatchFetch(url('alpha', sessionPath('alpha', 'concurrent', 'events')));
     const { events } = await read.json() as SessionResponse;
     assertContinuous(events);
     assert.deepEqual(events.filter(event => event.type === 'turn/start').map(event => event.data.turn), [1, 2]);
@@ -115,9 +147,7 @@ test('a new workerd process reads persisted events and resumes the original sess
     const before = await initial.json() as SessionResponse;
     await runtime.dispose();
     runtime = createRuntime(persist);
-    const read = await runtime.dispatchFetch('http://localhost/v1/tenants/alpha/sessions/restart/events', {
-      headers: { authorization: `Bearer ${credentials[0]!.token}` },
-    });
+    const read = await runtime.dispatchFetch(url('alpha', sessionPath('alpha', 'restart', 'events')));
     assert.equal(read.status, 200);
     assert.deepEqual((await read.json() as SessionResponse).events, before.events);
     const continued = await send(runtime, 'alpha', 'restart', 'after restart');

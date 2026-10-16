@@ -16,22 +16,21 @@ npm run check
 本地启动：
 
 ```bash
-cp .dev.vars.example .dev.vars
-# 将 .dev.vars 中的 token 替换为随机值。
 npm run dev
 ```
 
+本地通过 `cloudflare.config.ts` 的 `access.dev` 模拟开发用户；该配置只用于本地运行，不会授予云端访问权限。无需应用 Token 或 `.dev.vars`。先获取当前用户及个人租户 ID，再发送消息：
+
 ```bash
-curl http://localhost:8787/health
-curl http://localhost:8787/v1/tenants/demo/sessions/example/messages \
-  -H 'Authorization: Bearer YOUR_LOCAL_TOKEN' \
+curl http://localhost:8787/v1/me
+# 将上一步返回的 tenantId 填入 TENANT_ID。
+curl http://localhost:8787/v1/tenants/TENANT_ID/sessions/example/messages \
   -H 'Content-Type: application/json' \
   -d '{"text":"调用身份工具"}'
-curl http://localhost:8787/v1/tenants/demo/sessions/example/events \
-  -H 'Authorization: Bearer YOUR_LOCAL_TOKEN'
+curl http://localhost:8787/v1/tenants/TENANT_ID/sessions/example/events
 ```
 
-`VALIDATION_AUTH_JSON` 是本阶段的验证用凭据注册表，提供 bearer token、租户和 persona 的可信映射；用户与组织管理、正式鉴权和模型凭据管理仍待实现。没有配置时，Session API 拒绝访问。当前模型始终为 `scripted`，无需模型 API Key。
+云端使用 Cloudflare Access 邮箱登录和浏览器会话。Worker 只接受运行时 `ctx.access` 的可信身份，并校验应用 audience；Bearer Token 和客户端身份头不作为认证依据。首期每个 Access 用户有独立个人租户，由 Access 组织域名和用户 ID 派生；邮箱不作为租户键，组织成员关系后续接入独立授权层。当前模型始终为 `scripted`，无需模型 API Key。
 
 目录职责：
 
@@ -40,7 +39,7 @@ curl http://localhost:8787/v1/tenants/demo/sessions/example/events \
 | `apps/worker` | HTTP 入口、租户授权、SessionDO 寻址及串行执行 |
 | `packages/harness-runtime` | 装配 upstream 插件，通过原有 Agent API 创建、恢复和驱动 Session |
 | `packages/session-persistence-do` | 实现 upstream `SessionPersistence` 和 `SessionHandle`，管理 SQLite 事件与写入所有权 |
-| `packages/tenant` | 验证环境身份映射、SessionScope 校验和租户限定的对象名称 |
+| `packages/tenant` | Access 用户身份映射、SessionScope 校验和租户限定的对象名称 |
 | `scripts` | 固定上游、生成类型声明、构建及依赖审计 |
 | `tests` | 在本地 workerd 中执行行为、隔离、存储及恢复测试 |
 
@@ -56,4 +55,4 @@ npm run deploy:check
 
 当前实测范围、适配点和下一阶段计划见 [技术验证记录](docs/validation/kernel.md)。原始产品提案见 [产品架构 RFC](WEFT_PRODUCT_ARCHITECTURE.md)。上游许可见 [第三方许可](THIRD_PARTY_NOTICES.md)。
 
-云端验证入口：[健康检查](https://weft.luxuncang.com/health)。源码保存在 GitHub，Cloudflare 连接 GitHub 仓库；项目不配置流水线，通过 `cf` 手动部署。部署及鉴权说明见 [部署记录](docs/deployment.md)。
+云端入口：[Weft](https://weft.luxuncang.com/)，登录后返回用户与租户信息；健康检查同样受 Access 保护。源码保存在 GitHub，Cloudflare 连接 GitHub 仓库；项目不配置流水线，通过 `cf` 手动部署。部署及鉴权说明见 [部署记录](docs/deployment.md)。

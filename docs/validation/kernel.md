@@ -14,8 +14,8 @@
 | 验证 | 证据 |
 | --- | --- |
 | Agent Loop 和工具执行 | 工具调用进入 Session 日志，工具结果成为后续模型输入，第二个模型步骤正常结束 |
-| 多租户命名隔离 | alpha、beta 使用相同 sessionId，提示词、输入、工具结果和历史分别保存 |
-| 入口授权 | 无 token、跨租户读写和 body 中的租户覆盖均被拒绝 |
+| 多租户命名隔离 | 两个 Access 用户使用相同 sessionId，提示词、输入、工具结果和历史分别保存 |
+| 入口授权 | 缺失可信 Access 身份、错误 audience、服务身份、伪造头、跨租户读写和 body 中的租户覆盖均被拒绝 |
 | DO 内部身份检查 | 发给 alpha 对象的 beta scope 被拒绝，匹配 scope 可正常读取 |
 | 同 Session 并发 | 两个请求按独立 turn 串行完成，事件 seq 连续 |
 | 进程重建 | 关闭原 workerd，使用同一持久目录创建新进程，读取原日志并继续第二个 turn |
@@ -50,10 +50,12 @@ Cloudflare DO SQL 对部分 PRAGMA 操作有限制；本工程使用普通 schem
 2. 固定 Computer 版本，增加独立 WorkspaceDO，验证文件读写、搜索、编辑、Git、JS 和工作区重建。
 3. 选择首批受支持的 Harness profile / 插件，明确加载、配置和权限策略，形成兼容清单。
 4. 注入运行中进程终止、超时和重复投递，决定哪些任务需要持久调度及执行器改造。
-5. 增加正式身份认证、组织成员权限、凭据服务和会话列表；随后验证前端协议与 UI。
+5. 在现有 Access 用户认证上增加组织成员权限、模型凭据服务和会话列表；随后验证前端协议与 UI。
 
 成本路由、账单对照和流式批次优化暂缓。
 
 ## Cloudflare 云端复核
 
 2026-10-16 使用 `cf@1.0.0-beta.17` 实际部署 `weft-kernel-validation`，Durable Object 通过 exports 生命周期声明创建 SQLite 存储。云端健康检查、alpha / beta 两租户工具循环、持久日志读取和跨租户拒绝均通过。云端进程硬终止、实际模型和 Computer 仍待验证。持续部署状态与配置见 [部署记录](../deployment.md)。
+
+2026-10-16 已将用户入口切换至 Cloudflare Access。认证通过运行时 `ctx.access`；本地使用官方 `access.dev` 模拟并在真实 workerd 执行测试。应用不再提供 Bearer Token 用户认证；新增身份发现、邮箱变更后租户稳定性和跨站写入拒绝验证。

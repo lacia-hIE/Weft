@@ -1,1 +1,0 @@
-VALIDATION_AUTH_JSON='[{"token":"replace-with-a-long-random-token","tenantId":"demo","persona":"你是运行在 Weft 验证环境中的助手。"}]'

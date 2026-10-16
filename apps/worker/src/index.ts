@@ -6,11 +6,12 @@ import { runHarnessTurn } from '../../../packages/harness-runtime/src/runtime.ts
 import { ScriptedAdapter } from '../../../packages/harness-runtime/src/scripted-adapter.ts';
 import { registerIdentityTool } from '../../../packages/harness-runtime/src/validation-tools.ts';
 import { initializeSessionStorage, SqliteSessionPersistence } from '../../../packages/session-persistence-do/src/index.ts';
-import { authenticate, sessionAddress, scopeSchema, type SessionScope } from '../../../packages/tenant/src/index.ts';
+import { authenticateAccess, sessionAddress, scopeSchema, type SessionScope } from '../../../packages/tenant/src/index.ts';
 
 export interface Env {
   SESSIONS: DurableObjectNamespace<SessionDO>;
-  VALIDATION_AUTH_JSON?: string;
+  ACCESS_AUD?: string;
+  ACCESS_TEAM_DOMAIN?: string;
 }
 
 const messageSchema = z.object({ text: z.string().min(1).max(8000) }).strict();
@@ -95,14 +96,19 @@ class HttpError extends Error {
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     try {
       const pathname = new URL(request.url).pathname;
+      const principal = await authenticateAccess(ctx.access, env.ACCESS_AUD, env.ACCESS_TEAM_DOMAIN);
+      if (!principal) throw new HttpError(401, 'Cloudflare Access user login required');
+      if ((pathname === '/' || pathname === '/v1/me') && request.method === 'GET') {
+        return Response.json({ user: { id: principal.userId, email: principal.email }, tenantId: principal.tenantId }, {
+          headers: { 'cache-control': 'private, no-store' },
+        });
+      }
       if (pathname === '/health' && request.method === 'GET') {
         return Response.json({ status: 'ok', mode: 'harness-validation', model: 'scripted' });
       }
-      const principal = authenticate(request, env.VALIDATION_AUTH_JSON);
-      if (!principal) throw new HttpError(401, 'Authentication required');
       const match = /^\/v1\/tenants\/([^/]+)\/sessions\/([^/]+)\/(messages|events)$/.exec(pathname);
       if (!match) throw new HttpError(404, 'Not found');
       const parsed = scopeSchema.safeParse({ tenantId: match[1], sessionId: match[2] });
@@ -111,8 +117,13 @@ export default {
       if (scope.tenantId !== principal.tenantId) throw new HttpError(403, 'Tenant access denied');
       const session = env.SESSIONS.getByName(sessionAddress(scope));
       if (match[3] === 'messages' && request.method === 'POST') {
+        const origin = request.headers.get('origin');
+        const fetchSite = request.headers.get('sec-fetch-site');
+        if ((origin && origin !== new URL(request.url).origin) || fetchSite === 'cross-site') {
+          throw new HttpError(403, 'Cross-origin writes are not allowed');
+        }
         const { text } = await readMessage(request);
-        const events = await session.send(scope, text, principal.persona);
+        const events = await session.send(scope, text, `You are the assistant for tenant ${principal.tenantId}.`);
         return Response.json({ ...scope, events });
       }
       if (match[3] === 'events' && request.method === 'GET') {
