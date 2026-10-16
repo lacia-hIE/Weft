@@ -87,3 +87,5 @@ Cloudflare 原生构建使用专用 `weft-native-builds` 部署凭据；凭据�
 2026-10-17 按新的部署要求开启生产自动构建：`auto_build_enabled=true`，`previews_enabled=false`。监听仓库 `lacia-hIE/Weft` 的 `main` 分支，构建命令保持 `npm run build`，部署命令保持 `npm run deploy:workers`。因此推送到 main 会自动更新 `weft.luxuncang.com`；`git pull` 仅更新本地代码，不触发发布。此前记录中的“自动构建关闭”为当时配置。
 
 可在 Cloudflare 控制台的 Worker 构建页面查看提交对应的构建和部署结果；手动部署命令仍可使用。
+
+`scripts/deploy-workers.mjs` 顺序发布两份预构建产物。Workers Builds 注入的 `WRANGLER_CI_MATCH_TAG` / `WRANGLER_CI_OVERRIDE_NAME` 只描述关联的主 Worker，因此发布私有 UI 资产时移除这两个子进程变量，发布主 Worker 时保留原始环境和目标校验；账号与部署凭据保持原样。资产部署失败时不会继续发布主 Worker。
