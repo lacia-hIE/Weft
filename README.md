@@ -2,7 +2,7 @@
 
 在 Cloudflare Workers / Durable Objects 上运行 deepseek-harness，提供租户隔离、持久 Session 和可维护的运行环境适配。
 
-当前交付为第一阶段技术验证工程：直接运行固定版本的 upstream Agent Loop，使用确定性模型适配器验证工具循环、SQLite 持久化和租户隔离。技术可行性、兼容性和模块边界优先，成本优化后置。
+当前已接入真实 DeepSeek Messages 模型：直接运行固定版本的 upstream Agent Loop，支持工具循环、SSE 增量输出、取消、SQLite 持久化和租户隔离；确定性模型适配器用于无密钥回归测试。技术可行性、兼容性和模块边界优先，成本优化后置。
 
 需要 Node.js 22.19+ 和 Git。
 
@@ -16,6 +16,8 @@ npm run check
 本地启动：
 
 ```bash
+cp .env.example .env
+# 填入服务端 DeepSeek API Key；用户登录仍由 Cloudflare Access 负责。
 npm run dev
 ```
 
@@ -30,7 +32,9 @@ curl http://localhost:8787/v1/tenants/TENANT_ID/sessions/example/messages \
 curl http://localhost:8787/v1/tenants/TENANT_ID/sessions/example/events
 ```
 
-云端使用 Cloudflare Access 邮箱登录和浏览器会话。Worker 只接受运行时 `ctx.access` 的可信身份，并校验应用 audience；Bearer Token 和客户端身份头不作为认证依据。首期每个 Access 用户有独立个人租户，由 Access 组织域名和用户 ID 派生；邮箱不作为租户键，组织成员关系后续接入独立授权层。当前模型始终为 `scripted`，无需模型 API Key。
+云端使用 Cloudflare Access 邮箱登录和浏览器会话。Worker 只接受运行时 `ctx.access` 的可信身份，并校验应用 audience；Bearer Token 和客户端身份头不作为认证依据。首期每个 Access 用户有独立个人租户，由 Access 组织域名和用户 ID 派生；邮箱不作为租户键，组织成员关系后续接入独立授权层。云端默认模型为 `deepseek-flash`；模型密钥只在服务端配置。`npm run check` 使用确定性模型和模拟 HTTP 响应，不需要模型密钥。
+
+发送消息时增加 `Accept: text/event-stream` 可获取增量事件；省略时返回完整 JSON。正在运行 `npm run dev` 时，可另开终端执行 `npm run test:live`，验证真实模型工具调用、SSE 和会话恢复。
 
 目录职责：
 
@@ -38,6 +42,7 @@ curl http://localhost:8787/v1/tenants/TENANT_ID/sessions/example/events
 | --- | --- |
 | `apps/worker` | HTTP 入口、租户授权、SessionDO 寻址及串行执行 |
 | `packages/harness-runtime` | 装配 upstream 插件，通过原有 Agent API 创建、恢复和驱动 Session |
+| `packages/model-provider` | 按租户解析模型与凭据、复用上游 DeepSeek 适配器、归一化安全错误 |
 | `packages/session-persistence-do` | 实现 upstream `SessionPersistence` 和 `SessionHandle`，管理 SQLite 事件与写入所有权 |
 | `packages/tenant` | Access 用户身份映射、SessionScope 校验和租户限定的对象名称 |
 | `scripts` | 固定上游、生成类型声明、构建及依赖审计 |
@@ -53,6 +58,6 @@ npm run deploy:check
 
 上述命令通过 `cf deploy --dry-run` 检查部署产物。正式部署使用 `npm run deploy`，或在 `npm run build` 后执行 `npx cf deploy`。部署配置以 `cloudflare.config.ts` 为准，`wrangler.config.ts` 只提供构建器设置。
 
-当前实测范围、适配点和下一阶段计划见 [技术验证记录](docs/validation/kernel.md)。原始产品提案见 [产品架构 RFC](WEFT_PRODUCT_ARCHITECTURE.md)。上游许可见 [第三方许可](THIRD_PARTY_NOTICES.md)。
+内核验证见 [技术验证记录](docs/validation/kernel.md)，真实模型、SSE 与取消协议见 [模型验证记录](docs/validation/model.md)。原始产品提案见 [产品架构 RFC](WEFT_PRODUCT_ARCHITECTURE.md)。上游许可见 [第三方许可](THIRD_PARTY_NOTICES.md)。
 
 云端入口：[Weft](https://weft.luxuncang.com/)，登录后返回用户与租户信息；健康检查同样受 Access 保护。源码保存在 GitHub，Cloudflare 连接 GitHub 仓库；项目不配置流水线，通过 `cf` 手动部署。部署及鉴权说明见 [部署记录](docs/deployment.md)。

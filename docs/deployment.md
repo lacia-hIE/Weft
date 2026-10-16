@@ -30,7 +30,7 @@ Worker 使用 Cloudflare 官方提供的 [`ctx.access`](https://developers.cloud
 
 个人租户 ID 为 `user-` 加 SHA-256(JSON([Access 组织域名, 用户 ID]))。不同用户即使使用同一个 Session 名也对应不同的 Durable Object。邮箱变更不改变同一用户 ID 的租户；在 Access 中删除并重建用户可能产生新用户 ID，历史租户迁移需显式处理。原 alpha / beta 验证 Session 不映射给真实用户。
 
-本地 `npm run dev` 使用 `access.dev` 的模拟身份；该设置不参与生产认证。原应用 `VALIDATION_AUTH_JSON` 注册表已停用并从部署中移除。模型仍为确定性验证适配器。
+本地 `npm run dev` 使用 `access.dev` 的模拟身份；该设置不参与生产认证。原应用 `VALIDATION_AUTH_JSON` 注册表已停用并从部署中移除。当前默认接入真实 DeepSeek 模型，服务端模型密钥存储于 `DEEPSEEK_API_KEY` Secret，与用户 Access 登录分离。
 
 ## GitHub 关联
 
@@ -53,3 +53,13 @@ Cloudflare 原生构建使用专用 `weft-native-builds` 部署凭据；凭据�
 2026-10-16 Access 迁移：本地真实 workerd 的 11 项集成测试通过，覆盖可信身份、错误 audience、服务身份与伪造请求头拒绝、跨用户隔离、邮箱变更、跨站写入拒绝，以及原 Harness / SQLite / 重建恢复验证。云端未登录请求和伪造身份请求均由 Access 拦截并重定向至登录；真实邮箱验证码登录后的端到端操作需由允许的用户完成。
 
 本次通过 `cf` 发布的 Worker 版本：`a1404037-0a25-410f-9513-a1e1190c4a21`。复核云端 Secret 列表为空；原生 GitHub 仓库关联保持，`auto_build_enabled` 与 `previews_enabled` 均为 `false`。`cf dev` 的本地模拟身份查询及实际 Harness 工具循环也已通过。
+
+## 真实模型部署
+
+`cloudflare.config.ts` 指定 `MODEL_BACKEND=deepseek`、`DEEPSEEK_MODEL=deepseek-flash` 及 `DEEPSEEK_API_KEY` Secret。首次部署通过权限为 `0600` 的临时 secrets JSON 文件提供模型密钥，再执行 `npx cf deploy --secrets-file /path/to/secrets.json`；发布成功后删除临时副本。后续手动部署和原生 GitHub 手动构建沿用 Cloudflare 的 Secret。
+
+默认由平台提供共享模型凭据，用户 Session 和历史仍按个人租户隔离。服务端解析器支持 `TENANT_MODEL_CONFIG_JSON` Secret：键为实际 `tenantId`，值为 `{ "apiKey": "...", "model": "deepseek-flash" }`。启用该 Secret 时应在配置的 `worker.env` 中声明对应 `bindings.secret()` 并部署；此时注册表独占，缺席租户返回 `MODEL_NOT_CONFIGURED`，不会回退到平台共享密钥。当前尚无用户自助密钥管理页面。
+
+可在服务端配置中声明 `DEEPSEEK_BASE_URL`、`MODEL_IDLE_TIMEOUT_MS` 和 `MODEL_TURN_TIMEOUT_MS` 文本绑定，调整网关与期限；默认分别为官方 Anthropic 兼容 API、60 秒和 180 秒。网关必须使用 HTTPS，无 URL 凭据、查询参数或片段，HTTP 客户端不能覆盖这些配置。当前自动模型重试关闭，避免隐藏重放；后续在幂等和任务恢复设计中明确重试策略。
+
+2026-10-16 真实模型版本已由 `cf deploy` 发布：`bc3db012-0947-4963-aa8c-bea2507cd52b`。模型密钥已写入 Cloudflare Secret，临时部署文件已删除。真实 DeepSeek 的工具调用、SSE 与第二回合恢复在本地 workerd 中通过；Access 用户登录后的云端端到端验证仍需允许的用户完成。

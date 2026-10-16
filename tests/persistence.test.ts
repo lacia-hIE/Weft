@@ -7,7 +7,7 @@ import { createRuntime, send, type EventRecord, type SessionResponse } from './h
 function contractsRuntime(): Miniflare {
   const options = convertV4MiniflareOptions({
     modules: true, scriptPath: resolve('dist/contracts-worker.js'),
-    compatibilityDate: '2026-07-30', compatibilityFlags: ['nodejs_compat'],
+    compatibilityDate: '2026-07-30', compatibilityFlags: ['nodejs_compat', 'enable_request_signal'],
     durableObjects: {
       CONTRACTS: { className: 'ContractsDO', useSQLite: true },
       SESSIONS: { className: 'SessionDO', useSQLite: true },

@@ -23,6 +23,23 @@ const staticAttribution = {
   },
 };
 
+// Scope the fetch compatibility shim to the pinned Messages adapter only.
+const providerFetch = {
+  name: 'harness-workerd-provider-fetch',
+  setup(builder) {
+    builder.onLoad({ filter: /packages\/llm\/llm-deepseek\/src\/adapter\.ts$/ }, ({ path }) => {
+      const original = readFileSync(path, 'utf8');
+      if (!original.includes("body: extensions.payload, redirect: 'error'")) {
+        throw new Error('Upstream provider transport changed; review the workerd fetch adaptation.');
+      }
+      return {
+        contents: `import { fetchProvider as fetch } from ${JSON.stringify(resolve('packages/model-provider/src/fetch.ts'))};\n${original}`,
+        loader: 'ts', resolveDir: resolve(path, '..'),
+      };
+    });
+  },
+};
+
 mkdirSync('dist', { recursive: true });
 const result = await build({
   entryPoints: { worker: 'apps/worker/src/index.ts', 'contracts-worker': 'tests/fixtures/contracts-worker.ts' },
@@ -33,7 +50,7 @@ const result = await build({
   target: 'es2024',
   external: ['cloudflare:workers', 'node:*'],
   tsconfig: '.generated/upstream.source.tsconfig.json',
-  plugins: [staticAttribution],
+  plugins: [staticAttribution, providerFetch],
   sourcemap: true,
   metafile: true,
 });
@@ -42,7 +59,7 @@ const nodeImports = [...new Set(result.metafile.outputs['dist/worker.js'].import
   .filter(item => item.path.startsWith('node:')).map(item => item.path))].sort();
 writeFileSync('dist/runtime-audit.json', JSON.stringify({
   upstream: JSON.parse(readFileSync('upstream.lock.json', 'utf8')).commit,
-  adaptation: 'Static package version import in packages/llm/llm/src/attribution.ts',
+  adaptations: ['Static LLM package version import', 'Messages adapter fetch rejects redirects manually in workerd'],
   nodeImports,
   sourceFiles: Object.keys(result.metafile.outputs['dist/worker.js'].inputs).length,
   workerBytes: result.metafile.outputs['dist/worker.js'].bytes,

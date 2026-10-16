@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
-import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
+import { Miniflare, convertV4MiniflareOptions, type V4FetchHandler } from 'miniflare';
 
 export const accessAudience = 'weft-test-app';
 export const accessTeamDomain = 'test.cloudflareaccess.com';
@@ -13,11 +13,11 @@ export function tenantId(user: User): string {
   return 'user-' + createHash('sha256').update(JSON.stringify([accessTeamDomain, users[user].user_uuid])).digest('hex');
 }
 export function url(user: string, path: string): string { return `http://${user}.local${path}`; }
-export function sessionPath(user: User, sessionId: string, operation: 'messages' | 'events'): string {
+export function sessionPath(user: User, sessionId: string, operation: 'messages' | 'events' | 'cancel'): string {
   return `/v1/tenants/${tenantId(user)}/sessions/${sessionId}/${operation}`;
 }
 
-export function createRuntime(persist?: string): Miniflare {
+export function createRuntime(persist?: string, model: { bindings?: Record<string, string>; outbound?: V4FetchHandler } = {}): Miniflare {
   const profiles = [
     { name: 'alpha', access: { aud: accessAudience, identity: users.alpha } },
     { name: 'beta', access: { aud: accessAudience, identity: users.beta } },
@@ -34,9 +34,10 @@ export function createRuntime(persist?: string): Miniflare {
     modules: true,
     scriptPath: resolve('dist/worker.js'),
     compatibilityDate: '2026-07-30',
-    compatibilityFlags: ['nodejs_compat'],
+    compatibilityFlags: ['nodejs_compat', 'enable_request_signal'],
     durableObjects: { SESSIONS: { className: 'SessionDO', scriptName: 'alpha', useSQLite: true } },
-    bindings: { ACCESS_AUD: accessAudience, ACCESS_TEAM_DOMAIN: accessTeamDomain },
+    bindings: { ACCESS_AUD: accessAudience, ACCESS_TEAM_DOMAIN: accessTeamDomain, MODEL_BACKEND: 'scripted', ...model.bindings },
+    ...(model.outbound ? { outboundService: model.outbound } : {}),
     ...(profile.access ? { access: profile.access } : {}),
   })) });
   for (const worker of options.workers) worker.dev = { ...worker.dev, unsafeRegisterWorker: false };

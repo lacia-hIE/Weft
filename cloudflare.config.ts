@@ -7,7 +7,7 @@ export default defineConfig({
     name: 'weft-kernel-validation',
     entrypoint: './dist/worker.js',
     compatibilityDate: '2026-07-30',
-    compatibilityFlags: ['nodejs_compat'],
+    compatibilityFlags: ['nodejs_compat', 'enable_request_signal'],
     domains: ['weft.luxuncang.com'],
     workersDev: false,
     previewUrls: false,
@@ -15,6 +15,9 @@ export default defineConfig({
     access: { dev: { aud: accessAudience, identity: { user_uuid: 'local-developer', email: 'dev@example.com' } } },
     env: {
       SESSIONS: bindings.durableObject({ worker: 'weft-kernel-validation', exportName: 'SessionDO' }),
+      MODEL_BACKEND: bindings.text('deepseek'),
+      DEEPSEEK_MODEL: bindings.text('deepseek-flash'),
+      DEEPSEEK_API_KEY: bindings.secret(),
       ACCESS_AUD: bindings.text(accessAudience),
       ACCESS_TEAM_DOMAIN: bindings.text('aigraph.cloudflareaccess.com'),
     },

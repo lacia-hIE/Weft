@@ -36,7 +36,7 @@
 
 ## 上游适配与发现
 
-唯一源码内容适配位于构建插件：将 LLM attribution 中的 `createRequire(import.meta.url)('../package.json')` 改为静态 JSON 导入，保留 upstream 版本和请求身份。原操作会导致打包后的 workerd 启动失败。匹配不到固定源码时构建失败，要求重新审查；上游 checkout 未修改。
+首阶段的源码内容适配位于构建插件：将 LLM attribution 中的 `createRequire(import.meta.url)('../package.json')` 改为静态 JSON 导入，保留 upstream 版本和请求身份。原操作会导致打包后的 workerd 启动失败。匹配不到固定源码时构建失败，要求重新审查；上游 checkout 未修改。
 
 Cordis、Cosmokit 和 Schemastery 在 upstream 各自使用不同的编译设置。准备脚本单独生成这些固定 vendor 的声明供 Weft 使用；Weft 与被引用的 Harness 包保持严格检查。该步骤不代表执行了 upstream 全仓类型检查或测试。
 
@@ -46,7 +46,7 @@ Cloudflare DO SQL 对部分 PRAGMA 操作有限制；本工程使用普通 schem
 
 ## 下一阶段
 
-1. 接入 upstream DeepSeek 模型 Provider，在 workerd 中验证真实 HTTP、流式解析、错误及取消；凭据按租户解析。
+1. 已接入 upstream DeepSeek 模型适配器，完成真实 HTTP、流式解析、错误及取消验证；细节见 [模型验证记录](model.md)。
 2. 固定 Computer 版本，增加独立 WorkspaceDO，验证文件读写、搜索、编辑、Git、JS 和工作区重建。
 3. 选择首批受支持的 Harness profile / 插件，明确加载、配置和权限策略，形成兼容清单。
 4. 注入运行中进程终止、超时和重复投递，决定哪些任务需要持久调度及执行器改造。
@@ -59,3 +59,5 @@ Cloudflare DO SQL 对部分 PRAGMA 操作有限制；本工程使用普通 schem
 2026-10-16 使用 `cf@1.0.0-beta.17` 实际部署 `weft-kernel-validation`，Durable Object 通过 exports 生命周期声明创建 SQLite 存储。云端健康检查、alpha / beta 两租户工具循环、持久日志读取和跨租户拒绝均通过。云端进程硬终止、实际模型和 Computer 仍待验证。持续部署状态与配置见 [部署记录](../deployment.md)。
 
 2026-10-16 已将用户入口切换至 Cloudflare Access。认证通过运行时 `ctx.access`；本地使用官方 `access.dev` 模拟并在真实 workerd 执行测试。应用不再提供 Bearer Token 用户认证；新增身份发现、邮箱变更后租户稳定性和跨站写入拒绝验证。
+
+真实模型阶段增加 Messages 适配器专用 fetch 兼容层：workerd 拒绝 `redirect: error`，因此改为 `manual` 并显式拒绝所有 3xx，防止模型凭据随重定向转发。该适配同样位于构建层，上游 checkout 未修改。
