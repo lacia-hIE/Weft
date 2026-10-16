@@ -27,7 +27,7 @@ import {
   messageCss,
   DisclosureRow,
 } from "./upstream-ui.ts";
-import { MarkdownText } from "../../../deepseek-harness/packages/client/ui-primitives/src/markdown/MarkdownText.tsx";
+import { MarkdownText } from "@weft/upstream/packages/client/ui-primitives/src/markdown/MarkdownText.tsx";
 const markdownLabels = {
   code: { copyLabel: "复制", copiedLabel: "已复制" },
   footnotes: "脚注",

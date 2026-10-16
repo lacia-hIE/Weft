@@ -1,8 +1,8 @@
 import { z } from 'zod';
 import { LlmError, type GenerateOptions, type PreparedAdapterCall, type StreamChunk } from '@deepseek-ai/dsh-llm';
 import type { AnonymousUserId } from '@deepseek-ai/dsh-anonymous-user-id';
-import { DeepSeekAdapter } from '../../../deepseek-harness/packages/llm/llm-deepseek/src/adapter.ts';
-import { resolveAdapterOptions } from '../../../deepseek-harness/packages/llm/llm-deepseek/src/config.ts';
+import { DeepSeekAdapter } from '@weft/upstream/packages/llm/llm-deepseek/src/adapter.ts';
+import { resolveAdapterOptions } from '@weft/upstream/packages/llm/llm-deepseek/src/config.ts';
 import { ScriptedAdapter } from '../../harness-runtime/src/scripted-adapter.ts';
 import type { RuntimeOptions } from '../../harness-runtime/src/runtime.ts';
 

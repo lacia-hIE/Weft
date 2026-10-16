@@ -1,6 +1,6 @@
 # Cloudflare 部署
 
-项目使用 npm 锁定的 `cf@1.0.0-beta.17`，`cloudflare.config.ts` 声明 Worker、Access audience 与 SessionDO / WorkspaceDO 两个 SQLite Durable Object，`wrangler.config.ts` 保留构建器设置。源码先由 Weft 的 esbuild 脚本打包，再由 cf 生成 Build Output 并发布。
+项目使用 npm 锁定的 `cf@1.0.0-beta.17`，`cloudflare.config.ts` 声明主 Worker、Access audience 与 SessionDO / WorkspaceDO / TenantDO 三个 SQLite Durable Object。`apps/assets/cloudflare.config.ts` 声明私有 UI 资产 Worker。esbuild 打包后通过 Cloudflare 官方 config/build-output-utils 生成标准 Build Output，由 cf 按资产、主 Worker 的顺序发布。
 
 Worker：`weft-kernel-validation`。自定义域名：`weft.luxuncang.com`。健康检查：https://weft.luxuncang.com/health 。源码：https://github.com/lacia-hIE/Weft 。
 
@@ -13,11 +13,11 @@ cf auth login
 npm run deploy
 ```
 
-也可以先运行 `npm run build`，再执行 `npx cf deploy`。`cf` 本身不执行 package.json 的 build 脚本，不能在未生成 `dist/worker.js` 时直接部署。
+也可以先运行 `npm run build`，再执行 `npm run deploy:workers`。该命令使用 `cf deploy --prebuilt` 顺序发布两个 Worker；先运行 `npm run deploy:check` 可检查两份产物。构建产物生成后才能发布。
 
 ## Access 用户登录
 
-直接打开 https://weft.luxuncang.com/ ，通过 Cloudflare Access 的邮箱验证码登录。登录后 `/` 与 `/v1/me` 返回当前用户及个人 `tenantId`；Session API 使用浏览器登录会话，无需手工配置 Bearer Token。`/health` 也需要登录。
+直接打开 https://weft.luxuncang.com/ ，通过 Cloudflare Access 的邮箱验证码登录。登录后 `/` 进入 Web UI，`/v1/me` 返回当前用户及个人 `tenantId`；Session API 使用浏览器登录会话，无需手工配置 Bearer Token。`/health` 也需要登录。
 
 - Access 组织：`aigraph.cloudflareaccess.com`。
 - 应用：`Weft`，ID `c087ebda-0e03-4204-bc71-a99f2be49a6c`，保护完整域名 `weft.luxuncang.com`。
@@ -34,7 +34,7 @@ Worker 使用 Cloudflare 官方提供的 [`ctx.access`](https://developers.cloud
 
 ## GitHub 关联
 
-Worker 的“构建 → Git 存储库”已原生绑定 `lacia-hIE/Weft` 的 `main` 分支。构建命令为 `npm run build`，部署命令为 `npx cf deploy`，根目录为 `/`。自动构建和预览构建均关闭；项目不配置 GitHub Actions，检查与发布由开发者手动执行。
+Worker 的“构建 → Git 存储库”已原生绑定 `lacia-hIE/Weft` 的 `main` 分支。构建命令为 `npm run build`，部署命令为 `npm run deploy:workers`，根目录为 `/`。自动构建和预览构建均关闭；项目不配置 GitHub Actions，检查与发布由开发者手动执行。
 
 Cloudflare 仓库连接已确认，连接 ID 为 `8256897f-8bbb-490b-993e-8a1537f0a29a`。部署配置的 `worker.domains` 声明自定义域名，发布时由 Cloudflare 管理 DNS 和证书。
 
@@ -69,3 +69,15 @@ Cloudflare 原生构建使用专用 `weft-native-builds` 部署凭据；凭据�
 新增 `WORKSPACES` 绑定与 `WorkspaceDO` SQLite export；`cf deploy` 管理对应生命周期声明。现有 SessionDO 命名和存储保留。工作区使用 `@cloudflare/computer@0.5.1`，无 Container 或执行后端；无需增加模型以外的 Secret。文件 API、Session 绑定及验证细节见 [Workspace 记录](validation/workspace.md)。
 
 2026-10-16 Workspace 版本发布成功：`d621df0e-aeda-4add-91f7-0cefa9fa25c8`。已复核 WorkspaceDO 为 SQLite namespace `340c996ea191459484a0ce6059072943`，SessionDO namespace 保留。模型 Secret、指定 Access 策略及 GitHub 原生仓库关联保留，自动构建与预览构建均关闭。云端文件入口的未登录及伪造身份请求会跳转 Access 登录。
+
+## Web UI 与插件部署
+
+2026-10-17 已通过 cf 的标准 Build Output 发布两份 Worker：
+
+- 主 Worker：`fba34fdc-ee9b-47ea-b4ae-b3bb083656ae`，自定义域名 `weft.luxuncang.com`。
+- 私有 UI 资产 Worker：`c73c7860-209c-43bd-b874-6650910eb5f7`；无域名、公网路由、workers.dev 或预览入口，仅供主 Worker 的 UI Service Binding 调用。
+- 新 TenantDO SQLite namespace：`7c6ef46aef124749a2bf357e023e7529`。SessionDO / WorkspaceDO namespace 保留。
+
+严格类型检查、35 项 workerd 回归、源码目录切换后的 3 项补充测试、两项浏览器回归及真实 DeepSeek 生成客户端插件的浏览器故事均通过。UI 直接复用固定 Harness 的主题、控件、Markdown、布局算法及相关 CSS module。具体流程与支持边界见 [Web 插件验收](validation/web-plugins.md)。
+
+云端复核：指定 Access 策略 `794a6757-ac89-4f8b-8e6a-6d68bef91490` 保留；根页面、资产与伪造身份 API 请求均返回 302 至 Access 登录。两个 Worker 的 workers.dev 与预览入口关闭。GitHub 原生关联仍为 main，构建命令 `npm run build`，部署命令已更新为 `npm run deploy:workers`，自动构建和预览构建仍为 false。实际允许用户完成邮箱验证码登录后的云端操作尚未验证。

@@ -11,7 +11,7 @@ npm ci
 npm run check
 ```
 
-`check` 会校验或获取 `upstream.lock.json` 固定的 Harness 源码，生成源码解析配置和 vendor 类型声明，然后执行严格类型检查及真实 workerd 集成测试。已有 `deepseek-harness/` checkout 的 commit 不匹配或包含 tracked 修改时会停止，不会覆盖现有工作。
+`check` 会校验或获取 `upstream.lock.json` 固定的 Harness 源码，生成源码解析配置和 vendor 类型声明，然后执行严格类型检查及真实 workerd 集成测试。已有 `deepseek-harness/` checkout 的 commit 不匹配或包含 tracked 修改时，会保留它并使用 `.generated/upstream/<commit>` 的独立固定副本；不覆盖你的上游工作。
 
 本地启动：
 

@@ -27,13 +27,13 @@ import {
   IconNewChatOutlineRegular,
   IconSettingsOutlineRegular,
 } from "./upstream-ui.ts";
-import "../../../deepseek-harness/packages/client/ui-theme/src/styles/base.css";
-import "../../../deepseek-harness/packages/client/ui-theme/src/styles/design-platform.css";
-import "../../../deepseek-harness/packages/client/ui-theme/src/styles/focus.css";
-import "../../../deepseek-harness/packages/client/ui-theme/src/styles/scrollbar.css";
-import "../../../deepseek-harness/packages/client/ui-theme/src/styles/gradient-shadow-text.css";
-import "../../../deepseek-harness/packages/client/ui-theme/src/styles/shiki.css";
-import "../../../deepseek-harness/packages/client/ui-theme/src/styles/corner-shape.css";
+import "@weft/upstream/packages/client/ui-theme/src/styles/base.css";
+import "@weft/upstream/packages/client/ui-theme/src/styles/design-platform.css";
+import "@weft/upstream/packages/client/ui-theme/src/styles/focus.css";
+import "@weft/upstream/packages/client/ui-theme/src/styles/scrollbar.css";
+import "@weft/upstream/packages/client/ui-theme/src/styles/gradient-shadow-text.css";
+import "@weft/upstream/packages/client/ui-theme/src/styles/shiki.css";
+import "@weft/upstream/packages/client/ui-theme/src/styles/corner-shape.css";
 import "@deepseek-ai/dsh-client-ui-dockkit"; // Include SDK surfaces in the page stylesheet.
 import "./style.css";
 declare module "@deepseek-ai/dsh-client-ui-slots" {

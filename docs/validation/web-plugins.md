@@ -28,6 +28,10 @@
 
 ## 验证
 
+2026-10-17 验收：35 项 workerd 回归通过；固定源码目录切换后，3 项控制面 / Dynamic Worker 补充测试再次通过。严格类型检查通过。两项浏览器回归通过，覆盖自动 JSX、原生 Store/Config、完整 UI primitives 中的 Markdown 与控件、DockKit、用户消息与历史恢复、文件 CAS、插件卸载、安全模式、移动端和深色模式。真实 DeepSeek 浏览器验证通过（12.3 秒）：模型写入 TSX、发布、用户启用、点击计数器、刷新恢复。
+
+React 的 CommonJS 入口在共享 ESM SDK 中使用显式具名导出，避免 `export *` 丢失 JSX 和 ReactDOM API。客户端 imports 的唯一目录为 `packages/client-plugins/sdk.json`，构建入口与发布编译器共同消费。
+
 ```bash
 npm run check
 npx playwright install chromium

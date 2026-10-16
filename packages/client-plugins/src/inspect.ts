@@ -1,10 +1,10 @@
 import type { Context } from "@deepseek-ai/cordis";
 import * as InspectTools from "@deepseek-ai/dsh-tool-cordis";
-import { CordisInspectRegistryService } from "../../../deepseek-harness/packages/extensions/cordis-host-runner/src/inspect-registry.ts";
+import { CordisInspectRegistryService } from "@weft/upstream/packages/extensions/cordis-host-runner/src/inspect-registry.ts";
 import {
   queryServiceApi,
   SERVICE_API,
-} from "../../../deepseek-harness/packages/extensions/cordis-client-runner/src/client/api-catalog.ts";
+} from "@weft/upstream/packages/extensions/cordis-client-runner/src/client/api-catalog.ts";
 import type { JsonValue } from "@deepseek-ai/dsh-util-values";
 import { browserImports } from "./compiler.ts";
 import {

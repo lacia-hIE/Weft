@@ -5,8 +5,24 @@ import ts from 'typescript';
 
 const root = resolve(import.meta.dirname, '..');
 const lock = JSON.parse(readFileSync(resolve(root, 'upstream.lock.json'), 'utf8'));
-const checkout = resolve(root, lock.directory);
+const output = resolve(root, '.generated');
+const sourcePath = path => {
+  const result = relative(output, path);
+  return result.startsWith('.') ? result : './' + result;
+};
+mkdirSync(output, { recursive: true });
+const configuredCheckout = resolve(root, lock.directory);
+let checkout = configuredCheckout;
+if (existsSync(checkout)) {
+  const existing = execFileSync('git', ['-C', checkout, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  const dirty = execFileSync('git', ['-C', checkout, 'status', '--porcelain', '--untracked-files=no'], { encoding: 'utf8' }).trim();
+  if (existing !== lock.commit || dirty) {
+    checkout = resolve(output, 'upstream', lock.commit);
+    console.log('Preserving the existing Harness checkout; using an isolated pinned source copy.');
+  }
+}
 if (!existsSync(checkout)) {
+  mkdirSync(resolve(checkout, '..'), { recursive: true });
   execFileSync('git', ['clone', '--no-checkout', lock.repository, checkout], { stdio: 'inherit' });
   execFileSync('git', ['-C', checkout, 'checkout', '--detach', lock.commit], { stdio: 'inherit' });
 }
@@ -16,11 +32,11 @@ const changes = execFileSync('git', ['-C', checkout, 'status', '--porcelain', '-
 if (changes.trim()) throw new Error('Upstream has tracked changes. Resolve them before validating the pinned source.');
 const config = ts.readConfigFile(resolve(checkout, 'tsconfig.base.json'), ts.sys.readFile);
 if (config.error) throw new Error(ts.flattenDiagnosticMessageText(config.error.messageText, '\n'));
-const output = resolve(root, '.generated');
-mkdirSync(output, { recursive: true });
 const paths = Object.fromEntries(Object.entries(config.config.compilerOptions.paths).map(([name, targets]) => [
-  name, targets.map(target => relative(output, resolve(checkout, target))),
+  name, targets.map(target => sourcePath(resolve(checkout, target))),
 ]));
+paths['@weft/upstream/*'] = [sourcePath(checkout) + '/*'];
+writeFileSync(resolve(output, 'upstream-source.json'), JSON.stringify({ directory: checkout, commit: actual }) + '\n');
 writeFileSync(resolve(output, 'upstream.source.tsconfig.json'), JSON.stringify({ compilerOptions: { paths } }, null, 2) + '\n');
 // Vendored libraries use their own relaxed compiler settings upstream. Emit their
 // declarations separately so Weft and Harness packages retain strict checking.

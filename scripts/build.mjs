@@ -42,7 +42,8 @@ const providerFetch = {
 };
 
 mkdirSync('dist', { recursive: true });
-const dynamicCordis = await build({ entryPoints: ['deepseek-harness/vendor/cordis/src/index.ts'], bundle: true, format: 'esm', platform: 'browser', target: 'es2024', minify: true, write: false, tsconfig: '.generated/upstream.source.tsconfig.json' });
+const upstreamDirectory = JSON.parse(readFileSync('.generated/upstream-source.json','utf8')).directory;
+const dynamicCordis = await build({ entryPoints: [resolve(upstreamDirectory,'vendor/cordis/src/index.ts')], bundle: true, format: 'esm', platform: 'browser', target: 'es2024', minify: true, write: false, tsconfig: '.generated/upstream.source.tsconfig.json' });
 writeFileSync('.generated/dynamic-cordis.ts', `export const cordisModule = ${JSON.stringify(dynamicCordis.outputFiles[0].text)};\n`);
 rmSync('dist/web', { recursive: true, force: true });
 const web = await build({

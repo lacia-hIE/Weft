@@ -6,6 +6,7 @@ export default defineConfig({
   timeout: 180_000,
   expect: { timeout: 12_000 },
   use: {
+    actionTimeout: 15_000,
     baseURL: "http://127.0.0.1:4173",
     browserName: "chromium",
     screenshot: "only-on-failure",

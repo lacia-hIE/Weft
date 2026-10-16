@@ -1,6 +1,6 @@
 # Harness 兼容性与维护
 
-upstream.lock.json 固定 commit。服务端插件、模型协议、浏览器内核、UI 控件与样式从同一份源码构建。prepare-upstream.mjs 拒绝版本不匹配或 tracked 修改，升级需显式审查兼容契约。
+upstream.lock.json 固定 commit。服务端插件、模型协议、浏览器内核、UI 控件与样式从同一份源码构建。prepare-upstream.mjs 保留用户现有 checkout，必要时使用独立固定副本；所有公共及内部导入均指向同一副本。管理的副本若版本不匹配或有 tracked 修改则停止。升级需显式审查兼容契约。
 
 | 适配边界 | 职责 |
 | --- | --- |
