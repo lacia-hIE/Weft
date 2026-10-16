@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.generated/
+.wrangler/
+.cloudflare/
+.dev.vars
+.env
+coverage/
+# Upstream is fetched and verified by npm run upstream:prepare.
+deepseek-harness/

@@ -1,0 +1,48 @@
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { resolve, relative } from 'node:path';
+import ts from 'typescript';
+
+const root = resolve(import.meta.dirname, '..');
+const lock = JSON.parse(readFileSync(resolve(root, 'upstream.lock.json'), 'utf8'));
+const checkout = resolve(root, lock.directory);
+if (!existsSync(checkout)) {
+  execFileSync('git', ['clone', '--no-checkout', lock.repository, checkout], { stdio: 'inherit' });
+  execFileSync('git', ['-C', checkout, 'checkout', '--detach', lock.commit], { stdio: 'inherit' });
+}
+const actual = execFileSync('git', ['-C', checkout, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+if (actual !== lock.commit) throw new Error(`Upstream commit mismatch: expected ${lock.commit}, got ${actual}. Checkout was not modified.`);
+const changes = execFileSync('git', ['-C', checkout, 'status', '--porcelain', '--untracked-files=no'], { encoding: 'utf8' });
+if (changes.trim()) throw new Error('Upstream has tracked changes. Resolve them before validating the pinned source.');
+const config = ts.readConfigFile(resolve(checkout, 'tsconfig.base.json'), ts.sys.readFile);
+if (config.error) throw new Error(ts.flattenDiagnosticMessageText(config.error.messageText, '\n'));
+const output = resolve(root, '.generated');
+mkdirSync(output, { recursive: true });
+const paths = Object.fromEntries(Object.entries(config.config.compilerOptions.paths).map(([name, targets]) => [
+  name, targets.map(target => relative(output, resolve(checkout, target))),
+]));
+writeFileSync(resolve(output, 'upstream.source.tsconfig.json'), JSON.stringify({ compilerOptions: { paths } }, null, 2) + '\n');
+// Vendored libraries use their own relaxed compiler settings upstream. Emit their
+// declarations separately so Weft and Harness packages retain strict checking.
+const vendorNames = ['cordis', 'cosmokit', 'schemastery'];
+const vendorEntries = vendorNames.map(name => resolve(checkout, 'vendor', name, 'src/index.ts'));
+const absolutePaths = Object.fromEntries(Object.entries(config.config.compilerOptions.paths).map(([name, targets]) => [
+  name, targets.map(target => resolve(checkout, target)),
+]));
+const declarationProgram = ts.createProgram(vendorEntries, {
+  target: ts.ScriptTarget.ES2024,
+  module: ts.ModuleKind.ESNext,
+  moduleResolution: ts.ModuleResolutionKind.Bundler,
+  declaration: true,
+  emitDeclarationOnly: true,
+  noCheck: true,
+  rootDir: checkout,
+  outDir: resolve(output, 'types'),
+  paths: absolutePaths,
+});
+const emitted = declarationProgram.emit();
+if (emitted.emitSkipped) throw new Error('Unable to emit pinned vendor declarations');
+const typePaths = { ...paths };
+for (const name of vendorNames) typePaths[`@deepseek-ai/${name}`] = [`./types/vendor/${name}/src/index.d.ts`];
+writeFileSync(resolve(output, 'upstream.tsconfig.json'), JSON.stringify({ compilerOptions: { paths: typePaths } }, null, 2) + '\n');
+console.log(`Pinned Harness ${actual.slice(0, 12)}; generated source aliases.`);

@@ -1,0 +1,33 @@
+{
+  "name": "weft",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "upstream:prepare": "node scripts/prepare-upstream.mjs",
+    "build": "npm run upstream:prepare && node scripts/build.mjs",
+    "typecheck": "npm run upstream:prepare && tsc --noEmit",
+    "test": "npm run build && tsx --test --test-timeout=30000 tests/*.test.ts",
+    "dev": "npm run build && cf dev",
+    "deploy": "npm run build && cf deploy",
+    "deploy:check": "npm run build && cf deploy --dry-run",
+    "check": "npm run typecheck && npm test"
+  },
+  "dependencies": {
+    "@standard-schema/spec": "1.1.0",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20261016.1",
+    "@types/node": "^22.19.0",
+    "cf": "1.0.0-beta.17",
+    "esbuild": "0.28.2",
+    "miniflare": "5.20261012.1-beta",
+    "tsx": "4.23.15",
+    "typescript": "^5.9.3",
+    "wrangler": "4.151.1"
+  }
+}
