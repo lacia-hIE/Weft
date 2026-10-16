@@ -21,8 +21,16 @@ npm run deploy
 
 ## GitHub 关联
 
-源码保存在 GitHub，Cloudflare 的 GitHub 连接授权访问该仓库。项目不配置 GitHub Actions 或其他部署流水线，也不创建推送触发的自动部署规则。发布由开发者通过 `cf` 命令手动执行，检查在本地运行。
+Worker 的“构建 → Git 存储库”已原生绑定 `lacia-hIE/Weft` 的 `main` 分支。构建命令为 `npm run build`，部署命令为 `npx cf deploy`，根目录为 `/`。自动构建和预览构建均关闭；项目不配置 GitHub Actions，检查与发布由开发者手动执行。
 
 Cloudflare 仓库连接已确认，连接 ID 为 `8256897f-8bbb-490b-993e-8a1537f0a29a`。部署配置的 `worker.domains` 声明自定义域名，发布时由 Cloudflare 管理 DNS 和证书。
+
+也可在 Cloudflare 控制台手动启动构建，或执行：
+
+```bash
+npx cf builds create 7757abed-2c84-40db-9c15-60baaef0c190 --branch main
+```
+
+Cloudflare 原生构建使用专用 `weft-native-builds` 部署凭据；凭据保存在 Cloudflare，不上传 GitHub Secret。
 
 2026-10-16 的首次云端检查已验证：健康检查、两租户模型工具循环、Session 日志读取、无凭据返回 401、跨租户访问返回 403。
