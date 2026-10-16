@@ -34,7 +34,7 @@ Worker 使用 Cloudflare 官方提供的 [`ctx.access`](https://developers.cloud
 
 ## GitHub 关联
 
-Worker 的“构建 → Git 存储库”已原生绑定 `lacia-hIE/Weft` 的 `main` 分支。构建命令为 `npm run build`，部署命令为 `npm run deploy:workers`，根目录为 `/`。自动构建和预览构建均关闭；项目不配置 GitHub Actions，检查与发布由开发者手动执行。
+Worker 的“构建 → Git 存储库”已原生绑定 `lacia-hIE/Weft` 的 `main` 分支。构建命令为 `npm run build`，部署命令为 `npm run deploy:workers`，根目录为 `/`。生产自动构建已开启：推送到 `main` 后由 Cloudflare 原生 Git 构建并顺序部署私有 UI 资产与主 Worker。预览构建仍关闭，其他分支不自动发布。项目不配置 GitHub Actions。
 
 Cloudflare 仓库连接已确认，连接 ID 为 `8256897f-8bbb-490b-993e-8a1537f0a29a`。部署配置的 `worker.domains` 声明自定义域名，发布时由 Cloudflare 管理 DNS 和证书。
 
@@ -56,7 +56,7 @@ Cloudflare 原生构建使用专用 `weft-native-builds` 部署凭据；凭据�
 
 ## 真实模型部署
 
-`cloudflare.config.ts` 指定 `MODEL_BACKEND=deepseek`、`DEEPSEEK_MODEL=deepseek-flash` 及 `DEEPSEEK_API_KEY` Secret。首次部署通过权限为 `0600` 的临时 secrets JSON 文件提供模型密钥，再执行 `npx cf deploy --secrets-file /path/to/secrets.json`；发布成功后删除临时副本。后续手动部署和原生 GitHub 手动构建沿用 Cloudflare 的 Secret。
+`cloudflare.config.ts` 指定 `MODEL_BACKEND=deepseek`、`DEEPSEEK_MODEL=deepseek-flash` 及 `DEEPSEEK_API_KEY` Secret。首次部署通过权限为 `0600` 的临时 secrets JSON 文件提供模型密钥，再执行 `npx cf deploy --secrets-file /path/to/secrets.json`；发布成功后删除临时副本。后续手动部署和原生 GitHub 构建沿用 Cloudflare 的 Secret。
 
 默认由平台提供共享模型凭据，用户 Session 和历史仍按个人租户隔离。服务端解析器支持 `TENANT_MODEL_CONFIG_JSON` Secret：键为实际 `tenantId`，值为 `{ "apiKey": "...", "model": "deepseek-flash" }`。启用该 Secret 时应在配置的 `worker.env` 中声明对应 `bindings.secret()` 并部署；此时注册表独占，缺席租户返回 `MODEL_NOT_CONFIGURED`，不会回退到平台共享密钥。当前尚无用户自助密钥管理页面。
 
@@ -81,3 +81,9 @@ Cloudflare 原生构建使用专用 `weft-native-builds` 部署凭据；凭据�
 严格类型检查、35 项 workerd 回归、源码目录切换后的 3 项补充测试、两项浏览器回归及真实 DeepSeek 生成客户端插件的浏览器故事均通过。UI 直接复用固定 Harness 的主题、控件、Markdown、布局算法及相关 CSS module。具体流程与支持边界见 [Web 插件验收](validation/web-plugins.md)。
 
 云端复核：指定 Access 策略 `794a6757-ac89-4f8b-8e6a-6d68bef91490` 保留；根页面、资产与伪造身份 API 请求均返回 302 至 Access 登录。两个 Worker 的 workers.dev 与预览入口关闭。GitHub 原生关联仍为 main，构建命令 `npm run build`，部署命令已更新为 `npm run deploy:workers`，自动构建和预览构建仍为 false。实际允许用户完成邮箱验证码登录后的云端操作尚未验证。
+
+## 推送触发自动部署
+
+2026-10-17 按新的部署要求开启生产自动构建：`auto_build_enabled=true`，`previews_enabled=false`。监听仓库 `lacia-hIE/Weft` 的 `main` 分支，构建命令保持 `npm run build`，部署命令保持 `npm run deploy:workers`。因此推送到 main 会自动更新 `weft.luxuncang.com`；`git pull` 仅更新本地代码，不触发发布。此前记录中的“自动构建关闭”为当时配置。
+
+可在 Cloudflare 控制台的 Worker 构建页面查看提交对应的构建和部署结果；手动部署命令仍可使用。
