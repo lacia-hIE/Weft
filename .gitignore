@@ -6,5 +6,7 @@ dist/
 .dev.vars
 .env
 coverage/
+test-results/
+playwright-report/
 # Upstream is fetched and verified by npm run upstream:prepare.
 deepseek-harness/

@@ -1,6 +1,7 @@
 import { build } from 'esbuild';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync, readdirSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { writeBuildOutput } from './write-build-output.mjs';
 
 // Bundles have no adjacent package.json at runtime. Preserve upstream attribution
 // while converting this one Node loader operation to a static JSON import.
@@ -41,8 +42,55 @@ const providerFetch = {
 };
 
 mkdirSync('dist', { recursive: true });
+const dynamicCordis = await build({ entryPoints: ['deepseek-harness/vendor/cordis/src/index.ts'], bundle: true, format: 'esm', platform: 'browser', target: 'es2024', minify: true, write: false, tsconfig: '.generated/upstream.source.tsconfig.json' });
+writeFileSync('.generated/dynamic-cordis.ts', `export const cordisModule = ${JSON.stringify(dynamicCordis.outputFiles[0].text)};\n`);
+rmSync('dist/web', { recursive: true, force: true });
+const web = await build({
+  entryPoints: { app: 'apps/web/src/app.tsx', ...Object.fromEntries(Object.values(JSON.parse(readFileSync('packages/client-plugins/sdk.json','utf8'))).map(name => [`ui-runtime/${name}`, `apps/web/src/runtime/${name}.ts`])) },
+  outdir: 'dist/web', bundle: true, splitting: true, format: 'esm', platform: 'browser', target: 'es2022',
+  tsconfig: '.generated/upstream.source.tsconfig.json', jsx: 'automatic', minify: true, metafile: true,
+  define: { 'process.env.NODE_ENV': '"production"' },
+  loader: { '.woff2': 'dataurl', '.woff': 'dataurl', '.ttf': 'dataurl' },
+});
+const assets = {};
+const primitives = web.metafile.outputs['dist/web/ui-runtime/primitives.js'].exports;
+const dockkit = web.metafile.outputs['dist/web/ui-runtime/dockkit.js'].exports;
+writeFileSync('.generated/browser-capabilities.ts',`export const primitiveExports: string[]=${JSON.stringify(primitives)};\nexport const dockkitExports: string[]=${JSON.stringify(dockkit)};\n`);
+for (const output of Object.values(web.metafile.outputs)) {
+  if (Object.entries(output.inputs ?? {}).some(([path,input])=>input.bytesInOutput > 0 && path.includes('micromark-extension-math/node_modules/katex/'))) {
+    throw new Error('Old transitive KaTeX entered the browser bundle; use the reviewed direct renderer');
+  }
+}
+function collectAssets(directory) {
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const path = `${directory}/${entry.name}`;
+    if (entry.isDirectory()) collectAssets(path);
+    else assets['/assets/' + path.slice('dist/web/'.length)] = { body: readFileSync(path, 'utf8'), type: entry.name.endsWith('.css') ? 'text/css; charset=utf-8' : 'text/javascript; charset=utf-8' };
+  }
+}
+collectAssets('dist/web');
+const bundledPackages = new Set();
+for (const output of Object.values(web.metafile.outputs)) {
+  for (const [path, input] of Object.entries(output.inputs ?? {})) {
+    if (!input.bytesInOutput) continue;
+    const match = /^(.*node_modules\/(?:@[^/]+\/)?[^/]+)\//.exec(path);
+    if (match) bundledPackages.add(match[1]);
+  }
+}
+let notices = readFileSync('THIRD_PARTY_NOTICES.md', 'utf8');
+for (const directory of [...bundledPackages].sort()) {
+  const metadata = JSON.parse(readFileSync(`${directory}/package.json`, 'utf8'));
+  const licenses = readdirSync(directory).filter(name => /^(licen[cs]e|copying)(\.|$)/i.test(name));
+  notices += `\n\n## ${metadata.name}@${metadata.version}\n`;
+  for (const name of licenses) notices += `\n${readFileSync(`${directory}/${name}`, 'utf8')}\n`;
+}
+assets['/licenses.txt'] = { type:'text/plain; charset=utf-8', body:notices };
+assets['/'] = { type: 'text/html; charset=utf-8', body: '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#f2f5f9"><title>Weft · DeepSeek Harness</title><link rel="stylesheet" href="/assets/app.css"></head><body><div id="root"><p style="padding:32px;color:#8090a8">正在连接你的工作空间…</p></div><script type="module" src="/assets/app.js"></script></body></html>' };
+writeFileSync('.generated/ui-assets.ts', `export const uiAssets: Record<string, { body: string; type: string }> = ${JSON.stringify(assets)};\n`);
+writeFileSync('.generated/ui-paths.ts', `export const uiPaths: string[] = ${JSON.stringify(Object.keys(assets))};\n`);
+writeFileSync('dist/web-metafile.json', JSON.stringify(web.metafile, null, 2) + '\n');
 const result = await build({
-  entryPoints: { worker: 'apps/worker/src/index.ts', 'contracts-worker': 'tests/fixtures/contracts-worker.ts' },
+  entryPoints: { worker: 'apps/worker/src/index.ts', 'assets-worker':'apps/assets/src/index.ts', 'contracts-worker': 'tests/fixtures/contracts-worker.ts', 'dynamic-worker': 'tests/fixtures/dynamic-worker.ts' },
   outdir: 'dist',
   bundle: true,
   format: 'esm',
@@ -57,6 +105,9 @@ const result = await build({
 const forbiddenWorkspaceDependencies = ['just-bash', 'guarded-fetch', 'sprintf-js'];
 const shippedInputs = Object.entries(result.metafile.outputs['dist/worker.js'].inputs)
   .filter(([, input]) => input.bytesInOutput > 0).map(([path]) => path);
+if (shippedInputs.some(path => /packages\/(host\/webserver|api\/gateway)|node_modules\/ws\//.test(path))) {
+  throw new Error('Node host transport leaked into the workerd application bundle');
+}
 for (const dependency of forbiddenWorkspaceDependencies) {
   if (shippedInputs.some(path => path.includes(`node_modules/${dependency}/`))) {
     throw new Error(`Unreviewed workspace execution dependency in application bundle: ${dependency}`);
@@ -70,8 +121,16 @@ writeFileSync('dist/runtime-audit.json', JSON.stringify({
   adaptations: ['Static LLM package version import', 'Messages adapter fetch rejects redirects manually in workerd'],
   computer: { version: JSON.parse(readFileSync('node_modules/@cloudflare/computer/package.json', 'utf8')).version, executionBackends: [] },
   excludedExecutionDependencies: forbiddenWorkspaceDependencies,
+  browser: {
+    protocol: 1,
+    reused: ['Cordis Context', 'SlotRegistry', 'ui-renderer', 'store', 'Schemastery Config', 'ui-theme styles', 'ui-primitives controls', 'MarkdownText', 'DisclosureRow', 'sidebar/conversation/plugin page styles', 'layout column solver'],
+    assets: Object.keys(assets).length,
+    bytes: Object.values(web.metafile.outputs).reduce((sum, output) => sum + output.bytes, 0),
+  },
+  pluginPackages: ['tool-todo', 'time-context', 'repeat-tool-reminder', 'skill', 'skill-filesystem', 'tool-skill', 'tool-cordis'],
   nodeImports,
   sourceFiles: Object.keys(result.metafile.outputs['dist/worker.js'].inputs).length,
   workerBytes: result.metafile.outputs['dist/worker.js'].bytes,
 }, null, 2) + '\n');
 console.log(`Worker bundled; Node compatibility imports: ${nodeImports.join(', ')}`);
+await writeBuildOutput();

@@ -1,0 +1,64 @@
+import { createServer } from "node:http";
+import { Readable } from "node:stream";
+import { readFileSync } from "node:fs";
+import { createRuntime } from "../helpers/miniflare.ts";
+
+// Test-only bridge. Production serves directly from the authenticated Worker.
+// Native Access identities are supplied by Miniflare, never application headers.
+const live = process.env.WEFT_BROWSER_LIVE === "1";
+const key = live
+  ? readFileSync(".env", "utf8").match(
+      /^DEEPSEEK_API_KEY\s*=\s*["']?([^\r\n"']+)/m,
+    )?.[1]
+  : undefined;
+if (live && !key) throw new Error("Missing live model configuration");
+const runtime = createRuntime(
+  undefined,
+  key
+    ? {
+        bindings: { MODEL_BACKEND: "deepseek", DEEPSEEK_API_KEY: key },
+        browser: true,
+      }
+    : { browser: true },
+);
+await runtime.ready;
+const server = createServer(async (request, response) => {
+  try {
+    const buffers: Buffer[] = [];
+    for await (const part of request) buffers.push(Buffer.from(part));
+    const headers = new Headers();
+    for (const [name, value] of Object.entries(request.headers))
+      if (value && name !== "host")
+        headers.set(name, Array.isArray(value) ? value.join(", ") : value);
+    if (headers.has("origin")) headers.set("origin", "http://alpha.local");
+    const body = Buffer.concat(buffers);
+    const result = await runtime.dispatchFetch(
+      "http://alpha.local" + request.url,
+      {
+        method: request.method ?? "GET",
+        headers: [...headers],
+        ...(body.length ? { body } : {}),
+      },
+    );
+    response.writeHead(result.status, Object.fromEntries(result.headers));
+    if (result.body) Readable.fromWeb(result.body as never).pipe(response);
+    else response.end();
+  } catch (error) {
+    response.writeHead(500);
+    response.end(String(error));
+  }
+});
+server.listen(4173, "127.0.0.1", () => {
+  console.log("Browser verification server ready on 4173");
+});
+async function close(): Promise<void> {
+  server.close();
+  await runtime.dispose();
+  process.exit(0);
+}
+process.on("SIGTERM", () => {
+  void close();
+});
+process.on("SIGINT", () => {
+  void close();
+});

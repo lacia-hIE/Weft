@@ -1,0 +1,16 @@
+{
+  "react": "react",
+  "react/jsx-runtime": "jsx-runtime",
+  "react-dom": "react-dom",
+  "react-dom/client": "react-dom-client",
+  "clsx": "clsx",
+  "zod": "zod",
+  "immer": "immer",
+  "@deepseek-ai/cordis": "cordis",
+  "@deepseek-ai/cosmokit": "cosmokit",
+  "@deepseek-ai/schemastery": "schemastery",
+  "@deepseek-ai/dsh-client-ui-slots": "slots",
+  "@deepseek-ai/dsh-client-store": "store",
+  "@deepseek-ai/dsh-client-ui-primitives": "primitives",
+  "@deepseek-ai/dsh-client-ui-dockkit": "dockkit"
+}

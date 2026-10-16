@@ -13,7 +13,8 @@
     "skipLibCheck": true,
     "allowImportingTsExtensions": true,
     "resolveJsonModule": true,
+    "jsx": "react-jsx",
     "noEmit": true
   },
-  "include": ["apps/**/*.ts", "packages/**/*.ts", "tests/**/*.ts", "cloudflare.config.ts", "wrangler.config.ts"]
+  "include": ["apps/**/*.ts", "apps/**/*.tsx", "packages/**/*.ts", "tests/**/*.ts", "cloudflare.config.ts", "wrangler.config.ts"]
 }

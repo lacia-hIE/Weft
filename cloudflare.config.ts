@@ -1,6 +1,7 @@
-import { bindings, defineConfig, exports } from 'cf/config';
+import { bindings, defineConfig, defineWorker, exports } from 'cf/config';
 
 const accessAudience = 'a9f868c801ff9618d72eb834aeddbd37b2778f5ce054fef65c14168619d462b9';
+const uiWorker = defineWorker({ name:'weft-ui-assets',entrypoint:'./dist/assets-worker.js',compatibilityDate:'2026-07-30',workersDev:false,previewUrls:false });
 
 export default defineConfig({
   worker: {
@@ -14,8 +15,10 @@ export default defineConfig({
     // Local-only identity simulation; Cloudflare Access supplies production identity.
     access: { dev: { aud: accessAudience, identity: { user_uuid: 'local-developer', email: 'dev@example.com' } } },
     env: {
+      UI: bindings.worker({ worker: uiWorker }),
       SESSIONS: bindings.durableObject({ worker: 'weft-kernel-validation', exportName: 'SessionDO' }),
       WORKSPACES: bindings.durableObject({ worker: 'weft-kernel-validation', exportName: 'WorkspaceDO' }),
+      TENANTS: bindings.durableObject({ worker: 'weft-kernel-validation', exportName: 'TenantDO' }),
       MODEL_BACKEND: bindings.text('deepseek'),
       DEEPSEEK_MODEL: bindings.text('deepseek-flash'),
       DEEPSEEK_API_KEY: bindings.secret(),
@@ -25,6 +28,7 @@ export default defineConfig({
     exports: {
       SessionDO: exports.durableObject({ storage: 'sqlite' }),
       WorkspaceDO: exports.durableObject({ storage: 'sqlite' }),
+      TenantDO: exports.durableObject({ storage: 'sqlite' }),
     },
   },
 });

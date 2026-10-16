@@ -1,10 +1,19 @@
 import { DurableObject } from 'cloudflare:workers';
 import { HttpError, readJson, assertSameOrigin } from './http.ts';
 import { handleWorkspaceRequest } from './workspace-http.ts';
+import { handleControlRequest } from './control-http.ts';
+import { TenantDO, tenantAddress } from '../../../packages/control-plane/src/object.ts';
+import type { AgentRevision } from '../../../packages/control-plane/src/contracts.ts';
+import { id } from '../../../packages/control-plane/src/contracts.ts';
+import { mountPlugins } from '../../../packages/plugin-runtime/src/catalog.ts';
+import { CLIENT_PLUGIN_GUIDE, mountClientPublisher } from '../../../packages/client-plugins/src/tool.ts';
+import { mountClientInspection } from '../../../packages/client-plugins/src/inspect.ts';
+import upstream from '../../../upstream.lock.json';
+import { serveUi } from './ui-http.ts';
 import { mountWorkspace } from '../../../packages/workspace/src/provider.ts';
 import { WorkspaceDO } from '../../../packages/workspace/src/object.ts';
 import { workspaceIdSchema, workspaceAddress } from '../../../packages/workspace/src/protocol.ts';
-export { WorkspaceDO };
+export { WorkspaceDO, TenantDO };
 import { z } from 'zod';
 import { Context } from '@deepseek-ai/cordis';
 import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session';
@@ -16,13 +25,17 @@ import { initializeSessionStorage, SqliteSessionPersistence } from '../../../pac
 import { authenticateAccess, sessionAddress, scopeSchema, type SessionScope } from '../../../packages/tenant/src/index.ts';
 
 export interface Env extends ModelEnvironment {
+  UI: Fetcher;
   SESSIONS: DurableObjectNamespace<SessionDO>;
   WORKSPACES: DurableObjectNamespace<WorkspaceDO>;
+  TENANTS: DurableObjectNamespace<TenantDO>;
   ACCESS_AUD?: string;
   ACCESS_TEAM_DOMAIN?: string;
 }
 
-const messageSchema = z.object({ text: z.string().min(1).max(8000), requestId: z.uuid().optional(), workspaceId: workspaceIdSchema.optional() }).strict();
+const agentBindingSchema = z.object({ id, revision: z.number().int().positive().optional() }).strict();
+type AgentBinding = z.infer<typeof agentBindingSchema>;
+const messageSchema = z.object({ text: z.string().min(1).max(8000), requestId: z.uuid().optional(), workspaceId: workspaceIdSchema.optional(), agent: agentBindingSchema.optional() }).strict();
 const cancelSchema = z.object({ requestId: z.uuid() }).strict();
 type TurnResult = { ok: true; requestId: string; events: readonly SessionEvent[]; model: { provider: string; model: string } }
   | { ok: false; requestId: string; error: TurnFailure };
@@ -36,6 +49,8 @@ export class SessionDO extends DurableObject<Env> {
     super(ctx, env);
     initializeSessionStorage(ctx.storage);
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_session_config (id INTEGER PRIMARY KEY CHECK(id=1), workspace_id TEXT)');
+    const columns = ctx.storage.sql.exec<{ name: string }>('PRAGMA table_info(weft_session_config)').toArray();
+    if (!columns.some(column => column.name === 'agent_document')) ctx.storage.sql.exec('ALTER TABLE weft_session_config ADD COLUMN agent_document TEXT');
   }
 
   private assertScope(input: SessionScope): SessionScope {
@@ -53,8 +68,8 @@ export class SessionDO extends DurableObject<Env> {
     return result;
   }
 
-  async send(input: SessionScope, text: string, persona: string, requestId: string, workspaceId?: string): Promise<Response> {
-    const result = await this.execute(input, text, persona, requestId, workspaceId);
+  async send(input: SessionScope, text: string, persona: string, requestId: string, workspaceId?: string, agent?: AgentBinding): Promise<Response> {
+    const result = await this.execute(input, text, persona, requestId, workspaceId, agent);
     if (!result.ok) return Response.json({ error: result.error.message, code: result.error.code, requestId }, { status: result.error.status });
     return Response.json({ ...input, requestId, model: result.model, events: result.events }, { headers: { 'cache-control': 'private, no-store' } });
   }
@@ -71,6 +86,7 @@ export class SessionDO extends DurableObject<Env> {
   private async execute(
     input: SessionScope, text: string, persona: string, requestId: string,
     workspaceId: string | undefined,
+    agentBinding?: AgentBinding,
     hooks: Pick<RuntimeOptions, 'onEvent' | 'onFrame'> = {},
   ): Promise<TurnResult> {
     const scope = this.assertScope(input);
@@ -84,16 +100,29 @@ export class SessionDO extends DurableObject<Env> {
         try {
           controller.signal.throwIfAborted();
           const resolved = resolveTenantModel(this.env, scope.tenantId);
-          const stored = this.ctx.storage.sql.exec<{ workspace_id: string | null }>('SELECT workspace_id FROM weft_session_config WHERE id=1').toArray()[0];
+          const stored = this.ctx.storage.sql.exec<{ workspace_id: string | null; agent_document: string | null }>('SELECT workspace_id,agent_document FROM weft_session_config WHERE id=1').toArray()[0];
+          let profile = stored?.agent_document ? JSON.parse(stored.agent_document) as AgentRevision : undefined;
+          if (stored && agentBinding && (!profile || profile.spec.id !== agentBinding.id || (agentBinding.revision !== undefined && profile.revision !== agentBinding.revision))) {
+            return { ok: false, requestId, error: { code: 'AGENT_MISMATCH', message: 'Session is bound to another agent revision; start a new session', status: 409 } };
+          }
+          if (!stored && agentBinding) {
+            profile = await this.env.TENANTS.getByName(tenantAddress(scope.tenantId)).agent(scope.tenantId, agentBinding.id, agentBinding.revision);
+            if (!profile) return { ok: false, requestId, error: { code: 'AGENT_NOT_FOUND', message: 'Agent revision not found', status: 404 } };
+          }
+          if (profile && profile.upstream !== upstream.commit) return { ok: false, requestId, error: { code: 'RUNTIME_REVISION_UNAVAILABLE', message: 'This agent revision belongs to another Harness runtime; publish a reviewed revision after migration', status: 409 } };
           if (workspaceId !== undefined) workspaceIdSchema.parse(workspaceId);
           if (stored && workspaceId !== undefined && workspaceId !== stored.workspace_id) {
             return { ok: false, requestId, error: { code: 'WORKSPACE_MISMATCH', message: 'Session is already bound to another workspace', status: 409 } };
           }
-          const attachedWorkspace = stored ? stored.workspace_id : workspaceId ?? null;
-          if (!stored) this.ctx.storage.sql.exec('INSERT INTO weft_session_config VALUES (1, ?)', attachedWorkspace);
+          const attachedWorkspace = stored ? stored.workspace_id : profile?.spec.workspaceId ?? workspaceId ?? null;
+          if (profile && workspaceId !== undefined && workspaceId !== attachedWorkspace) return { ok: false, requestId, error: { code: 'WORKSPACE_MISMATCH', message: 'Workspace conflicts with the published agent', status: 409 } };
+          if (!stored) this.ctx.storage.sql.exec('INSERT INTO weft_session_config (id,workspace_id,agent_document) VALUES (1,?,?)', attachedWorkspace, profile ? JSON.stringify(profile) : null);
+          if (profile) await this.env.TENANTS.getByName(tenantAddress(scope.tenantId)).trackSession(scope.tenantId, {
+            id: scope.sessionId, title: text.slice(0, 80), agentId: profile.spec.id, revision: profile.revision, workspaceId: attachedWorkspace!, updatedAt: new Date().toISOString(),
+          });
           timer = setTimeout(() => { controller.abort({ code: 'TURN_TIMEOUT', message: 'Turn deadline exceeded', status: 504 } satisfies TurnFailure); }, resolved.turnTimeoutMs);
           const events = await runHarnessTurn({
-            sessionId: scope.sessionId, persona, model: resolved.model, adapter: resolved.adapter,
+            sessionId: scope.sessionId, persona: profile ? `${profile.spec.persona}\n${profile.spec.allowClientPlugins ? CLIENT_PLUGIN_GUIDE : ''}` : persona, model: resolved.model, adapter: resolved.adapter,
             signal: controller.signal, ...hooks,
             cancellationCause: () => controller.signal.reason?.code === 'TURN_TIMEOUT' ? { kind: 'hook', reason: 'turn-deadline' } : { kind: 'user' },
             mountPersistence: async ctx => { await ctx.plugin(SqliteSessionPersistence, { storage: this.ctx.storage }); },
@@ -102,6 +131,13 @@ export class SessionDO extends DurableObject<Env> {
               if (attachedWorkspace !== null) {
                 const workspaceScope = { tenantId: scope.tenantId, workspaceId: attachedWorkspace };
                 await mountWorkspace(ctx, { scope: workspaceScope, transport: this.env.WORKSPACES.getByName(workspaceAddress(workspaceScope)) });
+              }
+              if (profile) {
+                await mountPlugins(ctx, profile.spec.plugins);
+                if (profile.spec.allowClientPlugins) {
+                  await mountClientInspection(ctx);
+                  mountClientPublisher(ctx, input => this.env.TENANTS.getByName(tenantAddress(scope.tenantId)).publishClient(scope.tenantId, input));
+                }
               }
             },
           }, text);
@@ -115,7 +151,7 @@ export class SessionDO extends DurableObject<Env> {
 
   /** Internal binding transport; external requests are authenticated by the entry Worker. */
   override async fetch(request: Request): Promise<Response> {
-    const payload = z.object({ scope: scopeSchema, text: z.string().min(1).max(8000), persona: z.string().max(4000), requestId: z.uuid(), workspaceId: workspaceIdSchema.optional() }).strict().parse(await request.json());
+    const payload = z.object({ scope: scopeSchema, text: z.string().min(1).max(8000), persona: z.string().max(4000), requestId: z.uuid(), workspaceId: workspaceIdSchema.optional(), agent: agentBindingSchema.optional() }).strict().parse(await request.json());
     this.assertScope(payload.scope);
     let cancelled = false;
     let heartbeat: ReturnType<typeof setInterval> | undefined;
@@ -134,7 +170,7 @@ export class SessionDO extends DurableObject<Env> {
         };
         publish('session', { ...payload.scope, requestId: payload.requestId });
         heartbeat = setInterval(() => { publish('ping', { requestId: payload.requestId }); }, 5000);
-        const operation = this.execute(payload.scope, payload.text, payload.persona, payload.requestId, payload.workspaceId, {
+        const operation = this.execute(payload.scope, payload.text, payload.persona, payload.requestId, payload.workspaceId, payload.agent, {
           onEvent: event => { publish('session-event', event); },
           onFrame: frame => { publish('assistant-stream', frame); },
         }).then(result => {
@@ -169,7 +205,9 @@ export default {
       const pathname = new URL(request.url).pathname;
       const principal = await authenticateAccess(ctx.access, env.ACCESS_AUD, env.ACCESS_TEAM_DOMAIN);
       if (!principal) throw new HttpError(401, 'Cloudflare Access user login required');
-      if ((pathname === '/' || pathname === '/v1/me') && request.method === 'GET') {
+      const ui = serveUi(request, env.UI);
+      if (ui) return await ui;
+      if (pathname === '/v1/me' && request.method === 'GET') {
         return Response.json({ user: { id: principal.userId, email: principal.email }, tenantId: principal.tenantId }, {
           headers: { 'cache-control': 'private, no-store' },
         });
@@ -179,6 +217,8 @@ export default {
       }
       const workspaceResponse = await handleWorkspaceRequest(request, env, principal);
       if (workspaceResponse) return workspaceResponse;
+      const controlResponse = await handleControlRequest(request, env, principal);
+      if (controlResponse) return controlResponse;
       const match = /^\/v1\/tenants\/([^/]+)\/sessions\/([^/]+)\/(messages|events|cancel)$/.exec(pathname);
       if (!match) throw new HttpError(404, 'Not found');
       const parsed = scopeSchema.safeParse({ tenantId: match[1], sessionId: match[2] });
@@ -204,12 +244,12 @@ export default {
           request.signal.addEventListener('abort', stop, { once: true });
           const response = await session.fetch(new Request('https://session.internal/turn', {
             method: 'POST', headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ scope, text, persona, requestId, workspaceId: parsed.data.workspaceId }),
+            body: JSON.stringify({ scope, text, persona, requestId, workspaceId: parsed.data.workspaceId, agent: parsed.data.agent }),
           }));
           if (request.signal.aborted) stop();
           return response;
         }
-        return await session.send(scope, text, persona, requestId, parsed.data.workspaceId);
+        return await session.send(scope, text, persona, requestId, parsed.data.workspaceId, parsed.data.agent);
       }
       if (match[3] === 'events' && request.method === 'GET') {
         const events = await session.events(scope);
