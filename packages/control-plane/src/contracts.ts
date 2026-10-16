@@ -10,6 +10,13 @@ export const agentSchema = z
       .array(z.object({ id, config: z.record(z.string(), z.json()) }).strict())
       .max(20),
     allowClientPlugins: z.boolean(),
+    model: z
+      .object({
+        provider: z.literal("deepseek"),
+        name: z.string().trim().min(1).max(128),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 // Keep public RPC contracts finite: recursively inferred z.json types overwhelm
@@ -21,6 +28,7 @@ export interface AgentSpec {
   workspaceId: string;
   plugins: { id: string; config: Record<string, unknown> }[];
   allowClientPlugins: boolean;
+  model?: { provider: "deepseek"; name: string } | undefined;
 }
 export interface AgentRevision {
   spec: AgentSpec;
@@ -59,4 +67,19 @@ export interface TenantState {
   agents: AgentRevision[];
   sessions: SessionRecord[];
   clientPlugins: ClientPlugin[];
+}
+
+export const environmentScopeSchema = z
+  .object({ tenantId: id, environmentId: id })
+  .strict();
+export type EnvironmentScope = z.infer<typeof environmentScopeSchema>;
+export type ControlScope = string | EnvironmentScope;
+export const environmentCreateSchema = z
+  .object({ id: id.optional(), name: z.string().trim().min(1).max(80) })
+  .strict();
+export interface EnvironmentRecord {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
 }

@@ -7,11 +7,11 @@ import { HttpError, readJson, assertSameOrigin } from './http.ts';
 const writeSchema = z.object({ path: z.string().min(1).max(2048), content: z.string().max(MAX_FILE_BYTES), expectedVersion: z.string().min(1).max(100).nullable() }).strict();
 const editSchema = z.object({ path: z.string().min(1).max(2048), oldString: z.string().min(1).max(MAX_FILE_BYTES), newString: z.string().max(MAX_FILE_BYTES), replaceAll: z.boolean().default(false), expectedVersion: z.string().min(1).max(100) }).strict();
 
-export async function handleWorkspaceRequest(request: Request, env: Env, principal: Principal): Promise<Response | undefined> {
+export async function handleWorkspaceRequest(request: Request, env: Env, principal: Principal, environmentId?: string): Promise<Response | undefined> {
   const url = new URL(request.url);
   const match = /^\/v1\/tenants\/([^/]+)\/workspaces\/([^/]+)\/(files|search)$/.exec(url.pathname);
   if (!match) return undefined;
-  const parsed = workspaceScopeSchema.safeParse({ tenantId: match[1], workspaceId: match[2] });
+  const parsed = workspaceScopeSchema.safeParse({ tenantId: match[1], workspaceId: match[2], ...(environmentId ? { environmentId } : {}) });
   if (!parsed.success) throw new HttpError(400, 'Invalid workspace identity');
   const scope = parsed.data;
   if (scope.tenantId !== principal.tenantId) throw new HttpError(403, 'Tenant access denied');

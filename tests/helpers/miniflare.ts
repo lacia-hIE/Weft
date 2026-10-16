@@ -97,6 +97,7 @@ export function createRuntime(
               scriptName: "alpha",
               useSQLite: true,
             },
+            ENVIRONMENTS: { className: "EnvironmentDO", scriptName: "alpha", useSQLite: true },
             TENANTS: {
               className: "TenantDO",
               scriptName: "alpha",

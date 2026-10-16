@@ -62,7 +62,7 @@ export class ModelConfigurationError extends Error {
 export interface ResolvedModel extends Pick<RuntimeOptions, 'model' | 'adapter'> { turnTimeoutMs: number }
 
 /** Host-owned resolution: HTTP clients cannot select credentials or provider endpoints. */
-export function resolveTenantModel(env: ModelEnvironment, tenantId: string): ResolvedModel {
+export function resolveTenantModel(env: ModelEnvironment, tenantId: string, selectedModel?: { provider: "deepseek"; name: string }): ResolvedModel {
   if (env.MODEL_BACKEND === 'scripted') {
     return { model: { provider: 'validation', model: 'scripted' }, adapter: new ScriptedAdapter(), turnTimeoutMs: 60_000 };
   }
@@ -73,7 +73,7 @@ export function resolveTenantModel(env: ModelEnvironment, tenantId: string): Res
     const config = registry && Object.hasOwn(registry, tenantId) ? registry[tenantId] : undefined;
     const apiKey = registry ? config?.apiKey : env.DEEPSEEK_API_KEY?.trim();
     if (!apiKey) throw new ModelConfigurationError('MODEL_NOT_CONFIGURED');
-    const model = config?.model ?? env.DEEPSEEK_MODEL ?? 'deepseek-flash';
+    const model = selectedModel?.name ?? config?.model ?? env.DEEPSEEK_MODEL ?? 'deepseek-flash';
     const baseURL = env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com/anthropic';
     // HTTPS is mandatory, including custom gateways. No client-provided URL is accepted.
     if (new URL(baseURL).protocol !== 'https:' || !model.trim()) throw new Error('Invalid route');

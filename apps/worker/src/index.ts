@@ -1,8 +1,9 @@
 import { DurableObject } from 'cloudflare:workers';
 import { HttpError, readJson, assertSameOrigin } from './http.ts';
 import { handleWorkspaceRequest } from './workspace-http.ts';
+import { resolveEnvironmentRequest } from "./environment-http.ts";
 import { handleControlRequest } from './control-http.ts';
-import { TenantDO, tenantAddress } from '../../../packages/control-plane/src/object.ts';
+import { TenantDO, EnvironmentDO, controlFor, controlScope } from '../../../packages/control-plane/src/object.ts';
 import type { AgentRevision } from '../../../packages/control-plane/src/contracts.ts';
 import { id } from '../../../packages/control-plane/src/contracts.ts';
 import { mountPlugins } from '../../../packages/plugin-runtime/src/catalog.ts';
@@ -13,7 +14,7 @@ import { serveUi } from './ui-http.ts';
 import { mountWorkspace } from '../../../packages/workspace/src/provider.ts';
 import { WorkspaceDO } from '../../../packages/workspace/src/object.ts';
 import { workspaceIdSchema, workspaceAddress } from '../../../packages/workspace/src/protocol.ts';
-export { WorkspaceDO, TenantDO };
+export { WorkspaceDO, TenantDO, EnvironmentDO };
 import { z } from 'zod';
 import { Context } from '@deepseek-ai/cordis';
 import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session';
@@ -29,6 +30,7 @@ export interface Env extends ModelEnvironment {
   SESSIONS: DurableObjectNamespace<SessionDO>;
   WORKSPACES: DurableObjectNamespace<WorkspaceDO>;
   TENANTS: DurableObjectNamespace<TenantDO>;
+  ENVIRONMENTS: DurableObjectNamespace<EnvironmentDO>;
   ACCESS_AUD?: string;
   ACCESS_TEAM_DOMAIN?: string;
 }
@@ -99,17 +101,17 @@ export class SessionDO extends DurableObject<Env> {
         let timer: ReturnType<typeof setTimeout> | undefined;
         try {
           controller.signal.throwIfAborted();
-          const resolved = resolveTenantModel(this.env, scope.tenantId);
           const stored = this.ctx.storage.sql.exec<{ workspace_id: string | null; agent_document: string | null }>('SELECT workspace_id,agent_document FROM weft_session_config WHERE id=1').toArray()[0];
           let profile = stored?.agent_document ? JSON.parse(stored.agent_document) as AgentRevision : undefined;
           if (stored && agentBinding && (!profile || profile.spec.id !== agentBinding.id || (agentBinding.revision !== undefined && profile.revision !== agentBinding.revision))) {
             return { ok: false, requestId, error: { code: 'AGENT_MISMATCH', message: 'Session is bound to another agent revision; start a new session', status: 409 } };
           }
           if (!stored && agentBinding) {
-            profile = await this.env.TENANTS.getByName(tenantAddress(scope.tenantId)).agent(scope.tenantId, agentBinding.id, agentBinding.revision);
+            profile = await controlFor(this.env, controlScope(scope.tenantId, scope.environmentId)).agent(controlScope(scope.tenantId, scope.environmentId), agentBinding.id, agentBinding.revision);
             if (!profile) return { ok: false, requestId, error: { code: 'AGENT_NOT_FOUND', message: 'Agent revision not found', status: 404 } };
           }
           if (profile && profile.upstream !== upstream.commit) return { ok: false, requestId, error: { code: 'RUNTIME_REVISION_UNAVAILABLE', message: 'This agent revision belongs to another Harness runtime; publish a reviewed revision after migration', status: 409 } };
+          const resolved = resolveTenantModel(this.env, scope.tenantId, profile?.spec.model);
           if (workspaceId !== undefined) workspaceIdSchema.parse(workspaceId);
           if (stored && workspaceId !== undefined && workspaceId !== stored.workspace_id) {
             return { ok: false, requestId, error: { code: 'WORKSPACE_MISMATCH', message: 'Session is already bound to another workspace', status: 409 } };
@@ -117,7 +119,7 @@ export class SessionDO extends DurableObject<Env> {
           const attachedWorkspace = stored ? stored.workspace_id : profile?.spec.workspaceId ?? workspaceId ?? null;
           if (profile && workspaceId !== undefined && workspaceId !== attachedWorkspace) return { ok: false, requestId, error: { code: 'WORKSPACE_MISMATCH', message: 'Workspace conflicts with the published agent', status: 409 } };
           if (!stored) this.ctx.storage.sql.exec('INSERT INTO weft_session_config (id,workspace_id,agent_document) VALUES (1,?,?)', attachedWorkspace, profile ? JSON.stringify(profile) : null);
-          if (profile) await this.env.TENANTS.getByName(tenantAddress(scope.tenantId)).trackSession(scope.tenantId, {
+          if (profile) await controlFor(this.env, controlScope(scope.tenantId, scope.environmentId)).trackSession(controlScope(scope.tenantId, scope.environmentId), {
             id: scope.sessionId, title: text.slice(0, 80), agentId: profile.spec.id, revision: profile.revision, workspaceId: attachedWorkspace!, updatedAt: new Date().toISOString(),
           });
           timer = setTimeout(() => { controller.abort({ code: 'TURN_TIMEOUT', message: 'Turn deadline exceeded', status: 504 } satisfies TurnFailure); }, resolved.turnTimeoutMs);
@@ -129,14 +131,14 @@ export class SessionDO extends DurableObject<Env> {
             mountTools: async ctx => {
               registerIdentityTool(ctx, scope.tenantId);
               if (attachedWorkspace !== null) {
-                const workspaceScope = { tenantId: scope.tenantId, workspaceId: attachedWorkspace };
+                const workspaceScope = { tenantId: scope.tenantId, workspaceId: attachedWorkspace, ...(scope.environmentId ? { environmentId: scope.environmentId } : {}) };
                 await mountWorkspace(ctx, { scope: workspaceScope, transport: this.env.WORKSPACES.getByName(workspaceAddress(workspaceScope)) });
               }
               if (profile) {
                 await mountPlugins(ctx, profile.spec.plugins);
                 if (profile.spec.allowClientPlugins) {
                   await mountClientInspection(ctx);
-                  mountClientPublisher(ctx, input => this.env.TENANTS.getByName(tenantAddress(scope.tenantId)).publishClient(scope.tenantId, input));
+                  mountClientPublisher(ctx, input => controlFor(this.env, controlScope(scope.tenantId, scope.environmentId)).publishClient(controlScope(scope.tenantId, scope.environmentId), input));
                 }
               }
             },
@@ -202,7 +204,7 @@ export class SessionDO extends DurableObject<Env> {
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     try {
-      const pathname = new URL(request.url).pathname;
+      let pathname = new URL(request.url).pathname;
       const principal = await authenticateAccess(ctx.access, env.ACCESS_AUD, env.ACCESS_TEAM_DOMAIN);
       if (!principal) throw new HttpError(401, 'Cloudflare Access user login required');
       const ui = serveUi(request, env.UI);
@@ -215,13 +217,17 @@ export default {
       if (pathname === '/health' && request.method === 'GET') {
         return Response.json({ status: 'ok', mode: 'harness', backend: env.MODEL_BACKEND ?? 'unconfigured' });
       }
-      const workspaceResponse = await handleWorkspaceRequest(request, env, principal);
+      const environment = await resolveEnvironmentRequest(request, env, principal);
+      if (environment.response) return environment.response;
+      request = environment.request;
+      pathname = new URL(request.url).pathname;
+      const workspaceResponse = await handleWorkspaceRequest(request, env, principal, environment.environmentId);
       if (workspaceResponse) return workspaceResponse;
-      const controlResponse = await handleControlRequest(request, env, principal);
+      const controlResponse = await handleControlRequest(request, env, principal, environment.environmentId);
       if (controlResponse) return controlResponse;
       const match = /^\/v1\/tenants\/([^/]+)\/sessions\/([^/]+)\/(messages|events|cancel)$/.exec(pathname);
       if (!match) throw new HttpError(404, 'Not found');
-      const parsed = scopeSchema.safeParse({ tenantId: match[1], sessionId: match[2] });
+      const parsed = scopeSchema.safeParse({ tenantId: match[1], sessionId: match[2], ...(environment.environmentId ? { environmentId: environment.environmentId } : {}) });
       if (!parsed.success) throw new HttpError(400, 'Invalid session identity');
       const scope = parsed.data;
       if (scope.tenantId !== principal.tenantId) throw new HttpError(403, 'Tenant access denied');

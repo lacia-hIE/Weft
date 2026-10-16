@@ -45,7 +45,7 @@ export async function mountClientInspection(ctx: Context): Promise<void> {
               name,
               kind: "list",
               scope: "root",
-              owner: { host: "{sessionId,workspaceId,agentId,revision}" },
+              owner: { host: "{environmentId,sessionId,workspaceId,agentId,revision}" },
             }),
           ),
           services: {

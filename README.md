@@ -2,7 +2,7 @@
 
 在 Cloudflare Workers / Durable Objects 上运行 deepseek-harness，提供租户隔离、持久 Session 和可维护的运行环境适配。
 
-当前已接入真实 DeepSeek Messages 模型与 Web UI：直接运行固定版本的 upstream Agent Loop，支持工具循环、SSE、取消、SQLite、租户隔离及独立 Computer Workspace。Web 可配置原生 Todo、时间上下文、重复调用提醒与 Skills；Agent 可编写客户端 Cordis 插件，由用户审核启用。技术可行性、兼容性和模块边界优先，成本优化后置。
+当前支持独立 Harness 环境目录：每个用户可创建多个 Agent 环境，隔离预设、客户端插件、会话与工作区；既有数据保留在默认环境。已接入真实 DeepSeek Messages 模型与 Web UI：直接运行固定版本的 upstream Agent Loop，支持工具循环、SSE、取消、SQLite、租户隔离及独立 Computer Workspace。Web 可配置原生 Todo、时间上下文、重复调用提醒与 Skills；Agent 可编写客户端 Cordis 插件，由用户审核启用。技术可行性、兼容性和模块边界优先，成本优化后置。
 
 需要 Node.js 22.19+ 和 Git。
 
@@ -21,7 +21,7 @@ cp .env.example .env
 npm run dev
 ```
 
-浏览器打开本地地址即可使用 Web UI。先在「Agent 预设」启用插件并发布，再开始会话；需要 Agent 编写 UI 时开启相应选项。界面复用官方 Harness 组件、样式和交互布局。浏览器验证为 `npm run test:web`，真实模型生成插件验证为 `npm run test:web:live`，首次需 `npx playwright install chromium`。参见 [Web 插件记录](docs/validation/web-plugins.md)。
+浏览器打开本地地址先进入 Agent 列表，选择环境后进入工作台。先在「Agent 预设」启用插件并发布，再开始会话；需要 Agent 编写 UI 时开启相应选项。界面复用官方 Harness 组件、样式和交互布局。浏览器验证为 `npm run test:web`，真实模型生成插件验证为 `npm run test:web:live`，首次需 `npx playwright install chromium`。参见 [Web 插件记录](docs/validation/web-plugins.md)。
 
 本地通过 `cloudflare.config.ts` 的 `access.dev` 模拟开发用户；该配置只用于本地运行，不会授予云端访问权限。无需应用 Token 或 `.dev.vars`。先获取当前用户及个人租户 ID，再发送消息：
 
@@ -72,3 +72,5 @@ npm run deploy:check
 内核验证见 [技术验证记录](docs/validation/kernel.md)，真实模型、SSE 与取消协议见 [模型验证记录](docs/validation/model.md)，工作区、原生文件工具与文件 API 见 [Workspace 验证记录](docs/validation/workspace.md)。原始产品提案见 [产品架构 RFC](WEFT_PRODUCT_ARCHITECTURE.md)。上游许可见 [第三方许可](THIRD_PARTY_NOTICES.md)。
 
 云端入口：[Weft](https://weft.luxuncang.com/)，登录后进入 Web UI；用户与租户信息在 `/v1/me`，健康检查同样受 Access 保护。源码保存在 GitHub，Cloudflare 连接 GitHub 仓库；推送代码到 `main` 会触发 Cloudflare 原生 Git 自动构建和部署，无需 GitHub Actions；也可通过 `cf` 手动部署。部署及鉴权说明见 [部署记录](docs/deployment.md)。
+
+完整官方 UI 接入仍在进行中，当前环境内工作台是过渡实现。`npm run build:official-ui` 使用上游生成器生成 Remote ABI，并使用官方包自身的构建配置构建完整 Web 模块目录；这不等于已接入生产宿主。范围和验收状态见 [多环境与官方 UI](docs/architecture/agent-environments.md)。

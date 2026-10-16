@@ -1,11 +1,32 @@
 import { test, expect } from "@playwright/test";
 
+test("Agent catalogue enters separate Harness environments and switching drops client plugins", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  await page.goto("/");
+  await expect(page.getByRole("heading", {name: "我的 Agents"})).toBeVisible();
+  await page.getByRole("textbox", {name: "Agent 名称"}).fill("Research environment");
+  await page.getByRole("button", {name: "创建 Agent", exact: true}).click();
+  await page.getByRole("link", {name: "进入 Research environment", exact: true}).click();
+  await expect(page.getByRole("heading", {name: "探索未至之境"})).toBeVisible();
+  await page.getByRole("button", {name: "UI 插件", exact: true}).click();
+  await page.getByRole("button", {name: "试试计数器示例"}).click();
+  await page.getByRole("button", {name: "编译并发布"}).click();
+  await page.getByRole("switch", {name: "启用 计数器"}).click();
+  await expect(page.getByRole("button", {name: "加一", exact: true})).toBeVisible();
+  await page.getByRole("link", {name: "返回 Agent 列表"}).click();
+  await page.getByRole("link", {name: "进入 我的 Harness", exact: true}).click();
+  await expect(page.getByRole("heading", {name: "探索未至之境"})).toBeVisible();
+  await expect(page.getByRole("button", {name: "加一", exact: true})).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
 test("native Cordis slots mount, interact, dispose and survive refresh; chat and files are usable", async ({
   page,
 }) => {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  await page.goto("/");
+  await page.goto("/agents/default");
   await expect(
     page.getByRole("heading", { name: "探索未至之境" }),
   ).toBeVisible();
@@ -111,7 +132,7 @@ test("native Cordis slots mount, interact, dispose and survive refresh; chat and
 test("native store and Config work in browser plugins; invalid configurations and recovery remain usable", async ({
   page,
 }) => {
-  await page.goto("/");
+  await page.goto("/agents/default");
   await page.getByRole("button", { name: "UI 插件", exact: true }).click();
   await page
     .getByRole("button", { name: "创建 UI 插件", exact: false })
@@ -161,13 +182,13 @@ test("native store and Config work in browser plugins; invalid configurations an
     .getByRole("switch", { name: "启用 Native store", exact: true })
     .click();
   await expect(page.locator(".error-text")).toContainText("invalid config");
-  await page.goto("/?safe=1");
+  await page.goto("/agents/default?safe=1");
   await expect(page.getByText("安全模式：", { exact: false })).toBeVisible();
   await page.getByRole("button", { name: "UI 插件", exact: true }).click();
   await page
     .getByRole("switch", { name: "启用 Native store", exact: true })
     .click();
-  await page.goto("/");
+  await page.goto("/agents/default");
   await expect(
     page.getByRole("heading", { name: "探索未至之境" }),
   ).toBeVisible();
@@ -181,6 +202,9 @@ test("real DeepSeek authors a UI plugin through native file tools and a user ena
     "Explicit live model verification only",
   );
   await page.goto("/");
+  await page.getByRole("textbox", {name: "Agent 名称"}).fill("Live Harness environment");
+  await page.getByRole("button", {name: "创建 Agent", exact: true}).click();
+  await page.getByRole("link", {name: "进入 Live Harness environment", exact: true}).click();
   await page.getByRole("button", { name: "Agent 预设", exact: true }).click();
   const permission = page.getByRole("switch", {
     name: "允许 Agent 创建 UI 插件",

@@ -1,5 +1,10 @@
 import { DurableObject } from "cloudflare:workers";
 import {
+  environmentCreateSchema,
+  environmentScopeSchema,
+  type ControlScope,
+  type EnvironmentScope,
+  type EnvironmentRecord,
   agentSchema,
   clientPluginSchema,
   id,
@@ -14,12 +19,13 @@ import upstream from "../../../upstream.lock.json";
 
 export interface TenantEnvironment {
   TENANTS: DurableObjectNamespace<TenantDO>;
+  ENVIRONMENTS: DurableObjectNamespace<EnvironmentDO>;
 }
 export const tenantAddress = (tenantId: string): string =>
   JSON.stringify(["tenant", id.parse(tenantId)]);
 
-/** Tenant-owned metadata, immutable executable revisions and discoverable sessions. */
-export class TenantDO extends DurableObject<TenantEnvironment> {
+/** Environment-local Harness configuration, revisions and discoverable sessions. */
+abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
   constructor(ctx: DurableObjectState, env: TenantEnvironment) {
     super(ctx, env);
     ctx.storage.sql.exec(
@@ -35,12 +41,7 @@ export class TenantDO extends DurableObject<TenantEnvironment> {
       "CREATE TABLE IF NOT EXISTS client_revisions (revision TEXT PRIMARY KEY, document TEXT NOT NULL, module TEXT NOT NULL)",
     );
   }
-  private scope(tenantId: string): void {
-    if (
-      !this.ctx.id.equals(this.env.TENANTS.idFromName(tenantAddress(tenantId)))
-    )
-      throw new Error("Tenant object scope mismatch");
-  }
+  protected abstract scope(scope: ControlScope): void;
   private latest(agentId: string): AgentRevision | undefined {
     const row = this.ctx.storage.sql
       .exec<{
@@ -78,7 +79,7 @@ export class TenantDO extends DurableObject<TenantEnvironment> {
       JSON.stringify(value),
     );
   }
-  async state(tenantId: string): Promise<TenantState> {
+  async state(tenantId: ControlScope): Promise<TenantState> {
     this.scope(tenantId);
     this.ensureDefault();
     const agents = this.ctx.storage.sql
@@ -105,7 +106,7 @@ export class TenantDO extends DurableObject<TenantEnvironment> {
     return { agents, sessions, clientPlugins };
   }
   async publishAgent(
-    tenantId: string,
+    tenantId: ControlScope,
     input: unknown,
     expectedRevision: number,
   ): Promise<Response> {
@@ -156,7 +157,7 @@ export class TenantDO extends DurableObject<TenantEnvironment> {
     return Response.json(value);
   }
   async agent(
-    tenantId: string,
+    tenantId: ControlScope,
     agentId: string,
     revision?: number,
   ): Promise<AgentRevision | undefined> {
@@ -175,7 +176,10 @@ export class TenantDO extends DurableObject<TenantEnvironment> {
       .toArray()[0];
     return row ? (JSON.parse(row.document) as AgentRevision) : undefined;
   }
-  async trackSession(tenantId: string, record: SessionRecord): Promise<void> {
+  async trackSession(
+    tenantId: ControlScope,
+    record: SessionRecord,
+  ): Promise<void> {
     this.scope(tenantId);
     id.parse(record.id);
     const previous = this.ctx.storage.sql
@@ -195,7 +199,10 @@ export class TenantDO extends DurableObject<TenantEnvironment> {
     );
     await this.ctx.storage.sync();
   }
-  async publishClient(tenantId: string, input: unknown): Promise<Response> {
+  async publishClient(
+    tenantId: ControlScope,
+    input: unknown,
+  ): Promise<Response> {
     this.scope(tenantId);
     const parsed = clientPluginSchema.safeParse(input);
     if (!parsed.success)
@@ -264,7 +271,7 @@ export class TenantDO extends DurableObject<TenantEnvironment> {
     return Response.json({ ...value, enabled: false });
   }
   async enableClient(
-    tenantId: string,
+    tenantId: ControlScope,
     pluginId: string,
     revision: string,
     enabled: boolean,
@@ -294,7 +301,10 @@ export class TenantDO extends DurableObject<TenantEnvironment> {
     await this.ctx.storage.sync();
     return Response.json({ enabled });
   }
-  async clientModule(tenantId: string, revision: string): Promise<Response> {
+  async clientModule(
+    tenantId: ControlScope,
+    revision: string,
+  ): Promise<Response> {
     this.scope(tenantId);
     const row = this.ctx.storage.sql
       .exec<{
@@ -316,5 +326,115 @@ export class TenantDO extends DurableObject<TenantEnvironment> {
         "x-content-type-options": "nosniff",
       },
     });
+  }
+}
+
+export const environmentAddress = (scope: EnvironmentScope): string => {
+  const value = environmentScopeSchema.parse(scope);
+  return JSON.stringify(["environment", value.tenantId, value.environmentId]);
+};
+
+/** The default environment adopts existing addresses; no historical data is copied. */
+export function controlScope(
+  tenantId: string,
+  environmentId?: string,
+): ControlScope {
+  return !environmentId || environmentId === "default"
+    ? tenantId
+    : { tenantId, environmentId };
+}
+export function controlFor(env: TenantEnvironment, scope: ControlScope) {
+  return typeof scope === "string"
+    ? env.TENANTS.getByName(tenantAddress(scope))
+    : env.ENVIRONMENTS.getByName(environmentAddress(scope));
+}
+
+/** Tenant catalogue and the adopted default Harness environment. */
+export class TenantDO extends HarnessStateDO {
+  protected override scope(scope: ControlScope): void {
+    if (
+      typeof scope !== "string" ||
+      !this.ctx.id.equals(this.env.TENANTS.idFromName(tenantAddress(scope)))
+    )
+      throw new Error("Tenant object scope mismatch");
+  }
+  private environmentRows(): EnvironmentRecord[] {
+    this.ctx.storage.sql.exec(
+      "CREATE TABLE IF NOT EXISTS environments (id TEXT PRIMARY KEY, document TEXT NOT NULL)",
+    );
+    const now = new Date().toISOString();
+    this.ctx.storage.sql.exec(
+      "INSERT OR IGNORE INTO environments VALUES (?,?)",
+      "default",
+      JSON.stringify({
+        id: "default",
+        name: "我的 Harness",
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
+    return this.ctx.storage.sql
+      .exec<{ document: string }>(
+        "SELECT document FROM environments ORDER BY id",
+      )
+      .toArray()
+      .map((row) => JSON.parse(row.document) as EnvironmentRecord);
+  }
+  async environments(tenantId: string): Promise<EnvironmentRecord[]> {
+    this.scope(tenantId);
+    return this.environmentRows();
+  }
+  async environment(
+    tenantId: string,
+    environmentId: string,
+  ): Promise<EnvironmentRecord | undefined> {
+    this.scope(tenantId);
+    id.parse(environmentId);
+    return this.environmentRows().find((row) => row.id === environmentId);
+  }
+  async createEnvironment(tenantId: string, input: unknown): Promise<Response> {
+    this.scope(tenantId);
+    const parsed = environmentCreateSchema.safeParse(input);
+    if (!parsed.success)
+      return Response.json({ error: "Invalid environment" }, { status: 400 });
+    const rows = this.environmentRows();
+    const environmentId = parsed.data.id ?? crypto.randomUUID();
+    if (rows.some((row) => row.id === environmentId))
+      return Response.json(
+        { error: "Environment already exists" },
+        { status: 409 },
+      );
+    if (rows.length >= 64)
+      return Response.json(
+        { error: "Environment limit reached" },
+        { status: 409 },
+      );
+    const now = new Date().toISOString();
+    const record: EnvironmentRecord = {
+      id: environmentId,
+      name: parsed.data.name,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.ctx.storage.sql.exec(
+      "INSERT INTO environments VALUES (?,?)",
+      record.id,
+      JSON.stringify(record),
+    );
+    await this.ctx.storage.sync();
+    return Response.json(record, { status: 201 });
+  }
+}
+
+/** Each named Harness environment has a separate SQLite object and Cordis state. */
+export class EnvironmentDO extends HarnessStateDO {
+  protected override scope(scope: ControlScope): void {
+    if (
+      typeof scope === "string" ||
+      !this.ctx.id.equals(
+        this.env.ENVIRONMENTS.idFromName(environmentAddress(scope)),
+      )
+    )
+      throw new Error("Environment object scope mismatch");
   }
 }

@@ -1,6 +1,6 @@
 # Cloudflare 部署
 
-项目使用 npm 锁定的 `cf@1.0.0-beta.17`，`cloudflare.config.ts` 声明主 Worker、Access audience 与 SessionDO / WorkspaceDO / TenantDO 三个 SQLite Durable Object。`apps/assets/cloudflare.config.ts` 声明私有 UI 资产 Worker。esbuild 打包后通过 Cloudflare 官方 config/build-output-utils 生成标准 Build Output，由 cf 按资产、主 Worker 的顺序发布。
+项目使用 npm 锁定的 `cf@1.0.0-beta.17`，`cloudflare.config.ts` 声明主 Worker、Access audience 与 SessionDO / WorkspaceDO / TenantDO / EnvironmentDO 四个 SQLite Durable Object。`apps/assets/cloudflare.config.ts` 声明私有 UI 资产 Worker。esbuild 打包后通过 Cloudflare 官方 config/build-output-utils 生成标准 Build Output，由 cf 按资产、主 Worker 的顺序发布。
 
 Worker：`weft-kernel-validation`。自定义域名：`weft.luxuncang.com`。健康检查：https://weft.luxuncang.com/health 。源码：https://github.com/lacia-hIE/Weft 。
 
@@ -89,3 +89,9 @@ Cloudflare 原生构建使用专用 `weft-native-builds` 部署凭据；凭据�
 可在 Cloudflare 控制台的 Worker 构建页面查看提交对应的构建和部署结果；手动部署命令仍可使用。
 
 `scripts/deploy-workers.mjs` 顺序发布两份预构建产物。Workers Builds 注入的 `WRANGLER_CI_MATCH_TAG` / `WRANGLER_CI_OVERRIDE_NAME` 只描述关联的主 Worker，因此发布私有 UI 资产时移除这两个子进程变量，发布主 Worker 时保留原始环境和目标校验；账号与部署凭据保持原样。资产部署失败时不会继续发布主 Worker。
+
+## 独立 Harness 环境
+
+Agent 目录在 `/`，工作台在 `/agents/:environmentId`。新增 EnvironmentDO 保存独立环境的配置、插件与 Session 索引；默认环境采用既有 TenantDO 和资源地址。新环境的 SessionDO / WorkspaceDO 对象名包含环境 ID，现有 namespace 与数据保留。部署命令仍为 `npm run deploy:workers`，Git 推送触发方式不变。
+
+完整官方客户端接入尚在进行，官方模块构建与多环境回归结果见 [多环境验收](validation/agent-environments.md)。

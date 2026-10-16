@@ -1,4 +1,6 @@
+export const environmentId = /^\/agents\/([a-zA-Z0-9_-]{1,80})\/?$/.exec(location.pathname)?.[1];
 export interface Selection {
+  environmentId: string;
   sessionId: string;
   workspaceId: string;
   agentId: string;
@@ -6,6 +8,7 @@ export interface Selection {
 }
 let tenantId = "";
 let selection: Selection = {
+  environmentId: environmentId ?? "default",
   sessionId: "",
   workspaceId: "default",
   agentId: "default",
@@ -16,8 +19,8 @@ export function configureTenant(value: string): void {
   tenantId = value;
 }
 export const getSelection = (): Selection => selection;
-export function select(next: Selection): void {
-  selection = next;
+export function select(next: Omit<Selection, "environmentId">): void {
+  selection = { ...next, environmentId: environmentId ?? "default" };
   listeners.forEach((fn) => {
     fn();
   });
@@ -29,7 +32,7 @@ export const subscribeSelection = (fn: () => void): (() => void) => {
   };
 };
 export function tenantPath(path: string): string {
-  return `/v1/tenants/${tenantId}/${path}`;
+  return `/v1/tenants/${tenantId}/${environmentId ? `environments/${environmentId}/` : ""}${path}`;
 }
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   if (

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { pluginCatalog } from "../../../packages/plugin-runtime/src/catalog.ts";
 import {
-  tenantAddress,
+  controlScope, controlFor,
   type TenantEnvironment,
 } from "../../../packages/control-plane/src/object.ts";
 import { id } from "../../../packages/control-plane/src/contracts.ts";
@@ -13,6 +13,7 @@ export async function handleControlRequest(
   request: Request,
   env: TenantEnvironment,
   principal: Principal,
+  environmentId?: string,
 ): Promise<Response | undefined> {
   const match =
     /^\/v1\/tenants\/([^/]+)\/(state|plugins|agents|client-plugins)(?:\/([^/]+)(?:\/(enable|module\.js))?)?$/.exec(
@@ -21,13 +22,14 @@ export async function handleControlRequest(
   if (!match) return undefined;
   if (match[1] !== principal.tenantId)
     throw new HttpError(403, "Tenant access denied");
-  const tenant = env.TENANTS.getByName(tenantAddress(principal.tenantId));
+  const scope = controlScope(principal.tenantId, environmentId);
+  const tenant = controlFor(env, scope);
   const resource = match[2],
     key = match[3],
     action = match[4];
   if (request.method === "GET") {
     if (resource === "state" && !key)
-      return Response.json(await tenant.state(principal.tenantId), {
+      return Response.json(await tenant.state(scope), {
         headers: { "cache-control": "private, no-store" },
       });
     if (resource === "plugins" && !key)
@@ -43,7 +45,7 @@ export async function handleControlRequest(
         (!Number.isSafeInteger(revision) || revision < 1)
       )
         throw new HttpError(400, "Invalid revision");
-      const value = await tenant.agent(principal.tenantId, key, revision);
+      const value = await tenant.agent(scope, key, revision);
       if (!value) throw new HttpError(404, "Agent revision not found");
       return Response.json(value);
     }
@@ -53,7 +55,7 @@ export async function handleControlRequest(
       action === "module.js" &&
       z.uuid().safeParse(key).success
     )
-      return tenant.clientModule(principal.tenantId, key);
+      return tenant.clientModule(scope, key);
   }
   if (request.method === "POST") {
     assertSameOrigin(request);
@@ -72,13 +74,13 @@ export async function handleControlRequest(
       if (!payload.success)
         throw new HttpError(400, "Invalid publication body");
       return tenant.publishAgent(
-        principal.tenantId,
+        scope,
         payload.data.spec,
         payload.data.expectedRevision,
       );
     }
     if (resource === "client-plugins" && !key)
-      return tenant.publishClient(principal.tenantId, raw);
+      return tenant.publishClient(scope, raw);
     if (
       resource === "client-plugins" &&
       key &&
@@ -92,7 +94,7 @@ export async function handleControlRequest(
       if (!payload.success)
         throw new HttpError(400, "Invalid plugin activation body");
       return tenant.enableClient(
-        principal.tenantId,
+        scope,
         key,
         payload.data.revision,
         payload.data.enabled,

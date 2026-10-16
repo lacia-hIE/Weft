@@ -112,6 +112,13 @@ export function Agents({
           </label>
         </div>
         <label className="field">
+          模型
+          <Input aria-label="模型名称" placeholder="使用平台默认模型" value={draft.model?.name ?? ""} onChange={event => {
+            if (event.target.value.trim()) change({ model: { provider: "deepseek", name: event.target.value } });
+            else { const next = { ...draft }; delete next.model; setDraft(next); }
+          }}/>
+        </label>
+        <label className="field">
           系统指令
           <textarea
             aria-label="系统指令"

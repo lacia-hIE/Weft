@@ -18,6 +18,7 @@ export default defineConfig({
       UI: bindings.worker({ worker: uiWorker }),
       SESSIONS: bindings.durableObject({ worker: 'weft-kernel-validation', exportName: 'SessionDO' }),
       WORKSPACES: bindings.durableObject({ worker: 'weft-kernel-validation', exportName: 'WorkspaceDO' }),
+      ENVIRONMENTS: bindings.durableObject({ worker: 'weft-kernel-validation', exportName: 'EnvironmentDO' }),
       TENANTS: bindings.durableObject({ worker: 'weft-kernel-validation', exportName: 'TenantDO' }),
       MODEL_BACKEND: bindings.text('deepseek'),
       DEEPSEEK_MODEL: bindings.text('deepseek-flash'),
@@ -28,6 +29,7 @@ export default defineConfig({
     exports: {
       SessionDO: exports.durableObject({ storage: 'sqlite' }),
       WorkspaceDO: exports.durableObject({ storage: 'sqlite' }),
+      EnvironmentDO: exports.durableObject({ storage: 'sqlite' }),
       TenantDO: exports.durableObject({ storage: 'sqlite' }),
     },
   },
