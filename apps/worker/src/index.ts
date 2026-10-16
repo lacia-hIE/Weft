@@ -1,4 +1,10 @@
 import { DurableObject } from 'cloudflare:workers';
+import { HttpError, readJson, assertSameOrigin } from './http.ts';
+import { handleWorkspaceRequest } from './workspace-http.ts';
+import { mountWorkspace } from '../../../packages/workspace/src/provider.ts';
+import { WorkspaceDO } from '../../../packages/workspace/src/object.ts';
+import { workspaceIdSchema, workspaceAddress } from '../../../packages/workspace/src/protocol.ts';
+export { WorkspaceDO };
 import { z } from 'zod';
 import { Context } from '@deepseek-ai/cordis';
 import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session';
@@ -11,11 +17,12 @@ import { authenticateAccess, sessionAddress, scopeSchema, type SessionScope } fr
 
 export interface Env extends ModelEnvironment {
   SESSIONS: DurableObjectNamespace<SessionDO>;
+  WORKSPACES: DurableObjectNamespace<WorkspaceDO>;
   ACCESS_AUD?: string;
   ACCESS_TEAM_DOMAIN?: string;
 }
 
-const messageSchema = z.object({ text: z.string().min(1).max(8000), requestId: z.uuid().optional() }).strict();
+const messageSchema = z.object({ text: z.string().min(1).max(8000), requestId: z.uuid().optional(), workspaceId: workspaceIdSchema.optional() }).strict();
 const cancelSchema = z.object({ requestId: z.uuid() }).strict();
 type TurnResult = { ok: true; requestId: string; events: readonly SessionEvent[]; model: { provider: string; model: string } }
   | { ok: false; requestId: string; error: TurnFailure };
@@ -28,6 +35,7 @@ export class SessionDO extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     initializeSessionStorage(ctx.storage);
+    ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_session_config (id INTEGER PRIMARY KEY CHECK(id=1), workspace_id TEXT)');
   }
 
   private assertScope(input: SessionScope): SessionScope {
@@ -45,8 +53,8 @@ export class SessionDO extends DurableObject<Env> {
     return result;
   }
 
-  async send(input: SessionScope, text: string, persona: string, requestId: string): Promise<Response> {
-    const result = await this.execute(input, text, persona, requestId);
+  async send(input: SessionScope, text: string, persona: string, requestId: string, workspaceId?: string): Promise<Response> {
+    const result = await this.execute(input, text, persona, requestId, workspaceId);
     if (!result.ok) return Response.json({ error: result.error.message, code: result.error.code, requestId }, { status: result.error.status });
     return Response.json({ ...input, requestId, model: result.model, events: result.events }, { headers: { 'cache-control': 'private, no-store' } });
   }
@@ -62,6 +70,7 @@ export class SessionDO extends DurableObject<Env> {
 
   private async execute(
     input: SessionScope, text: string, persona: string, requestId: string,
+    workspaceId: string | undefined,
     hooks: Pick<RuntimeOptions, 'onEvent' | 'onFrame'> = {},
   ): Promise<TurnResult> {
     const scope = this.assertScope(input);
@@ -75,13 +84,26 @@ export class SessionDO extends DurableObject<Env> {
         try {
           controller.signal.throwIfAborted();
           const resolved = resolveTenantModel(this.env, scope.tenantId);
+          const stored = this.ctx.storage.sql.exec<{ workspace_id: string | null }>('SELECT workspace_id FROM weft_session_config WHERE id=1').toArray()[0];
+          if (workspaceId !== undefined) workspaceIdSchema.parse(workspaceId);
+          if (stored && workspaceId !== undefined && workspaceId !== stored.workspace_id) {
+            return { ok: false, requestId, error: { code: 'WORKSPACE_MISMATCH', message: 'Session is already bound to another workspace', status: 409 } };
+          }
+          const attachedWorkspace = stored ? stored.workspace_id : workspaceId ?? null;
+          if (!stored) this.ctx.storage.sql.exec('INSERT INTO weft_session_config VALUES (1, ?)', attachedWorkspace);
           timer = setTimeout(() => { controller.abort({ code: 'TURN_TIMEOUT', message: 'Turn deadline exceeded', status: 504 } satisfies TurnFailure); }, resolved.turnTimeoutMs);
           const events = await runHarnessTurn({
             sessionId: scope.sessionId, persona, model: resolved.model, adapter: resolved.adapter,
             signal: controller.signal, ...hooks,
             cancellationCause: () => controller.signal.reason?.code === 'TURN_TIMEOUT' ? { kind: 'hook', reason: 'turn-deadline' } : { kind: 'user' },
             mountPersistence: async ctx => { await ctx.plugin(SqliteSessionPersistence, { storage: this.ctx.storage }); },
-            mountTools: async ctx => { registerIdentityTool(ctx, scope.tenantId); },
+            mountTools: async ctx => {
+              registerIdentityTool(ctx, scope.tenantId);
+              if (attachedWorkspace !== null) {
+                const workspaceScope = { tenantId: scope.tenantId, workspaceId: attachedWorkspace };
+                await mountWorkspace(ctx, { scope: workspaceScope, transport: this.env.WORKSPACES.getByName(workspaceAddress(workspaceScope)) });
+              }
+            },
           }, text);
           return { ok: true, requestId, events, model: resolved.model };
         } catch (error) {
@@ -93,7 +115,7 @@ export class SessionDO extends DurableObject<Env> {
 
   /** Internal binding transport; external requests are authenticated by the entry Worker. */
   override async fetch(request: Request): Promise<Response> {
-    const payload = z.object({ scope: scopeSchema, text: z.string().min(1).max(8000), persona: z.string().max(4000), requestId: z.uuid() }).strict().parse(await request.json());
+    const payload = z.object({ scope: scopeSchema, text: z.string().min(1).max(8000), persona: z.string().max(4000), requestId: z.uuid(), workspaceId: workspaceIdSchema.optional() }).strict().parse(await request.json());
     this.assertScope(payload.scope);
     let cancelled = false;
     let heartbeat: ReturnType<typeof setInterval> | undefined;
@@ -112,7 +134,7 @@ export class SessionDO extends DurableObject<Env> {
         };
         publish('session', { ...payload.scope, requestId: payload.requestId });
         heartbeat = setInterval(() => { publish('ping', { requestId: payload.requestId }); }, 5000);
-        const operation = this.execute(payload.scope, payload.text, payload.persona, payload.requestId, {
+        const operation = this.execute(payload.scope, payload.text, payload.persona, payload.requestId, payload.workspaceId, {
           onEvent: event => { publish('session-event', event); },
           onFrame: frame => { publish('assistant-stream', frame); },
         }).then(result => {
@@ -141,37 +163,6 @@ export class SessionDO extends DurableObject<Env> {
   }
 }
 
-async function readJson(request: Request): Promise<unknown> {
-  if (!request.headers.get('content-type')?.toLowerCase().startsWith('application/json')) {
-    throw new HttpError(415, 'Expected application/json');
-  }
-  const reader = request.body?.getReader();
-  if (!reader) throw new HttpError(400, 'Missing JSON body');
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  try {
-    for (;;) {
-      const chunk = await reader.read();
-      if (chunk.done) break;
-      size += chunk.value.byteLength;
-      if (size > 16_384) {
-        await reader.cancel();
-        throw new HttpError(413, 'Message body is too large');
-      }
-      chunks.push(chunk.value);
-    }
-  } finally { reader.releaseLock(); }
-  const body = new Uint8Array(size);
-  let offset = 0;
-  for (const chunk of chunks) { body.set(chunk, offset); offset += chunk.byteLength; }
-  try { return JSON.parse(new TextDecoder().decode(body)) as unknown; }
-  catch { throw new HttpError(400, 'Invalid message body'); }
-}
-
-class HttpError extends Error {
-  constructor(readonly status: number, message: string) { super(message); }
-}
-
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     try {
@@ -186,6 +177,8 @@ export default {
       if (pathname === '/health' && request.method === 'GET') {
         return Response.json({ status: 'ok', mode: 'harness', backend: env.MODEL_BACKEND ?? 'unconfigured' });
       }
+      const workspaceResponse = await handleWorkspaceRequest(request, env, principal);
+      if (workspaceResponse) return workspaceResponse;
       const match = /^\/v1\/tenants\/([^/]+)\/sessions\/([^/]+)\/(messages|events|cancel)$/.exec(pathname);
       if (!match) throw new HttpError(404, 'Not found');
       const parsed = scopeSchema.safeParse({ tenantId: match[1], sessionId: match[2] });
@@ -194,11 +187,7 @@ export default {
       if (scope.tenantId !== principal.tenantId) throw new HttpError(403, 'Tenant access denied');
       const session = env.SESSIONS.getByName(sessionAddress(scope));
       if ((match[3] === 'messages' || match[3] === 'cancel') && request.method === 'POST') {
-        const origin = request.headers.get('origin');
-        const fetchSite = request.headers.get('sec-fetch-site');
-        if ((origin && origin !== new URL(request.url).origin) || fetchSite === 'cross-site') {
-          throw new HttpError(403, 'Cross-origin writes are not allowed');
-        }
+        assertSameOrigin(request);
         const raw = await readJson(request);
         if (match[3] === 'cancel') {
           const parsed = cancelSchema.safeParse(raw);
@@ -215,12 +204,12 @@ export default {
           request.signal.addEventListener('abort', stop, { once: true });
           const response = await session.fetch(new Request('https://session.internal/turn', {
             method: 'POST', headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ scope, text, persona, requestId }),
+            body: JSON.stringify({ scope, text, persona, requestId, workspaceId: parsed.data.workspaceId }),
           }));
           if (request.signal.aborted) stop();
           return response;
         }
-        return await session.send(scope, text, persona, requestId);
+        return await session.send(scope, text, persona, requestId, parsed.data.workspaceId);
       }
       if (match[3] === 'events' && request.method === 'GET') {
         const events = await session.events(scope);

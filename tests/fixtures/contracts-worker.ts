@@ -1,3 +1,6 @@
+import { Workspace } from '@cloudflare/computer';
+import { WorkspaceStore } from '../../packages/workspace/src/store.ts';
+import { WorkspaceDO } from '../../packages/workspace/src/object.ts';
 import { DurableObject } from 'cloudflare:workers';
 import { Context } from '@deepseek-ai/cordis';
 import SessionStore, { SessionId, SessionSeq, type SessionEvent } from '@deepseek-ai/dsh-session';
@@ -7,9 +10,9 @@ import { registerIdentityTool } from '../../packages/harness-runtime/src/validat
 import { initializeSessionStorage, SqliteSessionPersistence } from '../../packages/session-persistence-do/src/index.ts';
 import { SessionDO } from '../../apps/worker/src/index.ts';
 
-export { SessionDO };
+export { SessionDO, WorkspaceDO };
 
-interface Env { CONTRACTS: DurableObjectNamespace<ContractsDO>; SESSIONS: DurableObjectNamespace<SessionDO> }
+interface Env { CONTRACTS: DurableObjectNamespace<ContractsDO>; SESSIONS: DurableObjectNamespace<SessionDO>; WORKSPACES: DurableObjectNamespace<WorkspaceDO> }
 
 async function failure(operation: () => Promise<unknown>): Promise<string> {
   try { await operation(); return 'NO_ERROR'; }
@@ -30,6 +33,31 @@ export class ContractsDO extends DurableObject<Env> {
     catch (error) { wrongScope = error instanceof Error ? error.message : String(error); }
     const correctScope = await session.events({ tenantId: 'alpha', sessionId: 'same-id' });
     return { wrongScope, correctScopeHasNoEvents: correctScope === undefined };
+  }
+
+  async checkWorkspace() {
+    const scoped = this.env.WORKSPACES.getByName(JSON.stringify(['alpha', 'one']));
+    const wrong = await scoped.call({ tenantId: 'beta', workspaceId: 'one' }, { type: 'list', path: '/workspace' });
+    const files = new WorkspaceStore(this.ctx.storage);
+    const computer = new Workspace({ storage: this.ctx.storage, output: false });
+    computer.provider().symlinkSync('/outside', '/workspace/escape');
+    let symlink = '';
+    try { files.execute({ type: 'read', path: '/workspace/escape/secret' }); } catch (error) { symlink = (error as { code: string }).code; }
+    computer.provider().unlinkSync('/workspace/escape');
+    this.ctx.storage.sql.exec("CREATE TRIGGER reject_version BEFORE INSERT ON weft_file_versions BEGIN SELECT RAISE(ABORT, 'injected'); END");
+    let rejected = '';
+    try { files.execute({ type: 'write', path: '/workspace/subdir/atomic.txt', content: 'must roll back' }); } catch (error) { rejected = (error as { code: string }).code; }
+    const afterRollback = files.execute({ type: 'list', path: '/workspace' });
+    this.ctx.storage.sql.exec('DROP TRIGGER reject_version');
+    const committed = files.execute({ type: 'write', path: '/workspace/ok.txt', content: 'ok' }) as { revision: number };
+    computer.provider().writeFileSync('/workspace/binary.dat', Buffer.from([0, 255, 65]));
+    const bytes = files.execute({ type: 'bytes', path: '/workspace/binary.dat', offset: 1, length: 2 }) as Uint8Array;
+    let binary = '';
+    try { files.execute({ type: 'read', path: '/workspace/binary.dat' }); } catch (error) { binary = (error as { code: string }).code; }
+    this.ctx.storage.sql.exec('UPDATE weft_workspace_schema SET version=99');
+    let futureFormat = '';
+    try { new WorkspaceStore(this.ctx.storage); } catch (error) { futureFormat = (error as Error).message; }
+    return { wrongScope: wrong.status, symlink, rejected, afterRollback, revisionAfterRollback: committed.revision, bytes: Array.from(bytes), binary, futureFormat };
   }
 
   async checkStorage() {
@@ -118,6 +146,7 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const object = env.CONTRACTS.getByName(crypto.randomUUID());
     if (new URL(request.url).pathname === '/scope') return Response.json(await object.checkScope());
+    if (new URL(request.url).pathname === '/workspace-contracts') return Response.json(await object.checkWorkspace());
     if (new URL(request.url).pathname === '/storage') return Response.json(await object.checkStorage());
     return Response.json(await object.resumeInterrupted(await request.json()));
   },

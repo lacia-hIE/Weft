@@ -15,9 +15,11 @@
     "deploy": "npm run build && cf deploy",
     "deploy:check": "npm run build && cf deploy --dry-run",
     "check": "npm run typecheck && npm test",
-    "test:live": "node scripts/verify-live-model.mjs"
+    "test:live": "node scripts/verify-live-model.mjs",
+    "test:live:workspace": "node scripts/verify-live-workspace.mjs"
   },
   "dependencies": {
+    "@cloudflare/computer": "0.5.1",
     "@standard-schema/spec": "1.1.0",
     "eventsource-parser": "3.1.0",
     "zod": "4.4.3"

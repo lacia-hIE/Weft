@@ -11,6 +11,7 @@ function contractsRuntime(): Miniflare {
     durableObjects: {
       CONTRACTS: { className: 'ContractsDO', useSQLite: true },
       SESSIONS: { className: 'SessionDO', useSQLite: true },
+      WORKSPACES: { className: 'WorkspaceDO', useSQLite: true },
     },
   });
   options.workers[0]!.dev = { ...options.workers[0]!.dev, unsafeRegisterWorker: false };
@@ -68,4 +69,16 @@ test('upstream resume repairs an interrupted tool call without replaying its exe
     assert.equal(repaired.filter(event => event.type === 'turn/end').length, 2);
     assert.equal(repaired.at(-1)?.data.reason?.kind, 'completed');
   } finally { await Promise.all([source.dispose(), target.dispose()]); }
+});
+
+test('Computer scope, symlink confinement, atomic rollback, bytes and workspace format refusal', async () => {
+  const runtime = contractsRuntime();
+  try {
+    const response = await runtime.dispatchFetch('http://localhost/workspace-contracts');
+    assert.equal(response.status, 200, await response.clone().text());
+    assert.deepEqual(await response.json(), {
+      wrongScope: 403, symlink: 'FS_SANDBOX_DENIED', rejected: 'FS_IO_ERROR', afterRollback: [], revisionAfterRollback: 1,
+      bytes: [255, 65], binary: 'FS_NOT_TEXT', futureFormat: 'Unsupported Weft workspace format',
+    });
+  } finally { await runtime.dispose(); }
 });

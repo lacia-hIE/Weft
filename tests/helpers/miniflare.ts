@@ -35,7 +35,7 @@ export function createRuntime(persist?: string, model: { bindings?: Record<strin
     scriptPath: resolve('dist/worker.js'),
     compatibilityDate: '2026-07-30',
     compatibilityFlags: ['nodejs_compat', 'enable_request_signal'],
-    durableObjects: { SESSIONS: { className: 'SessionDO', scriptName: 'alpha', useSQLite: true } },
+    durableObjects: { SESSIONS: { className: 'SessionDO', scriptName: 'alpha', useSQLite: true }, WORKSPACES: { className: 'WorkspaceDO', scriptName: 'alpha', useSQLite: true } },
     bindings: { ACCESS_AUD: accessAudience, ACCESS_TEAM_DOMAIN: accessTeamDomain, MODEL_BACKEND: 'scripted', ...model.bindings },
     ...(model.outbound ? { outboundService: model.outbound } : {}),
     ...(profile.access ? { access: profile.access } : {}),

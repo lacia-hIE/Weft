@@ -15,6 +15,7 @@ export default defineConfig({
     access: { dev: { aud: accessAudience, identity: { user_uuid: 'local-developer', email: 'dev@example.com' } } },
     env: {
       SESSIONS: bindings.durableObject({ worker: 'weft-kernel-validation', exportName: 'SessionDO' }),
+      WORKSPACES: bindings.durableObject({ worker: 'weft-kernel-validation', exportName: 'WorkspaceDO' }),
       MODEL_BACKEND: bindings.text('deepseek'),
       DEEPSEEK_MODEL: bindings.text('deepseek-flash'),
       DEEPSEEK_API_KEY: bindings.secret(),
@@ -23,6 +24,7 @@ export default defineConfig({
     },
     exports: {
       SessionDO: exports.durableObject({ storage: 'sqlite' }),
+      WorkspaceDO: exports.durableObject({ storage: 'sqlite' }),
     },
   },
 });

@@ -47,7 +47,7 @@ Cloudflare DO SQL 对部分 PRAGMA 操作有限制；本工程使用普通 schem
 ## 下一阶段
 
 1. 已接入 upstream DeepSeek 模型适配器，完成真实 HTTP、流式解析、错误及取消验证；细节见 [模型验证记录](model.md)。
-2. 固定 Computer 版本，增加独立 WorkspaceDO，验证文件读写、搜索、编辑、Git、JS 和工作区重建。
+2. 已固定 Computer 并接入独立 WorkspaceDO、原生文件工具、搜索和重建恢复；见 [Workspace 验证记录](workspace.md)。Git、JavaScript 执行与完整工作区快照继续验证。
 3. 选择首批受支持的 Harness profile / 插件，明确加载、配置和权限策略，形成兼容清单。
 4. 注入运行中进程终止、超时和重复投递，决定哪些任务需要持久调度及执行器改造。
 5. 在现有 Access 用户认证上增加组织成员权限、模型凭据服务和会话列表；随后验证前端协议与 UI。

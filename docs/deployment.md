@@ -1,6 +1,6 @@
 # Cloudflare 部署
 
-项目使用 npm 锁定的 `cf@1.0.0-beta.17`，`cloudflare.config.ts` 声明 Worker、Access audience 与 SQLite Durable Object，`wrangler.config.ts` 保留构建器设置。源码先由 Weft 的 esbuild 脚本打包，再由 cf 生成 Build Output 并发布。
+项目使用 npm 锁定的 `cf@1.0.0-beta.17`，`cloudflare.config.ts` 声明 Worker、Access audience 与 SessionDO / WorkspaceDO 两个 SQLite Durable Object，`wrangler.config.ts` 保留构建器设置。源码先由 Weft 的 esbuild 脚本打包，再由 cf 生成 Build Output 并发布。
 
 Worker：`weft-kernel-validation`。自定义域名：`weft.luxuncang.com`。健康检查：https://weft.luxuncang.com/health 。源码：https://github.com/lacia-hIE/Weft 。
 
@@ -63,3 +63,9 @@ Cloudflare 原生构建使用专用 `weft-native-builds` 部署凭据；凭据�
 可在服务端配置中声明 `DEEPSEEK_BASE_URL`、`MODEL_IDLE_TIMEOUT_MS` 和 `MODEL_TURN_TIMEOUT_MS` 文本绑定，调整网关与期限；默认分别为官方 Anthropic 兼容 API、60 秒和 180 秒。网关必须使用 HTTPS，无 URL 凭据、查询参数或片段，HTTP 客户端不能覆盖这些配置。当前自动模型重试关闭，避免隐藏重放；后续在幂等和任务恢复设计中明确重试策略。
 
 2026-10-16 真实模型版本已由 `cf deploy` 发布：`bc3db012-0947-4963-aa8c-bea2507cd52b`。模型密钥已写入 Cloudflare Secret，临时部署文件已删除。真实 DeepSeek 的工具调用、SSE 与第二回合恢复在本地 workerd 中通过；Access 用户登录后的云端端到端验证仍需允许的用户完成。
+
+## Workspace 部署
+
+新增 `WORKSPACES` 绑定与 `WorkspaceDO` SQLite export；`cf deploy` 管理对应生命周期声明。现有 SessionDO 命名和存储保留。工作区使用 `@cloudflare/computer@0.5.1`，无 Container 或执行后端；无需增加模型以外的 Secret。文件 API、Session 绑定及验证细节见 [Workspace 记录](validation/workspace.md)。
+
+2026-10-16 Workspace 版本发布成功：`d621df0e-aeda-4add-91f7-0cefa9fa25c8`。已复核 WorkspaceDO 为 SQLite namespace `340c996ea191459484a0ce6059072943`，SessionDO namespace 保留。模型 Secret、指定 Access 策略及 GitHub 原生仓库关联保留，自动构建与预览构建均关闭。云端文件入口的未登录及伪造身份请求会跳转 Access 登录。

@@ -54,12 +54,22 @@ const result = await build({
   sourcemap: true,
   metafile: true,
 });
+const forbiddenWorkspaceDependencies = ['just-bash', 'guarded-fetch', 'sprintf-js'];
+const shippedInputs = Object.entries(result.metafile.outputs['dist/worker.js'].inputs)
+  .filter(([, input]) => input.bytesInOutput > 0).map(([path]) => path);
+for (const dependency of forbiddenWorkspaceDependencies) {
+  if (shippedInputs.some(path => path.includes(`node_modules/${dependency}/`))) {
+    throw new Error(`Unreviewed workspace execution dependency in application bundle: ${dependency}`);
+  }
+}
 writeFileSync('dist/metafile.json', JSON.stringify(result.metafile, null, 2) + '\n');
 const nodeImports = [...new Set(result.metafile.outputs['dist/worker.js'].imports
   .filter(item => item.path.startsWith('node:')).map(item => item.path))].sort();
 writeFileSync('dist/runtime-audit.json', JSON.stringify({
   upstream: JSON.parse(readFileSync('upstream.lock.json', 'utf8')).commit,
   adaptations: ['Static LLM package version import', 'Messages adapter fetch rejects redirects manually in workerd'],
+  computer: { version: JSON.parse(readFileSync('node_modules/@cloudflare/computer/package.json', 'utf8')).version, executionBackends: [] },
+  excludedExecutionDependencies: forbiddenWorkspaceDependencies,
   nodeImports,
   sourceFiles: Object.keys(result.metafile.outputs['dist/worker.js'].inputs).length,
   workerBytes: result.metafile.outputs['dist/worker.js'].bytes,

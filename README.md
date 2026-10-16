@@ -2,7 +2,7 @@
 
 在 Cloudflare Workers / Durable Objects 上运行 deepseek-harness，提供租户隔离、持久 Session 和可维护的运行环境适配。
 
-当前已接入真实 DeepSeek Messages 模型：直接运行固定版本的 upstream Agent Loop，支持工具循环、SSE 增量输出、取消、SQLite 持久化和租户隔离；确定性模型适配器用于无密钥回归测试。技术可行性、兼容性和模块边界优先，成本优化后置。
+当前已接入真实 DeepSeek Messages 模型：直接运行固定版本的 upstream Agent Loop，支持工具循环、SSE 增量输出、取消、SQLite 持久化、租户隔离及独立 Computer Workspace；确定性模型适配器用于无密钥回归测试。技术可行性、兼容性和模块边界优先，成本优化后置。
 
 需要 Node.js 22.19+ 和 Git。
 
@@ -36,12 +36,15 @@ curl http://localhost:8787/v1/tenants/TENANT_ID/sessions/example/events
 
 发送消息时增加 `Accept: text/event-stream` 可获取增量事件；省略时返回完整 JSON。正在运行 `npm run dev` 时，可另开终端执行 `npm run test:live`，验证真实模型工具调用、SSE 和会话恢复。
 
+创建文件 Session 时，在消息 JSON 中传入 `workspaceId`（例如 `project`），即可使用原生 `read`、`write`、`edit` 和 `workspace_search`。绑定在 Session 中持久保存，后续请求可省略；同一用户的多个 Session 可绑定同一个 Workspace 共享文件。真实文件工具验证命令为 `npm run test:live:workspace`。
+
 目录职责：
 
 | 路径 | 职责 |
 | --- | --- |
 | `apps/worker` | HTTP 入口、租户授权、SessionDO 寻址及串行执行 |
 | `packages/harness-runtime` | 装配 upstream 插件，通过原有 Agent API 创建、恢复和驱动 Session |
+| `packages/workspace` | Computer WorkspaceDO、原生 Harness 文件系统适配、版本冲突与文件 API |
 | `packages/model-provider` | 按租户解析模型与凭据、复用上游 DeepSeek 适配器、归一化安全错误 |
 | `packages/session-persistence-do` | 实现 upstream `SessionPersistence` 和 `SessionHandle`，管理 SQLite 事件与写入所有权 |
 | `packages/tenant` | Access 用户身份映射、SessionScope 校验和租户限定的对象名称 |
@@ -58,6 +61,6 @@ npm run deploy:check
 
 上述命令通过 `cf deploy --dry-run` 检查部署产物。正式部署使用 `npm run deploy`，或在 `npm run build` 后执行 `npx cf deploy`。部署配置以 `cloudflare.config.ts` 为准，`wrangler.config.ts` 只提供构建器设置。
 
-内核验证见 [技术验证记录](docs/validation/kernel.md)，真实模型、SSE 与取消协议见 [模型验证记录](docs/validation/model.md)。原始产品提案见 [产品架构 RFC](WEFT_PRODUCT_ARCHITECTURE.md)。上游许可见 [第三方许可](THIRD_PARTY_NOTICES.md)。
+内核验证见 [技术验证记录](docs/validation/kernel.md)，真实模型、SSE 与取消协议见 [模型验证记录](docs/validation/model.md)，工作区、原生文件工具与文件 API 见 [Workspace 验证记录](docs/validation/workspace.md)。原始产品提案见 [产品架构 RFC](WEFT_PRODUCT_ARCHITECTURE.md)。上游许可见 [第三方许可](THIRD_PARTY_NOTICES.md)。
 
 云端入口：[Weft](https://weft.luxuncang.com/)，登录后返回用户与租户信息；健康检查同样受 Access 保护。源码保存在 GitHub，Cloudflare 连接 GitHub 仓库；项目不配置流水线，通过 `cf` 手动部署。部署及鉴权说明见 [部署记录](docs/deployment.md)。
