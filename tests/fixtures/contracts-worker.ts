@@ -8,11 +8,11 @@ import { runHarnessTurn } from '../../packages/harness-runtime/src/runtime.ts';
 import { ScriptedAdapter } from '../../packages/harness-runtime/src/scripted-adapter.ts';
 import { registerIdentityTool } from '../../packages/harness-runtime/src/validation-tools.ts';
 import { initializeSessionStorage, SqliteSessionPersistence } from '../../packages/session-persistence-do/src/index.ts';
-import { SessionDO } from '../../apps/worker/src/index.ts';
+import { SessionDO, EnvironmentDO, TenantDO } from '../../apps/worker/src/index.ts';
 import { sessionAddress } from '../../packages/tenant/src/index.ts';
 import { workspaceAddress } from '../../packages/workspace/src/protocol.ts';
 
-export { SessionDO, WorkspaceDO };
+export { SessionDO, WorkspaceDO, EnvironmentDO, TenantDO };
 
 interface Env { CONTRACTS: DurableObjectNamespace<ContractsDO>; SESSIONS: DurableObjectNamespace<SessionDO>; WORKSPACES: DurableObjectNamespace<WorkspaceDO> }
 
@@ -39,6 +39,19 @@ export class ContractsDO extends DurableObject<Env> {
     catch (error) { wrongEnvironment = error instanceof Error ? error.message : String(error); }
     const correctScope = await session.events(scope);
     return { wrongScope, wrongEnvironment, correctScopeHasNoEvents: correctScope === undefined };
+  }
+
+  async nativeContext(stage: string) {
+    const scope = {tenantId: 'alpha', environmentId: 'one', sessionId: 'plugin-context'};
+    const session = this.env.SESSIONS.getByName(sessionAddress(scope));
+    if (stage === 'seed') {
+      await session.nativeCreate(scope);
+      await session.nativePluginContext(scope, 'Plugin activation context survived', false);
+    } else if (stage === 'run') {
+      await session.nativePrompt(scope, {sessionId: scope.sessionId, requestId: 'plugin-context-request', mode: 'queue', content: [{type: 'text', text: 'continue'}]});
+      await session.events(scope);
+    }
+    return {status: await session.nativeStatus(scope), projections: await (await session.nativeProjections(scope)).json(), events: await session.events(scope)};
   }
 
   async checkWorkspace() {
@@ -151,6 +164,7 @@ export class ContractsDO extends DurableObject<Env> {
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const object = env.CONTRACTS.getByName(crypto.randomUUID());
+    if (new URL(request.url).pathname === '/native-context') return Response.json(await object.nativeContext(new URL(request.url).searchParams.get('stage') ?? 'read'));
     if (new URL(request.url).pathname === '/scope') return Response.json(await object.checkScope());
     if (new URL(request.url).pathname === '/workspace-contracts') return Response.json(await object.checkWorkspace());
     if (new URL(request.url).pathname === '/storage') return Response.json(await object.checkStorage());

@@ -5,6 +5,8 @@ import Title from '@deepseek-ai/dsh-session-title';
 import Query, { SessionQueryError } from '@deepseek-ai/dsh-session-query';
 import type { AssistantStreamFrame, Agent } from '@deepseek-ai/dsh-agent';
 import { installModelSelectionProjection } from './model-selection.ts';
+import { turnBoundaryProjectionDefinition } from '@deepseek-ai/dsh-agent-loop';
+import { inboxProjectionDefinition } from '@weft/upstream/packages/core/agent-loop/src/inbox.ts';
 import type { SessionSearchRequest, SessionSearchExecContext, SessionSearchPage, SessionSearchHit, SessionEventSearchRequest, SessionEventSearchPage } from '@deepseek-ai/dsh-session-query';
 import { SessionHistoryController } from '@weft/upstream/packages/api/session-controller/src/history.ts';
 import type {} from '@weft/upstream/packages/subagent/subagent/src/projection.ts';
@@ -36,6 +38,8 @@ export async function createSessionReader(storage: DurableObjectStorage) {
   try {
     await ctx.plugin(ReaderSessions);
     await ctx.plugin(Projections);
+    ctx.sessionProjections.register(turnBoundaryProjectionDefinition);
+    ctx.sessionProjections.register(inboxProjectionDefinition);
     installModelSelectionProjection(ctx);
     await ctx.plugin(Title, {fallbackMaxWords: 5, fallbackMaxBytes: 40, maxTitleBytes: 80});
     await ctx.plugin(SqliteSessionPersistence, {storage});

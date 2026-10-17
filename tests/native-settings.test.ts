@@ -81,6 +81,41 @@ test('native settings and write-only credentials persist by environment and cont
   } finally { await runtime.dispose(); await rm(directory, {recursive: true, force: true}); }
 });
 
+test('platform model credentials stay bound to the host endpoint and custom endpoints require an environment-owned key', {timeout: 60_000}, async () => {
+  const calls: {url: string; key: string | null}[] = [];
+  const runtime = createRuntime(undefined, {browser: true, bindings: {MODEL_BACKEND: 'deepseek', DEEPSEEK_API_KEY: 'host-bound-fixture', DEEPSEEK_BASE_URL: 'https://platform.test/anthropic'}, outbound: async request => {
+    calls.push({url: request.url, key: request.headers.get('x-api-key')});
+    const event = (type: string, data: object) => `event: ${type}\ndata: ${JSON.stringify({type, ...data})}\n\n`;
+    return new Response(event('message_start', {message: {usage: {input_tokens: 1, output_tokens: 0}}}) + event('content_block_start', {index: 0, content_block: {type: 'text', text: 'bound credential'}}) + event('content_block_stop', {index: 0}) + event('message_delta', {delta: {stop_reason: 'end_turn'}, usage: {output_tokens: 2}}) + event('message_stop', {}), {headers: {'content-type': 'text/event-stream'}});
+  }});
+  const api = nativeClient(() => runtime);
+  const prompt = () => api.raw('session/prompt', {request: {sessionId: 'endpoint-bound', requestId: randomUUID(), mode: 'queue', content: [{type: 'text', text: 'reply'}]}});
+  const idle = () => runtime.dispatchFetch(url('alpha', `/v1/tenants/${tenantId('alpha')}/environments/default/sessions/endpoint-bound/events`));
+  const configure = (baseURL: string, expectedRevision: number) => api.call('settings/update', {ns: 'llm-deepseek', patch: {baseURL}, expectedRevision});
+  try {
+    await configure('https://platform.test/untrusted', 0);
+    await api.call('session/create', {request: {sessionId: 'endpoint-bound'}});
+    assert.equal((await prompt()).result.error?.code, 'session/provider-credentials-unavailable');
+    await configure('https://custom.test/anthropic', 1);
+    assert.equal((await prompt()).result.error?.code, 'session/provider-credentials-unavailable');
+    assert.equal(calls.length, 0, 'neither a changed path nor another host receives the fallback key');
+    await configure('https://platform.test/anthropic/', 2);
+    assert.equal((await prompt()).result.ok, true);
+    assert.equal((await idle()).status, 200);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0]!.key, 'host-bound-fixture');
+    await configure('https://custom.test/anthropic', 3);
+    assert.equal((await prompt()).result.error?.code, 'session/provider-credentials-unavailable');
+    assert.equal(calls.length, 1, 'the already warm Agent also refuses to forward the fallback key');
+    await api.call('credentials/set', {ref: 'DEEPSEEK_API_KEY', value: 'environment-bound-fixture'});
+    assert.equal((await prompt()).result.ok, true);
+    assert.equal((await idle()).status, 200);
+    assert.equal(calls.length, 2);
+    assert.equal(new URL(calls[1]!.url).origin, 'https://custom.test');
+    assert.equal(calls[1]!.key, 'environment-bound-fixture');
+  } finally {await runtime.dispose();}
+});
+
 test('a live native turn adopts configuration and credential changes at its next model step', {timeout: 60_000}, async () => {
   let first!: () => void, release!: () => void;
   const started = new Promise<void>(resolve => {first = resolve;});

@@ -17,6 +17,11 @@ test('official Session codecs expose real blank creation, live history, prompt c
   let runtime = createRuntime(directory, {browser: true});
   const api = nativeClient(() => runtime);
   let stream: Awaited<ReturnType<typeof api.follow>> | undefined;
+  const rejectSecondWriter = async () => {
+    const response = await runtime.dispatchFetch(url('alpha', `/v1/tenants/${tenantId('alpha')}/environments/default/sessions/native/messages`), {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({text: 'wrong writer'})});
+    assert.equal(response.status, 409);
+    assert.equal((await response.json() as {code: string}).code, 'NATIVE_SESSION_REQUIRED');
+  };
   try {
     const created = await api.call<SessionCreateValue>('session/create', {request: {sessionId: 'native'}});
     assert.deepEqual(created, {sessionId: 'native', agentPreset: 'default'});
@@ -62,10 +67,12 @@ test('official Session codecs expose real blank creation, live history, prompt c
     assert.match(JSON.stringify(page.records.at(-1)), /我的工作区/);
     assert.equal(page.hasMore, false);
     assert.equal((await api.call<SessionListValue>('session/list', {_request: {}})).items[0]!.blank, false);
+    await rejectSecondWriter();
     const another = await api.call<SessionCreateValue>('session/create', {request: {sessionId: 'native'}});
     assert.notEqual(another.sessionId, 'native', 'a used Session cannot be reused as a new conversation');
     await runtime.dispose();
     runtime = createRuntime(directory, {browser: true});
+    await rejectSecondWriter();
     stream = await api.follow('native');
     const restored = await stream.next();
     assert.equal(restored.type, 'snapshot');
@@ -134,7 +141,7 @@ test('native Remote rejects invalid contracts and unavailable capabilities witho
     await api.call('session/create', {request: {sessionId: 'same'}});
     const error = await api.raw('session/page', {request: {address: {kind: 'session', sessionId: 'same'}, throughSeq: 999}});
     assert.equal(error.result.error?.code, 'gateway/bad-request');
-    assert.equal((await api.raw('session/prompt', {request: {sessionId: 'same', requestId: randomUUID(), mode: 'steer', content: [{type: 'text', text: 'steer'}]}})).result.error?.code, 'session/agent-busy');
+    assert.equal((await api.raw('session/prompt', {request: {sessionId: 'same', requestId: randomUUID(), mode: 'steer', content: [{type: 'text', text: 'steer'}]}})).result.ok, true);
     assert.equal((await api.raw('session/prompt', {request: {sessionId: 'same', requestId: randomUUID(), mode: 'queue', content: [{type: 'text', text: 'hello'}], clientTimeZone: 'Invalid/Zone'}})).result.error?.code, 'session/invalid-time-zone');
     for (const environment of ['one', 'two']) {
       const response = await runtime.dispatchFetch(url('alpha', `/v1/tenants/${tenantId('alpha')}/environments`), {
@@ -193,7 +200,7 @@ test('a native follow reconnect sees the actual active Session and assistant sna
     assert.match(JSON.stringify(opening.assistantStream?.activeAttempt), /still running/);
     const renamed = await api.call<{title: string; seq: number}>('session/rename', {request: {sessionId: 'live', title: 'renamed while running'}});
     assert.equal(renamed.title, 'renamed while running', 'a title edit does not wait behind the model turn');
-    assert.equal((await api.raw('session/prompt', {request: {sessionId: 'live', requestId: randomUUID(), mode: 'queue', content: [{type: 'text', text: 'not admitted'}]}})).result.error?.code, 'session/agent-busy');
+    assert.equal((await api.raw('session/prompt', {request: {sessionId: 'live', requestId: randomUUID(), mode: 'queue', content: [{type: 'text', text: '   '}]}})).result.error?.code, 'gateway/bad-request');
     const page = await api.call<SessionPage>('session/page', {request: {address: {kind: 'session', sessionId: 'live'}, throughSeq: cursor}});
     assert.ok(!page.records.some(record => record.event.type === 'turn/end'));
     await first.close(); streams.splice(streams.indexOf(first), 1);
@@ -219,7 +226,7 @@ test('a native follow reconnect sees the actual active Session and assistant sna
 
 test('native prompt admission returns a credential failure before acknowledging a turn and remains readable after restart', {timeout: 60_000}, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'weft-native-admission-'));
-  let runtime = createRuntime(directory, {browser: true});
+  let runtime = createRuntime(directory, {browser: true, bindings: {MODEL_BACKEND: 'deepseek', DEEPSEEK_API_KEY: ''}});
   const api = nativeClient(() => runtime);
   try {
     await api.call('session/create', {request: {sessionId: 'unconfigured'}});

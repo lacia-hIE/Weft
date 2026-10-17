@@ -15,10 +15,10 @@ import { mountClientInspection } from '../../../packages/client-plugins/src/insp
 import { controlFor, controlScope } from '../../../packages/control-plane/src/object.ts';
 
 type Reader = Awaited<ReturnType<typeof createSessionReader>>;
-export async function sessionRuntime(env: Env, storage: DurableObjectStorage, scope: SessionScope, profile: AgentRevision | undefined, workspaceId: string | null, persona: string, presentation: boolean, reader?: Reader, hooks: Pick<RuntimeOptions, 'onEvent' | 'onFrame'> = {}, cwd = '/workspace') {
+export async function sessionRuntime(env: Env, storage: DurableObjectStorage, scope: SessionScope, profile: AgentRevision | undefined, workspaceId: string | null, persona: string, presentation: boolean, reader?: Reader, hooks: Pick<RuntimeOptions, 'onEvent' | 'onFrame'> = {}, cwd = '/workspace', requireCredential = true) {
   const owner = controlScope(scope.tenantId, scope.environmentId);
   const configuration = await readEnvironmentModelConfiguration(await controlFor(env, owner).nativeModelConfiguration(owner));
-  const model = resolveTenantModel(env, scope.tenantId, profile?.spec.model, configuration);
+  const model = resolveTenantModel(env, scope.tenantId, profile?.spec.model, configuration, requireCredential);
   let activeAgent: Agent | undefined;
   const options: RuntimeOptions = {
     sessionId: scope.sessionId,

@@ -1,0 +1,46 @@
+import { test, expect } from '@playwright/test';
+
+test('official Inbox controls edit, remove and steer durable queued messages across refresh', async ({page, request}) => {
+  test.skip(process.env.WEFT_BROWSER_QUEUE !== '1', 'Requires the controlled streaming model transport');
+  const me = await (await request.get('/v1/me')).json() as {tenantId: string};
+  const environment = 'official-queue-'+crypto.randomUUID().slice(0, 8);
+  const base = `/v1/tenants/${me.tenantId}/environments/${environment}`;
+  expect((await request.post(`/v1/tenants/${me.tenantId}/environments`, {data: {id: environment, name: environment}})).status()).toBe(201);
+  await page.goto(`/agents/${environment}?ui=official`);
+  await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
+  const input = page.locator('[contenteditable=true]');
+  await input.fill('active request');
+  await page.getByRole('button', {name: 'Send message', exact: true}).click();
+  await expect.poll(async () => (await (await request.get('/__test/model-gate')).json()).calls).toBe(1);
+  await expect(page.getByRole('button', {name: 'Stop generating', exact: true})).toBeVisible();
+  await input.fill('queued draft');
+  await page.getByRole('button', {name: 'Queue message', exact: true}).click();
+  await page.getByRole('button', {name: 'Edit queued message', exact: true}).click();
+  await page.getByRole('textbox', {name: 'Edit queued message', exact: true}).fill('edited queue');
+  await page.getByRole('button', {name: 'Save queued message', exact: true}).click();
+  await expect(page.getByText('edited queue', {exact: true})).toBeVisible();
+  await page.reload();
+  await expect(page.getByText('edited queue', {exact: true})).toBeVisible();
+  await page.getByRole('button', {name: 'Remove queued message', exact: true}).click();
+  await expect(page.getByText('edited queue', {exact: true})).toHaveCount(0);
+  await input.fill('steer from original UI');
+  await page.getByRole('button', {name: 'Queue message', exact: true}).click();
+  await page.getByRole('button', {name: 'Steer queued message', exact: true}).click();
+  await expect(page.getByRole('button', {name: 'Remove queued message', exact: true})).toHaveCount(0);
+  await request.post('/__test/model-gate');
+  await expect(page.getByText('Queue response 2', {exact: true})).toBeVisible({timeout: 30_000});
+  await expect(page.getByRole('button', {name: 'Stop generating', exact: true})).toHaveCount(0);
+  const rpc = async (method: string, args: unknown) => {
+    const envelope = await (await request.post(`${base}/native/api/${method}`, {data: {type: 'client-request', rpcId: crypto.randomUUID(), method, payload: {args}}})).json();
+    expect(envelope.result.ok, JSON.stringify(envelope)).toBe(true);
+    return envelope.result.value;
+  };
+  const sessionId: string = (await rpc('session/list', {_request: {}})).items[0].sessionId;
+  const history = await (await request.get(`${base}/sessions/${sessionId}/events`)).json();
+  expect(history.events.filter((event: {type: string}) => event.type === 'turn/end')).toHaveLength(1);
+  expect(JSON.stringify(history.events.filter((event: {type: string}) => event.type === 'user/message'))).toContain('steer from original UI');
+  expect(JSON.stringify(history.events.filter((event: {type: string}) => event.type === 'user/message'))).not.toContain('edited queue');
+  expect((await rpc('session/projections', {request: {sessionId}})).values.inbox).toEqual({'next-turn': [], 'next-step': []});
+  await page.reload();
+  await expect(page.getByText('Queue response 2', {exact: true})).toBeVisible();
+});

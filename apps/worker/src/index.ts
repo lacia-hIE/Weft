@@ -3,7 +3,6 @@ import { createSessionReader } from '../../../packages/harness-runtime/src/sessi
 import { sessionRuntime } from './runtime-options.ts';
 import sessionRemote from '../../../.generated/official-remotes/packages/api/session-controller/typert.remote-client.js';
 import { remoteStream } from '../../../packages/harness-runtime/src/remote-stream.ts';
-import type { SessionPromptRequest } from '@deepseek-ai/dsh-api-session-controller/types';
 import { HttpError, readJson, assertSameOrigin } from './http.ts';
 import { handleWorkspaceRequest } from './workspace-http.ts';
 import { resolveEnvironmentRequest } from "./environment-http.ts";
@@ -19,10 +18,13 @@ import { workspaceIdSchema, workspaceAddress, workspacePath } from '../../../pac
 export { WorkspaceDO, TenantDO, EnvironmentDO };
 import { z } from 'zod';
 import { Context } from '@deepseek-ai/cordis';
+import { createUserMessage } from '@deepseek-ai/dsh-llm';
+import type {} from '@deepseek-ai/dsh-cordis-host-runner';
 import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session';
 import { runHarnessTurn, initializeHarnessSession, renameHarnessSession, renameLiveHarnessSession, selectHarnessModel } from '../../../packages/harness-runtime/src/runtime.ts';
 import { selectLiveHarnessModel } from '../../../packages/harness-runtime/src/model-selection.ts';
-import { turnFailure, type ModelEnvironment, type TurnFailure } from '../../../packages/model-provider/src/index.ts';
+import { NativeSessionHost } from './native-session-host.ts';
+import { turnFailure, ModelConfigurationError, type ModelEnvironment, type TurnFailure } from '../../../packages/model-provider/src/index.ts';
 import type { RuntimeOptions } from '../../../packages/harness-runtime/src/runtime.ts';
 import { RemoteError } from '@deepseek-ai/dsh-typert-protocol';
 import { initializeSessionStorage, SqliteSessionPersistence, readSessionSnapshot } from '../../../packages/session-persistence-do/src/index.ts';
@@ -57,7 +59,28 @@ export class SessionDO extends DurableObject<Env> {
   private getReader() { return this.readerPromise ??= createSessionReader(this.ctx.storage); }
   private tail: Promise<void> = Promise.resolve();
   private readonly requests = new Map<string, AbortController>();
-  private readonly nativeAdmissions = new Map<string, Promise<void>>();
+  private nativeHost: NativeSessionHost | undefined;
+  private nativeHostPromise: Promise<NativeSessionHost> | undefined;
+  private getNativeHost(scope: SessionScope): Promise<NativeSessionHost> {
+    if (this.nativeHostPromise) return this.nativeHostPromise;
+    const pending = this.exclusive(async () => {
+      const stored = this.ctx.storage.sql.exec<{workspace_id: string; agent_document: string}>('SELECT workspace_id,agent_document FROM weft_session_config WHERE id=1').one();
+      const profile = JSON.parse(stored.agent_document) as AgentRevision;
+      if (profile.upstream !== upstream.commit) throw new Error('Agent runtime revision unavailable');
+      const runtime = await sessionRuntime(this.env, this.ctx.storage, scope, profile, stored.workspace_id, profile.spec.persona, true, await this.getReader(), {}, this.nativeCwd(scope.sessionId), false);
+      const owner = controlScope(scope.tenantId, scope.environmentId);
+      const host = await NativeSessionHost.open(runtime.options, runtime.turnTimeoutMs, {
+        waitUntil: promise => {this.ctx.waitUntil(promise);},
+        changed: () => this.publishNativeSummary(scope),
+        failed: failure => controlFor(this.env, owner).nativeEvent(owner, 'api-session/error', [scope.sessionId, failure.message]),
+      });
+      this.nativeHost = host;
+      return host;
+    });
+    this.nativeHostPromise = pending;
+    void pending.catch(() => {if (this.nativeHostPromise === pending) this.nativeHostPromise = undefined;});
+    return pending;
+  }
   private nativeCwd(sessionId: string): string {
     const row = this.ctx.storage.sql.exec<{header_json: string}>('SELECT header_json FROM harness_sessions WHERE id=?', sessionId).toArray()[0];
     return workspacePath(row ? (JSON.parse(row.header_json) as {cwd?: string}).cwd ?? '/workspace' : '/workspace');
@@ -78,10 +101,7 @@ export class SessionDO extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     initializeSessionStorage(ctx.storage);
-    ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_session_config (id INTEGER PRIMARY KEY CHECK(id=1), workspace_id TEXT)');
-    const columns = ctx.storage.sql.exec<{ name: string }>('PRAGMA table_info(weft_session_config)').toArray();
-    if (!columns.some(column => column.name === 'agent_document')) ctx.storage.sql.exec('ALTER TABLE weft_session_config ADD COLUMN agent_document TEXT');
-    if (!columns.some(column => column.name === 'presentation')) ctx.storage.sql.exec('ALTER TABLE weft_session_config ADD COLUMN presentation INTEGER NOT NULL DEFAULT 0');
+    ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_session_config (id INTEGER PRIMARY KEY CHECK(id=1), workspace_id TEXT, agent_document TEXT, presentation INTEGER NOT NULL DEFAULT 0)');
   }
 
   private assertScope(input: SessionScope): SessionScope {
@@ -119,20 +139,19 @@ export class SessionDO extends DurableObject<Env> {
     workspaceId: string | undefined,
     agentBinding?: AgentBinding,
     hooks: Pick<RuntimeOptions, 'onEvent' | 'onFrame'> = {},
-    nativeRequest?: Pick<SessionPromptRequest, 'requestId' | 'clientTimeZone' | 'content'>,
   ): Promise<TurnResult> {
     const scope = this.assertScope(input);
     if (this.requests.has(requestId)) return { ok: false, requestId, error: { code: 'REQUEST_ACTIVE', message: 'Request is already active', status: 409 } };
     if (this.requests.size >= 32) return { ok: false, requestId, error: { code: 'SESSION_BUSY', message: 'Session queue is full', status: 429 } };
     const controller = new AbortController();
     this.requests.set(requestId, controller);
-    let nativeMode = false;
     try {
       return await this.exclusive(async (): Promise<TurnResult> => {
         let timer: ReturnType<typeof setTimeout> | undefined;
         try {
           controller.signal.throwIfAborted();
           const stored = this.ctx.storage.sql.exec<{ workspace_id: string | null; agent_document: string | null; presentation: number }>('SELECT workspace_id,agent_document,presentation FROM weft_session_config WHERE id=1').toArray()[0];
+          if (stored?.presentation === 1) return {ok: false, requestId, error: {code: 'NATIVE_SESSION_REQUIRED', message: 'Use the native Session API for this session', status: 409}};
           let profile = stored?.agent_document ? JSON.parse(stored.agent_document) as AgentRevision : undefined;
           if (stored && agentBinding && (!profile || profile.spec.id !== agentBinding.id || (agentBinding.revision !== undefined && profile.revision !== agentBinding.revision))) {
             return { ok: false, requestId, error: { code: 'AGENT_MISMATCH', message: 'Session is bound to another agent revision; start a new session', status: 409 } };
@@ -148,10 +167,7 @@ export class SessionDO extends DurableObject<Env> {
           }
           const attachedWorkspace = stored ? stored.workspace_id : profile?.spec.workspaceId ?? workspaceId ?? null;
           if (profile && workspaceId !== undefined && workspaceId !== attachedWorkspace) return { ok: false, requestId, error: { code: 'WORKSPACE_MISMATCH', message: 'Workspace conflicts with the published agent', status: 409 } };
-          const presentation = stored?.presentation === 1;
-          nativeMode = presentation;
-          const reader = presentation ? await this.getReader() : undefined;
-          const runtime = await sessionRuntime(this.env, this.ctx.storage, scope, profile, attachedWorkspace, persona, presentation, reader, hooks, presentation ? this.nativeCwd(scope.sessionId) : '/workspace');
+          const runtime = await sessionRuntime(this.env, this.ctx.storage, scope, profile, attachedWorkspace, persona, false, undefined, hooks);
           if (!stored) this.ctx.storage.sql.exec('INSERT INTO weft_session_config (id,workspace_id,agent_document) VALUES (1,?,?)', attachedWorkspace, profile ? JSON.stringify(profile) : null);
           if (profile) await controlFor(this.env, controlScope(scope.tenantId, scope.environmentId)).trackSession(controlScope(scope.tenantId, scope.environmentId), {
             id: scope.sessionId, title: text.slice(0, 80), agentId: profile.spec.id, revision: profile.revision, workspaceId: attachedWorkspace!, updatedAt: new Date().toISOString(),
@@ -159,11 +175,6 @@ export class SessionDO extends DurableObject<Env> {
           timer = setTimeout(() => { controller.abort({ code: 'TURN_TIMEOUT', message: 'Turn deadline exceeded', status: 504 } satisfies TurnFailure); }, runtime.turnTimeoutMs);
           const events = await runHarnessTurn({
             ...runtime.options,
-            onEvent: (event, session) => {
-              runtime.options.onEvent?.(event, session);
-              if (presentation && event.type === 'turn/start') this.ctx.waitUntil(Promise.resolve().then(() => this.publishNativeSummary(scope)));
-            },
-            ...(nativeRequest ? {requestId: nativeRequest.requestId, promptContent: nativeRequest.content.flatMap(part => part.type === 'text' ? [part] : []), ...(nativeRequest.clientTimeZone !== undefined ? {clientTimeZone: nativeRequest.clientTimeZone} : {})} : {}),
             signal: controller.signal,
             cancellationCause: () => controller.signal.reason?.code === 'TURN_TIMEOUT' ? {kind: 'hook', reason: 'turn-deadline'} : {kind: 'user'},
           }, text);
@@ -174,7 +185,6 @@ export class SessionDO extends DurableObject<Env> {
       });
     } finally {
       this.requests.delete(requestId);
-      if (nativeMode) this.ctx.waitUntil(this.publishNativeSummary(scope));
     }
   }
 
@@ -189,6 +199,12 @@ export class SessionDO extends DurableObject<Env> {
       if (!profile) throw new Error('Agent preset not found');
       const snapshot = readSessionSnapshot(this.ctx.storage, SessionId(scope.sessionId));
       if (snapshot?.events.some(event => event.type === 'turn/start')) return false;
+      if (this.nativeHost) {
+        if (this.nativeHost.agent.status === 'running' || this.nativeHost.agent.inbox.nextTurn.length || this.nativeHost.agent.inbox.nextStep.length) return false;
+        const previous = this.nativeHost;
+        this.nativeHost = undefined; this.nativeHostPromise = undefined;
+        await previous.dispose();
+      }
       if (stored && binding && (profile.spec.id !== binding.id || (binding.revision !== undefined && profile.revision !== binding.revision))) {
         if (snapshot?.events.some(event => event.type === 'turn/start')) throw new Error('Session preset is fixed after its first turn');
         profile = await control.agent(owner, binding.id, binding.revision);
@@ -200,7 +216,7 @@ export class SessionDO extends DurableObject<Env> {
       if (stored && workspaceId && stored.workspace_id !== workspaceId && snapshot?.events.some(event => event.type === 'turn/start')) throw new Error('Session workspace is fixed after its first turn');
       const reader = await this.getReader();
       const directory = workspacePath(cwd ?? snapshot?.header.cwd ?? '/workspace');
-      const runtime = await sessionRuntime(this.env, this.ctx.storage, scope, profile, attachedWorkspace, profile.spec.persona, true, reader, {}, directory);
+      const runtime = await sessionRuntime(this.env, this.ctx.storage, scope, profile, attachedWorkspace, profile.spec.persona, true, reader, {}, directory, false);
       if (snapshot) this.ctx.storage.sql.exec('UPDATE harness_sessions SET header_json=? WHERE id=?', JSON.stringify({...snapshot.header, cwd: directory, agentPreset: profile.spec.id}), scope.sessionId);
       await initializeHarnessSession(runtime.options);
       this.ctx.storage.sql.exec('INSERT INTO weft_session_config (id,workspace_id,agent_document,presentation) VALUES (1,?,?,1) ON CONFLICT(id) DO UPDATE SET workspace_id=excluded.workspace_id,agent_document=excluded.agent_document,presentation=1', attachedWorkspace, JSON.stringify(profile));
@@ -285,48 +301,37 @@ export class SessionDO extends DurableObject<Env> {
     const {request} = sessionRemote.methods['session/prompt'].input({strict: true}).create().parse({request: raw});
     if (request.sessionId !== scope.sessionId) throw new Error('Session identity mismatch');
     if (!readSessionSnapshot(this.ctx.storage, SessionId(scope.sessionId))) throw new RemoteError('session/not-found', 'Session not found', {sessionId: request.sessionId});
-    if (request.mode === 'steer') throw new RemoteError('session/agent-busy', 'Steering is not connected yet', {reason: 'steer-unavailable'});
-    if (request.content.some(part => part.type !== 'text')) throw new RemoteError('session/attachment-invalid', 'Attachment admission is not connected yet', {reason: 'attachment-unavailable'});
-    const text = request.content.map(part => part.type === 'text' ? part.text : '').join('');
-    if (!text.trim()) throw new RemoteError('gateway/bad-request', 'Prompt content is empty', {});
-    if (request.clientTimeZone !== undefined) {
-      try { new Intl.DateTimeFormat('en', {timeZone: request.clientTimeZone}); }
-      catch { throw new RemoteError('session/invalid-time-zone', 'Invalid client time zone', {value: request.clientTimeZone}); }
+    try {
+      await (await this.getNativeHost(scope)).prompt(request);
+      await this.ctx.storage.sync();
+    } catch (error) {
+      if (error instanceof ModelConfigurationError && error.code === 'MODEL_NOT_CONFIGURED') throw new RemoteError('session/provider-credentials-unavailable', error.message, {});
+      throw error;
     }
-    const pending = this.nativeAdmissions.get(request.requestId);
-    if (pending) return pending;
-    const seen = this.ctx.storage.sql.exec("SELECT seq FROM harness_events WHERE session_id=? AND json_extract(event_json,'$.data.source.rpcId')=? LIMIT 1", scope.sessionId, request.requestId).toArray().length;
-    if (seen) return;
-    if (this.requests.size > 0) throw new RemoteError('session/agent-busy', 'Native inbox queue admission is not connected yet', {reason: 'queue-unavailable'});
-    let admitted = false;
-    let accept!: () => void;
-    let refuse!: (error: unknown) => void;
-    const admission = new Promise<void>((resolve, reject) => {accept = resolve; refuse = reject;});
-    this.nativeAdmissions.set(request.requestId, admission);
-    const operation = this.execute(scope, text, '', request.requestId, undefined, undefined, {
-      onEvent: event => {
-        if (event.type === 'user/message' && event.data.source.kind === 'user' && 'rpcId' in event.data.source && event.data.source.rpcId === request.requestId) {
-          admitted = true;
-          accept();
-        }
-      },
-    }, request);
-    this.ctx.waitUntil(operation.then(result => {
-      if (!admitted) refuse(!result.ok && result.error.code === 'MODEL_NOT_CONFIGURED'
-        ? new RemoteError('session/provider-credentials-unavailable', result.error.message, {})
-        : new RemoteError('gateway/internal', result.ok ? 'Prompt was not admitted' : result.error.message, {}));
-      else if (!result.ok && result.error.code !== 'TURN_CANCELLED') {
-        const owner = controlScope(scope.tenantId, scope.environmentId);
-        this.ctx.waitUntil(controlFor(this.env, owner).nativeEvent(owner, 'api-session/error', [scope.sessionId, result.error.message]));
-      }
-    }, error => { refuse(error); }));
-    try { await admission; await this.ctx.storage.sync(); }
-    finally { this.nativeAdmissions.delete(request.requestId); }
+  }
+
+  async nativeUpdateQueue(input: SessionScope, raw: unknown): Promise<void> {
+    const scope = this.assertScope(input);
+    const {request} = sessionRemote.methods['session/updateQueue'].input({strict: true}).create().parse({request: raw});
+    if (request.sessionId !== scope.sessionId) throw new Error('Session identity mismatch');
+    if (!readSessionSnapshot(this.ctx.storage, SessionId(scope.sessionId))) throw new RemoteError('session/queue-item-not-found', 'Queued item is no longer pending', {itemId: request.itemId});
+    await (await this.getNativeHost(scope)).updateQueue(request);
+    await this.ctx.storage.sync();
   }
 
   async nativeCancel(input: SessionScope): Promise<void> {
     this.assertScope(input);
-    for (const id of this.requests.keys()) await this.cancel(input, id);
+    if (this.nativeHost) this.nativeHost.cancel();
+    else for (const id of this.requests.keys()) await this.cancel(input, id);
+  }
+
+  /** Trusted plugin lifecycle feedback uses the native durable inbox. */
+  async nativePluginContext(input: SessionScope, text: string, wakeup: boolean): Promise<void> {
+    const scope = this.assertScope(input);
+    z.string().min(1).max(32_768).parse(text);
+    z.boolean().parse(wakeup);
+    await (await this.getNativeHost(scope)).deliver(createUserMessage({content: [{type: 'text', text}], source: {kind: 'cordis-host-runner'}}), wakeup);
+    await this.ctx.storage.sync();
   }
 
   /** Internal binding transport; external requests are authenticated by the entry Worker. */
@@ -378,6 +383,8 @@ export class SessionDO extends DurableObject<Env> {
 
   async events(input: SessionScope): Promise<readonly SessionEvent[] | undefined> {
     const scope = this.assertScope(input);
+    const native = await this.nativeHostPromise?.catch(() => undefined);
+    await native?.whenIdle();
     return this.exclusive(async () => {
       const ctx = new Context();
       try {

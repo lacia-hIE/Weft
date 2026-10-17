@@ -172,6 +172,12 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
         value = await (await target.stub.nativeSelectModel(target.scope, input)).json();
         break;
       }
+      case 'session/updateQueue': {
+        const {request: input} = sessionRemote.methods[endpoint].input({strict: true}).create().parse(payload.args);
+        const target = session(input.sessionId);
+        await target.stub.nativeUpdateQueue(target.scope, input);
+        value = {accepted: true}; break;
+      }
       case 'session/cancel': {
         const {request: input} = sessionRemote.methods[endpoint].input({strict: true}).create().parse(payload.args);
         const target = session(input.sessionId);

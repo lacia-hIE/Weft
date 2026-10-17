@@ -71,9 +71,17 @@ test('native Workspace commands, real directories, membership, pins, archival an
     try {
       assert.equal((await control.next()).type, 'baseline');
       await api.call('session/rename', {request: {sessionId: session.sessionId, title: 'control stream title'}});
-      const frame = await control.next();
-      assert.equal(frame.type, 'projection');
-      assert.match(JSON.stringify(frame), /control stream title/);
+      let titleSeen = false;
+      for (let index = 0; index < 8 && !titleSeen; index++) {
+        const frame = await control.next();
+        assert.equal(frame.type, 'projection');
+        if (frame.type === 'projection' && frame.key === 'title') {
+          assert.equal(frame.sessionId, session.sessionId);
+          assert.equal(frame.value, 'control stream title');
+          titleSeen = true;
+        }
+      }
+      assert.equal(titleSeen, true, 'other native projection updates may precede the title');
     } finally { await control.close(); }
     const catalog = await api.call<ModelCatalog>('session/modelCatalog', {});
     assert.deepEqual(catalog.default, {provider: 'validation', model: 'scripted'});

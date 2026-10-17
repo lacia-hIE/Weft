@@ -36,10 +36,26 @@ export interface RuntimeOptions {
   defaultModel?: () => import('@deepseek-ai/dsh-agent').ModelSelection;
 }
 
-/** Run the unchanged upstream driver and return its committed event vocabulary. */
-async function withHarnessSession<T>(options: RuntimeOptions, operation: (ctx: Context, agent: Agent) => Promise<T>): Promise<T> {
+export interface HarnessSessionHost {
+  ctx: Context;
+  agent: Agent;
+  dispose(): Promise<void>;
+}
+
+/** A real native root and Agent; its owner chooses the lifetime, not a model turn. */
+export async function openHarnessSession(options: RuntimeOptions): Promise<HarnessSessionHost> {
   const ctx = new Context();
   let owned: Agent | undefined;
+  let closing: Promise<void> | undefined;
+  const dispose = () => closing ??= (async () => {
+    try { await ctx.fiber.dispose(); }
+    finally {
+      if (owned) {
+        options.onAgentDisposed?.(owned);
+        options.onSessionDisposed?.(owned.session);
+      }
+    }
+  })();
   try {
     options.signal?.throwIfAborted();
     if (options.onEvent) ctx.on('session/event', (session, event) => { options.onEvent!(structuredClone(event), session); });
@@ -71,18 +87,15 @@ async function withHarnessSession<T>(options: RuntimeOptions, operation: (ctx: C
     }, {prepend: true});
     options.signal?.throwIfAborted();
     options.onAgent?.(handle.agent, ctx);
-    return await operation(ctx, handle.agent);
-  } finally {
-    try { await ctx.fiber.dispose(); }
-    finally {
-      // Root listeners can unwind before their child Agent disposal event.
-      // The owner must release its borrowed read handle explicitly.
-      if (owned) {
-        options.onAgentDisposed?.(owned);
-        options.onSessionDisposed?.(owned.session);
-      }
-    }
-  }
+    return {ctx, agent: handle.agent, dispose};
+  } catch (error) { await dispose(); throw error; }
+}
+
+/** One-shot callers share the exact same native assembly and dispose explicitly. */
+async function withHarnessSession<T>(options: RuntimeOptions, operation: (ctx: Context, agent: Agent) => Promise<T>): Promise<T> {
+  const host = await openHarnessSession(options);
+  try { return await operation(host.ctx, host.agent); }
+  finally { await host.dispose(); }
 }
 
 /** Create or restore the real native Agent/Session without submitting a prompt. */

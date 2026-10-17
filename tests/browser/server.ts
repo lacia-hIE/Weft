@@ -2,10 +2,13 @@ import { createServer } from "node:http";
 import { Readable } from "node:stream";
 import { readFileSync } from "node:fs";
 import { createRuntime } from "../helpers/miniflare.ts";
+import { modelGate } from './model-gate.ts';
 
 // Test-only bridge. Production serves directly from the authenticated Worker.
 // Native Access identities are supplied by Miniflare, never application headers.
 const live = process.env.WEFT_BROWSER_LIVE === "1";
+const queue = process.env.WEFT_BROWSER_QUEUE === '1' ? modelGate() : undefined;
+if (live && queue) throw new Error('Choose a live provider or the controlled queue provider');
 const key = live
   ? readFileSync(".env", "utf8").match(
       /^DEEPSEEK_API_KEY\s*=\s*["']?([^\r\n"']+)/m,
@@ -19,11 +22,17 @@ const runtime = createRuntime(
         bindings: { MODEL_BACKEND: "deepseek", DEEPSEEK_API_KEY: key },
         browser: true,
       }
-    : { browser: true },
+    : queue ? {browser: true, bindings: {MODEL_BACKEND: 'deepseek', DEEPSEEK_API_KEY: 'queue-browser-fixture', DEEPSEEK_BASE_URL: 'https://browser-model.test/anthropic'}, outbound: queue.outbound} : { browser: true },
 );
 await runtime.ready;
 const server = createServer(async (request, response) => {
   try {
+    if (queue && request.url === '/__test/model-gate') {
+      if (request.method === 'POST') queue.release();
+      response.writeHead(200, {'content-type': 'application/json'});
+      response.end(JSON.stringify({calls: queue.calls()}));
+      return;
+    }
     const buffers: Buffer[] = [];
     for await (const part of request) buffers.push(Buffer.from(part));
     const headers = new Headers();

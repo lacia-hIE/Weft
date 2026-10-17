@@ -91,7 +91,7 @@ export function tenantModelHost(env: ModelEnvironment, tenantId: string) {
 }
 
 /** Host-owned resolution: HTTP clients cannot select credentials or provider endpoints. */
-export function resolveTenantModel(env: ModelEnvironment, tenantId: string, selectedModel?: { provider: "deepseek"; name: string }, settings?: EnvironmentModelConfig): ResolvedModel {
+export function resolveTenantModel(env: ModelEnvironment, tenantId: string, selectedModel?: { provider: "deepseek"; name: string }, settings?: EnvironmentModelConfig, requireCredential = true): ResolvedModel {
   if (env.MODEL_BACKEND === 'scripted') {
     return { model: { provider: 'validation', model: 'scripted' }, adapter: new ScriptedAdapter(), turnTimeoutMs: 60_000 };
   }
@@ -99,7 +99,7 @@ export function resolveTenantModel(env: ModelEnvironment, tenantId: string, sele
   try {
     const host = tenantModelHost(env, tenantId);
     const apiKey = settings ? settings.apiKey : host.apiKey;
-    if (!apiKey) throw new ModelConfigurationError('MODEL_NOT_CONFIGURED');
+    if (!apiKey && requireCredential) throw new ModelConfigurationError('MODEL_NOT_CONFIGURED');
     const model = settings?.defaultModel?.model ?? selectedModel?.name ?? host.model;
     const baseURL = settings?.providerOptions.baseURL ?? host.baseURL;
     // HTTPS is mandatory, including custom gateways. No client-provided URL is accepted.
@@ -114,7 +114,7 @@ export function resolveTenantModel(env: ModelEnvironment, tenantId: string, sele
     let current = settings;
     let connection = connectionFor(settings);
     const credentials = new WeakMap<typeof connection, string>();
-    credentials.set(connection, apiKey);
+    if (apiKey) credentials.set(connection, apiKey);
     const currentSelection = (): ModelSelection => {
       const selection = current?.defaultModel;
       return {provider: 'deepseek-official', model: selection?.model ?? selectedModel?.name ?? host.model,
@@ -122,7 +122,11 @@ export function resolveTenantModel(env: ModelEnvironment, tenantId: string, sele
     };
     const adapter: SafeDeepSeekAdapter = new SafeDeepSeekAdapter({
       options: () => connection,
-      resolveAuth: async snapshot => ({ headers: { 'x-api-key': credentials.get(snapshot)! } }),
+      resolveAuth: async snapshot => {
+        const key = credentials.get(snapshot);
+        if (!key) throw new LlmError('No model credential configured', 'MISSING_CREDENTIAL');
+        return {headers: {'x-api-key': key}};
+      },
       discoverModels: async provider => {
         const ids = [...new Set([...connection.models.map(entry => entry.id), currentSelection().model])];
         return Promise.all(ids.map(id => adapter.resolveModel(provider, id)));

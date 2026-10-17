@@ -27,6 +27,8 @@
 
 原生会话宿主适配位于 `apps/worker/src/native-http.ts`，入口为环境 API 下的 `/native/api/<endpoint>` 与 `/native/streams/session/follow`。它消费官方 Connection 请求信封和生成的参数、结果解析器，连接真实 SessionDO。历史分页与实时订阅复用官方 SessionHistoryController / SessionQuery；执行仍由原生 AgentLoop 驱动。活动会话的读取借用真实 Session，不重复取得写入权，也不把运行中的流当成崩溃恢复。
 
+`NativeSessionHost` 让 SessionDO 在热实例内持有真实 Agent 和 Cordis Context，轮次结束不会销毁宿主。原版 Inbox 保存排队、编辑、删除及 steer 的 splice 事件；重复 RPC 不会重新插入已经移除的消息。取消保留待处理消息，下一次唤醒后继续按原版轮次规则处理。插件生命周期消息也通过真实 Inbox 投递，可只注入上下文而不调用模型。DO 重建恢复持久事件，不承诺保留热内存；这不引入常驻 Node 进程。原生会话拒绝通过过渡消息接口再次取得写入权。
+
 UI 资产由没有公网入口的 Worker 通过 Static Assets binding 读取；公开入口保持独立，并先验证原生 Access 身份，再通过 Service Binding 调用资产 Worker。这为完整官方客户端及文档预览分块提供资产承载方式。
 
 官方入口适配在 `apps/web/src/official/`。它调用原版 AppWebEntry，提供环境范围内的 Fetch/SSE transport 和浏览器存储命名空间，由官方模块系统、Loader 和 Slots 挂载界面。页面内部的相对 HTTP 请求通过同源 base 路径指向该环境。原版 Loader 表达式及动态客户端插件依赖 Function，因此仅官方环境文档启用对应 CSP；管理页面维持原来的策略。
@@ -35,7 +37,7 @@ UI 资产由没有公网入口的 Worker 通过 Static Assets binding 读取；�
 
 配置宿主位于 `packages/control-plane/src/native-settings.ts`，复用官方 DeepSeek API-key、默认模型、开发工具和欢迎确认的 Config schema，以及原生 volatile form、plainConfig 和 secret redaction。官方 Models 编辑器使用原版 composition entry ID `llm-deepseek`，对应 API-key provider 包；运行路由使用 `deepseek-official`。SQLite 保存用户覆盖层和修订号，过期表单拒绝覆盖新版本；数组替换和路径编辑保留继承/重置语义。配置不伪装为本地 YAML 文件。
 
-`DurableCredentials` 实现原生 CredentialProvider seam，按环境保存凭据引用与插件记录。客户端仅能写入密钥、读取配置状态；实际值只经服务端可信绑定送往执行宿主。模型请求捕获一致的 endpoint/credential 配置快照。运行中的设置变更在下一次原生 prompt assembly 前重新解析，不改动已经开始的模型请求。
+`DurableCredentials` 实现原生 CredentialProvider seam，按环境保存凭据引用与插件记录。客户端仅能写入密钥、读取配置状态；实际值只经服务端可信绑定送往执行宿主。平台回退密钥限定服务端配置的完整 endpoint；环境更改域名或 base path 后须提供自己的密钥。模型请求捕获一致的 endpoint/credential 配置快照。运行中的设置变更在下一次原生 prompt assembly 前重新解析，不改动已经开始的模型请求。
 
 `$events`、`session/control` 与 `workspace/follow` 提供环境内的真实通知及重新连接基线。通知本身不持久化，重连重新读取 DO 状态；观察者退出不终止 Agent 执行。浏览器切换采用完整导航，并按租户与环境划分原版客户端持久化键，防止同名 Session 缓存串用。
 
@@ -43,15 +45,15 @@ UI 资产由没有公网入口的 Worker 通过 Static Assets binding 读取；�
 
 已实现并验证环境目录创建、配置/文件/插件/同名会话的环境隔离及重启恢复。浏览器验证覆盖目录进入、环境切换卸载及既有工作台回归。旧数据采用与迁移不再是验收目标。
 
-已接通官方协议的会话创建、列表、分页、订阅、标题、模型选择、提示词和取消，以及工作区、目录选择和全局通知。模型投影复用官方定义，请求装配复用原生模型切换钩子；冷启动后恢复所选路由。完整原生 Inbox 的排队/steer、附件、子 Agent 与更多业务投影仍需接入。提示词只有在原生用户消息入日志并同步存储后才确认接受；缺失能力明确拒绝。
+已接通官方协议的会话创建、列表、分页、订阅、标题、模型选择、提示词、取消，以及工作区、目录选择和全局通知。模型投影复用官方定义，请求装配复用原生模型切换钩子；冷启动后恢复所选路由。原生 Inbox 已接通排队、编辑、删除、steer 和持久恢复；附件、子 Agent 与更多业务投影仍需接入。提示词只有在原生 Inbox 入队事件同步存储后才确认接受，用户消息在原版驱动消费时进入历史；缺失能力明确拒绝。
 
 官方 Remote 的 30 个包与官方 Web 目录的 69 个客户端模块已使用上游生成器、各包自身的构建配置成功生成。标准 `npm run build` 已包含这条完整构建链，确保全新的 Cloudflare Git 构建也会生成官方产物；构建报告位于 `.generated/official-ui/build-report.json`。
 
-Boot Graph 由真实客户端工厂产物生成，复用官方 `orderByModuleGraph` 和 `parseBootManifest` 排序与校验。当前 Web profile 激活 67 个模块，按上游条件排除仅 Desktop 启用的 product-analytics 与 sidebar-browser。`/agents/:environmentId?ui=official` 已运行这条官方启动链；无参数入口仍保留过渡工作台，直至下面的兼容与完整功能验收通过。
+Boot Graph 由真实客户端工厂产物生成，复用官方 `orderByModuleGraph` 和 `parseBootManifest` 排序与校验。当前 Web profile 激活 67 个模块，按上游条件排除仅 Desktop 启用的 product-analytics 与 sidebar-browser。`/agents/:environmentId?ui=official` 已运行这条官方启动链；无参数入口仍保留过渡工作台，直至下面的完整功能验收通过。
 
 以下工作仍未完成，目标保持进行中：
 
-1. 继续补齐预设、权限、文件及更多插件的原生配置和 Host 接口，以及完整 Inbox 和业务投影；当前未连接的能力返回明确错误。
+1. 继续补齐预设、权限、文件及更多插件的原生配置和 Host 接口、业务投影，并完成 Inbox 的原版页面交互验收；当前未连接的能力返回明确错误。
 2. 验证实时控制流在并发写入、长任务、断线与 DO 重建后的完整一致性，并解决 Session 目录当前 200 条上限。
 3. 验收后将官方 AppWebEntry 设为默认环境入口，并通过独立扩展补充 Weft 导航。
 4. 原生动态插件与官方模块系统、检查工具、配置生命周期的对接。

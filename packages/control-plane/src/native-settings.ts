@@ -121,7 +121,11 @@ export class NativeSettings {
   }
   async modelConfiguration() {
     const provider = this.value(MODEL_NAMESPACE);
-    const key = await this.credentials.resolve(credentialRef(String(provider.apiKeyEnv)));
+    let key = await this.credentials.resolve(credentialRef(String(provider.apiKeyEnv)));
+    // An editable endpoint must never receive a host-owned fallback credential.
+    // Compare the full base path too: same-origin custom gateways are still custom.
+    const endpoint = (value: unknown) => new URL(String(value)).href.replace(/\/+$/, '');
+    if (key && key.source !== 'environment' && endpoint(provider.baseURL) !== endpoint(this.host.providerBase().baseURL)) key = undefined;
     const defaults = this.value(DEFAULT_MODEL_NAMESPACE);
     const explicit = Object.keys(this.row(DEFAULT_MODEL_NAMESPACE).user).length > 0;
     return {providerOptions: provider as DeepSeekOptions, ...(key ? {apiKey: key.value} : {}), ...(explicit ? {defaultModel: {provider: String(defaults.provider), model: String(defaults.model), ...(defaults.reasoningEffort === undefined ? {} : {reasoningEffort: String(defaults.reasoningEffort)})}} : {})};
