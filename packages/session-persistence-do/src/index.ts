@@ -19,6 +19,26 @@ type HeaderRow = {
   writer: string | null;
 };
 
+export interface SessionSnapshot {
+  header: SessionHeader;
+  events: readonly SessionEvent[];
+}
+
+/** Read one coherent committed log cut without waiting behind an active model turn. */
+export function readSessionSnapshot(storage: DurableObjectStorage, id: SessionId): SessionSnapshot | undefined {
+  return storage.transactionSync(() => {
+    const row = storage.sql.exec<HeaderRow>('SELECT * FROM harness_sessions WHERE id = ?', id).toArray()[0];
+    if (!row) return undefined;
+    const header = materializeCreateHeader(JSON.parse(row.header_json));
+    assertStoredId(id, header);
+    assertVersion(header);
+    const events = validateStoredEvents(header, storage.sql.exec<{event_json: string}>('SELECT event_json FROM harness_events WHERE session_id = ? ORDER BY seq', id).toArray().map(row => JSON.parse(row.event_json)));
+    assertContiguous(id, events, 0);
+    if (events.length !== row.event_count) throw new Error('Committed event count does not match the session log');
+    return { header, events };
+  });
+}
+
 /** Called once by the owning DO constructor, never by an individual Context. */
 export function initializeSessionStorage(storage: DurableObjectStorage): void {
   storage.transactionSync(() => {

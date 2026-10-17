@@ -18,6 +18,10 @@ body {
   justify-content: space-between;
   gap: 24px;
 }
+.environment-list header > a {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
 .environment-list h1 {
   font-size: 30px;
   font-weight: 550;

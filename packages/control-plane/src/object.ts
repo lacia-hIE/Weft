@@ -190,7 +190,7 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
     if (previous)
       record = {
         ...record,
-        title: (JSON.parse(previous.document) as SessionRecord).title,
+        title: (JSON.parse(previous.document) as SessionRecord).title || record.title,
       };
     this.ctx.storage.sql.exec(
       "INSERT INTO sessions VALUES (?,?) ON CONFLICT(id) DO UPDATE SET document=excluded.document",
@@ -198,6 +198,10 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
       JSON.stringify(record),
     );
     await this.ctx.storage.sync();
+  }
+  async sessionIndex(scope: ControlScope): Promise<SessionRecord[]> {
+    this.scope(scope);
+    return this.ctx.storage.sql.exec<{document: string}>("SELECT document FROM sessions ORDER BY json_extract(document,'$.updatedAt') DESC LIMIT 200").toArray().map(row => JSON.parse(row.document) as SessionRecord);
   }
   async publishClient(
     tenantId: ControlScope,

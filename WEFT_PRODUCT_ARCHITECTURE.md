@@ -7,6 +7,8 @@
 >
 > **名称说明：** Weft 意为织物的「纬线」，寓意用模型、工具、技能、工作区和流程编织 Agent。这是项目工作名，域名、商标和开源项目重名尚未完成核验。
 
+> **2026-10-17 产品边界更新：** Weft 管理多套 Harness 环境；Agent 列表中的一个 Agent 对应一套独立 Environment，用户进入后使用完整官方 Harness Web UI。环境内部的模型、插件、预设、会话和工作区沿用 Harness 的组织方式。Environment、Harness 预设和 Session 是三个不同层次。当前优先验证原生运行、隔离、兼容性与代码可维护性，成本优化后置。下文的异步 Model Runner、预算和产品扩展保留为提案，不作为当前已实现能力；具体实现及官方 UI 剩余验收以 [多环境与官方 UI](docs/architecture/agent-environments.md) 为准。
+
 ## 0. 一页决策
 
 **Weft 不是一个“帮用户开通 AI 聊天页面”的 SaaS，也不是把 DeepSeek Harness 运行在 Cloudflare Container 里。** Weft 是一个让用户**自由拼装、运行、复用和发布 Agent** 的云原生运行平台：保留 Cordis 的插件机制与 DeepSeek Harness 的 Agent 行为契约，将执行驱动改造成适用于 Durable Objects 的**可恢复、零常驻状态机**，并用 Cloudflare Computer 提供持久工作区与无容器工具执行。

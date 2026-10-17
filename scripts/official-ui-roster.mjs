@@ -3,8 +3,8 @@ import { resolve } from "node:path";
 import { parse } from "yaml";
 import ts from "typescript";
 
-/** Read the official web profile's browser roster and its declared dependencies. */
-export function officialUiRoster(upstreamDirectory) {
+/** The exact static module table shared by official bundles and the Web kernel. */
+export function officialPlatformModules(upstreamDirectory) {
   const source = ts.createSourceFile(
     "platform.ts",
     readFileSync(
@@ -31,7 +31,13 @@ export function officialUiRoster(upstreamDirectory) {
     !array.elements.every(ts.isStringLiteral)
   )
     throw new Error("Unsupported official platform module declaration");
-  const baseline = new Set(array.elements.map((element) => element.text));
+  return array.elements.map((element) => element.text);
+}
+
+/** Read the official browser roster; activation additionally honors the Web profile. */
+export function officialUiRoster(upstreamDirectory, {profile = 'all'} = {}) {
+  if (!['all', 'web'].includes(profile)) throw new Error('Unsupported client profile');
+  const baseline = new Set(officialPlatformModules(upstreamDirectory));
   const packages = new Map();
   const packageRoot = resolve(upstreamDirectory, "packages");
   for (const group of readdirSync(packageRoot, { withFileTypes: true })) {
@@ -58,14 +64,22 @@ export function officialUiRoster(upstreamDirectory) {
     },
   );
   const names = new Set();
+  const disabled = new Set();
   const collect = (rows) => {
     for (const row of rows) {
       if (row.insert) collect(row.insert);
       if (
         row.name &&
         packages.get(row.name)?.manifest.dsh?.client?.platform === "web"
-      )
-        names.add(row.name);
+      ) {
+        if (profile === 'web' && row.disabled !== undefined && row.disabled !== false) {
+          // Interpret only the pinned official profile condition, never eval
+          // arbitrary YAML expressions in a build or the Cloudflare runtime.
+          if (row.disabled !== true && row.disabled !== "ctx.get('profileContext')?.name !== 'desktop'")
+            throw new Error(`Unsupported Web activation condition for ${row.name}`);
+          disabled.add(row.name);
+        } else names.add(row.name);
+      }
     }
   };
   collect(patch);
@@ -78,6 +92,7 @@ export function officialUiRoster(upstreamDirectory) {
     for (const dependency of record.manifest.dsh.client.inject ?? []) {
       if (baseline.has(dependency)) continue;
       if (names.has(dependency)) continue;
+      if (disabled.has(dependency)) throw new Error(`Active Web client ${name} requires disabled ${dependency}`);
       names.add(dependency);
       visit(dependency);
     }

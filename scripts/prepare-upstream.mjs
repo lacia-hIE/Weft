@@ -40,17 +40,25 @@ writeFileSync(resolve(output, 'upstream-source.json'), JSON.stringify({ director
 writeFileSync(resolve(output, 'upstream.source.tsconfig.json'), JSON.stringify({ compilerOptions: { paths } }, null, 2) + '\n');
 // Vendored libraries use their own relaxed compiler settings upstream. Emit their
 // declarations separately so Weft and Harness packages retain strict checking.
-const vendorNames = ['cordis', 'cosmokit', 'schemastery'];
+const vendorNames = {cordis: 'cordis', cosmokit: 'cosmokit', schemastery: 'schemastery', loader: 'cordis-plugin-loader', include: 'cordis-plugin-include'};
 const declarationOnlyPackages = {
   '@deepseek-ai/dsh-repeat-tool-reminder': 'packages/guard/repeat-tool-reminder/src/index.ts',
   // Inspection references the gateway's types; its Node HTTP implementation is
   // never bundled into Weft. Consume its own declarations at this boundary.
   '@deepseek-ai/dsh-api-gateway': 'packages/api/gateway/src/index.ts',
+  // History references host composition through subagent/preset types. Those
+  // Node-only packages are declaration boundaries, never runtime substitutes.
+  '@deepseek-ai/dsh-subagent': 'packages/subagent/subagent/src/index.ts',
+  '@deepseek-ai/dsh-agent-preset-registry': 'packages/preset/agent-preset-registry/src/index.ts',
+  '@deepseek-ai/dsh-app-boot': 'packages/boot/app-boot/src/index.ts',
+  '@deepseek-ai/dsh-cmdline': 'packages/boot/cmdline/src/index.ts',
+  '@deepseek-ai/dsh-hmr': 'packages/boot/hmr/src/index.ts',
+  '@deepseek-ai/dsh-config-editor': 'packages/boot/config-editor/src/index.ts',
 };
 // This pinned upstream module has a broad-union MessageSource spread which its
 // standalone source check rejects. Consume its declarations without changing it;
 // real workerd tests verify the plugin's runtime behavior and event vocabulary.
-const vendorEntries = [...vendorNames.map(name => resolve(checkout, 'vendor', name, 'src/index.ts')), ...Object.values(declarationOnlyPackages).map(path => resolve(checkout, path))];
+const vendorEntries = [...Object.keys(vendorNames).map(name => resolve(checkout, 'vendor', name, 'src/index.ts')), ...Object.values(declarationOnlyPackages).map(path => resolve(checkout, path))];
 const absolutePaths = Object.fromEntries(Object.entries(config.config.compilerOptions.paths).map(([name, targets]) => [
   name, targets.map(target => resolve(checkout, target)),
 ]));
@@ -68,7 +76,7 @@ const declarationProgram = ts.createProgram(vendorEntries, {
 const emitted = declarationProgram.emit();
 if (emitted.emitSkipped) throw new Error('Unable to emit pinned vendor declarations');
 const typePaths = { ...paths };
-for (const name of vendorNames) typePaths[`@deepseek-ai/${name}`] = [`./types/vendor/${name}/src/index.d.ts`];
+for (const [name, moduleName] of Object.entries(vendorNames)) typePaths[`@deepseek-ai/${moduleName}`] = [`./types/vendor/${name}/src/index.d.ts`];
 for (const [name, path] of Object.entries(declarationOnlyPackages)) typePaths[name] = [`./types/${path.replace(/\.ts$/, '.d.ts')}`];
 writeFileSync(resolve(output, 'upstream.tsconfig.json'), JSON.stringify({ compilerOptions: { paths: typePaths } }, null, 2) + '\n');
 console.log(`Pinned Harness ${actual.slice(0, 12)}; generated source aliases.`);

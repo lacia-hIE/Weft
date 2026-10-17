@@ -118,6 +118,7 @@ export function createRuntime(
         modules: true,
         scriptPath: resolve("dist/assets-worker.js"),
         compatibilityDate: "2026-07-30",
+        assets: { directory: resolve("dist/public"), binding: "ASSETS", run_worker_first: true, routerConfig: {has_user_worker: true}, assetConfig: {html_handling: "none", not_found_handling: "none"} },
       },
     ],
   });

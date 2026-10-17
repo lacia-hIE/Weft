@@ -28,4 +28,19 @@
 npm run build:official-ui
 ```
 
-产物和报告在 `.generated/official-remotes/` 与 `.generated/official-ui/`，不会作为已接入的生产 UI 发布。当前环境入口仍是过渡工作台；完整官方 UI 的 Host 接口、流和启动链路尚未接通，目标仍未完成。参见 [架构与剩余验收](../architecture/agent-environments.md)。
+产物和报告在 `.generated/official-remotes/` 与 `.generated/official-ui/`。Boot Graph 与静态资源生成到 `.generated/official-web-assets/`，使用官方模块排序函数及 manifest parser 验证；当前激活 67 个 Web 模块，按上游条件排除 Desktop 专用的 product-analytics 和 sidebar-browser。它们尚未挂入生产环境入口。
+
+## 原生会话 Host 验证
+
+新增 5 项真实 workerd 测试，覆盖官方生成契约和真实 SessionDO：
+
+- 在首条提示词前创建真实空白 Session；只复用空白会话，已使用的会话创建新身份。
+- 官方历史分页、事件连续性、assistant 帧、消息请求 ID、多个文本块、时区及重复提交去重。
+- 原生标题事件与投影、运行中修改标题、非法标题拒绝，以及进程重建后的恢复。
+- 延迟 DeepSeek 协议流中重连，看到真实活动 Session 与已积累 assistant 输出；关闭所有订阅后模型仍继续执行。
+- 取消到达原生 Agent 并写入 `aborted/user` 终止事件；凭据缺失在确认提示词之前返回失败。
+- 同名会话的环境隔离；未知接口、未接入的 workspace catalog、steer 与运行中 Inbox 排队明确报告不可用。
+
+完整 workerd 回归共 42 项通过，严格类型检查通过；3 项现有浏览器回归通过，两个 Worker 的预构建部署检查通过。UI 资产改为私有 Worker 的 Static Assets binding，公开主 Worker 仍先验证原生 Access 身份。本地 Miniflare 需显式设置资产 router 的 `has_user_worker`，保证与生产的 Worker-first 路由一致。
+
+当前环境入口仍是过渡工作台。原生会话 Host 是完整官方 UI 的基础，不能计为完整官方客户端接入。工作区、设置、插件配置、全局事件及 AppWebEntry 启动仍需完成；参见 [架构与剩余验收](../architecture/agent-environments.md)。

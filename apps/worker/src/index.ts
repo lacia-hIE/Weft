@@ -1,28 +1,30 @@
 import { DurableObject } from 'cloudflare:workers';
+import { createSessionReader } from '../../../packages/harness-runtime/src/session-reader.ts';
+import { sessionRuntime } from './runtime-options.ts';
+import sessionRemote from '../../../.generated/official-remotes/packages/api/session-controller/typert.remote-client.js';
+import { remoteStream } from '../../../packages/harness-runtime/src/remote-stream.ts';
+import type { SessionPromptRequest } from '@deepseek-ai/dsh-api-session-controller/types';
 import { HttpError, readJson, assertSameOrigin } from './http.ts';
 import { handleWorkspaceRequest } from './workspace-http.ts';
 import { resolveEnvironmentRequest } from "./environment-http.ts";
 import { handleControlRequest } from './control-http.ts';
+import { handleNativeRequest } from './native-http.ts';
 import { TenantDO, EnvironmentDO, controlFor, controlScope } from '../../../packages/control-plane/src/object.ts';
 import type { AgentRevision } from '../../../packages/control-plane/src/contracts.ts';
 import { id } from '../../../packages/control-plane/src/contracts.ts';
-import { mountPlugins } from '../../../packages/plugin-runtime/src/catalog.ts';
-import { CLIENT_PLUGIN_GUIDE, mountClientPublisher } from '../../../packages/client-plugins/src/tool.ts';
-import { mountClientInspection } from '../../../packages/client-plugins/src/inspect.ts';
 import upstream from '../../../upstream.lock.json';
 import { serveUi } from './ui-http.ts';
-import { mountWorkspace } from '../../../packages/workspace/src/provider.ts';
 import { WorkspaceDO } from '../../../packages/workspace/src/object.ts';
 import { workspaceIdSchema, workspaceAddress } from '../../../packages/workspace/src/protocol.ts';
 export { WorkspaceDO, TenantDO, EnvironmentDO };
 import { z } from 'zod';
 import { Context } from '@deepseek-ai/cordis';
 import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session';
-import { runHarnessTurn } from '../../../packages/harness-runtime/src/runtime.ts';
-import { resolveTenantModel, turnFailure, type ModelEnvironment, type TurnFailure } from '../../../packages/model-provider/src/index.ts';
+import { runHarnessTurn, initializeHarnessSession, renameHarnessSession, renameLiveHarnessSession } from '../../../packages/harness-runtime/src/runtime.ts';
+import { turnFailure, type ModelEnvironment, type TurnFailure } from '../../../packages/model-provider/src/index.ts';
 import type { RuntimeOptions } from '../../../packages/harness-runtime/src/runtime.ts';
-import { registerIdentityTool } from '../../../packages/harness-runtime/src/validation-tools.ts';
-import { initializeSessionStorage, SqliteSessionPersistence } from '../../../packages/session-persistence-do/src/index.ts';
+import { RemoteError } from '@deepseek-ai/dsh-typert-protocol';
+import { initializeSessionStorage, SqliteSessionPersistence, readSessionSnapshot } from '../../../packages/session-persistence-do/src/index.ts';
 import { authenticateAccess, sessionAddress, scopeSchema, type SessionScope } from '../../../packages/tenant/src/index.ts';
 
 export interface Env extends ModelEnvironment {
@@ -37,6 +39,12 @@ export interface Env extends ModelEnvironment {
 
 const agentBindingSchema = z.object({ id, revision: z.number().int().positive().optional() }).strict();
 type AgentBinding = z.infer<typeof agentBindingSchema>;
+// Keep the DO RPC projection finite; the official projection map is augmented
+// by every client package and contains recursively defined JSON contracts.
+interface NativeSummary {
+  sessionId: string; updatedAt: number; running: boolean; agentAvailable: boolean; blank: boolean;
+  cwd?: string; formatStatus: 'current';
+}
 const messageSchema = z.object({ text: z.string().min(1).max(8000), requestId: z.uuid().optional(), workspaceId: workspaceIdSchema.optional(), agent: agentBindingSchema.optional() }).strict();
 const cancelSchema = z.object({ requestId: z.uuid() }).strict();
 type TurnResult = { ok: true; requestId: string; events: readonly SessionEvent[]; model: { provider: string; model: string } }
@@ -44,8 +52,11 @@ type TurnResult = { ok: true; requestId: string; events: readonly SessionEvent[]
 
 /** One tenant-qualified session. RPC methods are reachable only through trusted bindings. */
 export class SessionDO extends DurableObject<Env> {
+  private readerPromise: Promise<Awaited<ReturnType<typeof createSessionReader>>> | undefined;
+  private getReader() { return this.readerPromise ??= createSessionReader(this.ctx.storage); }
   private tail: Promise<void> = Promise.resolve();
   private readonly requests = new Map<string, AbortController>();
+  private readonly nativeAdmissions = new Map<string, Promise<void>>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -53,6 +64,7 @@ export class SessionDO extends DurableObject<Env> {
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_session_config (id INTEGER PRIMARY KEY CHECK(id=1), workspace_id TEXT)');
     const columns = ctx.storage.sql.exec<{ name: string }>('PRAGMA table_info(weft_session_config)').toArray();
     if (!columns.some(column => column.name === 'agent_document')) ctx.storage.sql.exec('ALTER TABLE weft_session_config ADD COLUMN agent_document TEXT');
+    if (!columns.some(column => column.name === 'presentation')) ctx.storage.sql.exec('ALTER TABLE weft_session_config ADD COLUMN presentation INTEGER NOT NULL DEFAULT 0');
   }
 
   private assertScope(input: SessionScope): SessionScope {
@@ -90,6 +102,7 @@ export class SessionDO extends DurableObject<Env> {
     workspaceId: string | undefined,
     agentBinding?: AgentBinding,
     hooks: Pick<RuntimeOptions, 'onEvent' | 'onFrame'> = {},
+    nativeRequest?: Pick<SessionPromptRequest, 'requestId' | 'clientTimeZone' | 'content'>,
   ): Promise<TurnResult> {
     const scope = this.assertScope(input);
     if (this.requests.has(requestId)) return { ok: false, requestId, error: { code: 'REQUEST_ACTIVE', message: 'Request is already active', status: 409 } };
@@ -101,7 +114,7 @@ export class SessionDO extends DurableObject<Env> {
         let timer: ReturnType<typeof setTimeout> | undefined;
         try {
           controller.signal.throwIfAborted();
-          const stored = this.ctx.storage.sql.exec<{ workspace_id: string | null; agent_document: string | null }>('SELECT workspace_id,agent_document FROM weft_session_config WHERE id=1').toArray()[0];
+          const stored = this.ctx.storage.sql.exec<{ workspace_id: string | null; agent_document: string | null; presentation: number }>('SELECT workspace_id,agent_document,presentation FROM weft_session_config WHERE id=1').toArray()[0];
           let profile = stored?.agent_document ? JSON.parse(stored.agent_document) as AgentRevision : undefined;
           if (stored && agentBinding && (!profile || profile.spec.id !== agentBinding.id || (agentBinding.revision !== undefined && profile.revision !== agentBinding.revision))) {
             return { ok: false, requestId, error: { code: 'AGENT_MISMATCH', message: 'Session is bound to another agent revision; start a new session', status: 409 } };
@@ -111,39 +124,27 @@ export class SessionDO extends DurableObject<Env> {
             if (!profile) return { ok: false, requestId, error: { code: 'AGENT_NOT_FOUND', message: 'Agent revision not found', status: 404 } };
           }
           if (profile && profile.upstream !== upstream.commit) return { ok: false, requestId, error: { code: 'RUNTIME_REVISION_UNAVAILABLE', message: 'This agent revision belongs to another Harness runtime; publish a reviewed revision after migration', status: 409 } };
-          const resolved = resolveTenantModel(this.env, scope.tenantId, profile?.spec.model);
           if (workspaceId !== undefined) workspaceIdSchema.parse(workspaceId);
           if (stored && workspaceId !== undefined && workspaceId !== stored.workspace_id) {
             return { ok: false, requestId, error: { code: 'WORKSPACE_MISMATCH', message: 'Session is already bound to another workspace', status: 409 } };
           }
           const attachedWorkspace = stored ? stored.workspace_id : profile?.spec.workspaceId ?? workspaceId ?? null;
           if (profile && workspaceId !== undefined && workspaceId !== attachedWorkspace) return { ok: false, requestId, error: { code: 'WORKSPACE_MISMATCH', message: 'Workspace conflicts with the published agent', status: 409 } };
+          const presentation = stored?.presentation === 1;
+          const reader = presentation ? await this.getReader() : undefined;
+          const runtime = sessionRuntime(this.env, this.ctx.storage, scope, profile, attachedWorkspace, persona, presentation, reader, hooks);
           if (!stored) this.ctx.storage.sql.exec('INSERT INTO weft_session_config (id,workspace_id,agent_document) VALUES (1,?,?)', attachedWorkspace, profile ? JSON.stringify(profile) : null);
           if (profile) await controlFor(this.env, controlScope(scope.tenantId, scope.environmentId)).trackSession(controlScope(scope.tenantId, scope.environmentId), {
             id: scope.sessionId, title: text.slice(0, 80), agentId: profile.spec.id, revision: profile.revision, workspaceId: attachedWorkspace!, updatedAt: new Date().toISOString(),
           });
-          timer = setTimeout(() => { controller.abort({ code: 'TURN_TIMEOUT', message: 'Turn deadline exceeded', status: 504 } satisfies TurnFailure); }, resolved.turnTimeoutMs);
+          timer = setTimeout(() => { controller.abort({ code: 'TURN_TIMEOUT', message: 'Turn deadline exceeded', status: 504 } satisfies TurnFailure); }, runtime.turnTimeoutMs);
           const events = await runHarnessTurn({
-            sessionId: scope.sessionId, persona: profile ? `${profile.spec.persona}\n${profile.spec.allowClientPlugins ? CLIENT_PLUGIN_GUIDE : ''}` : persona, model: resolved.model, adapter: resolved.adapter,
-            signal: controller.signal, ...hooks,
-            cancellationCause: () => controller.signal.reason?.code === 'TURN_TIMEOUT' ? { kind: 'hook', reason: 'turn-deadline' } : { kind: 'user' },
-            mountPersistence: async ctx => { await ctx.plugin(SqliteSessionPersistence, { storage: this.ctx.storage }); },
-            mountTools: async ctx => {
-              registerIdentityTool(ctx, scope.tenantId);
-              if (attachedWorkspace !== null) {
-                const workspaceScope = { tenantId: scope.tenantId, workspaceId: attachedWorkspace, ...(scope.environmentId ? { environmentId: scope.environmentId } : {}) };
-                await mountWorkspace(ctx, { scope: workspaceScope, transport: this.env.WORKSPACES.getByName(workspaceAddress(workspaceScope)) });
-              }
-              if (profile) {
-                await mountPlugins(ctx, profile.spec.plugins);
-                if (profile.spec.allowClientPlugins) {
-                  await mountClientInspection(ctx);
-                  mountClientPublisher(ctx, input => controlFor(this.env, controlScope(scope.tenantId, scope.environmentId)).publishClient(controlScope(scope.tenantId, scope.environmentId), input));
-                }
-              }
-            },
+            ...runtime.options,
+            ...(nativeRequest ? {requestId: nativeRequest.requestId, promptContent: nativeRequest.content.flatMap(part => part.type === 'text' ? [part] : []), ...(nativeRequest.clientTimeZone !== undefined ? {clientTimeZone: nativeRequest.clientTimeZone} : {})} : {}),
+            signal: controller.signal,
+            cancellationCause: () => controller.signal.reason?.code === 'TURN_TIMEOUT' ? {kind: 'hook', reason: 'turn-deadline'} : {kind: 'user'},
           }, text);
-          return { ok: true, requestId, events, model: resolved.model };
+          return { ok: true, requestId, events, model: runtime.options.model };
         } catch (error) {
           return { ok: false, requestId, error: controller.signal.aborted ? controller.signal.reason as TurnFailure : turnFailure(error) };
         } finally { if (timer !== undefined) clearTimeout(timer); }
@@ -151,9 +152,140 @@ export class SessionDO extends DurableObject<Env> {
     } finally { this.requests.delete(requestId); }
   }
 
+  /** Native Web creation opens a real persisted Session before its first prompt. */
+  async nativeCreate(input: SessionScope, binding?: AgentBinding, workspaceId?: string): Promise<boolean> {
+    const scope = this.assertScope(input);
+    return this.exclusive(async () => {
+      const owner = controlScope(scope.tenantId, scope.environmentId);
+      const control = controlFor(this.env, owner);
+      const stored = this.ctx.storage.sql.exec<{workspace_id: string | null; agent_document: string | null}>('SELECT workspace_id,agent_document FROM weft_session_config WHERE id=1').toArray()[0];
+      let profile = stored?.agent_document ? JSON.parse(stored.agent_document) as AgentRevision : await control.agent(owner, binding?.id ?? 'default', binding?.revision);
+      if (!profile) throw new Error('Agent preset not found');
+      const snapshot = readSessionSnapshot(this.ctx.storage, SessionId(scope.sessionId));
+      if (snapshot?.events.some(event => event.type === 'turn/start')) return false;
+      if (stored && binding && (profile.spec.id !== binding.id || (binding.revision !== undefined && profile.revision !== binding.revision))) {
+        if (snapshot?.events.some(event => event.type === 'turn/start')) throw new Error('Session preset is fixed after its first turn');
+        profile = await control.agent(owner, binding.id, binding.revision);
+        if (!profile) throw new Error('Agent preset not found');
+      }
+      if (profile.upstream !== upstream.commit) throw new Error('Agent runtime revision unavailable');
+      const attachedWorkspace = workspaceId ?? stored?.workspace_id ?? profile.spec.workspaceId;
+      workspaceIdSchema.parse(attachedWorkspace);
+      if (stored && workspaceId && stored.workspace_id !== workspaceId && snapshot?.events.some(event => event.type === 'turn/start')) throw new Error('Session workspace is fixed after its first turn');
+      const reader = await this.getReader();
+      const runtime = sessionRuntime(this.env, this.ctx.storage, scope, profile, attachedWorkspace, profile.spec.persona, true, reader);
+      if (snapshot) this.ctx.storage.sql.exec('UPDATE harness_sessions SET header_json=? WHERE id=?', JSON.stringify({...snapshot.header, cwd: '/workspace', agentPreset: profile.spec.id}), scope.sessionId);
+      await initializeHarnessSession(runtime.options);
+      this.ctx.storage.sql.exec('INSERT INTO weft_session_config (id,workspace_id,agent_document,presentation) VALUES (1,?,?,1) ON CONFLICT(id) DO UPDATE SET workspace_id=excluded.workspace_id,agent_document=excluded.agent_document,presentation=1', attachedWorkspace, JSON.stringify(profile));
+      await control.trackSession(owner, {id: scope.sessionId, title: '', agentId: profile.spec.id, revision: profile.revision, workspaceId: attachedWorkspace, updatedAt: new Date().toISOString()});
+      return true;
+    });
+  }
+
+  async nativeHeader(input: SessionScope) {
+    const scope = this.assertScope(input);
+    return readSessionSnapshot(this.ctx.storage, SessionId(scope.sessionId))?.header;
+  }
+
+  async nativePage(input: SessionScope, raw: unknown): Promise<Response> {
+    const scope = this.assertScope(input);
+    const {request} = sessionRemote.methods['session/page'].input({strict: true}).create().parse({request: raw});
+    if (request.address.kind !== 'session' || request.address.sessionId !== scope.sessionId) throw new Error('Session address mismatch');
+    return Response.json(await (await this.getReader()).history.page(request, new AbortController().signal));
+  }
+
+  async nativeRename(input: SessionScope, title: string) {
+    const scope = this.assertScope(input);
+    const active = (await this.getReader()).activeRuntime();
+    if (active?.ctx.get('sessionTitle')) return renameLiveHarnessSession(active.ctx, active.agent, title);
+    return this.exclusive(async () => {
+      const stored = this.ctx.storage.sql.exec<{workspace_id: string; agent_document: string}>('SELECT workspace_id,agent_document FROM weft_session_config WHERE id=1').one();
+      const profile = JSON.parse(stored.agent_document) as AgentRevision;
+      const runtime = sessionRuntime(this.env, this.ctx.storage, scope, profile, stored.workspace_id, profile.spec.persona, true, await this.getReader());
+      return renameHarnessSession(runtime.options, title);
+    });
+  }
+
+  async nativeStatus(input: SessionScope): Promise<NativeSummary | undefined> {
+    const scope = this.assertScope(input);
+    const row = this.ctx.storage.sql.exec<{header_json: string; event_count: number}>('SELECT header_json,event_count FROM harness_sessions WHERE id=?', scope.sessionId).toArray()[0];
+    if (!row) return undefined;
+    const header = JSON.parse(row.header_json) as import('@deepseek-ai/dsh-session').SessionHeader;
+    const last = this.ctx.storage.sql.exec<{time: number}>("SELECT MAX(json_extract(event_json,'$.time')) AS time FROM harness_events WHERE session_id=? AND json_extract(event_json,'$.type')='user/message' AND json_extract(event_json,'$.data.source.kind')='user'", scope.sessionId).one();
+    const turn = this.ctx.storage.sql.exec("SELECT seq FROM harness_events WHERE session_id=? AND json_extract(event_json,'$.type')='turn/start' LIMIT 1", scope.sessionId).toArray().length > 0;
+    return {sessionId: header.id, updatedAt: last.time ?? header.createdAt, running: this.requests.size > 0, agentAvailable: this.requests.size > 0, blank: !turn, ...(header.cwd ? {cwd: header.cwd} : {}), formatStatus: 'current' as const};
+  }
+
+  async nativeProjections(input: SessionScope): Promise<Response> {
+    const scope = this.assertScope(input);
+    if (!this.ctx.storage.sql.exec('SELECT id FROM harness_sessions WHERE id=?', scope.sessionId).toArray().length) return Response.json(null);
+    using observation = await (await this.getReader()).ctx.sessionQuery.observeSession(SessionId(scope.sessionId));
+    const checked = sessionRemote.methods['session/projections'].result.create().parse({kind: 'sequenced', asOfSeq: observation.cursor, values: observation.projections?.values ?? {}});
+    if (checked?.kind !== 'sequenced') throw new Error('Expected current projections');
+    return Response.json(checked);
+  }
+
+  async nativePrompt(input: SessionScope, raw: unknown): Promise<void> {
+    const scope = this.assertScope(input);
+    const {request} = sessionRemote.methods['session/prompt'].input({strict: true}).create().parse({request: raw});
+    if (request.sessionId !== scope.sessionId) throw new Error('Session identity mismatch');
+    if (!readSessionSnapshot(this.ctx.storage, SessionId(scope.sessionId))) throw new RemoteError('session/not-found', 'Session not found', {sessionId: request.sessionId});
+    if (request.mode === 'steer') throw new RemoteError('session/agent-busy', 'Steering is not connected yet', {reason: 'steer-unavailable'});
+    if (request.content.some(part => part.type !== 'text')) throw new RemoteError('session/attachment-invalid', 'Attachment admission is not connected yet', {reason: 'attachment-unavailable'});
+    const text = request.content.map(part => part.type === 'text' ? part.text : '').join('');
+    if (!text.trim()) throw new RemoteError('gateway/bad-request', 'Prompt content is empty', {});
+    if (request.clientTimeZone !== undefined) {
+      try { new Intl.DateTimeFormat('en', {timeZone: request.clientTimeZone}); }
+      catch { throw new RemoteError('session/invalid-time-zone', 'Invalid client time zone', {value: request.clientTimeZone}); }
+    }
+    const pending = this.nativeAdmissions.get(request.requestId);
+    if (pending) return pending;
+    const seen = this.ctx.storage.sql.exec("SELECT seq FROM harness_events WHERE session_id=? AND json_extract(event_json,'$.data.source.rpcId')=? LIMIT 1", scope.sessionId, request.requestId).toArray().length;
+    if (seen) return;
+    if (this.requests.size > 0) throw new RemoteError('session/agent-busy', 'Native inbox queue admission is not connected yet', {reason: 'queue-unavailable'});
+    let admitted = false;
+    let accept!: () => void;
+    let refuse!: (error: unknown) => void;
+    const admission = new Promise<void>((resolve, reject) => {accept = resolve; refuse = reject;});
+    this.nativeAdmissions.set(request.requestId, admission);
+    const operation = this.execute(scope, text, '', request.requestId, undefined, undefined, {
+      onEvent: event => {
+        if (event.type === 'user/message' && event.data.source.kind === 'user' && 'rpcId' in event.data.source && event.data.source.rpcId === request.requestId) {
+          admitted = true;
+          accept();
+        }
+      },
+    }, request);
+    this.ctx.waitUntil(operation.then(result => {
+      if (!admitted) refuse(!result.ok && result.error.code === 'MODEL_NOT_CONFIGURED'
+        ? new RemoteError('session/provider-credentials-unavailable', result.error.message, {})
+        : new RemoteError('gateway/internal', result.ok ? 'Prompt was not admitted' : result.error.message, {}));
+      else if (!result.ok) console.error('Native prompt failed', result.error.code);
+    }, error => { refuse(error); }));
+    try { await admission; await this.ctx.storage.sync(); }
+    finally { this.nativeAdmissions.delete(request.requestId); }
+  }
+
+  async nativeCancel(input: SessionScope): Promise<void> {
+    this.assertScope(input);
+    for (const id of this.requests.keys()) await this.cancel(input, id);
+  }
+
   /** Internal binding transport; external requests are authenticated by the entry Worker. */
   override async fetch(request: Request): Promise<Response> {
-    const payload = z.object({ scope: scopeSchema, text: z.string().min(1).max(8000), persona: z.string().max(4000), requestId: z.uuid(), workspaceId: workspaceIdSchema.optional(), agent: agentBindingSchema.optional() }).strict().parse(await request.json());
+    const raw: unknown = await request.json();
+    if (typeof raw === 'object' && raw !== null && 'operation' in raw && raw.operation === 'native-follow') {
+      const envelope = z.object({scope: scopeSchema, operation: z.literal('native-follow'), args: z.unknown()}).strict().parse(raw);
+      const scope = this.assertScope(envelope.scope);
+      const args = sessionRemote.methods['session/follow'].input({strict: true}).create().parse(envelope.args);
+      if (args.request.address.kind !== 'session' || args.request.address.sessionId !== scope.sessionId) throw new Error('Session address mismatch');
+      const abort = new AbortController();
+      request.signal.addEventListener('abort', () => abort.abort(), {once: true});
+      const reader = await this.getReader();
+      const codec = sessionRemote.methods['session/follow'].result.create();
+      return remoteStream(reader.history.follow(args.request, abort.signal), abort, value => codec.parse(value));
+    }
+    const payload = z.object({ scope: scopeSchema, text: z.string().min(1).max(8000), persona: z.string().max(4000), requestId: z.uuid(), workspaceId: workspaceIdSchema.optional(), agent: agentBindingSchema.optional() }).strict().parse(raw);
     this.assertScope(payload.scope);
     let cancelled = false;
     let heartbeat: ReturnType<typeof setInterval> | undefined;
@@ -221,6 +353,8 @@ export default {
       if (environment.response) return environment.response;
       request = environment.request;
       pathname = new URL(request.url).pathname;
+      const nativeResponse = await handleNativeRequest(request, env, principal, environment.environmentId);
+      if (nativeResponse) return nativeResponse;
       const workspaceResponse = await handleWorkspaceRequest(request, env, principal, environment.environmentId);
       if (workspaceResponse) return workspaceResponse;
       const controlResponse = await handleControlRequest(request, env, principal, environment.environmentId);

@@ -4,8 +4,9 @@ import {
   writeRootConfig,
   writeWorkerConfig,
   getWorkerBundleDir,
+  getWorkerAssetsDir,
 } from "@cloudflare/build-output-utils";
-import { mkdir, copyFile } from "node:fs/promises";
+import { mkdir, copyFile, cp } from "node:fs/promises";
 import { resolve } from "node:path";
 
 // The CLI currently emits only the default Worker when delegating to Wrangler.
@@ -40,6 +41,7 @@ export async function writeBuildOutput() {
     await mkdir(bundle, { recursive: true });
     await copyFile(path, resolve(bundle, "worker.js"));
     await copyFile(path + ".map", resolve(bundle, "worker.js.map"));
+    if (directoryName === "ui") await cp(resolve("dist/public"), getWorkerAssetsDir(root, directoryName), { recursive: true });
     await writeWorkerConfig({
       root,
       config,

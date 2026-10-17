@@ -87,7 +87,12 @@ for (const directory of [...bundledPackages].sort()) {
 }
 assets['/licenses.txt'] = { type:'text/plain; charset=utf-8', body:notices };
 assets['/'] = { type: 'text/html; charset=utf-8', body: '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#f2f5f9"><title>Weft · DeepSeek Harness</title><link rel="stylesheet" href="/assets/app.css"></head><body><div id="root"><p style="padding:32px;color:#8090a8">正在连接你的工作空间…</p></div><script type="module" src="/assets/app.js"></script></body></html>' };
-writeFileSync('.generated/ui-assets.ts', `export const uiAssets: Record<string, { body: string; type: string }> = ${JSON.stringify(assets)};\n`);
+rmSync('dist/public', { recursive: true, force: true });
+for (const [path, asset] of Object.entries(assets)) {
+  const target = resolve('dist/public', path === '/' ? 'index.html' : path.slice(1));
+  mkdirSync(resolve(target, '..'), { recursive: true });
+  writeFileSync(target, asset.body);
+}
 writeFileSync('.generated/ui-paths.ts', `export const uiPaths: string[] = ${JSON.stringify(Object.keys(assets))};\n`);
 writeFileSync('dist/web-metafile.json', JSON.stringify(web.metafile, null, 2) + '\n');
 const result = await build({

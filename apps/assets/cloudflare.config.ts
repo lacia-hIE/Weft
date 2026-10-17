@@ -1,4 +1,4 @@
-import { defineConfig } from "cf/config";
+import { defineConfig, bindings } from "cf/config";
 export default defineConfig({
   worker: {
     name: "weft-ui-assets",
@@ -6,5 +6,7 @@ export default defineConfig({
     compatibilityDate: "2026-07-30",
     workersDev: false,
     previewUrls: false,
+    env: { ASSETS: bindings.assets() },
+    assets: { runWorkerFirst: true, htmlHandling: "none", notFoundHandling: "none" },
   },
 });
