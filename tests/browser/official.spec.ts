@@ -19,6 +19,7 @@ test('the official Harness entry sends native turns, restores history and scopes
   };
   const loaded = await page.goto(`/agents/${first}?ui=official`);
   expect(loaded!.headers()['content-security-policy']).toContain("base-uri 'self'");
+  await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
   await expect(page.getByRole('button', {name: 'Select model, current scripted', exact: true})).toBeVisible({timeout: 45_000});
   await page.evaluate(() => {
     localStorage.setItem('same-native-key', 'first environment');
@@ -41,6 +42,7 @@ test('the official Harness entry sends native turns, restores history and scopes
   await native(second, 'session/create', {request: {sessionId: commonId}});
   await native(second, 'session/rename', {request: {sessionId: commonId, title: 'Second environment session'}});
   await page.goto(`/agents/${second}?ui=official`);
+  await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
   await expect(page.getByRole('button', {name: 'Select model, current scripted', exact: true})).toBeVisible({timeout: 45_000});
   await expect(page.getByText(message, {exact: true})).toHaveCount(0);
   expect(await page.evaluate(() => [localStorage.getItem('same-native-key'), sessionStorage.getItem('same-native-key')])).toEqual([null, null]);
@@ -62,10 +64,50 @@ test('the official entry uses real DeepSeek and restores its native history', as
   const created = await request.post(`/v1/tenants/${me.tenantId}/environments`, {data: {id: environment, name: environment}});
   expect(created.status()).toBe(201);
   await page.goto(`/agents/${environment}?ui=official`);
+  await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
   await expect(page.getByRole('button', {name: /Select model, current DeepSeek/})).toBeVisible({timeout: 45_000});
   await page.locator('[contenteditable=true]').fill('只回复这一行，不调用工具：WEFT_OFFICIAL_UI_OK');
   await page.getByRole('button', {name: 'Send message', exact: true}).click();
   await expect(page.getByText('WEFT_OFFICIAL_UI_OK', {exact: true})).toBeVisible({timeout: 120_000});
   await page.reload();
   await expect(page.getByText('WEFT_OFFICIAL_UI_OK', {exact: true})).toBeVisible({timeout: 45_000});
+});
+
+test('official Models settings save real scoped credentials and configuration without reading the key back', async ({page, request}) => {
+  const me = await (await request.get('/v1/me')).json() as {tenantId: string};
+  const id = 'official-settings-'+crypto.randomUUID().slice(0, 8);
+  const base = `/v1/tenants/${me.tenantId}/environments/${id}`;
+  expect((await request.post(`/v1/tenants/${me.tenantId}/environments`, {data: {id, name: id}})).status()).toBe(201);
+  const rpc = async (method: string, args: unknown) => {
+    const body = await (await request.post(`${base}/native/api/${method}`, {data: {type: 'client-request', rpcId: crypto.randomUUID(), method, payload: {args}}})).json();
+    expect(body.result.ok, JSON.stringify(body)).toBe(true);
+    return body.result.value;
+  };
+  const openSettings = async () => {
+    await page.getByRole('button', {name: 'Account menu', exact: true}).click({timeout: 45_000});
+    await page.getByRole('menuitem', {name: 'Settings', exact: true}).click();
+    await page.getByRole('button', {name: 'Models', exact: true}).click();
+    await page.getByRole('button', {name: 'Edit DeepSeek (deepseek-official)', exact: true}).click();
+  };
+  await page.goto(`/agents/${id}?ui=official`);
+  await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
+  await openSettings();
+  await page.getByRole('textbox', {name: 'API key', exact: true}).fill('browser-settings-key-fixture');
+  await page.getByText('Customized settings', {exact: true}).click();
+  await page.getByRole('textbox', {name: 'Base URL', exact: true}).fill('https://browser-model.test/anthropic');
+  await page.getByRole('textbox', {name: 'Display name 1', exact: true}).fill('Browser Configured Model');
+  await page.getByRole('button', {name: 'Apply', exact: true}).click();
+  await expect(page.getByRole('textbox', {name: 'API key', exact: true})).toHaveCount(0);
+  const stored = await rpc('settings/describe', {});
+  expect(JSON.stringify(stored)).toContain('Browser Configured Model');
+  expect(JSON.stringify(stored)).toContain('https://browser-model.test/anthropic');
+  expect(JSON.stringify(stored)).not.toContain('browser-settings-key-fixture');
+  expect(await rpc('credentials/describe', {refs: ['DEEPSEEK_API_KEY']})).toEqual({DEEPSEEK_API_KEY: {configured: true, source: 'environment', writable: true}});
+  await page.reload();
+  await openSettings();
+  await expect(page.getByRole('textbox', {name: 'API key', exact: true})).toHaveValue('');
+  await page.getByText('Customized settings', {exact: true}).click();
+  await expect(page.getByRole('textbox', {name: 'Base URL', exact: true})).toHaveValue('https://browser-model.test/anthropic');
+  await expect(page.getByRole('textbox', {name: 'Display name 1', exact: true})).toHaveValue('Browser Configured Model');
+  await expect(page.getByRole('button', {name: 'Continue', exact: true})).toHaveCount(0);
 });

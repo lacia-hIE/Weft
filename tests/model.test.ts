@@ -61,7 +61,7 @@ test('upstream DeepSeek adapter parses fragmented SSE and drives a real tool rou
     const raw = await response.text();
     assert.ok(!raw.includes(bindings.DEEPSEEK_API_KEY));
     const result = JSON.parse(raw) as SessionResponse & { model: unknown };
-    assert.deepEqual(result.model, { provider: 'deepseek', model: 'deepseek-flash' });
+    assert.deepEqual(result.model, { provider: 'deepseek-official', model: 'deepseek-flash' });
     assert.equal(calls.length, 2);
     assert.match(JSON.stringify(calls[1]), /tool_result/);
     assert.match(JSON.stringify(calls[1]), new RegExp(tenantId('alpha')));

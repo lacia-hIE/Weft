@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { DATA_LAYOUT_VERSION } from './layout.ts';
 
 const idSchema = z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/);
 export const scopeSchema = z.object({ tenantId: idSchema, sessionId: idSchema, environmentId: idSchema.optional() }).strict();
@@ -38,7 +39,5 @@ export async function authenticateAccess(
 
 /** Unambiguous tenant-qualified object identity; session ids alone are never routing keys. */
 export function sessionAddress(scope: SessionScope): string {
-  return JSON.stringify(scope.environmentId && scope.environmentId !== "default"
-    ? [scope.tenantId, "environment", scope.environmentId, scope.sessionId]
-    : [scope.tenantId, scope.sessionId]);
+  return JSON.stringify([DATA_LAYOUT_VERSION, 'session', scope.tenantId, scope.environmentId ?? 'default', scope.sessionId]);
 }

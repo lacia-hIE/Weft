@@ -9,6 +9,8 @@ import { ScriptedAdapter } from '../../packages/harness-runtime/src/scripted-ada
 import { registerIdentityTool } from '../../packages/harness-runtime/src/validation-tools.ts';
 import { initializeSessionStorage, SqliteSessionPersistence } from '../../packages/session-persistence-do/src/index.ts';
 import { SessionDO } from '../../apps/worker/src/index.ts';
+import { sessionAddress } from '../../packages/tenant/src/index.ts';
+import { workspaceAddress } from '../../packages/workspace/src/protocol.ts';
 
 export { SessionDO, WorkspaceDO };
 
@@ -27,16 +29,20 @@ export class ContractsDO extends DurableObject<Env> {
   }
 
   async checkScope() {
-    const session = this.env.SESSIONS.getByName(JSON.stringify(['alpha', 'same-id']));
+    const scope = {tenantId: 'alpha', environmentId: 'one', sessionId: 'same-id'};
+    const session = this.env.SESSIONS.getByName(sessionAddress(scope));
     let wrongScope = 'NO_ERROR';
-    try { await session.events({ tenantId: 'beta', sessionId: 'same-id' }); }
+    try { await session.events({...scope, tenantId: 'beta'}); }
     catch (error) { wrongScope = error instanceof Error ? error.message : String(error); }
-    const correctScope = await session.events({ tenantId: 'alpha', sessionId: 'same-id' });
-    return { wrongScope, correctScopeHasNoEvents: correctScope === undefined };
+    let wrongEnvironment = 'NO_ERROR';
+    try { await session.events({...scope, environmentId: 'two'}); }
+    catch (error) { wrongEnvironment = error instanceof Error ? error.message : String(error); }
+    const correctScope = await session.events(scope);
+    return { wrongScope, wrongEnvironment, correctScopeHasNoEvents: correctScope === undefined };
   }
 
   async checkWorkspace() {
-    const scoped = this.env.WORKSPACES.getByName(JSON.stringify(['alpha', 'one']));
+    const scoped = this.env.WORKSPACES.getByName(workspaceAddress({tenantId: 'alpha', workspaceId: 'one'}));
     const wrong = await scoped.call({ tenantId: 'beta', workspaceId: 'one' }, { type: 'list', path: '/workspace' });
     const files = new WorkspaceStore(this.ctx.storage);
     const computer = new Workspace({ storage: this.ctx.storage, output: false });

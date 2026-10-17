@@ -24,7 +24,7 @@ test('the DO refuses an internal RPC addressed with a different tenant scope', a
     const response = await runtime.dispatchFetch('http://localhost/scope');
     assert.equal(response.status, 200, await response.clone().text());
     assert.deepEqual(await response.json(), {
-      wrongScope: 'Session scope does not match the addressed object', correctScopeHasNoEvents: true,
+      wrongScope: 'Session scope does not match the addressed object', wrongEnvironment: 'Session scope does not match the addressed object', correctScopeHasNoEvents: true,
     });
   } finally { await runtime.dispose(); }
 });

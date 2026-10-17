@@ -15,7 +15,7 @@ import type {
   ClientPlugin,
 } from "../packages/control-plane/src/contracts.ts";
 
-test("Harness environments isolate presets, modules, files and same-name sessions, persist, and adopt legacy data", async () => {
+test("Harness environments isolate presets, modules, files and same-name sessions, persist, and share the default environment across API entry paths", async () => {
   const directory = await mkdtemp(join(tmpdir(), "weft-environments-"));
   let runtime = createRuntime(directory);
   const request = (
@@ -42,7 +42,7 @@ test("Harness environments isolate presets, modules, files and same-name session
     assert.equal(
       (
         await request("/workspaces/default/files", "PUT", {
-          path: "/workspace/legacy.txt",
+          path: "/workspace/default.txt",
           content: "kept",
           expectedVersion: null,
         })
@@ -52,7 +52,7 @@ test("Harness environments isolate presets, modules, files and same-name session
     assert.equal(
       (
         await request(
-          "/environments/default/workspaces/default/files?path=/workspace/legacy.txt",
+          "/environments/default/workspaces/default/files?path=/workspace/default.txt",
         )
       ).status,
       200,
@@ -218,7 +218,7 @@ test("Harness environments isolate presets, modules, files and same-name session
     assert.equal(
       (
         await request(
-          "/environments/default/workspaces/default/files?path=/workspace/legacy.txt",
+          "/environments/default/workspaces/default/files?path=/workspace/default.txt",
         )
       ).status,
       200,

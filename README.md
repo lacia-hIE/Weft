@@ -73,4 +73,4 @@ npm run deploy:check
 
 云端入口：[Weft](https://weft.luxuncang.com/)，登录后进入 Web UI；用户与租户信息在 `/v1/me`，健康检查同样受 Access 保护。源码保存在 GitHub，Cloudflare 连接 GitHub 仓库；推送代码到 `main` 会触发 Cloudflare 原生 Git 自动构建和部署，无需 GitHub Actions；也可通过 `cf` 手动部署。部署及鉴权说明见 [部署记录](docs/deployment.md)。
 
-完整官方 UI 接入仍在进行中。`/agents/:environmentId?ui=official` 已运行原版 AppWebEntry 与 Web 模块树，会话、模型选择、工作区目录和全局通知连接真实 DO；设置、原生动态插件及部分业务接口仍待接入，默认入口保留过渡工作台。标准 `npm run build` 包含官方 Remote ABI、原始模块构建和 Boot Graph 生成。范围和验收状态见 [多环境与官方 UI](docs/architecture/agent-environments.md)。
+完整官方 UI 接入仍在进行中。`/agents/:environmentId?ui=official` 已运行原版 AppWebEntry 与 Web 模块树，会话、模型选择、工作区、设置、环境凭据和全局通知连接真实 DO；原生动态插件与部分业务接口仍待接入，默认入口保留过渡工作台。本轮使用全新的 `harness-v1` 数据布局，不迁移旧数据。标准 `npm run build` 包含官方 Remote ABI、原始模块构建和 Boot Graph 生成。范围和验收状态见 [多环境与官方 UI](docs/architecture/agent-environments.md)。

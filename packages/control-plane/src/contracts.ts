@@ -73,7 +73,7 @@ export const environmentScopeSchema = z
   .object({ tenantId: id, environmentId: id })
   .strict();
 export type EnvironmentScope = z.infer<typeof environmentScopeSchema>;
-export type ControlScope = string | EnvironmentScope;
+export type ControlScope = EnvironmentScope;
 export const environmentCreateSchema = z
   .object({ id: id.optional(), name: z.string().trim().min(1).max(80) })
   .strict();

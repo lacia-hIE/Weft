@@ -26,25 +26,57 @@ import { sessionAddress, type SessionScope } from '../../tenant/src/index.ts';
 import sessionRemote from '../../../.generated/official-remotes/packages/api/session-controller/typert.remote-client.js';
 import type { SessionControlFrame, SessionProjectionBaseline } from '@deepseek-ai/dsh-api-session-controller/types';
 import { remoteStream } from '../../harness-runtime/src/remote-stream.ts';
+import { NativeSettings } from './native-settings.ts';
+import { tenantModelHost, ModelConfigurationError, type ModelEnvironment } from '../../model-provider/src/index.ts';
+import { DATA_LAYOUT_VERSION } from '../../tenant/src/layout.ts';
 
-export interface TenantEnvironment {
+export interface TenantEnvironment extends ModelEnvironment {
   TENANTS: DurableObjectNamespace<TenantDO>;
   ENVIRONMENTS: DurableObjectNamespace<EnvironmentDO>;
   WORKSPACES: DurableObjectNamespace<WorkspaceDO>;
   SESSIONS: DurableObjectNamespace<SessionDO>;
 }
 export const tenantAddress = (tenantId: string): string =>
-  JSON.stringify(["tenant", id.parse(tenantId)]);
+  JSON.stringify([DATA_LAYOUT_VERSION, "tenant", id.parse(tenantId)]);
 
 /** Environment-local Harness configuration, revisions and discoverable sessions. */
 abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
+  private nativeSettings: NativeSettings | undefined;
+  private settings(scope: ControlScope): NativeSettings {
+    this.scope(scope);
+    this.ensureDefault();
+    const tenantId = scope.tenantId;
+    return this.nativeSettings ??= new NativeSettings(this.ctx.storage, {
+      providerBase: () => ({baseURL: tenantModelHost(this.env, tenantId).baseURL, maxTokens: 8192, thinking: 'disabled', reasoningEffort: 'off', streamIdleTimeoutMs: Number(this.env.MODEL_IDLE_TIMEOUT_MS ?? '60000'), retryPolicy: {mode: 'normal', maxRetries: 0}, apiKeyEnv: 'DEEPSEEK_API_KEY'}),
+      modelBase: () => this.env.MODEL_BACKEND === 'scripted'
+        ? {provider: 'validation', model: 'scripted'}
+        : {provider: 'deepseek-official', model: this.latest('default')?.spec.model?.name ?? tenantModelHost(this.env, tenantId).model},
+      credential: ref => {
+        const key = ref === 'DEEPSEEK_API_KEY' ? tenantModelHost(this.env, tenantId).apiKey : undefined;
+        return key ? {value: key, source: 'platform'} : undefined;
+      },
+      changed: (event, args) => this.nativeEvents.emit(event, args),
+    });
+  }
+  async nativeSettingsRequest(scope: ControlScope, endpoint: string, args: unknown): Promise<Response> {
+    return this.settings(scope).invoke(endpoint, args);
+  }
+  /** Private binding only: never dispatch this snapshot as a client Remote. */
+  async nativeModelConfiguration(scope: ControlScope): Promise<Response> {
+    this.scope(scope);
+    try { return Response.json(await this.settings(scope).modelConfiguration()); }
+    catch (error) { return Response.json({code: error instanceof ModelConfigurationError ? error.code : 'MODEL_CONFIGURATION_INVALID'}, {status: 503}); }
+  }
+  async nativeSaveDefaultModel(scope: ControlScope, selected: {provider: string; model: string; reasoningEffort?: string}): Promise<void> {
+    await this.settings(scope).saveDefault(selected);
+  }
   private readonly nativeEvents = new NativeEventHub();
   private readonly nativeControl = new NativeStreamHub<SessionControlFrame>();
   private nativeWorkspaces: NativeWorkspaces | undefined;
   private workspaces(scope: ControlScope): NativeWorkspaces {
     this.scope(scope);
     if (this.nativeWorkspaces) return this.nativeWorkspaces;
-    const owner = typeof scope === 'string' ? {tenantId: scope} : scope;
+    const owner = scope;
     const session = (sessionId: string) => {
       const address: SessionScope = {...owner, sessionId};
       return {scope: address, stub: this.env.SESSIONS.getByName(sessionAddress(address))};
@@ -113,13 +145,13 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
     }
   }
   override async fetch(request: Request): Promise<Response> {
-    const body = z.object({operation: z.enum(['native-events','native-workspaces','native-session-control']), scope: z.union([id, environmentScopeSchema])}).strict().parse(await request.json());
+    const body = z.object({operation: z.enum(['native-events','native-workspaces','native-session-control']), scope: environmentScopeSchema}).strict().parse(await request.json());
     this.scope(body.scope);
     const abort = new AbortController();
     if (request.signal.aborted) abort.abort();
     else request.signal.addEventListener('abort', () => abort.abort(), {once: true});
     if (body.operation === 'native-session-control') {
-      const owner = typeof body.scope === 'string' ? {tenantId: body.scope} : body.scope;
+      const owner = body.scope;
       const source = this.nativeControl.open(abort.signal, async () => {
         const projections: Record<string, SessionProjectionBaseline> = {};
         const records = await this.sessionIndex(body.scope);
@@ -429,29 +461,24 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
 
 export const environmentAddress = (scope: EnvironmentScope): string => {
   const value = environmentScopeSchema.parse(scope);
-  return JSON.stringify(["environment", value.tenantId, value.environmentId]);
+  return JSON.stringify([DATA_LAYOUT_VERSION, "environment", value.tenantId, value.environmentId]);
 };
 
-/** The default environment adopts existing addresses; no historical data is copied. */
+/** All environments, including default, use the same native state owner. */
 export function controlScope(
   tenantId: string,
   environmentId?: string,
 ): ControlScope {
-  return !environmentId || environmentId === "default"
-    ? tenantId
-    : { tenantId, environmentId };
+  return {tenantId, environmentId: environmentId ?? 'default'};
 }
 export function controlFor(env: TenantEnvironment, scope: ControlScope) {
-  return typeof scope === "string"
-    ? env.TENANTS.getByName(tenantAddress(scope))
-    : env.ENVIRONMENTS.getByName(environmentAddress(scope));
+  return env.ENVIRONMENTS.getByName(environmentAddress(scope));
 }
 
-/** Tenant catalogue and the adopted default Harness environment. */
-export class TenantDO extends HarnessStateDO {
-  protected override scope(scope: ControlScope): void {
+/** Tenant catalogue only; every Harness runs in an EnvironmentDO. */
+export class TenantDO extends DurableObject<TenantEnvironment> {
+  private scope(scope: string): void {
     if (
-      typeof scope !== "string" ||
       !this.ctx.id.equals(this.env.TENANTS.idFromName(tenantAddress(scope)))
     )
       throw new Error("Tenant object scope mismatch");
@@ -528,7 +555,6 @@ export class TenantDO extends HarnessStateDO {
 export class EnvironmentDO extends HarnessStateDO {
   protected override scope(scope: ControlScope): void {
     if (
-      typeof scope === "string" ||
       !this.ctx.id.equals(
         this.env.ENVIRONMENTS.idFromName(environmentAddress(scope)),
       )

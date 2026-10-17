@@ -34,12 +34,12 @@ test('native model selection drives actual requests, persists intent and rejects
     assert.equal(blank?.kind, 'sequenced');
     if (blank?.kind !== 'sequenced') throw new Error('Missing native projections');
     assert.deepEqual(blank.values.modelSelection, {lastUsed: null, next: null});
-    const selected = await api.call<{selected: {provider: string; model: string}}>('session/selectModel', {request: {sessionId: 'choice', provider: 'deepseek', model: 'deepseek-v4-pro'}});
+    const selected = await api.call<{selected: {provider: string; model: string}}>('session/selectModel', {request: {sessionId: 'choice', provider: 'deepseek-official', model: 'deepseek-v4-pro'}});
     assert.equal(selected.selected.model, 'deepseek-v4-pro');
     assert.equal(routes.length, 0, 'selection never calls the inference endpoint');
-    assert.equal((await api.raw('session/selectModel', {request: {sessionId: 'choice', provider: 'deepseek', model: 'not-configured'}})).result.error?.code, 'session/model-unavailable');
+    assert.equal((await api.raw('session/selectModel', {request: {sessionId: 'choice', provider: 'deepseek-official', model: 'not-configured'}})).result.error?.code, 'session/model-unavailable');
     assert.equal((await api.raw('session/selectModel', {request: {sessionId: 'choice', provider: 'outside', model: 'deepseek-v4-pro'}})).result.error?.code, 'session/model-unavailable');
-    assert.equal((await api.raw('session/selectModel', {request: {sessionId: 'choice', provider: 'deepseek', model: 'deepseek-v4-pro', reasoningEffort: 'invented'}})).result.error?.code, 'session/model-unavailable');
+    assert.equal((await api.raw('session/selectModel', {request: {sessionId: 'choice', provider: 'deepseek-official', model: 'deepseek-v4-pro', reasoningEffort: 'invented'}})).result.error?.code, 'session/model-unavailable');
     const pending = await projections();
     if (pending?.kind !== 'sequenced') throw new Error('Missing pending selection');
     assert.equal(pending.values.modelSelection?.next?.model, 'deepseek-v4-pro');
@@ -49,7 +49,7 @@ test('native model selection drives actual requests, persists intent and rejects
     const used = await projections();
     if (used?.kind !== 'sequenced') throw new Error('Missing used selection');
     assert.equal(used.values.modelSelection?.lastUsed?.model, 'deepseek-v4-pro');
-    await api.call('session/selectModel', {request: {sessionId: 'choice', provider: 'deepseek', model: 'deepseek-flash'}});
+    await api.call('session/selectModel', {request: {sessionId: 'choice', provider: 'deepseek-official', model: 'deepseek-flash'}});
     await send();
     assert.equal(routes.at(-1)!.model, 'deepseek-flash');
     const current = await projections();

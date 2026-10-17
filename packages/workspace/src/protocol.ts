@@ -1,6 +1,7 @@
 import { posix } from 'node:path';
 import { z } from 'zod';
 import { FsError } from '@deepseek-ai/dsh-fs';
+import { DATA_LAYOUT_VERSION } from '../../tenant/src/layout.ts';
 
 export const workspaceIdSchema = z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/);
 export const workspaceScopeSchema = z.object({ tenantId: workspaceIdSchema, workspaceId: workspaceIdSchema, environmentId: workspaceIdSchema.optional() }).strict();
@@ -30,7 +31,7 @@ export interface WriteResult { operation: 'create' | 'update'; version: string; 
 export interface SearchResult { matches: { path: string; line: number; text: string }[]; truncated: boolean }
 export interface WorkspaceTransport { call(scope: WorkspaceScope, operation: WorkspaceOperation): Promise<Response> }
 
-export function workspaceAddress(scope: WorkspaceScope): string { return JSON.stringify(scope.environmentId && scope.environmentId !== "default" ? [scope.tenantId, "environment", scope.environmentId, scope.workspaceId] : [scope.tenantId, scope.workspaceId]); }
+export function workspaceAddress(scope: WorkspaceScope): string { return JSON.stringify([DATA_LAYOUT_VERSION, 'workspace', scope.tenantId, scope.environmentId ?? 'default', scope.workspaceId]); }
 export function workspacePath(path: string, cwd = ROOT): string {
   if (!path || path.length > 2048 || /[\\\0\r\n]/.test(path)) throw new FsError('Invalid workspace path', 'FS_SANDBOX_DENIED');
   const result = posix.resolve(cwd, path);

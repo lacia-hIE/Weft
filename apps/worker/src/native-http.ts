@@ -5,11 +5,13 @@ import type {} from '@weft/upstream/packages/api/gateway/src/remote-error-codes.
 import { clientRequestSchema } from '@weft/upstream/packages/client/connection/src/rpc-schema.ts';
 import sessionRemote from '../../../.generated/official-remotes/packages/api/session-controller/typert.remote-client.js';
 import workspaceRemote from '../../../.generated/official-remotes/packages/api/workspace-controller/typert.remote-client.js';
+import llmRemote from '../../../.generated/official-remotes/packages/llm/llm/typert.remote-client.js';
+import { MODEL_NAMESPACE } from '../../../packages/control-plane/src/native-settings.ts';
 import { controlFor, controlScope } from '../../../packages/control-plane/src/object.ts';
 import { sessionAddress, scopeSchema, type Principal } from '../../../packages/tenant/src/index.ts';
 import type { Env } from './index.ts';
 import { assertSameOrigin, HttpError, readJson } from './http.ts';
-import { resolveTenantModel, ModelConfigurationError } from '../../../packages/model-provider/src/index.ts';
+import { resolveTenantModel, ModelConfigurationError, readEnvironmentModelConfiguration } from '../../../packages/model-provider/src/index.ts';
 
 const payloadSchema = z.object({args: z.unknown()}).strict();
 type Endpoint = keyof typeof sessionRemote.methods;
@@ -66,6 +68,18 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
     rpcId = envelope.rpcId;
     if (envelope.method !== endpoint) throw new RemoteError('gateway/bad-request', 'RPC method does not match endpoint', {});
     const payload = payloadSchema.parse(envelope.payload);
+    if (endpoint.startsWith('settings/') || endpoint.startsWith('credentials/')) {
+      const {value} = await (await control.nativeSettingsRequest(owner, endpoint, payload.args)).json() as {value?: unknown};
+      return Response.json({type: 'server-response', rpcId, result: {ok: true, value}}, {headers: {'cache-control': 'private, no-store'}});
+    }
+    if (endpoint === 'llm/listProviders' || endpoint === 'llm/listConfigurableProviders') {
+      const method = llmRemote.methods[endpoint];
+      method.input({strict: true}).create().parse(payload.args);
+      const value = method.result.create().parse(endpoint === 'llm/listConfigurableProviders'
+        ? [{provider: 'deepseek-official', displayName: 'DeepSeek', settingsNs: MODEL_NAMESPACE, settingsPath: []}]
+        : env.MODEL_BACKEND === 'scripted' ? [{id: 'validation', name: 'validation'}] : [{id: 'deepseek-official', name: 'DeepSeek'}]);
+      return Response.json({type: 'server-response', rpcId, result: {ok: true, value}}, {headers: {'cache-control': 'private, no-store'}});
+    }
     if (endpoint.startsWith('workspace/') || endpoint.startsWith('directoryPicker/')) {
       const output = await control.nativeWorkspace(owner, endpoint, payload.args);
       const {value} = await output.json() as {value?: unknown};
@@ -83,7 +97,8 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
       }
       case 'session/modelCatalog': {
         sessionRemote.methods[endpoint].input({strict: true}).create().parse(payload.args);
-        const selected = resolveTenantModel(env, principal.tenantId, await control.nativeDefaultModel(owner));
+        const configuration = await readEnvironmentModelConfiguration(await control.nativeModelConfiguration(owner));
+        const selected = resolveTenantModel(env, principal.tenantId, await control.nativeDefaultModel(owner), configuration);
         const provider = selected.adapter.providerInfo(selected.model.provider);
         const models = await selected.adapter.listModels(selected.model.provider);
         value = {default: selected.model, routableProviders: models.length ? [provider.id] : [], groups: models.length ? [{id: provider.id, name: provider.name, models: models.map(model => ({id: model.id, name: model.name, ...(model.description ? {description: model.description} : {}), ...('reasoning' in model && model.reasoning ? {reasoning: model.reasoning} : {})}))}] : [], failures: []};

@@ -151,7 +151,7 @@ export class SessionDO extends DurableObject<Env> {
           const presentation = stored?.presentation === 1;
           nativeMode = presentation;
           const reader = presentation ? await this.getReader() : undefined;
-          const runtime = sessionRuntime(this.env, this.ctx.storage, scope, profile, attachedWorkspace, persona, presentation, reader, hooks, presentation ? this.nativeCwd(scope.sessionId) : '/workspace');
+          const runtime = await sessionRuntime(this.env, this.ctx.storage, scope, profile, attachedWorkspace, persona, presentation, reader, hooks, presentation ? this.nativeCwd(scope.sessionId) : '/workspace');
           if (!stored) this.ctx.storage.sql.exec('INSERT INTO weft_session_config (id,workspace_id,agent_document) VALUES (1,?,?)', attachedWorkspace, profile ? JSON.stringify(profile) : null);
           if (profile) await controlFor(this.env, controlScope(scope.tenantId, scope.environmentId)).trackSession(controlScope(scope.tenantId, scope.environmentId), {
             id: scope.sessionId, title: text.slice(0, 80), agentId: profile.spec.id, revision: profile.revision, workspaceId: attachedWorkspace!, updatedAt: new Date().toISOString(),
@@ -200,7 +200,7 @@ export class SessionDO extends DurableObject<Env> {
       if (stored && workspaceId && stored.workspace_id !== workspaceId && snapshot?.events.some(event => event.type === 'turn/start')) throw new Error('Session workspace is fixed after its first turn');
       const reader = await this.getReader();
       const directory = workspacePath(cwd ?? snapshot?.header.cwd ?? '/workspace');
-      const runtime = sessionRuntime(this.env, this.ctx.storage, scope, profile, attachedWorkspace, profile.spec.persona, true, reader, {}, directory);
+      const runtime = await sessionRuntime(this.env, this.ctx.storage, scope, profile, attachedWorkspace, profile.spec.persona, true, reader, {}, directory);
       if (snapshot) this.ctx.storage.sql.exec('UPDATE harness_sessions SET header_json=? WHERE id=?', JSON.stringify({...snapshot.header, cwd: directory, agentPreset: profile.spec.id}), scope.sessionId);
       await initializeHarnessSession(runtime.options);
       this.ctx.storage.sql.exec('INSERT INTO weft_session_config (id,workspace_id,agent_document,presentation) VALUES (1,?,?,1) ON CONFLICT(id) DO UPDATE SET workspace_id=excluded.workspace_id,agent_document=excluded.agent_document,presentation=1', attachedWorkspace, JSON.stringify(profile));
@@ -233,7 +233,7 @@ export class SessionDO extends DurableObject<Env> {
     return this.exclusive(async () => {
       const stored = this.ctx.storage.sql.exec<{workspace_id: string; agent_document: string}>('SELECT workspace_id,agent_document FROM weft_session_config WHERE id=1').one();
       const profile = JSON.parse(stored.agent_document) as AgentRevision;
-      const runtime = sessionRuntime(this.env, this.ctx.storage, scope, profile, stored.workspace_id, profile.spec.persona, true, await this.getReader(), {}, this.nativeCwd(scope.sessionId));
+      const runtime = await sessionRuntime(this.env, this.ctx.storage, scope, profile, stored.workspace_id, profile.spec.persona, true, await this.getReader(), {}, this.nativeCwd(scope.sessionId));
       const value = await renameHarnessSession(runtime.options, title);
       await this.publishNativeSummary(scope);
       return value;
@@ -262,10 +262,12 @@ export class SessionDO extends DurableObject<Env> {
     else value = await this.exclusive(async () => {
       const stored = this.ctx.storage.sql.exec<{workspace_id: string; agent_document: string}>('SELECT workspace_id,agent_document FROM weft_session_config WHERE id=1').one();
       const profile = JSON.parse(stored.agent_document) as AgentRevision;
-      const runtime = sessionRuntime(this.env, this.ctx.storage, scope, profile, stored.workspace_id, profile.spec.persona, true, await this.getReader(), {}, this.nativeCwd(scope.sessionId));
+      const runtime = await sessionRuntime(this.env, this.ctx.storage, scope, profile, stored.workspace_id, profile.spec.persona, true, await this.getReader(), {}, this.nativeCwd(scope.sessionId));
       return selectHarnessModel(runtime.options, request);
     });
     await this.publishNativeSummary(scope);
+    const owner = controlScope(scope.tenantId, scope.environmentId);
+    await controlFor(this.env, owner).nativeSaveDefaultModel(owner, value.selected);
     return Response.json(sessionRemote.methods['session/selectModel'].result.create().parse(value));
   }
 

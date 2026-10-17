@@ -32,6 +32,8 @@ export interface RuntimeOptions {
   onSessionDisposed?: (session: Session) => void;
   mountPersistence?: (ctx: Context) => Promise<void>;
   mountTools?: (ctx: Context) => Promise<void>;
+  beforeAssembly?: () => Promise<void>;
+  defaultModel?: () => import('@deepseek-ai/dsh-agent').ModelSelection;
 }
 
 /** Run the unchanged upstream driver and return its committed event vocabulary. */
@@ -62,7 +64,11 @@ async function withHarnessSession<T>(options: RuntimeOptions, operation: (ctx: C
       ? await ctx.agents.resume({ resumeSessionId: sessionId, agentOptions })
       : await ctx.agents.create({ sessionId, agentOptions, ...(options.meta ? { meta: options.meta } : {}) });
     owned = handle.agent;
-    if (options.presentation) mountModelSelection(ctx, handle.agent);
+    if (options.presentation) mountModelSelection(ctx, handle.agent, options.defaultModel, options.beforeAssembly);
+    if (options.beforeAssembly) handle.agent.ctx.on('system-prompt/assemble', async (_assembly, _context, next) => {
+      await options.beforeAssembly!();
+      return next();
+    }, {prepend: true});
     options.signal?.throwIfAborted();
     options.onAgent?.(handle.agent, ctx);
     return await operation(ctx, handle.agent);

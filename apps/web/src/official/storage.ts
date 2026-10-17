@@ -1,6 +1,7 @@
 /** Native Harness assumes one host per origin. Weft assigns browser state per environment. */
+import { DATA_LAYOUT_VERSION } from '../../../../packages/tenant/src/layout.ts';
 export function installEnvironmentStorage(tenantId: string, environmentId: string): void {
-  const prefix = `weft.harness.${JSON.stringify([tenantId, environmentId])}.`;
+  const prefix = `weft.${DATA_LAYOUT_VERSION}.${JSON.stringify([tenantId, environmentId])}.`;
   for (const name of ['localStorage', 'sessionStorage'] as const) {
     try {
       const original = window[name];

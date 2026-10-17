@@ -1,8 +1,10 @@
 import { z } from 'zod';
-import { LlmError, type GenerateOptions, type PreparedAdapterCall, type StreamChunk } from '@deepseek-ai/dsh-llm';
+import { LlmError, ReasoningEffortId, type GenerateOptions, type PreparedAdapterCall, type StreamChunk } from '@deepseek-ai/dsh-llm';
+import type { ModelSelection } from '@deepseek-ai/dsh-agent';
 import type { AnonymousUserId } from '@deepseek-ai/dsh-anonymous-user-id';
 import { DeepSeekAdapter } from '@weft/upstream/packages/llm/llm-deepseek/src/adapter.ts';
 import { resolveAdapterOptions } from '@weft/upstream/packages/llm/llm-deepseek/src/config.ts';
+import type { Options as DeepSeekOptions } from '@weft/upstream/packages/llm/llm-deepseek/src/config.ts';
 import { ScriptedAdapter } from '../../harness-runtime/src/scripted-adapter.ts';
 import type { RuntimeOptions } from '../../harness-runtime/src/runtime.ts';
 
@@ -59,41 +61,85 @@ export class ModelConfigurationError extends Error {
   }
 }
 
-export interface ResolvedModel extends Pick<RuntimeOptions, 'model' | 'adapter'> { turnTimeoutMs: number }
+export interface ResolvedModel extends Pick<RuntimeOptions, 'model' | 'adapter'> {
+  turnTimeoutMs: number;
+  refresh?: (configuration: EnvironmentModelConfig) => void;
+  currentSelection?: () => ModelSelection;
+}
+
+export interface EnvironmentModelConfig {
+  providerOptions: DeepSeekOptions;
+  apiKey?: string;
+  defaultModel?: {provider: string; model: string; reasoningEffort?: string};
+}
+/** Preserve typed model failures across the Durable Object RPC serialization boundary. */
+export async function readEnvironmentModelConfiguration(response: Response): Promise<EnvironmentModelConfig> {
+  if (!response.ok) {
+    const failure = z.object({code: z.enum(['MODEL_NOT_CONFIGURED', 'MODEL_CONFIGURATION_INVALID'])}).parse(await response.json());
+    throw new ModelConfigurationError(failure.code);
+  }
+  return await response.json() as EnvironmentModelConfig;
+}
+
+/** Only this host-owned layer may supply shared credential fallbacks. */
+export function tenantModelHost(env: ModelEnvironment, tenantId: string) {
+  try {
+    const registry = env.TENANT_MODEL_CONFIG_JSON ? registrySchema.parse(JSON.parse(env.TENANT_MODEL_CONFIG_JSON)) : undefined;
+    const config = registry && Object.hasOwn(registry, tenantId) ? registry[tenantId] : undefined;
+    return {apiKey: registry ? config?.apiKey : env.DEEPSEEK_API_KEY?.trim(), model: config?.model ?? env.DEEPSEEK_MODEL ?? 'deepseek-flash', baseURL: env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com/anthropic'};
+  } catch { throw new ModelConfigurationError('MODEL_CONFIGURATION_INVALID'); }
+}
 
 /** Host-owned resolution: HTTP clients cannot select credentials or provider endpoints. */
-export function resolveTenantModel(env: ModelEnvironment, tenantId: string, selectedModel?: { provider: "deepseek"; name: string }): ResolvedModel {
+export function resolveTenantModel(env: ModelEnvironment, tenantId: string, selectedModel?: { provider: "deepseek"; name: string }, settings?: EnvironmentModelConfig): ResolvedModel {
   if (env.MODEL_BACKEND === 'scripted') {
     return { model: { provider: 'validation', model: 'scripted' }, adapter: new ScriptedAdapter(), turnTimeoutMs: 60_000 };
   }
   if (env.MODEL_BACKEND !== 'deepseek') throw new ModelConfigurationError('MODEL_CONFIGURATION_INVALID');
   try {
-    const registry = env.TENANT_MODEL_CONFIG_JSON ? registrySchema.parse(JSON.parse(env.TENANT_MODEL_CONFIG_JSON)) : undefined;
-    // An explicit registry is exclusive: tenants absent from it never inherit the shared key.
-    const config = registry && Object.hasOwn(registry, tenantId) ? registry[tenantId] : undefined;
-    const apiKey = registry ? config?.apiKey : env.DEEPSEEK_API_KEY?.trim();
+    const host = tenantModelHost(env, tenantId);
+    const apiKey = settings ? settings.apiKey : host.apiKey;
     if (!apiKey) throw new ModelConfigurationError('MODEL_NOT_CONFIGURED');
-    const model = selectedModel?.name ?? config?.model ?? env.DEEPSEEK_MODEL ?? 'deepseek-flash';
-    const baseURL = env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com/anthropic';
+    const model = settings?.defaultModel?.model ?? selectedModel?.name ?? host.model;
+    const baseURL = settings?.providerOptions.baseURL ?? host.baseURL;
     // HTTPS is mandatory, including custom gateways. No client-provided URL is accepted.
     if (new URL(baseURL).protocol !== 'https:' || !model.trim()) throw new Error('Invalid route');
-    const connection = resolveAdapterOptions({
-      baseURL, maxTokens: 8192, thinking: 'disabled', reasoningEffort: 'off',
+    const connectionFor = (configuration: EnvironmentModelConfig | undefined) => resolveAdapterOptions({
+      maxTokens: 8192, thinking: 'disabled', reasoningEffort: 'off',
       streamIdleTimeoutMs: duration.parse(env.MODEL_IDLE_TIMEOUT_MS ?? '60000'),
       retryPolicy: { mode: 'normal', maxRetries: 0 },
+      ...configuration?.providerOptions,
+      baseURL: configuration?.providerOptions.baseURL ?? host.baseURL,
     });
+    let current = settings;
+    let connection = connectionFor(settings);
+    const credentials = new WeakMap<typeof connection, string>();
+    credentials.set(connection, apiKey);
+    const currentSelection = (): ModelSelection => {
+      const selection = current?.defaultModel;
+      return {provider: 'deepseek-official', model: selection?.model ?? selectedModel?.name ?? host.model,
+        ...(selection?.reasoningEffort === undefined ? {} : {reasoningEffort: ReasoningEffortId(selection.reasoningEffort)})};
+    };
     const adapter: SafeDeepSeekAdapter = new SafeDeepSeekAdapter({
       options: () => connection,
-      resolveAuth: async () => ({ headers: { 'x-api-key': apiKey } }),
+      resolveAuth: async snapshot => ({ headers: { 'x-api-key': credentials.get(snapshot)! } }),
       discoverModels: async provider => {
-        const ids = [...new Set([...connection.models.map(entry => entry.id), model])];
+        const ids = [...new Set([...connection.models.map(entry => entry.id), currentSelection().model])];
         return Promise.all(ids.map(id => adapter.resolveModel(provider, id)));
       },
       // Tenant-scoped pseudonymous id; never send the Access email or user id to the model provider.
       resolveUserId: () => tenantId as AnonymousUserId,
       prepareExtensions: async () => ({ fields: {}, accept: async () => {} }),
     });
-    return { model: { provider: 'deepseek', model }, adapter, turnTimeoutMs: duration.parse(env.MODEL_TURN_TIMEOUT_MS ?? '180000') };
+    if (settings?.defaultModel && settings.defaultModel.provider !== 'deepseek-official') throw new Error('Unsupported provider');
+    return {model: currentSelection(), adapter, turnTimeoutMs: duration.parse(env.MODEL_TURN_TIMEOUT_MS ?? '180000'), currentSelection,
+      refresh: configuration => {
+        if (!configuration.apiKey) throw new ModelConfigurationError('MODEL_NOT_CONFIGURED');
+        const snapshot = connectionFor(configuration);
+        if (new URL(snapshot.baseURL).protocol !== 'https:' || (configuration.defaultModel && configuration.defaultModel.provider !== 'deepseek-official')) throw new ModelConfigurationError('MODEL_CONFIGURATION_INVALID');
+        credentials.set(snapshot, configuration.apiKey);
+        current = configuration; connection = snapshot;
+      }};
   } catch (error) {
     if (error instanceof ModelConfigurationError) throw error;
     throw new ModelConfigurationError('MODEL_CONFIGURATION_INVALID');
