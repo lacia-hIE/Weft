@@ -15,14 +15,14 @@ import { mountClientInspection } from '../../../packages/client-plugins/src/insp
 import { controlFor, controlScope } from '../../../packages/control-plane/src/object.ts';
 
 type Reader = Awaited<ReturnType<typeof createSessionReader>>;
-export function sessionRuntime(env: Env, storage: DurableObjectStorage, scope: SessionScope, profile: AgentRevision | undefined, workspaceId: string | null, persona: string, presentation: boolean, reader?: Reader, hooks: Pick<RuntimeOptions, 'onEvent' | 'onFrame'> = {}) {
+export function sessionRuntime(env: Env, storage: DurableObjectStorage, scope: SessionScope, profile: AgentRevision | undefined, workspaceId: string | null, persona: string, presentation: boolean, reader?: Reader, hooks: Pick<RuntimeOptions, 'onEvent' | 'onFrame'> = {}, cwd = '/workspace') {
   const model = resolveTenantModel(env, scope.tenantId, profile?.spec.model);
   let activeAgent: Agent | undefined;
   const options: RuntimeOptions = {
     sessionId: scope.sessionId,
     persona: profile ? `${profile.spec.persona}\n${profile.spec.allowClientPlugins ? CLIENT_PLUGIN_GUIDE : ''}` : persona,
     model: model.model, adapter: model.adapter, presentation,
-    ...(presentation ? {meta: {cwd: '/workspace', ...(profile ? {agentPreset: profile.spec.id} : {})}} : {}),
+    ...(presentation ? {meta: {cwd, ...(profile ? {agentPreset: profile.spec.id} : {})}} : {}),
     onAgent: (agent, ctx) => { activeAgent = agent; reader?.activate(agent, ctx); },
     onAgentDisposed: agent => { if (activeAgent === agent) activeAgent = undefined; reader?.dispose(agent); },
     onSessionCreated: session => { reader?.created(session); },
@@ -34,7 +34,7 @@ export function sessionRuntime(env: Env, storage: DurableObjectStorage, scope: S
       registerIdentityTool(ctx, scope.tenantId);
       if (workspaceId !== null) {
         const workspace = {tenantId: scope.tenantId, workspaceId, ...(scope.environmentId ? {environmentId: scope.environmentId} : {})};
-        await mountWorkspace(ctx, {scope: workspace, transport: env.WORKSPACES.getByName(workspaceAddress(workspace))});
+        await mountWorkspace(ctx, {scope: workspace, transport: env.WORKSPACES.getByName(workspaceAddress(workspace)), cwd});
       }
       if (profile) {
         await mountPlugins(ctx, profile.spec.plugins);

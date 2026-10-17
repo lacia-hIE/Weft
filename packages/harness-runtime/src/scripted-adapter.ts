@@ -3,6 +3,7 @@ import { LlmAdapter, ToolCallId, type GenerateOptions, type StreamChunk } from '
 /** Deterministic model substitute for keyless workerd validation, never a production provider. */
 export class ScriptedAdapter extends LlmAdapter {
   readonly requests: GenerateOptions[] = [];
+  override async listModels(provider: string) { return [await this.resolveModel(provider, 'scripted')]; }
 
   override async resolveModel(provider: string, model: string) {
     return { provider, id: model, name: model };

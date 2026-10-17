@@ -8,7 +8,7 @@
   },
   "scripts": {
     "upstream:prepare": "node scripts/prepare-upstream.mjs",
-    "build": "npm run upstream:prepare && node scripts/generate-official-remotes.mjs && node scripts/build.mjs",
+    "build": "npm run upstream:prepare && node scripts/generate-official-remotes.mjs && node scripts/build-official-ui.mjs && node scripts/prepare-official-boot.mjs && node scripts/build.mjs",
     "typecheck": "npm run build && tsc --noEmit",
     "test:unit": "tsx --test --test-concurrency=1 --test-timeout=300000 tests/*.test.ts",
     "test": "npm run build && npm run test:unit",

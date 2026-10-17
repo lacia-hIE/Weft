@@ -15,7 +15,7 @@
 - SessionDO / WorkspaceDO 寻址包含 tenantId、environmentId、资源 ID。不同环境允许同名资源，默认不共享。
 - `default` 环境显式采用原来的 TenantDO / SessionDO / WorkspaceDO 地址，保留历史数据；已有预设保留为默认环境内的预设。
 - 新 API 入口为 `/v1/tenants/:tenant/environments/:environment/...`。入口先验证 Access 租户和环境存在性，DO 再验证寻址范围。旧租户级 API 继续映射默认环境。
-- 模型选择属于已发布预设，Session 固定其版本；凭据仍由服务端租户授权提供，不写入预设文档。环境自有凭据管理尚待接入。
+- 预设发布版本固定 Session 的初始配置；官方模型选择通过原生 `model/selection` 事件持久化，控制后续请求的模型及推理档位。凭据仍由服务端租户授权提供，不写入预设文档。环境自有凭据及环境默认模型设置尚待接入。
 
 管理入口为 `/`，环境入口为 `/agents/:environmentId`。切换环境采用完整页面导航，销毁前一个浏览器运行时；客户端宿主 API 只构造当前环境的资源路径。同源用户脚本仍与登录用户页面同权，这不等同于浏览器插件安全沙箱。
 
@@ -29,21 +29,27 @@
 
 UI 资产由没有公网入口的 Worker 通过 Static Assets binding 读取；公开入口保持独立，并先验证原生 Access 身份，再通过 Service Binding 调用资产 Worker。这为完整官方客户端及文档预览分块提供资产承载方式。
 
+官方入口适配在 `apps/web/src/official/`。它调用原版 AppWebEntry，提供环境范围内的 Fetch/SSE transport 和浏览器存储命名空间，由官方模块系统、Loader 和 Slots 挂载界面。页面内部的相对 HTTP 请求通过同源 base 路径指向该环境。原版 Loader 表达式及动态客户端插件依赖 Function，因此仅官方环境文档启用对应 CSP；管理页面维持原来的策略。
+
+工作区注册表使用官方记录 schema，保存到 EnvironmentDO 的 SQLite，并通过官方 Workspace 协议提供排序、会话归属、固定与归档。官方 Workspace 对应环境文件系统中的真实目录，新原生会话使用该目录作为 cwd；目录创建和文件操作落到 WorkspaceDO 的 Computer 文件系统。删除注册不会删除文件或会话。旧 API 的独立命名卷保持原有语义，其非默认卷与旧会话的原生 UI 兼容仍需迁移验证。
+
+`$events`、`session/control` 与 `workspace/follow` 提供环境内的真实通知及重新连接基线。通知本身不持久化，重连重新读取 DO 状态；观察者退出不终止 Agent 执行。浏览器切换采用完整导航，并按租户与环境划分原版客户端持久化键，防止同名 Session 缓存串用。
+
 ## 验收状态
 
 已实现并验证环境目录创建、默认数据采用、配置/文件/插件/同名会话的环境隔离及重启恢复。浏览器验证覆盖目录进入、环境切换卸载及既有工作台回归。
 
-已接通官方协议的会话创建、列表、分页、订阅、投影、提示词、标题及取消接口。它们尚未替换环境内的过渡 UI；完整原生 Inbox 的排队/steer、附件、子 Agent、模型选择和全局控制流仍需接入。提示词只有在原生用户消息入日志并同步存储后才确认接受；缺失能力明确拒绝。运行中关闭订阅不等于取消任务。
+已接通官方协议的会话创建、列表、分页、订阅、标题、模型选择、提示词和取消，以及工作区、目录选择和全局通知。模型投影复用官方定义，请求装配复用原生模型切换钩子；冷启动后恢复所选路由。完整原生 Inbox 的排队/steer、附件、子 Agent 与更多业务投影仍需接入。提示词只有在原生用户消息入日志并同步存储后才确认接受；缺失能力明确拒绝。
 
-官方 Remote 的 30 个包与官方 Web 目录的 69 个客户端模块已使用上游生成器、各包自身的构建配置成功生成。运行 `npm run build:official-ui` 可复现；构建报告位于 `.generated/official-ui/build-report.json`。这些产物尚未接入生产环境入口。
+官方 Remote 的 30 个包与官方 Web 目录的 69 个客户端模块已使用上游生成器、各包自身的构建配置成功生成。标准 `npm run build` 已包含这条完整构建链，确保全新的 Cloudflare Git 构建也会生成官方产物；构建报告位于 `.generated/official-ui/build-report.json`。
 
-Boot Graph 由真实客户端工厂产物生成，复用官方 `orderByModuleGraph` 和 `parseBootManifest` 排序与校验。当前 Web profile 激活 67 个模块，按上游条件排除仅 Desktop 启用的 product-analytics 与 sidebar-browser；不能将全部构建目录直接视为应激活的插件树。打包资产位于 `.generated/official-web-assets/`，尚未挂入生产页面。
+Boot Graph 由真实客户端工厂产物生成，复用官方 `orderByModuleGraph` 和 `parseBootManifest` 排序与校验。当前 Web profile 激活 67 个模块，按上游条件排除仅 Desktop 启用的 product-analytics 与 sidebar-browser。`/agents/:environmentId?ui=official` 已运行这条官方启动链；无参数入口仍保留过渡工作台，直至下面的兼容与完整功能验收通过。
 
 以下工作仍未完成，目标保持进行中：
 
-1. 将已生成的 Remote 和客户端模块产物接入官方 Boot Graph 与资产服务。
-2. 官方 Session、Workspace、Settings、插件配置等 Host 接口与 DO 的连接，以及实时流和恢复。
-3. 使用官方 AppWebEntry 替换当前过渡工作台，接入完整官方客户端模块树。
+1. 补齐官方 Settings、凭据、预设、权限、文件等业务 Host 接口，以及完整 Inbox 和业务投影；当前未连接的能力返回明确错误。
+2. 验证实时控制流在并发写入、长任务、断线与 DO 重建后的完整一致性，并解决 Session 目录当前 200 条上限。
+3. 验收后将官方 AppWebEntry 设为默认环境入口，并通过独立扩展补充 Weft 导航。
 4. 原生动态插件与官方模块系统、检查工具、配置生命周期的对接。
 5. 环境自有凭据授权、环境管理生命周期及旧数据兼容验收。
 6. 在真实模型、多环境、重连、重启和 Cloudflare 部署中验收完整官方 UI。

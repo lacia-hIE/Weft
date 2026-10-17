@@ -16,16 +16,67 @@ import {
 import { validatePlugins } from "../../plugin-runtime/src/catalog.ts";
 import { compileClientPlugin } from "../../client-plugins/src/compiler.ts";
 import upstream from "../../../upstream.lock.json";
+import { z } from 'zod';
+import { NativeEventHub, NativeStreamHub } from './native-events.ts';
+import { NativeWorkspaces } from './native-workspaces.ts';
+import type { WorkspaceDO } from '../../workspace/src/object.ts';
+import type { SessionDO } from '../../../apps/worker/src/index.ts';
+import { workspaceAddress } from '../../workspace/src/protocol.ts';
+import { sessionAddress, type SessionScope } from '../../tenant/src/index.ts';
+import sessionRemote from '../../../.generated/official-remotes/packages/api/session-controller/typert.remote-client.js';
+import type { SessionControlFrame, SessionProjectionBaseline } from '@deepseek-ai/dsh-api-session-controller/types';
+import { remoteStream } from '../../harness-runtime/src/remote-stream.ts';
 
 export interface TenantEnvironment {
   TENANTS: DurableObjectNamespace<TenantDO>;
   ENVIRONMENTS: DurableObjectNamespace<EnvironmentDO>;
+  WORKSPACES: DurableObjectNamespace<WorkspaceDO>;
+  SESSIONS: DurableObjectNamespace<SessionDO>;
 }
 export const tenantAddress = (tenantId: string): string =>
   JSON.stringify(["tenant", id.parse(tenantId)]);
 
 /** Environment-local Harness configuration, revisions and discoverable sessions. */
 abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
+  private readonly nativeEvents = new NativeEventHub();
+  private readonly nativeControl = new NativeStreamHub<SessionControlFrame>();
+  private nativeWorkspaces: NativeWorkspaces | undefined;
+  private workspaces(scope: ControlScope): NativeWorkspaces {
+    this.scope(scope);
+    if (this.nativeWorkspaces) return this.nativeWorkspaces;
+    const owner = typeof scope === 'string' ? {tenantId: scope} : scope;
+    const session = (sessionId: string) => {
+      const address: SessionScope = {...owner, sessionId};
+      return {scope: address, stub: this.env.SESSIONS.getByName(sessionAddress(address))};
+    };
+    const volume = {...owner, workspaceId: 'default'};
+    return this.nativeWorkspaces = new NativeWorkspaces(this.ctx.storage, {
+      files: operation => this.env.WORKSPACES.getByName(workspaceAddress(volume)).call(volume, operation),
+      header: async id => {const target=session(id); return target.stub.nativeHeader(target.scope);},
+      headers: async () => {
+        const records = await this.sessionIndex(scope);
+        const values = await Promise.all(records.map(async row => {const target=session(row.id); return target.stub.nativeHeader(target.scope);}));
+        return values.filter(value => value !== undefined);
+      },
+      running: async id => {const target=session(id); return (await target.stub.nativeStatus(target.scope))?.running ?? false;},
+      cancel: async id => {const target=session(id); await target.stub.nativeCancel(target.scope);},
+    });
+  }
+  async nativeWorkspace(scope: ControlScope, endpoint: string, args: unknown): Promise<Response> {
+    const catalog = this.workspaces(scope);
+    if (endpoint === 'workspace/initializeDefault') {
+      z.object({}).strict().parse(args);
+      const workspace = await catalog.initializeDefault();
+      return Response.json({value: workspace ? {workspace} : undefined});
+    }
+    return catalog.invoke(endpoint, args);
+  }
+  async nativeResolveWorkspace(scope: ControlScope, workspaceId?: string, cwd?: string) {
+    return this.workspaces(scope).resolve(workspaceId, cwd);
+  }
+  async nativeAttachWorkspace(scope: ControlScope, workspaceId: string, sessionId: string): Promise<void> {
+    await this.workspaces(scope).attach(workspaceId, sessionId);
+  }
   constructor(ctx: DurableObjectState, env: TenantEnvironment) {
     super(ctx, env);
     ctx.storage.sql.exec(
@@ -42,6 +93,49 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
     );
   }
   protected abstract scope(scope: ControlScope): void;
+  nativeDefaultModel(scope: ControlScope) {
+    this.scope(scope);
+    this.ensureDefault();
+    return this.latest('default')?.spec.model;
+  }
+  nativeEvent(scope: ControlScope, event: string, args: readonly unknown[]): void {
+    this.scope(scope);
+    this.nativeEvents.emit(event, args);
+    if (event === 'api-session/added') {
+      const {items} = sessionRemote.methods['session/list'].result.create().parse({items: [args[0]]});
+      const row = items[0]!;
+      if (row.projections?.kind === 'sequenced' && row.projections.asOfSeq >= 0) {
+        for (const [key,value] of Object.entries(row.projections.values)) {
+          const frame = sessionRemote.methods['session/control'].result.create().parse({type: 'projection', sessionId: row.sessionId, key, value, seq: row.projections.asOfSeq});
+          this.nativeControl.emit(frame);
+        }
+      }
+    }
+  }
+  override async fetch(request: Request): Promise<Response> {
+    const body = z.object({operation: z.enum(['native-events','native-workspaces','native-session-control']), scope: z.union([id, environmentScopeSchema])}).strict().parse(await request.json());
+    this.scope(body.scope);
+    const abort = new AbortController();
+    if (request.signal.aborted) abort.abort();
+    else request.signal.addEventListener('abort', () => abort.abort(), {once: true});
+    if (body.operation === 'native-session-control') {
+      const owner = typeof body.scope === 'string' ? {tenantId: body.scope} : body.scope;
+      const source = this.nativeControl.open(abort.signal, async () => {
+        const projections: Record<string, SessionProjectionBaseline> = {};
+        const records = await this.sessionIndex(body.scope);
+        await Promise.all(records.map(async row => {
+          const scope = {...owner, sessionId: row.id};
+          const raw: unknown = await (await this.env.SESSIONS.getByName(sessionAddress(scope)).nativeProjections(scope)).json();
+          const value = sessionRemote.methods['session/projections'].result.create().parse(raw);
+          if (value?.kind === 'sequenced') projections[row.id] = {asOfSeq: value.asOfSeq, values: value.values};
+        }));
+        return {type: 'baseline', value: {projections}};
+      });
+      const codec = sessionRemote.methods['session/control'].result.create();
+      return remoteStream(source, abort, value => codec.parse(value));
+    }
+    return remoteStream(body.operation === 'native-events' ? this.nativeEvents.open(abort.signal) : this.workspaces(body.scope).follow(abort.signal), abort);
+  }
   private latest(agentId: string): AgentRevision | undefined {
     const row = this.ctx.storage.sql
       .exec<{

@@ -72,6 +72,14 @@ export class WorkspaceStore {
         const path = this.guardedPath(operation.path);
         if (operation.type === 'stat') return this.metadata(path) ?? null;
         if (operation.type === 'read') return this.read(path);
+        if (operation.type === 'mkdir') {
+          if (this.metadata(path)) throw new FsError('Workspace entry already exists', 'FS_IO_ERROR');
+          const parent = this.metadata(posix.dirname(path));
+          if (parent?.type !== 'directory') throw new FsError('Parent directory not found', 'FS_NOT_DIRECTORY');
+          this.computer.provider().mkdirSync(path);
+          this.storage.sql.exec('UPDATE weft_workspace_state SET revision=revision+1 WHERE id=1');
+          return this.metadata(path);
+        }
         if (operation.type === 'list') {
           const info = this.metadata(path);
           if (!info) throw new FsError('Workspace directory not found', 'FS_NOT_FOUND');

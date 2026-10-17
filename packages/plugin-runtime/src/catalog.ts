@@ -108,13 +108,14 @@ const entries: Entry[] = [
         throw new Error("Invalid catalog description length");
     },
     mount: async (ctx, config) => {
+      const cwd = ctx.workingDirectory.defaultDirectory;
       await ctx.plugin(Skills, {});
       await ctx.plugin(SkillFiles, {
         includeDefaultRoots: false,
         watch: false,
-        dshHome: "/workspace/.dsh",
-        agentsHome: "/workspace/.agents",
-        customSkillDirs: ["/workspace/.agents/skills"],
+        dshHome: `${cwd}/.dsh`,
+        agentsHome: `${cwd}/.agents`,
+        customSkillDirs: [`${cwd}/.agents/skills`],
       });
       await ctx.plugin(SkillTool, SkillTool.Config(config));
     },

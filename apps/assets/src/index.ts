@@ -9,7 +9,10 @@ export default {
     const headers = new Headers(asset.headers);
     headers.set("cache-control", "private, no-store");
     headers.set("x-content-type-options", "nosniff");
-    headers.set("content-security-policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self' data:; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
+    const official = url.pathname === '/index.html' && request.headers.get('x-weft-harness-document') === 'official';
+    // Official Cordis Loader expressions and the client runner use Function.
+    // The public Worker supplies this marker only for the native environment document.
+    headers.set("content-security-policy", `default-src 'self'; script-src 'self'${official ? " 'unsafe-eval'" : ''}; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self' data:; worker-src 'self' blob:; object-src 'none'; base-uri ${official ? "'self'" : "'none'"}; frame-ancestors 'none'; form-action 'self'`);
     headers.set("referrer-policy", "same-origin");
     return new Response(asset.body, {status: asset.status, headers});
   },

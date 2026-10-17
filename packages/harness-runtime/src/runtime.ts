@@ -8,6 +8,8 @@ import SessionTitle, {SessionTitleInvalidError, normalizeSessionTitle} from '@de
 import { RemoteError } from '@deepseek-ai/dsh-typert-protocol';
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt';
 import ToolRuntime from '@deepseek-ai/dsh-tools';
+import { installModelSelectionProjection, mountModelSelection, selectLiveHarnessModel } from './model-selection.ts';
+import type { ModelSelection } from '@deepseek-ai/dsh-api-session-controller/types';
 
 /** Trusted dependencies supplied by the platform; a Context belongs to one session. */
 export interface RuntimeOptions {
@@ -44,6 +46,7 @@ async function withHarnessSession<T>(options: RuntimeOptions, operation: (ctx: C
     await ctx.plugin(LlmRuntime);
     await ctx.plugin(SessionStore);
     await ctx.plugin(SessionProjectionRegistry);
+    if (options.presentation) installModelSelectionProjection(ctx);
     if (options.presentation) await ctx.plugin(SessionTitle, { fallbackMaxWords: 5, fallbackMaxBytes: 40, maxTitleBytes: 80 });
     await ctx.plugin(SystemPrompt, { personaPrefix: options.persona });
     await ctx.plugin(ToolRuntime);
@@ -59,6 +62,7 @@ async function withHarnessSession<T>(options: RuntimeOptions, operation: (ctx: C
       ? await ctx.agents.resume({ resumeSessionId: sessionId, agentOptions })
       : await ctx.agents.create({ sessionId, agentOptions, ...(options.meta ? { meta: options.meta } : {}) });
     owned = handle.agent;
+    if (options.presentation) mountModelSelection(ctx, handle.agent);
     options.signal?.throwIfAborted();
     options.onAgent?.(handle.agent, ctx);
     return await operation(ctx, handle.agent);
@@ -86,6 +90,10 @@ export async function initializeHarnessSession(options: RuntimeOptions): Promise
 export async function renameHarnessSession(options: RuntimeOptions, title: string): Promise<{title: string; seq: number}> {
   if (!normalizeSessionTitle(title, 80)) throw new RemoteError('session/title-invalid', 'Title must not be empty', {sessionId: SessionId(options.sessionId)});
   return withHarnessSession({...options, presentation: true}, (ctx, agent) => renameLiveHarnessSession(ctx, agent, title));
+}
+
+export async function selectHarnessModel(options: RuntimeOptions, selection: ModelSelection): Promise<{selected: ModelSelection}> {
+  return withHarnessSession({...options, presentation: true}, (ctx, agent) => selectLiveHarnessModel(ctx, agent, selection));
 }
 
 export async function renameLiveHarnessSession(ctx: Context, agent: Agent, title: string): Promise<{title: string; seq: number}> {

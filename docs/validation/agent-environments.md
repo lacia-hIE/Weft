@@ -28,7 +28,7 @@
 npm run build:official-ui
 ```
 
-产物和报告在 `.generated/official-remotes/` 与 `.generated/official-ui/`。Boot Graph 与静态资源生成到 `.generated/official-web-assets/`，使用官方模块排序函数及 manifest parser 验证；当前激活 67 个 Web 模块，按上游条件排除 Desktop 专用的 product-analytics 和 sidebar-browser。它们尚未挂入生产环境入口。
+产物和报告在 `.generated/official-remotes/` 与 `.generated/official-ui/`。Boot Graph 与静态资源生成到 `.generated/official-web-assets/`，使用官方模块排序函数及 manifest parser 验证；当前激活 67 个 Web 模块，按上游条件排除 Desktop 专用的 product-analytics 和 sidebar-browser。标准 `npm run build` 已包含完整生成链，并已完成一次完整构建。
 
 ## 原生会话 Host 验证
 
@@ -39,8 +39,22 @@ npm run build:official-ui
 - 原生标题事件与投影、运行中修改标题、非法标题拒绝，以及进程重建后的恢复。
 - 延迟 DeepSeek 协议流中重连，看到真实活动 Session 与已积累 assistant 输出；关闭所有订阅后模型仍继续执行。
 - 取消到达原生 Agent 并写入 `aborted/user` 终止事件；凭据缺失在确认提示词之前返回失败。
-- 同名会话的环境隔离；未知接口、未接入的 workspace catalog、steer 与运行中 Inbox 排队明确报告不可用。
+- 同名会话的环境隔离；未知接口、steer 与运行中 Inbox 排队明确报告不可用。
 
 完整 workerd 回归共 42 项通过，严格类型检查通过；3 项现有浏览器回归通过，两个 Worker 的预构建部署检查通过。UI 资产改为私有 Worker 的 Static Assets binding，公开主 Worker 仍先验证原生 Access 身份。本地 Miniflare 需显式设置资产 router 的 `has_user_worker`，保证与生产的 Worker-first 路由一致。
 
-当前环境入口仍是过渡工作台。原生会话 Host 是完整官方 UI 的基础，不能计为完整官方客户端接入。工作区、设置、插件配置、全局事件及 AppWebEntry 启动仍需完成；参见 [架构与剩余验收](../architecture/agent-environments.md)。
+## 官方页面、工作区与模型选择
+
+`/agents/:environmentId?ui=official` 使用真实 AppWebEntry、官方 Loader 和 67 个 Web 模块，已在浏览器完成原生会话发送、回复展示与刷新恢复。新增端到端测试还让两个环境使用相同 Session ID，验证页面内容、localStorage/sessionStorage 的读取、清理与切换恢复均按环境隔离。并行执行完整类型检查时首次启动超过原先 12 秒测试等待，官方启动检查调整为 45 秒后通过。
+
+新增真实 workerd 验证覆盖：
+
+- `$events` 的真实会话通知、环境隔离与重连后从持久状态重新读取。
+- Workspace 注册、真实目录创建、重命名、排序、会话归属、固定/归档、重启恢复；删除注册保留文件和会话。
+- `session/control` 的持久投影基线，以及配置模型目录。
+- 指定项目目录后，原生文件工具用相对路径写入该项目，而非默认根目录。
+- 原生模型选择事件与投影；重启后实际推理请求使用所选模型，切换后写入官方模型变更提示。不存在的模型、外部路由及无效推理档位被拒绝。
+
+本轮完整 workerd 回归 **46 项全部通过**；严格类型检查、完整官方构建及两个 Worker 的预部署检查通过。3 项既有浏览器回归通过，新增官方页面隔离/历史恢复测试重跑通过。真实 DeepSeek 的官方页面测试也通过：在独立环境中发送消息，收到指定回复，刷新后恢复同一原生历史；推理与恢复流程耗时 21.4 秒。该实测使用本地 workerd 和测试 Access 身份，不能替代云端允许用户的登录后验收。
+
+默认环境入口仍保留过渡工作台。Settings、凭据、原生动态插件与其他业务接口尚未接齐；官方页面目前不能计为完整接入。原生通知不持久化，断线重新获取基线。旧命名卷与旧会话的完整 UI 兼容，以及云端 Access 用户登录后的验收仍需完成；参见 [架构与剩余验收](../architecture/agent-environments.md)。

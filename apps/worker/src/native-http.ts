@@ -4,17 +4,27 @@ import { RemoteError, remoteErrorOf } from '@deepseek-ai/dsh-typert-protocol';
 import type {} from '@weft/upstream/packages/api/gateway/src/remote-error-codes.ts';
 import { clientRequestSchema } from '@weft/upstream/packages/client/connection/src/rpc-schema.ts';
 import sessionRemote from '../../../.generated/official-remotes/packages/api/session-controller/typert.remote-client.js';
+import workspaceRemote from '../../../.generated/official-remotes/packages/api/workspace-controller/typert.remote-client.js';
 import { controlFor, controlScope } from '../../../packages/control-plane/src/object.ts';
 import { sessionAddress, scopeSchema, type Principal } from '../../../packages/tenant/src/index.ts';
 import type { Env } from './index.ts';
 import { assertSameOrigin, HttpError, readJson } from './http.ts';
+import { resolveTenantModel, ModelConfigurationError } from '../../../packages/model-provider/src/index.ts';
 
 const payloadSchema = z.object({args: z.unknown()}).strict();
 type Endpoint = keyof typeof sessionRemote.methods;
 
 /** Official Connection envelopes and generated codecs at the CF host boundary. */
 export async function handleNativeRequest(request: Request, env: Env, principal: Principal, environmentId?: string): Promise<Response | undefined> {
-  const match = /^\/v1\/tenants\/([^/]+)\/native\/(api|streams)\/(.+)$/.exec(new URL(request.url).pathname);
+  const pathname = new URL(request.url).pathname;
+  const auxiliary = /^\/v1\/tenants\/([^/]+)\/native\/(open-in-app\/apps|plugins\/boot)$/.exec(pathname);
+  if (auxiliary) {
+    if (auxiliary[1] !== principal.tenantId) throw new HttpError(403, 'Tenant access denied');
+    if (request.method !== 'GET') throw new HttpError(405, 'Expected GET');
+    if (auxiliary[2] === 'open-in-app/apps') return Response.json({apps: []}, {headers: {'cache-control': 'private, no-store'}});
+    return env.UI.fetch(new Request(new URL('/harness/boot.json', request.url)));
+  }
+  const match = /^\/v1\/tenants\/([^/]+)\/native\/(api|streams)\/(.+)$/.exec(pathname);
   if (!match) return undefined;
   if (match[1] !== principal.tenantId) throw new HttpError(403, 'Tenant access denied');
   if (request.method !== 'POST') throw new HttpError(405, 'Expected POST');
@@ -31,6 +41,18 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
   try {
     const raw = await readJson(request, 65_536);
     if (match[2] === 'streams') {
+      if (endpoint === '$events') {
+        z.object({args: z.object({}).strict()}).strict().parse(raw);
+        return await control.fetch(new Request('https://environment.internal/native-events', {method: 'POST', body: JSON.stringify({operation: 'native-events', scope: owner}), signal: request.signal}));
+      }
+      if (endpoint === 'workspace/follow') {
+        workspaceRemote.methods[endpoint].input({strict: true}).create().parse(payloadSchema.parse(raw).args);
+        return await control.fetch(new Request('https://environment.internal/native-workspaces', {method: 'POST', body: JSON.stringify({operation: 'native-workspaces', scope: owner}), signal: request.signal}));
+      }
+      if (endpoint === 'session/control') {
+        sessionRemote.methods[endpoint].input({strict: true}).create().parse(payloadSchema.parse(raw).args);
+        return await control.fetch(new Request('https://environment.internal/native-control', {method: 'POST', body: JSON.stringify({operation: 'native-session-control', scope: owner}), signal: request.signal}));
+      }
       if (endpoint !== 'session/follow') throw new RemoteError('gateway/method-unavailable', 'Remote stream is not connected yet', {endpoint});
       const payload = payloadSchema.parse(raw);
       const args = sessionRemote.methods['session/follow'].input({strict: true}).create().parse(payload.args);
@@ -44,14 +66,32 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
     rpcId = envelope.rpcId;
     if (envelope.method !== endpoint) throw new RemoteError('gateway/bad-request', 'RPC method does not match endpoint', {});
     const payload = payloadSchema.parse(envelope.payload);
+    if (endpoint.startsWith('workspace/') || endpoint.startsWith('directoryPicker/')) {
+      const output = await control.nativeWorkspace(owner, endpoint, payload.args);
+      const {value} = await output.json() as {value?: unknown};
+      return Response.json({type: 'server-response', rpcId, result: {ok: true, value}}, {headers: {'cache-control': 'private, no-store'}});
+    }
     let value: unknown;
     switch (endpoint) {
+      case 'session/canOpenWorkspacePath': {
+        sessionRemote.methods[endpoint].input({strict: true}).create().parse(payload.args);
+        value = false; break;
+      }
+      case 'session/workspacePathApplications': {
+        sessionRemote.methods[endpoint].input({strict: true}).create().parse(payload.args);
+        value = []; break;
+      }
+      case 'session/modelCatalog': {
+        sessionRemote.methods[endpoint].input({strict: true}).create().parse(payload.args);
+        const selected = resolveTenantModel(env, principal.tenantId, await control.nativeDefaultModel(owner));
+        const provider = selected.adapter.providerInfo(selected.model.provider);
+        const models = await selected.adapter.listModels(selected.model.provider);
+        value = {default: selected.model, routableProviders: models.length ? [provider.id] : [], groups: models.length ? [{id: provider.id, name: provider.name, models: models.map(model => ({id: model.id, name: model.name, ...(model.description ? {description: model.description} : {}), ...('reasoning' in model && model.reasoning ? {reasoning: model.reasoning} : {})}))}] : [], failures: []};
+        break;
+      }
       case 'session/create': {
         const {request: input} = sessionRemote.methods[endpoint].input({strict: true}).create().parse(payload.args);
-        if ((input.cwd && input.cwd !== '/workspace') || (input.workspaceId && input.workspaceId !== 'default')) {
-          throw new RemoteError('gateway/method-unavailable', 'Native workspace catalog is not connected yet', {endpoint});
-        }
-        if (input.cwd && input.workspaceId) throw new RemoteError('gateway/bad-request', 'workspaceId and cwd are exclusive', {});
+        const workspace = await control.nativeResolveWorkspace(owner, input.workspaceId, input.cwd);
         let sessionId = input.sessionId ?? SessionId(crypto.randomUUID());
         let target = session(sessionId);
         const existing = await target.stub.nativeStatus(target.scope);
@@ -60,11 +100,12 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
           target = session(sessionId);
         }
         const binding = input.agentPreset ? {id: input.agentPreset} : undefined;
-        if (!await target.stub.nativeCreate(target.scope, binding, input.workspaceId)) {
+        if (!await target.stub.nativeCreate(target.scope, binding, 'default', workspace.path)) {
           sessionId = SessionId(crypto.randomUUID());
           target = session(sessionId);
-          if (!await target.stub.nativeCreate(target.scope, binding, input.workspaceId)) throw new RemoteError('gateway/internal', 'New Session identity was already used', {});
+          if (!await target.stub.nativeCreate(target.scope, binding, 'default', workspace.path)) throw new RemoteError('gateway/internal', 'New Session identity was already used', {});
         }
+        await control.nativeAttachWorkspace(owner, workspace.workspaceId, sessionId);
         const header = await target.stub.nativeHeader(target.scope);
         value = {sessionId, ...(header?.agentPreset ? {agentPreset: header.agentPreset} : {})};
         break;
@@ -110,6 +151,12 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
         value = {accepted: true};
         break;
       }
+      case 'session/selectModel': {
+        const {request: input} = sessionRemote.methods[endpoint].input({strict: true}).create().parse(payload.args);
+        const target = session(input.sessionId);
+        value = await (await target.stub.nativeSelectModel(target.scope, input)).json();
+        break;
+      }
       case 'session/cancel': {
         const {request: input} = sessionRemote.methods[endpoint].input({strict: true}).create().parse(payload.args);
         const target = session(input.sessionId);
@@ -128,6 +175,8 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
     if (error instanceof HttpError) throw error;
     const failure = remoteErrorOf(error) ?? (error instanceof z.ZodError
       ? {code: 'gateway/bad-request', message: 'Invalid Remote arguments', details: {}}
+      : error instanceof ModelConfigurationError && error.code === 'MODEL_NOT_CONFIGURED'
+      ? {code: 'session/provider-credentials-unavailable', message: error.message, details: {}}
       : {code: 'gateway/internal', message: 'Host operation failed', details: {}});
     return Response.json({type: 'server-response', rpcId, result: {ok: false, error: {code: failure.code, message: failure.message, details: failure.details}}}, {headers: {'cache-control': 'private, no-store'}});
   }

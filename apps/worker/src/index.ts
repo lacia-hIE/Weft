@@ -15,12 +15,13 @@ import { id } from '../../../packages/control-plane/src/contracts.ts';
 import upstream from '../../../upstream.lock.json';
 import { serveUi } from './ui-http.ts';
 import { WorkspaceDO } from '../../../packages/workspace/src/object.ts';
-import { workspaceIdSchema, workspaceAddress } from '../../../packages/workspace/src/protocol.ts';
+import { workspaceIdSchema, workspaceAddress, workspacePath } from '../../../packages/workspace/src/protocol.ts';
 export { WorkspaceDO, TenantDO, EnvironmentDO };
 import { z } from 'zod';
 import { Context } from '@deepseek-ai/cordis';
 import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session';
-import { runHarnessTurn, initializeHarnessSession, renameHarnessSession, renameLiveHarnessSession } from '../../../packages/harness-runtime/src/runtime.ts';
+import { runHarnessTurn, initializeHarnessSession, renameHarnessSession, renameLiveHarnessSession, selectHarnessModel } from '../../../packages/harness-runtime/src/runtime.ts';
+import { selectLiveHarnessModel } from '../../../packages/harness-runtime/src/model-selection.ts';
 import { turnFailure, type ModelEnvironment, type TurnFailure } from '../../../packages/model-provider/src/index.ts';
 import type { RuntimeOptions } from '../../../packages/harness-runtime/src/runtime.ts';
 import { RemoteError } from '@deepseek-ai/dsh-typert-protocol';
@@ -57,6 +58,22 @@ export class SessionDO extends DurableObject<Env> {
   private tail: Promise<void> = Promise.resolve();
   private readonly requests = new Map<string, AbortController>();
   private readonly nativeAdmissions = new Map<string, Promise<void>>();
+  private nativeCwd(sessionId: string): string {
+    const row = this.ctx.storage.sql.exec<{header_json: string}>('SELECT header_json FROM harness_sessions WHERE id=?', sessionId).toArray()[0];
+    return workspacePath(row ? (JSON.parse(row.header_json) as {cwd?: string}).cwd ?? '/workspace' : '/workspace');
+  }
+  private async publishNativeSummary(scope: SessionScope): Promise<void> {
+    const status = await this.nativeStatus(scope);
+    if (!status) return;
+    const raw: unknown = await (await this.nativeProjections(scope)).json();
+    const projections = sessionRemote.methods['session/projections'].result.create().parse(raw);
+    const row = {...status, ...(projections?.kind === 'sequenced' ? {projections: {kind: 'sequenced' as const, asOfSeq: projections.asOfSeq, values: projections.values}} : {})};
+    const checked = sessionRemote.methods['session/list'].result.create().parse({items: [row]});
+    const owner = controlScope(scope.tenantId, scope.environmentId);
+    const control = controlFor(this.env, owner);
+    await control.nativeEvent(owner, 'api-session/added', [checked.items[0]]);
+    await control.nativeEvent(owner, 'api-session/status', [scope.sessionId, status.running]);
+  }
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -109,6 +126,7 @@ export class SessionDO extends DurableObject<Env> {
     if (this.requests.size >= 32) return { ok: false, requestId, error: { code: 'SESSION_BUSY', message: 'Session queue is full', status: 429 } };
     const controller = new AbortController();
     this.requests.set(requestId, controller);
+    let nativeMode = false;
     try {
       return await this.exclusive(async (): Promise<TurnResult> => {
         let timer: ReturnType<typeof setTimeout> | undefined;
@@ -131,8 +149,9 @@ export class SessionDO extends DurableObject<Env> {
           const attachedWorkspace = stored ? stored.workspace_id : profile?.spec.workspaceId ?? workspaceId ?? null;
           if (profile && workspaceId !== undefined && workspaceId !== attachedWorkspace) return { ok: false, requestId, error: { code: 'WORKSPACE_MISMATCH', message: 'Workspace conflicts with the published agent', status: 409 } };
           const presentation = stored?.presentation === 1;
+          nativeMode = presentation;
           const reader = presentation ? await this.getReader() : undefined;
-          const runtime = sessionRuntime(this.env, this.ctx.storage, scope, profile, attachedWorkspace, persona, presentation, reader, hooks);
+          const runtime = sessionRuntime(this.env, this.ctx.storage, scope, profile, attachedWorkspace, persona, presentation, reader, hooks, presentation ? this.nativeCwd(scope.sessionId) : '/workspace');
           if (!stored) this.ctx.storage.sql.exec('INSERT INTO weft_session_config (id,workspace_id,agent_document) VALUES (1,?,?)', attachedWorkspace, profile ? JSON.stringify(profile) : null);
           if (profile) await controlFor(this.env, controlScope(scope.tenantId, scope.environmentId)).trackSession(controlScope(scope.tenantId, scope.environmentId), {
             id: scope.sessionId, title: text.slice(0, 80), agentId: profile.spec.id, revision: profile.revision, workspaceId: attachedWorkspace!, updatedAt: new Date().toISOString(),
@@ -140,6 +159,10 @@ export class SessionDO extends DurableObject<Env> {
           timer = setTimeout(() => { controller.abort({ code: 'TURN_TIMEOUT', message: 'Turn deadline exceeded', status: 504 } satisfies TurnFailure); }, runtime.turnTimeoutMs);
           const events = await runHarnessTurn({
             ...runtime.options,
+            onEvent: (event, session) => {
+              runtime.options.onEvent?.(event, session);
+              if (presentation && event.type === 'turn/start') this.ctx.waitUntil(Promise.resolve().then(() => this.publishNativeSummary(scope)));
+            },
             ...(nativeRequest ? {requestId: nativeRequest.requestId, promptContent: nativeRequest.content.flatMap(part => part.type === 'text' ? [part] : []), ...(nativeRequest.clientTimeZone !== undefined ? {clientTimeZone: nativeRequest.clientTimeZone} : {})} : {}),
             signal: controller.signal,
             cancellationCause: () => controller.signal.reason?.code === 'TURN_TIMEOUT' ? {kind: 'hook', reason: 'turn-deadline'} : {kind: 'user'},
@@ -149,11 +172,14 @@ export class SessionDO extends DurableObject<Env> {
           return { ok: false, requestId, error: controller.signal.aborted ? controller.signal.reason as TurnFailure : turnFailure(error) };
         } finally { if (timer !== undefined) clearTimeout(timer); }
       });
-    } finally { this.requests.delete(requestId); }
+    } finally {
+      this.requests.delete(requestId);
+      if (nativeMode) this.ctx.waitUntil(this.publishNativeSummary(scope));
+    }
   }
 
   /** Native Web creation opens a real persisted Session before its first prompt. */
-  async nativeCreate(input: SessionScope, binding?: AgentBinding, workspaceId?: string): Promise<boolean> {
+  async nativeCreate(input: SessionScope, binding?: AgentBinding, workspaceId?: string, cwd?: string): Promise<boolean> {
     const scope = this.assertScope(input);
     return this.exclusive(async () => {
       const owner = controlScope(scope.tenantId, scope.environmentId);
@@ -173,11 +199,13 @@ export class SessionDO extends DurableObject<Env> {
       workspaceIdSchema.parse(attachedWorkspace);
       if (stored && workspaceId && stored.workspace_id !== workspaceId && snapshot?.events.some(event => event.type === 'turn/start')) throw new Error('Session workspace is fixed after its first turn');
       const reader = await this.getReader();
-      const runtime = sessionRuntime(this.env, this.ctx.storage, scope, profile, attachedWorkspace, profile.spec.persona, true, reader);
-      if (snapshot) this.ctx.storage.sql.exec('UPDATE harness_sessions SET header_json=? WHERE id=?', JSON.stringify({...snapshot.header, cwd: '/workspace', agentPreset: profile.spec.id}), scope.sessionId);
+      const directory = workspacePath(cwd ?? snapshot?.header.cwd ?? '/workspace');
+      const runtime = sessionRuntime(this.env, this.ctx.storage, scope, profile, attachedWorkspace, profile.spec.persona, true, reader, {}, directory);
+      if (snapshot) this.ctx.storage.sql.exec('UPDATE harness_sessions SET header_json=? WHERE id=?', JSON.stringify({...snapshot.header, cwd: directory, agentPreset: profile.spec.id}), scope.sessionId);
       await initializeHarnessSession(runtime.options);
       this.ctx.storage.sql.exec('INSERT INTO weft_session_config (id,workspace_id,agent_document,presentation) VALUES (1,?,?,1) ON CONFLICT(id) DO UPDATE SET workspace_id=excluded.workspace_id,agent_document=excluded.agent_document,presentation=1', attachedWorkspace, JSON.stringify(profile));
       await control.trackSession(owner, {id: scope.sessionId, title: '', agentId: profile.spec.id, revision: profile.revision, workspaceId: attachedWorkspace, updatedAt: new Date().toISOString()});
+      await this.publishNativeSummary(scope);
       return true;
     });
   }
@@ -197,12 +225,18 @@ export class SessionDO extends DurableObject<Env> {
   async nativeRename(input: SessionScope, title: string) {
     const scope = this.assertScope(input);
     const active = (await this.getReader()).activeRuntime();
-    if (active?.ctx.get('sessionTitle')) return renameLiveHarnessSession(active.ctx, active.agent, title);
+    if (active?.ctx.get('sessionTitle')) {
+      const value = await renameLiveHarnessSession(active.ctx, active.agent, title);
+      await this.publishNativeSummary(scope);
+      return value;
+    }
     return this.exclusive(async () => {
       const stored = this.ctx.storage.sql.exec<{workspace_id: string; agent_document: string}>('SELECT workspace_id,agent_document FROM weft_session_config WHERE id=1').one();
       const profile = JSON.parse(stored.agent_document) as AgentRevision;
-      const runtime = sessionRuntime(this.env, this.ctx.storage, scope, profile, stored.workspace_id, profile.spec.persona, true, await this.getReader());
-      return renameHarnessSession(runtime.options, title);
+      const runtime = sessionRuntime(this.env, this.ctx.storage, scope, profile, stored.workspace_id, profile.spec.persona, true, await this.getReader(), {}, this.nativeCwd(scope.sessionId));
+      const value = await renameHarnessSession(runtime.options, title);
+      await this.publishNativeSummary(scope);
+      return value;
     });
   }
 
@@ -213,7 +247,26 @@ export class SessionDO extends DurableObject<Env> {
     const header = JSON.parse(row.header_json) as import('@deepseek-ai/dsh-session').SessionHeader;
     const last = this.ctx.storage.sql.exec<{time: number}>("SELECT MAX(json_extract(event_json,'$.time')) AS time FROM harness_events WHERE session_id=? AND json_extract(event_json,'$.type')='user/message' AND json_extract(event_json,'$.data.source.kind')='user'", scope.sessionId).one();
     const turn = this.ctx.storage.sql.exec("SELECT seq FROM harness_events WHERE session_id=? AND json_extract(event_json,'$.type')='turn/start' LIMIT 1", scope.sessionId).toArray().length > 0;
-    return {sessionId: header.id, updatedAt: last.time ?? header.createdAt, running: this.requests.size > 0, agentAvailable: this.requests.size > 0, blank: !turn, ...(header.cwd ? {cwd: header.cwd} : {}), formatStatus: 'current' as const};
+    const active = this.readerPromise ? (await this.readerPromise).activeRuntime()?.agent : undefined;
+    return {sessionId: header.id, updatedAt: last.time ?? header.createdAt, running: active?.status === 'running', agentAvailable: active !== undefined, blank: !turn, ...(header.cwd ? {cwd: header.cwd} : {}), formatStatus: 'current' as const};
+  }
+
+  async nativeSelectModel(input: SessionScope, raw: unknown): Promise<Response> {
+    const scope = this.assertScope(input);
+    const {request} = sessionRemote.methods['session/selectModel'].input({strict: true}).create().parse({request: raw});
+    if (request.sessionId !== scope.sessionId) throw new Error('Session identity mismatch');
+    if (!await this.nativeStatus(scope)) throw new RemoteError('session/not-found', 'Session not found', {sessionId: request.sessionId});
+    const active = (await this.getReader()).activeRuntime();
+    let value;
+    if (active?.ctx.get('llm')) value = await selectLiveHarnessModel(active.ctx, active.agent, request);
+    else value = await this.exclusive(async () => {
+      const stored = this.ctx.storage.sql.exec<{workspace_id: string; agent_document: string}>('SELECT workspace_id,agent_document FROM weft_session_config WHERE id=1').one();
+      const profile = JSON.parse(stored.agent_document) as AgentRevision;
+      const runtime = sessionRuntime(this.env, this.ctx.storage, scope, profile, stored.workspace_id, profile.spec.persona, true, await this.getReader(), {}, this.nativeCwd(scope.sessionId));
+      return selectHarnessModel(runtime.options, request);
+    });
+    await this.publishNativeSummary(scope);
+    return Response.json(sessionRemote.methods['session/selectModel'].result.create().parse(value));
   }
 
   async nativeProjections(input: SessionScope): Promise<Response> {
@@ -260,7 +313,10 @@ export class SessionDO extends DurableObject<Env> {
       if (!admitted) refuse(!result.ok && result.error.code === 'MODEL_NOT_CONFIGURED'
         ? new RemoteError('session/provider-credentials-unavailable', result.error.message, {})
         : new RemoteError('gateway/internal', result.ok ? 'Prompt was not admitted' : result.error.message, {}));
-      else if (!result.ok) console.error('Native prompt failed', result.error.code);
+      else if (!result.ok && result.error.code !== 'TURN_CANCELLED') {
+        const owner = controlScope(scope.tenantId, scope.environmentId);
+        this.ctx.waitUntil(controlFor(this.env, owner).nativeEvent(owner, 'api-session/error', [scope.sessionId, result.error.message]));
+      }
     }, error => { refuse(error); }));
     try { await admission; await this.ctx.storage.sync(); }
     finally { this.nativeAdmissions.delete(request.requestId); }

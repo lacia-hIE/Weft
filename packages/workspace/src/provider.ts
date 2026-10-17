@@ -7,7 +7,7 @@ import * as ObservationPolicy from '@deepseek-ai/dsh-fs-observation-policy';
 import { defineTool } from '@deepseek-ai/dsh-tools';
 import { workspaceAddress, workspacePath, ROOT, MAX_FILE_BYTES, type WorkspaceScope, type WorkspaceTransport, type WorkspaceOperation, type FileInfo, type FileRead, type WriteResult, type SearchResult } from './protocol.ts';
 
-interface ProviderConfig { scope: WorkspaceScope; transport: WorkspaceTransport }
+interface ProviderConfig { scope: WorkspaceScope; transport: WorkspaceTransport; cwd?: string }
 export class ComputerFileSystem extends FileSystem {
   constructor(ctx: Context, private readonly config: ProviderConfig) { super(ctx); }
   private async call<T>(operation: WorkspaceOperation, signal?: AbortSignal): Promise<T> {
@@ -26,7 +26,7 @@ export class ComputerFileSystem extends FileSystem {
   }
   override async resolve(path: string, opts?: { cwd?: string; signal?: AbortSignal }): Promise<FsTarget> {
     opts?.signal?.throwIfAborted();
-    const canonical = workspacePath(path, opts?.cwd);
+    const canonical = workspacePath(path, opts?.cwd ?? this.config.cwd);
     return { targetKey: FsTargetKey(this.key(canonical)), displayPath: canonical };
   }
   override processPath(target: FsTarget): string { return this.path(target); }
@@ -86,7 +86,8 @@ export class ComputerFileSystem extends FileSystem {
 /** Keep upstream tool schemas, read windows, observation policy, rendering and diff behavior. */
 export async function mountWorkspace(ctx: Context, config: ProviderConfig): Promise<void> {
   await ctx.plugin(ComputerFileSystem, config);
-  await ctx.plugin(WorkingDirectory, { defaultDirectory: ROOT });
+  const cwd = config.cwd ?? ROOT;
+  await ctx.plugin(WorkingDirectory, { defaultDirectory: cwd });
   await ctx.plugin(ObservationPolicy);
   await ctx.plugin(FileTools, { readImage: false });
   ctx.tools.register(defineTool({
@@ -95,7 +96,7 @@ export async function mountWorkspace(ctx: Context, config: ProviderConfig): Prom
     output: { schema: { type: 'object', properties: { result: { type: 'string', required: true } }, additionalProperties: false }, render: (_args, value) => [{ type: 'text', text: value.result }] },
     execute: async (args: { query: string; path?: string }, exec) => {
       exec.signal.throwIfAborted();
-      const response = await config.transport.call(config.scope, { type: 'search', path: workspacePath(args.path ?? ROOT), query: args.query, limit: 50 });
+      const response = await config.transport.call(config.scope, { type: 'search', path: workspacePath(args.path ?? cwd, cwd), query: args.query, limit: 50 });
       const payload = await response.json() as { value?: SearchResult; error?: string; code?: FsErrorCode };
       exec.signal.throwIfAborted();
       if (!response.ok) throw new FsError(payload.error ?? 'Workspace search failed', payload.code ?? 'FS_IO_ERROR');

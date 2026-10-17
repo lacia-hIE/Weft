@@ -17,6 +17,7 @@ export const workspaceOperationSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('stat'), path }).strict(),
   z.object({ type: z.literal('read'), path }).strict(),
   z.object({ type: z.literal('list'), path }).strict(),
+  z.object({ type: z.literal('mkdir'), path }).strict(),
   z.object({ type: z.literal('bytes'), path, offset: z.number().int().min(0), length: z.number().int().min(0).max(MAX_FILE_BYTES), maxBytes: z.number().int().min(0).max(MAX_FILE_BYTES).optional() }).strict(),
   z.object({ type: z.literal('write'), path, content: z.string().max(MAX_FILE_BYTES), expected: intent.optional() }).strict(),
   z.object({ type: z.literal('edit'), path, oldString: z.string().min(1).max(MAX_FILE_BYTES), newString: z.string().max(MAX_FILE_BYTES), replaceAll: z.boolean(), expectedVersion: version.optional() }).strict(),

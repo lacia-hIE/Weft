@@ -41,8 +41,12 @@ const server = createServer(async (request, response) => {
       },
     );
     response.writeHead(result.status, Object.fromEntries(result.headers));
-    if (result.body) Readable.fromWeb(result.body as never).pipe(response);
-    else response.end();
+    if (result.body) {
+      const stream = Readable.fromWeb(result.body as never);
+      response.on('close', () => { if (!response.writableEnded) stream.destroy(); });
+      stream.on('error', () => { response.destroy(); });
+      stream.pipe(response);
+    } else response.end();
   } catch (error) {
     response.writeHead(500);
     response.end(String(error));

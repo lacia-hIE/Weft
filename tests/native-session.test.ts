@@ -7,64 +7,15 @@ import { test } from 'node:test';
 import { ReadableStream } from 'node:stream/web';
 import { Response } from 'miniflare';
 import type { SessionFollowFrame, SessionPage, SessionCreateValue, SessionListValue } from '@deepseek-ai/dsh-api-session-controller/types';
+import type { RemoteEventDownlinkFrame } from '@weft/upstream/packages/api/gateway/src/stream-protocol.ts';
 import { createRuntime, tenantId, url } from './helpers/miniflare.ts';
+import { nativeClient } from './helpers/native.ts';
 
-type Runtime = ReturnType<typeof createRuntime>;
-function client(runtime: () => Runtime, environment = 'default', user = 'alpha' as const) {
-  const base = `/v1/tenants/${tenantId(user)}/environments/${environment}/native`;
-  return {
-    async raw(endpoint: string, args: unknown, method = endpoint) {
-      const response = await runtime().dispatchFetch(url(user, `${base}/api/${endpoint}`), {
-        method: 'POST', headers: {'content-type': 'application/json'},
-        body: JSON.stringify({type: 'client-request', rpcId: 'fixture-rpc', method, payload: {args}}),
-      });
-      assert.equal(response.status, 200, await response.clone().text());
-      assert.equal(response.headers.get('cache-control'), 'private, no-store');
-      return await response.json() as {rpcId: string; result: {ok: boolean; value: unknown; error?: {code: string}}};
-    },
-    async call<T>(endpoint: string, args: unknown): Promise<T> {
-      const body = await this.raw(endpoint, args);
-      assert.equal(body.result.ok, true, JSON.stringify(body));
-      assert.equal(body.rpcId, 'fixture-rpc');
-      return body.result.value as T;
-    },
-    async follow(sessionId: string) {
-      const response = await runtime().dispatchFetch(url(user, `${base}/streams/session/follow`), {
-        method: 'POST', headers: {'content-type': 'application/json'},
-        body: JSON.stringify({args: {request: {address: {kind: 'session', sessionId}, assistantStream: true}}}),
-      });
-      assert.equal(response.status, 200);
-      assert.match(response.headers.get('content-type')!, /text\/event-stream/);
-      const reader = response.body!.getReader();
-      const decoder = new TextDecoder();
-      let pending = '';
-      return {
-        async next(): Promise<SessionFollowFrame> {
-          for (;;) {
-            const end = pending.indexOf('\n\n');
-            if (end >= 0) {
-              const frame = pending.slice(0, end);
-              pending = pending.slice(end + 2);
-              const data = frame.split('\n').find(line => line.startsWith('data: '))?.slice(6);
-              assert.ok(data, frame);
-              assert.ok(frame.startsWith('event: item'), data);
-              return JSON.parse(data) as SessionFollowFrame;
-            }
-            const part = await reader.read();
-            assert.equal(part.done, false, 'follow ended before the expected frame');
-            pending += decoder.decode(part.value, {stream: true});
-          }
-        },
-        close: () => reader.cancel(),
-      };
-    },
-  };
-}
 
 test('official Session codecs expose real blank creation, live history, prompt correlation, titles and restart recovery in workerd', {timeout: 90_000}, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'weft-native-session-'));
   let runtime = createRuntime(directory, {browser: true});
-  const api = client(() => runtime);
+  const api = nativeClient(() => runtime);
   let stream: Awaited<ReturnType<typeof api.follow>> | undefined;
   try {
     const created = await api.call<SessionCreateValue>('session/create', {request: {sessionId: 'native'}});
@@ -130,14 +81,56 @@ test('official Session codecs expose real blank creation, live history, prompt c
   }
 });
 
+test('official event generations carry real Session summaries, isolate environments and reconnect against persisted state', {timeout: 60_000}, async () => {
+  const runtime = createRuntime(undefined, {browser: true});
+  const streams: {close(): Promise<void>}[] = [];
+  try {
+    for (const environment of ['one', 'two']) {
+      const response = await runtime.dispatchFetch(url('alpha', `/v1/tenants/${tenantId('alpha')}/environments`), {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({id: environment, name: environment})});
+      assert.equal(response.status, 201);
+    }
+    const one = nativeClient(() => runtime, 'one'), two = nativeClient(() => runtime, 'two');
+    const first = await one.events(), second = await two.events();
+    streams.push(first, second);
+    const a = await first.next(), b = await second.next();
+    assert.equal(a.type, 'ready'); assert.equal(b.type, 'ready');
+    if (a.type !== 'ready' || b.type !== 'ready') throw new Error('Missing native event generation');
+    assert.notEqual(a.clientId, b.clientId);
+    assert.equal(a.host.home, '/workspace');
+    await one.call('session/create', {request: {sessionId: 'only-one'}});
+    const added = await first.next();
+    assert.equal(added.type, 'emit');
+    if (added.type !== 'emit') throw new Error('Missing added event');
+    assert.equal(added.event, 'api-session/added');
+    assert.match(JSON.stringify(added.args), /only-one/);
+    assert.deepEqual(await first.next(), {type: 'emit', event: 'api-session/status', args: ['only-one', false]});
+    await two.call('session/create', {request: {sessionId: 'only-two'}});
+    const other = await second.next();
+    assert.match(JSON.stringify(other), /only-two/);
+    assert.doesNotMatch(JSON.stringify(other), /only-one/);
+    await second.next();
+    await one.call('session/rename', {request: {sessionId: 'only-one', title: 'persisted native event title'}});
+    assert.match(JSON.stringify(await first.next()), /persisted native event title/);
+    await first.close(); streams.splice(streams.indexOf(first), 1);
+    const next = await one.events(); streams.push(next);
+    const generation = await next.next();
+    assert.equal(generation.type, 'ready');
+    if (generation.type !== 'ready') throw new Error('Missing reconnect generation');
+    assert.notEqual(generation.clientId, a.clientId);
+    const list = await one.call<SessionListValue>('session/list', {_request: {}});
+    assert.equal(list.items.length, 1);
+    assert.match(JSON.stringify(list.items[0]!.projections), /persisted native event title/);
+  } finally { await Promise.all(streams.map(stream => stream.close())); await runtime.dispose(); }
+});
+
 test('native Remote rejects invalid contracts and unavailable capabilities without inventing successful results, and keeps environments isolated', {timeout: 60_000}, async () => {
   const runtime = createRuntime(undefined, {browser: true});
-  const api = client(() => runtime);
+  const api = nativeClient(() => runtime);
   try {
     assert.equal((await api.raw('session/create', {request: {sessionId: '../escape'}})).result.error?.code, 'gateway/bad-request');
     assert.equal((await api.raw('session/create', {request: {}}, 'session/list')).result.error?.code, 'gateway/bad-request');
-    assert.equal((await api.raw('session/create', {request: {cwd: '/etc'}})).result.error?.code, 'gateway/method-unavailable');
-    assert.equal((await api.raw('session/modelCatalog', {})).result.error?.code, 'gateway/method-unavailable');
+    assert.equal((await api.raw('session/create', {request: {cwd: '/etc'}})).result.error?.code, 'workspace/invalid-path');
+    assert.equal((await api.raw('session/fork', {})).result.error?.code, 'gateway/method-unavailable');
     await api.call('session/create', {request: {sessionId: 'same'}});
     const error = await api.raw('session/page', {request: {address: {kind: 'session', sessionId: 'same'}, throughSeq: 999}});
     assert.equal(error.result.error?.code, 'gateway/bad-request');
@@ -149,7 +142,7 @@ test('native Remote rejects invalid contracts and unavailable capabilities witho
       });
       assert.equal(response.status, 201);
     }
-    const one = client(() => runtime, 'one'), two = client(() => runtime, 'two');
+    const one = nativeClient(() => runtime, 'one'), two = nativeClient(() => runtime, 'two');
     await one.call('session/create', {request: {sessionId: 'same'}});
     assert.deepEqual(await two.call('session/list', {_request: {}}), {items: []});
     await two.call('session/create', {request: {sessionId: 'same'}});
@@ -177,7 +170,7 @@ test('a native follow reconnect sees the actual active Session and assistant sna
     controller.enqueue(new TextEncoder().encode(prefix));
     finish = () => { controller.enqueue(new TextEncoder().encode(suffix)); controller.close(); };
   }}), {headers: {'content-type': 'text/event-stream'}})});
-  const api = client(() => runtime);
+  const api = nativeClient(() => runtime);
   const streams: Awaited<ReturnType<typeof api.follow>>[] = [];
   try {
     await api.call('session/create', {request: {sessionId: 'live'}});
@@ -227,7 +220,7 @@ test('a native follow reconnect sees the actual active Session and assistant sna
 test('native prompt admission returns a credential failure before acknowledging a turn and remains readable after restart', {timeout: 60_000}, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'weft-native-admission-'));
   let runtime = createRuntime(directory, {browser: true});
-  const api = client(() => runtime);
+  const api = nativeClient(() => runtime);
   try {
     await api.call('session/create', {request: {sessionId: 'unconfigured'}});
     await runtime.dispose();
@@ -246,7 +239,7 @@ test('native cancellation reaches the active Agent and commits its terminal even
   }, outbound: async () => new Response(new ReadableStream<Uint8Array>({start(controller) {
     controller.enqueue(new TextEncoder().encode('event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":1,"output_tokens":0}}}\n\n'));
   }}), {headers: {'content-type': 'text/event-stream'}})});
-  const api = client(() => runtime);
+  const api = nativeClient(() => runtime);
   let stream: Awaited<ReturnType<typeof api.follow>> | undefined;
   try {
     await api.call('session/create', {request: {sessionId: 'cancel'}});

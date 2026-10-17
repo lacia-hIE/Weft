@@ -82,9 +82,13 @@ export function resolveTenantModel(env: ModelEnvironment, tenantId: string, sele
       streamIdleTimeoutMs: duration.parse(env.MODEL_IDLE_TIMEOUT_MS ?? '60000'),
       retryPolicy: { mode: 'normal', maxRetries: 0 },
     });
-    const adapter = new SafeDeepSeekAdapter({
+    const adapter: SafeDeepSeekAdapter = new SafeDeepSeekAdapter({
       options: () => connection,
       resolveAuth: async () => ({ headers: { 'x-api-key': apiKey } }),
+      discoverModels: async provider => {
+        const ids = [...new Set([...connection.models.map(entry => entry.id), model])];
+        return Promise.all(ids.map(id => adapter.resolveModel(provider, id)));
+      },
       // Tenant-scoped pseudonymous id; never send the Access email or user id to the model provider.
       resolveUserId: () => tenantId as AnonymousUserId,
       prepareExtensions: async () => ({ fields: {}, accept: async () => {} }),

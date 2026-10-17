@@ -1,5 +1,5 @@
 import { build } from 'esbuild';
-import { mkdirSync, readFileSync, writeFileSync, readdirSync, rmSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync, readdirSync, rmSync, cpSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { writeBuildOutput } from './write-build-output.mjs';
 
@@ -43,6 +43,12 @@ const providerFetch = {
 
 mkdirSync('dist', { recursive: true });
 const upstreamDirectory = JSON.parse(readFileSync('.generated/upstream-source.json','utf8')).directory;
+const browserNodeModule = {
+  name: 'official-loader-browser-boundary',
+  setup(builder) {
+    builder.onResolve({filter: /^node:module$/}, () => ({path: resolve(upstreamDirectory, 'apps/web/src/node-module-stub.ts')}));
+  },
+};
 const dynamicCordis = await build({ entryPoints: [resolve(upstreamDirectory,'vendor/cordis/src/index.ts')], bundle: true, format: 'esm', platform: 'browser', target: 'es2024', minify: true, write: false, tsconfig: '.generated/upstream.source.tsconfig.json' });
 writeFileSync('.generated/dynamic-cordis.ts', `export const cordisModule = ${JSON.stringify(dynamicCordis.outputFiles[0].text)};\n`);
 rmSync('dist/web', { recursive: true, force: true });
@@ -50,7 +56,8 @@ const web = await build({
   entryPoints: { app: 'apps/web/src/app.tsx', ...Object.fromEntries(Object.values(JSON.parse(readFileSync('packages/client-plugins/sdk.json','utf8'))).map(name => [`ui-runtime/${name}`, `apps/web/src/runtime/${name}.ts`])) },
   outdir: 'dist/web', bundle: true, splitting: true, format: 'esm', platform: 'browser', target: 'es2022',
   tsconfig: '.generated/upstream.source.tsconfig.json', jsx: 'automatic', minify: true, metafile: true,
-  define: { 'process.env.NODE_ENV': '"production"' },
+  define: { 'process.env.NODE_ENV': '"production"', 'process.versions.node': '"0.0.0"', 'process.execArgv': '[]', 'process.env.CORDIS_SHARED': 'undefined' },
+  plugins: [browserNodeModule],
   loader: { '.woff2': 'dataurl', '.woff': 'dataurl', '.ttf': 'dataurl' },
 });
 const assets = {};
@@ -93,7 +100,20 @@ for (const [path, asset] of Object.entries(assets)) {
   mkdirSync(resolve(target, '..'), { recursive: true });
   writeFileSync(target, asset.body);
 }
-writeFileSync('.generated/ui-paths.ts', `export const uiPaths: string[] = ${JSON.stringify(Object.keys(assets))};\n`);
+const paths = Object.keys(assets);
+if (existsSync('.generated/official-web-assets/harness/boot.json')) {
+  const graph = JSON.parse(readFileSync('.generated/official-web-assets/harness/boot.json', 'utf8'));
+  if (graph.release?.commit !== JSON.parse(readFileSync('upstream.lock.json', 'utf8')).commit) throw new Error('Official Web assets are stale');
+  cpSync('.generated/official-web-assets/harness', 'dist/public/harness', {recursive: true});
+  function collectOfficial(directory, prefix) {
+    for (const entry of readdirSync(directory, {withFileTypes: true})) {
+      if (entry.isDirectory()) collectOfficial(`${directory}/${entry.name}`, `${prefix}/${entry.name}`);
+      else paths.push(`${prefix}/${entry.name}`);
+    }
+  }
+  collectOfficial('dist/public/harness', '/harness');
+}
+writeFileSync('.generated/ui-paths.ts', `export const uiPaths: string[] = ${JSON.stringify(paths)};\n`);
 writeFileSync('dist/web-metafile.json', JSON.stringify(web.metafile, null, 2) + '\n');
 const result = await build({
   entryPoints: { worker: 'apps/worker/src/index.ts', 'assets-worker':'apps/assets/src/index.ts', 'contracts-worker': 'tests/fixtures/contracts-worker.ts', 'dynamic-worker': 'tests/fixtures/dynamic-worker.ts' },
