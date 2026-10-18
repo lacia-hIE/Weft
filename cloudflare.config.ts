@@ -12,6 +12,11 @@ export default defineConfig({
     domains: ['weft.luxuncang.com'],
     workersDev: false,
     previewUrls: false,
+    observability: {
+      enabled: true,
+      redactQueryString: true,
+      logs: { enabled: true, headSamplingRate: 1, invocationLogs: false },
+    },
     // Local-only identity simulation; Cloudflare Access supplies production identity.
     access: { dev: { aud: accessAudience, identity: { user_uuid: 'local-developer', email: 'dev@example.com' } } },
     env: {
