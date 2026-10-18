@@ -67,11 +67,11 @@ export async function createSessionReader(storage: DurableObjectStorage) {
     });
     return {
       ctx, history,
-      configureWorkspace(config: {scope: WorkspaceScope; transport: WorkspaceTransport; cwd: string; sessionId: string; attachmentTransport: AttachmentTransport}): Promise<void> {
+      configureWorkspace(config: {scope: WorkspaceScope; transport: WorkspaceTransport; cwd: string; sessionId: string; attachmentTransport: AttachmentTransport; images?: ImagesBinding}): Promise<void> {
         return workspace ??= (async () => {
           await ctx.plugin(ComputerFileSystem, config);
           await ctx.plugin(WorkingDirectory, {defaultDirectory: config.cwd});
-          await ctx.plugin(ComputerAttachmentStore, {scope: config.scope, sessionId: config.sessionId, transport: config.attachmentTransport});
+          await ctx.plugin(ComputerAttachmentStore, {scope: config.scope, sessionId: config.sessionId, transport: config.attachmentTransport, ...(config.images ? {images: config.images} : {})});
           new ApiSessionList(ctx, 8);
         })();
       },

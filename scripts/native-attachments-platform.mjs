@@ -12,6 +12,13 @@ export function prepareAttachmentHelpers(upstreamDirectory) {
   const to = commands.indexOf('\nfunction hasPromptRequest(', from);
   if (from < 0 || to < 0) throw new Error('Upstream prompt receipt resolution changed; review attachment admission');
   writeFileSync('.generated/official-prompt-files.ts', "import {RemoteError} from '@deepseek-ai/dsh-typert-protocol';\nimport type {AttachmentAdmissionPart, FileAttachmentRef} from '@deepseek-ai/dsh-attachment';\nimport type {FileUploadReceiptId} from '@deepseek-ai/dsh-client-file-upload/types';\nimport type {SessionPromptRequest} from '@deepseek-ai/dsh-api-session-controller/types';\nexport " + commands.slice(from, to) + '\n');
+  const imageStore = readFileSync(resolve(upstreamDirectory, 'packages/attachment/attachment-local/src/store.ts'), 'utf8');
+  const nameFrom = imageStore.indexOf('function displayName(');
+  const nameTo = imageStore.indexOf('\nfunction ensureReference(', nameFrom);
+  const imageFrom = commands.indexOf('function imageBlockIn(');
+  if (nameFrom < 0 || nameTo < 0 || imageFrom < 0 || !commands.slice(imageFrom).includes('function referencedImage(')) throw new Error('Upstream image authorization helpers changed; review the adaptation');
+  writeFileSync('.generated/official-image-helpers.ts', "import {assistantStreamChunks} from '@deepseek-ai/dsh-llm';\nimport type {SessionEvent} from '@deepseek-ai/dsh-session';\nimport type {ImageAttachmentRef} from '@deepseek-ai/dsh-attachment';\n" + imageStore.slice(nameFrom, nameTo).replace('function displayName(', 'export function imageDisplayName(') + '\n' + commands.slice(imageFrom).replace('function referencedImage(', 'export function referencedImage('));
+
 }
 
 /** Keep native receipts/commands intact; replace lifetime and physical HTTP transport. */

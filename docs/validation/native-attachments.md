@@ -1,6 +1,6 @@
 # 原版通用文件附件
 
-`packages/native-attachments` 挂载原版 `FileUploads` 和 Commands，使用实际 NativeSessionHost 的 Agent / Session。上传、回执绑定、回滚 guard、消费后的退休及原版浏览器后台上传器沿用上游实现。图片作为模型输入仍未接入；本阶段不声明完整图片附件能力。
+`packages/native-attachments` 挂载原版 `FileUploads` 和 Commands，使用实际 NativeSessionHost 的 Agent / Session。上传、回执绑定、回滚 guard、消费后的退休及原版浏览器后台上传器沿用上游实现。本文记录通用文件链路；后续接入的图片输入、模型上传和历史读取见 [原版图片验证](native-images.md)。
 
 ## Host 与协议
 
@@ -26,7 +26,7 @@ SessionDO SQLite 保存回执、FileAttachmentRef 和接受它的 requestId；�
 
 恢复时使用真实 Agent 的 Inbox 和原生事件判定绑定状态：待处理的消息保留绑定；已经消费或移除的回执退休；没有入队事件的未完成绑定恢复为可用。提示词和队列仍由原版 AgentLoop 执行，接受响应等待原生持久化 flush。重复 requestId 在回执退休后仍按原生入队记录去重，不重复触发模型。
 
-原版 ApiSessionList 提供 `imageLimits` 和会话列表元数据投影。当前 `mediaTypes` 为空，图片准入明确不可用；通用文件仍按原字节存储。这与已经接通的工作区图片预览是两个不同能力。
+原版 ApiSessionList 提供 `imageLimits` 和会话列表元数据投影。配置 Images binding 后提供真实图片准入范围；缺少 binding 时 `mediaTypes` 为空并明确拒绝图片输入。通用文件仍按原字节存储。这与工作区字节预览及图片输入的规范化是不同能力。
 
 ## 验证
 
@@ -47,7 +47,7 @@ SessionDO SQLite 保存回执、FileAttachmentRef 和接受它的 requestId；�
 
 `tests/browser/attachments-live.spec.ts` 把随机校验码只写入上传文件，再要求真实 DeepSeek 使用原生 read 工具读取。验收同时检查真实工具事件、助手回复及刷新后的历史，提示词本身不包含校验码。
 
-完整官方 UI 目标仍在进行中。图片准入、更多附件衍生能力、子 Agent、权限与更多静态插件生命周期需要继续接入；本地模型和页面验证不代替 Access 允许用户登录后的云端运行验收。旧数据不做兼容或迁移。
+完整官方 UI 目标仍在进行中。更多附件衍生能力、子 Agent、权限与更多静态插件生命周期需要继续接入；本地模型和页面验证不代替 Access 允许用户登录后的云端运行验收。旧数据不做兼容或迁移。
 
 ## 2026-10-18 验收记录
 

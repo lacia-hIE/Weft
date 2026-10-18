@@ -5,6 +5,7 @@ import { WorkspaceStore } from './store.ts';
 import { fsStatus, workspaceAddress, workspaceScopeSchema, workspaceOperationSchema, workspacePath, type WorkspaceScope, type WorkspaceOperation } from './protocol.ts';
 import {AttachmentError, type FileAttachmentRef} from '@deepseek-ai/dsh-attachment';
 import {attachmentOperationSchema, ATTACHMENT_ROOT, UPLOAD_CHUNK_BYTES} from '../../native-attachments/src/storage.ts';
+import type {ImageVariantRecord} from '../../native-attachments/src/image-variants.ts';
 import {storedFilePath} from '../../../.generated/official-file-reference.ts';
 
 interface Env { WORKSPACES: DurableObjectNamespace<WorkspaceDO> }
@@ -118,6 +119,18 @@ export class WorkspaceDO extends DurableObject<Env> {
     } catch (error) {
       const failure = error instanceof AttachmentError ? error : new AttachmentError('Attachment read failed.', 'ATTACHMENT_READ_FAILED');
       return Response.json({error: failure.message, code: failure.code}, {status: failure.code === 'ATTACHMENT_NOT_FOUND' ? 404 : 400});
+    }
+  }
+  async imageVariant(input: WorkspaceScope, key: string, candidate?: ImageVariantRecord): Promise<Response> {
+    const scope = workspaceScopeSchema.safeParse(input);
+    if (!scope.success || !this.ctx.id.equals(this.env.WORKSPACES.idFromName(workspaceAddress(scope.data)))) return Response.json({error: 'Workspace scope mismatch', code: 'FS_SANDBOX_DENIED'}, {status: 403});
+    try {
+      const value = this.files.imageVariants.resolve(key, candidate);
+      await this.ctx.storage.sync();
+      return Response.json({value}, {headers: {'cache-control': 'private, no-store'}});
+    } catch (error) {
+      const failure = error instanceof AttachmentError ? error : new AttachmentError('Image variant storage failed.', 'ATTACHMENT_WRITE_FAILED');
+      return Response.json({error: failure.message, code: failure.code}, {status: 400});
     }
   }
   /** Private, bounded invalidations. The original WorkspaceChangeFeed reads current metadata. */

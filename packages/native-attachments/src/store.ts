@@ -1,21 +1,48 @@
 import {createHash} from 'node:crypto';
 import type {Context} from '@deepseek-ai/cordis';
-import AttachmentStore, {AttachmentError, type AttachmentErrorCode, type FileAttachmentRef, type SaveFileAttachment, type SaveFileStreamAttachment, type ImageAttachmentRef, type SaveImageAttachment, type StoredImageAttachment} from '@deepseek-ai/dsh-attachment';
+import AttachmentStore, {AttachmentError, type AttachmentErrorCode, type FileAttachmentRef, type SaveFileAttachment, type SaveFileStreamAttachment, type ImageAttachmentRef, type SaveImageAttachment, type StoredImageAttachment, type ImageRequestTarget, type RequestImageAttachment, type AttachmentAdmissionPart, type AdmittedPromptContentPart, type ImageAttachmentLimits} from '@deepseek-ai/dsh-attachment';
 import type {WorkspaceScope} from '../../workspace/src/protocol.ts';
 import {ATTACHMENT_ROOT, UPLOAD_CHUNK_BYTES} from './protocol.ts';
+import type {ImageCodecBinding} from './image-codec.ts';
+import {ComputerImageAttachments} from './image-store.ts';
+import {IMAGE_LIMITS} from './image-policy.ts';
+import {checkedImageVariant, type ImageVariantRecord} from './image-variants.ts';
 import {storedFilePath} from '../../../.generated/official-file-reference.ts';
 
 export interface AttachmentTransport {
   uploadAttachment(scope: WorkspaceScope, sessionId: string, name: string | undefined, body: ReadableStream<Uint8Array>): Promise<Response>;
   readAttachment(scope: WorkspaceScope, ref: FileAttachmentRef): Promise<Response>;
+  imageVariant(scope: WorkspaceScope, key: string, record?: ImageVariantRecord): Promise<Response>;
 }
-interface Config {scope: WorkspaceScope; sessionId: string; transport: AttachmentTransport}
+interface Config {scope: WorkspaceScope; sessionId: string; transport: AttachmentTransport; images?: ImageCodecBinding}
 export const fileOnlyImageLimits = Object.freeze({maxImageBytes: 20 * 1024 * 1024, maxImagesPerMessage: 20, maxMessageImageBytes: 50 * 1024 * 1024, maxImagePixels: 40_000_000, maxImageDimension: 16_384, mediaTypes: []});
 
 /** Native AttachmentStore backed by immutable Computer files, with chunk backpressure. */
 export class ComputerAttachmentStore extends AttachmentStore {
-  readonly imageLimits = fileOnlyImageLimits;
-  constructor(ctx: Context, private readonly config: Config) {super(ctx);}
+  readonly imageLimits: ImageAttachmentLimits;
+  private readonly images: ComputerImageAttachments;
+  constructor(ctx: Context, private readonly config: Config) {
+    super(ctx);
+    this.imageLimits = config.images ? IMAGE_LIMITS : fileOnlyImageLimits;
+    this.images = new ComputerImageAttachments(this, config.images, async (key, record) => {
+      const response = await this.checked(await config.transport.imageVariant(config.scope, key, record));
+      const {value} = await response.json() as {value: unknown};
+      return value === null ? null : checkedImageVariant(value);
+    });
+  }
+  override async admitPromptContent(content: readonly AttachmentAdmissionPart[]): Promise<AdmittedPromptContentPart[]> {
+    const images = content.filter(part => part.type === 'image');
+    if (images.length > this.imageLimits.maxImagesPerMessage) throw new AttachmentError('Too many images.', 'TOO_MANY_IMAGES');
+    let total = 0;
+    for (const image of images) {
+      if (!this.imageLimits.mediaTypes.includes(image.mediaType)) throw new AttachmentError('Image input is not configured for this type.', 'UNSUPPORTED_IMAGE_TYPE');
+      const bytes = Math.floor(image.data.length / 4) * 3 - (image.data.endsWith('==') ? 2 : image.data.endsWith('=') ? 1 : 0);
+      if (bytes > this.imageLimits.maxImageBytes) throw new AttachmentError('Image exceeds its byte limit.', 'IMAGE_TOO_LARGE');
+      total += bytes;
+    }
+    if (total > this.imageLimits.maxMessageImageBytes) throw new AttachmentError('Image batch exceeds its byte limit.', 'IMAGES_TOO_LARGE');
+    return super.admitPromptContent(content);
+  }
   private async checked(response: Response): Promise<Response> {
     if (!response.ok) {
       const failure = await response.json() as {error: string; code: AttachmentErrorCode};
@@ -91,9 +118,15 @@ export class ComputerAttachmentStore extends AttachmentStore {
         yield value;
       }
       if (bytes !== ref.bytes || 'sha256:' + hash.digest('hex') !== ref.attachmentId) throw new AttachmentError('Stored file failed integrity verification.', 'ATTACHMENT_CORRUPT');
+    } catch (error) {
+      signal?.throwIfAborted();
+      if (error instanceof AttachmentError) throw error;
+      throw new AttachmentError('Stored file stream could not be verified.', 'ATTACHMENT_READ_FAILED', {cause: error});
     } finally {signal?.removeEventListener('abort', onAbort); await reader.cancel().catch(() => {}); reader.releaseLock();}
   }
-  override async validateImage(_input: SaveImageAttachment): Promise<void> {throw new AttachmentError('Image admission is not configured for this deployment.', 'UNSUPPORTED_IMAGE_TYPE');}
-  override async saveImage(_input: SaveImageAttachment): Promise<ImageAttachmentRef> {throw new AttachmentError('Image admission is not configured for this deployment.', 'UNSUPPORTED_IMAGE_TYPE');}
-  override async readImage(_ref: ImageAttachmentRef): Promise<StoredImageAttachment> {throw new AttachmentError('Image storage is not configured for this deployment.', 'ATTACHMENT_NOT_FOUND');}
+  override validateImage(input: SaveImageAttachment): Promise<void> {return this.images.validate(input);}
+  override saveImage(input: SaveImageAttachment): Promise<ImageAttachmentRef> {return this.images.save(input);}
+  override readImage(ref: ImageAttachmentRef, signal?: AbortSignal): Promise<StoredImageAttachment> {return this.images.read(ref, signal);}
+  override imageHostPath(ref: ImageAttachmentRef): string {return this.images.hostPath(ref);}
+  override readImageRequest(ref: ImageAttachmentRef, target: ImageRequestTarget, signal?: AbortSignal): Promise<RequestImageAttachment> {return this.images.request(ref, target, signal);}
 }

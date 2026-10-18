@@ -38,6 +38,7 @@ export function createRuntime(
     bindings?: Record<string, string>;
     outbound?: V4FetchHandler;
     browser?: boolean;
+    images?: boolean;
     scriptPath?: string;
   } = {},
 ): Miniflare {
@@ -88,6 +89,7 @@ export function createRuntime(
           compatibilityDate: "2026-07-30",
           compatibilityFlags: ["nodejs_compat", "enable_request_signal"],
           workerLoaders: {LOADER: {}},
+          ...(model.images ? {images: {binding: 'IMAGES'}} : {}),
           durableObjects: {
             SESSIONS: {
               className: "SessionDO",

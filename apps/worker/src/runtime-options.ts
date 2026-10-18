@@ -1,3 +1,5 @@
+import {resolveImageAttachmentAccess} from '@deepseek-ai/dsh-llm';
+import {EnvironmentUploadIndex, EnvironmentDeepSeekFiles} from '../../../packages/model-provider/src/files.ts';
 import type { Agent } from '@deepseek-ai/dsh-agent';
 import type { Env } from './index.ts';
 import type { SessionScope } from '../../../packages/tenant/src/index.ts';
@@ -24,11 +26,16 @@ type Reader = Awaited<ReturnType<typeof createSessionReader>>;
 export async function sessionRuntime(env: Env, storage: DurableObjectStorage, scope: SessionScope, profile: AgentRevision | undefined, workspaceId: string | null, persona: string, presentation: boolean, reader?: Reader, hooks: Pick<RuntimeOptions, 'onEvent' | 'onFrame'> = {}, cwd = '/workspace', requireCredential = true) {
   const owner = controlScope(scope.tenantId, scope.environmentId);
   const configuration = await readEnvironmentModelConfiguration(await controlFor(env, owner).nativeModelConfiguration(owner));
-  const model = resolveTenantModel(env, scope.tenantId, profile?.spec.model, configuration, requireCredential);
+  let runtimeRoot: Context | undefined;
+  const files = new EnvironmentDeepSeekFiles(new EnvironmentUploadIndex(operation => controlFor(env, owner).nativeModelFiles(owner, operation)));
+  const model = resolveTenantModel(env, scope.tenantId, profile?.spec.model, configuration, requireCredential, {
+    resolveAttachments: () => runtimeRoot?.get('attachments'),
+    resolveImageAccess: (attachments, ref) => resolveImageAttachmentAccess(attachments, path => runtimeRoot?.get('fs')?.processPathFromHostPath(path), ref),
+    resolveFiles: () => files,
+  });
   const loop = await (await controlFor(env, owner).nativeLoopConfiguration(owner)).json() as {maxParallelToolCalls: number};
   let activeAgent: Agent | undefined;
   let composition: Context | undefined;
-  let runtimeRoot: Context | undefined;
   const options: RuntimeOptions = {
     sessionId: scope.sessionId,
     persona: profile ? `${profile.spec.persona}\n${profile.spec.allowClientPlugins ? presentation ? NATIVE_PLUGIN_GUIDE : CLIENT_PLUGIN_GUIDE : ''}` : persona,
@@ -60,7 +67,7 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
       if (workspaceId !== null) {
         const workspace = {tenantId: scope.tenantId, workspaceId, ...(scope.environmentId ? {environmentId: scope.environmentId} : {})};
         await mountWorkspace(ctx, {scope: workspace, transport: env.WORKSPACES.getByName(workspaceAddress(workspace)), cwd});
-        if (presentation) await mountNativeAttachments(ctx, {storage, scope: workspace, sessionId: scope.sessionId, transport: env.WORKSPACES.getByName(workspaceAddress(workspace))});
+        if (presentation) await mountNativeAttachments(ctx, {storage, scope: workspace, sessionId: scope.sessionId, transport: env.WORKSPACES.getByName(workspaceAddress(workspace)), ...(env.IMAGES ? {images: env.IMAGES} : {})});
       }
       if (profile) {
         if (presentation) {await mountNativeComposition(ctx, [nativePresetDefinition(profile)], profile.spec.id); composition = ctx;}

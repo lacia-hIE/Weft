@@ -23,6 +23,60 @@ function contractsRuntime(persist?: string): Miniflare {
   return new Miniflare({...options, ...(persist ? {resourcePersistencePath: persist} : {})});
 }
 
+test('model upload ownership survives restart, competing publication and stale cleanup without crossing environment or credential boundaries', async () => {
+  const directory = await mkdtemp(resolve(tmpdir(), 'weft-upload-ownership-'));
+  let runtime = contractsRuntime(directory);
+  const owner = {tenantId: 'alpha', environmentId: 'one'};
+  const scope = 'a'.repeat(64), otherCredential = 'b'.repeat(64);
+  const variantId = 'sha256:' + 'c'.repeat(64);
+  const candidate = (fileId: string, credential = scope, expiresAt = 10_000) => ({scope: credential, variantId, attachmentId: 'sha256:' + 'd'.repeat(64), fileId, bytes: 100, createdAt: 100, expiresAt});
+  const call = async (operation: unknown, address = owner, identity = address) => {
+    const response = await runtime.dispatchFetch('http://localhost/model-uploads', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({address, scope: identity, operation})});
+    return {status: response.status, ...await response.json() as {value: any; error?: string}};
+  };
+  const get = (credential = scope, now = 1000) => ({type: 'get', scope: credential, variantId, now, margin: 100});
+  const commit = (fileId: string, credential = scope, now = 1000) => ({type: 'commit', candidate: candidate(fileId, credential, now + 9000), now, margin: 100});
+  try {
+    const race = await Promise.all([call(commit('first')), call(commit('second'))]);
+    assert.ok(race.every(result => result.status === 200));
+    assert.equal(race.filter(result => result.value.accepted).length, 1);
+    const winner = race[0]!.value.record;
+    assert.deepEqual(race[1]!.value.record, winner);
+    assert.equal((await call(get())).value.fileId, winner.fileId);
+    await call(commit('credential-two', otherCredential));
+    const environment = {...owner, environmentId: 'two'};
+    const tenant = {...owner, tenantId: 'beta'};
+    assert.equal((await call(get(), environment)).value, null);
+    assert.equal((await call(get(), tenant)).value, null);
+    await call(commit('environment-two'), environment);
+    await call(commit('tenant-beta'), tenant);
+    for (const wrong of [environment, tenant]) {
+      const refused = await call({type: 'clear', scope}, owner, wrong);
+      assert.equal(refused.status, 400);
+      assert.match(refused.error!, /scope mismatch/);
+    }
+    await runtime.dispose(); runtime = contractsRuntime(directory);
+    assert.deepEqual((await call(get())).value, winner);
+    assert.equal((await call(get(otherCredential))).value.fileId, 'credential-two');
+    assert.equal((await call(get(), environment)).value.fileId, 'environment-two');
+    assert.equal((await call(get(), tenant)).value.fileId, 'tenant-beta');
+    // Replacing an expired generation must not let delayed cleanup delete its replacement.
+    assert.equal((await call(get(scope, 10_900))).value, null);
+    assert.equal((await call(commit('replacement', scope, 10_900))).value.accepted, true);
+    await call({type: 'remove', scope, generations: [{variantId, fileId: winner.fileId}]});
+    assert.equal((await call(get(scope, 10_900))).value.fileId, 'replacement');
+    // Clear only this credential namespace; another environment and tenant retain ownership.
+    await call(commit('credential-replacement', otherCredential, 10_900));
+    await call({type: 'clear', scope});
+    assert.equal((await call(get(scope, 10_900))).value, null);
+    assert.equal((await call(get(otherCredential, 10_900))).value.fileId, 'credential-replacement');
+    assert.equal((await call(get(), environment)).value.fileId, 'environment-two');
+    assert.equal((await call(get(), tenant)).value.fileId, 'tenant-beta');
+    const invalid = await call({...commit('invalid'), candidate: {...candidate('invalid'), scope: 'plaintext-api-key'}});
+    assert.equal(invalid.status, 400);
+  } finally {await runtime.dispose(); await rm(directory, {recursive: true, force: true});}
+});
+
 test('attachment streaming cleans interruptions, bounds staging and rolls back publication without losing verified bytes', async () => {
   const runtime = contractsRuntime();
   try {

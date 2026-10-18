@@ -14,7 +14,7 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 
-export async function mountNativeAttachments(ctx: Context, config: {storage: DurableObjectStorage; scope: WorkspaceScope; sessionId: string; transport: AttachmentTransport}): Promise<void> {
+export async function mountNativeAttachments(ctx: Context, config: {storage: DurableObjectStorage; scope: WorkspaceScope; sessionId: string; transport: AttachmentTransport; images?: ImagesBinding}): Promise<void> {
   await ctx.plugin(ComputerAttachmentStore, config);
   await ctx.plugin(Commands);
   await ctx.plugin(AuthenticatedFetchRoutes);

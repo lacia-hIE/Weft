@@ -14,7 +14,7 @@ export function nativeClient(runtime: () => Runtime, environment = 'default', us
       });
       assert.equal(response.status, 200, await response.clone().text());
       assert.equal(response.headers.get('cache-control'), 'private, no-store');
-      return await response.json() as {rpcId: string; result: {ok: boolean; value: unknown; error?: {code: string}}};
+      return await response.json() as {rpcId: string; result: {ok: boolean; value: unknown; error?: {code: string; details?: Record<string, unknown>}}};
     },
     async call<T>(endpoint: string, args: unknown): Promise<T> {
       const body = await this.raw(endpoint, args);

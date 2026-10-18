@@ -12,6 +12,7 @@ import inventoryRemote from '../../../.generated/official-remotes/packages/host/
 import managerRemote from '../../../.generated/official-remotes/packages/boot/plugin-manager/typert.remote-client.js';
 import fileRemote from '../../../.generated/official-remotes/packages/api/workspace-files/typert.remote-client.js';
 import type {NativeFileEndpoint} from '../../../packages/native-files/src/index.ts';
+import {IMAGE_PROMPT_BODY_BYTES} from '../../../packages/native-attachments/src/image-policy.ts';
 import uploadRemote from '../../../.generated/official-remotes/packages/client/file-upload/typert.remote-client.js';
 import {FILE_UPLOAD_PATH} from '@weft/upstream/packages/client/file-upload/src/protocol.ts';
 import type { NativePluginEndpoint } from '../../../packages/native-plugins/src/host.ts';
@@ -81,7 +82,7 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
   };
   const notFound = (sessionId: string): never => { throw new RemoteError('session/not-found', 'Session not found', {sessionId: SessionId(sessionId)}); };
   try {
-    const raw = await readJson(request, endpoint === 'fileUploads/upload' ? 8 * 1024 * 1024 : 65_536);
+    const raw = await readJson(request, endpoint === 'session/prompt' ? IMAGE_PROMPT_BODY_BYTES : endpoint === 'fileUploads/upload' ? 8 * 1024 * 1024 : 65_536);
     if (match[2] === 'streams') {
       if (endpoint === 'workspaceFiles/changes') {
         const observerId = z.uuid().parse(request.headers.get('x-weft-observer-id'));
@@ -255,6 +256,13 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
         const {request: input} = sessionRemote.methods[endpoint].input({strict: true}).create().parse(payload.args);
         const target = session(input.sessionId);
         value = await (await target.stub.nativeProjections(target.scope)).json();
+        break;
+      }
+      case 'session/attachment': {
+        const {request: input} = sessionRemote.methods[endpoint].input({strict: true}).create().parse(payload.args);
+        const target = session(input.sessionId);
+        const response = await target.stub.nativeImageAttachment(target.scope, input.attachmentId);
+        value = (await response.json() as {value: unknown}).value;
         break;
       }
       case 'session/rename': {

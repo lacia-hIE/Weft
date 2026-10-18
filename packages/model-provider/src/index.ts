@@ -4,6 +4,7 @@ import type { ModelSelection } from '@deepseek-ai/dsh-agent';
 import type { AnonymousUserId } from '@deepseek-ai/dsh-anonymous-user-id';
 import { DeepSeekAdapter } from '@weft/upstream/packages/llm/llm-deepseek/src/adapter.ts';
 import { resolveAdapterOptions } from '@weft/upstream/packages/llm/llm-deepseek/src/config.ts';
+import type {DeepSeekAdapterOptions} from '@weft/upstream/packages/llm/llm-deepseek/src/types.ts';
 import type { Options as DeepSeekOptions } from '@weft/upstream/packages/llm/llm-deepseek/src/config.ts';
 import { ScriptedAdapter } from '../../harness-runtime/src/scripted-adapter.ts';
 import type { RuntimeOptions } from '../../harness-runtime/src/runtime.ts';
@@ -91,7 +92,7 @@ export function tenantModelHost(env: ModelEnvironment, tenantId: string) {
 }
 
 /** Host-owned resolution: HTTP clients cannot select credentials or provider endpoints. */
-export function resolveTenantModel(env: ModelEnvironment, tenantId: string, selectedModel?: { provider: "deepseek"; name: string }, settings?: EnvironmentModelConfig, requireCredential = true): ResolvedModel {
+export function resolveTenantModel(env: ModelEnvironment, tenantId: string, selectedModel?: { provider: "deepseek"; name: string }, settings?: EnvironmentModelConfig, requireCredential = true, capabilities: Pick<DeepSeekAdapterOptions, 'resolveAttachments' | 'resolveImageAccess' | 'resolveFiles'> = {}): ResolvedModel {
   if (env.MODEL_BACKEND === 'scripted') {
     return { model: { provider: 'validation', model: 'scripted' }, adapter: new ScriptedAdapter(), turnTimeoutMs: 60_000 };
   }
@@ -121,6 +122,7 @@ export function resolveTenantModel(env: ModelEnvironment, tenantId: string, sele
         ...(selection?.reasoningEffort === undefined ? {} : {reasoningEffort: ReasoningEffortId(selection.reasoningEffort)})};
     };
     const adapter: SafeDeepSeekAdapter = new SafeDeepSeekAdapter({
+      ...capabilities,
       options: () => connection,
       resolveAuth: async snapshot => {
         const key = credentials.get(snapshot);

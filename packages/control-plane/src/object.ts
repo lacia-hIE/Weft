@@ -32,6 +32,7 @@ import {profileDefinitions} from '../../harness-profile/src/index.ts';
 import {manageNativePlugins} from '../../native-composition/src/manager.ts';
 import {mountWorkspace} from '../../workspace/src/provider.ts';
 import { tenantModelHost, ModelConfigurationError, type ModelEnvironment } from '../../model-provider/src/index.ts';
+import {SqliteModelUploadIndex, type ModelUploadOperation} from '../../model-provider/src/files-protocol.ts';
 import { DATA_LAYOUT_VERSION } from '../../tenant/src/layout.ts';
 import { NativePluginCatalog } from './native-plugins.ts';
 
@@ -46,6 +47,13 @@ export const tenantAddress = (tenantId: string): string =>
 
 /** Environment-local Harness configuration, revisions and discoverable sessions. */
 abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
+  private modelUploads: SqliteModelUploadIndex | undefined;
+  async nativeModelFiles(scope: ControlScope, operation: ModelUploadOperation): Promise<Response> {
+    this.scope(scope);
+    const value = (this.modelUploads ??= new SqliteModelUploadIndex(this.ctx.storage)).execute(operation);
+    await this.ctx.storage.sync();
+    return Response.json({value}, {headers: {'cache-control': 'private, no-store'}});
+  }
   private nativePluginCatalog: NativePluginCatalog | undefined;
   private pluginCatalog(scope: ControlScope) {this.scope(scope); return this.nativePluginCatalog ??= new NativePluginCatalog(this.ctx.storage);}
   async nativeSyncPlugins(scope: ControlScope, sessionId: string, inventory: unknown, pending: unknown): Promise<void> {id.parse(sessionId); await this.pluginCatalog(scope).sync(sessionId, inventory, pending);}

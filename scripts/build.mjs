@@ -130,7 +130,7 @@ if (existsSync('.generated/official-web-assets/harness/boot.json')) {
 writeFileSync('.generated/ui-paths.ts', `export const uiPaths: string[] = ${JSON.stringify(paths)};\n`);
 writeFileSync('dist/web-metafile.json', JSON.stringify(web.metafile, null, 2) + '\n');
 const result = await build({
-  entryPoints: { worker: 'apps/worker/src/index.ts', 'assets-worker':'apps/assets/src/index.ts', 'contracts-worker': 'tests/fixtures/contracts-worker.ts', 'dynamic-worker': 'tests/fixtures/dynamic-worker.ts', 'composition-worker': 'tests/fixtures/composition-worker.ts', 'preset-worker': 'tests/fixtures/preset-worker.ts' },
+  entryPoints: { worker: 'apps/worker/src/index.ts', 'assets-worker':'apps/assets/src/index.ts', 'images-worker': 'tests/fixtures/images-worker.ts', 'contracts-worker': 'tests/fixtures/contracts-worker.ts', 'dynamic-worker': 'tests/fixtures/dynamic-worker.ts', 'composition-worker': 'tests/fixtures/composition-worker.ts', 'preset-worker': 'tests/fixtures/preset-worker.ts' },
   outdir: 'dist',
   bundle: true,
   format: 'esm',
@@ -151,6 +151,9 @@ if (shippedInputs.some(path => /packages\/(host\/webserver|api\/gateway|client\/
 if (shippedInputs.some(path => /packages\/attachment\/attachment-local\/src\/(store|normalization|image)\.ts$/.test(path))) {
   throw new Error('Node local attachment/image backend leaked into the workerd application bundle');
 }
+if (shippedInputs.some(path => /node_modules\/(sharp|@img)\//.test(path))) {
+  throw new Error('A native image codec leaked into the workerd application bundle');
+}
 if (result.metafile.outputs['dist/worker.js'].imports.some(item => item.path === 'node:vm')) {
   throw new Error('Node VM sandbox leaked into the workerd application bundle');
 }
@@ -164,7 +167,7 @@ const nodeImports = [...new Set(result.metafile.outputs['dist/worker.js'].import
   .filter(item => item.path.startsWith('node:')).map(item => item.path))].sort();
 writeFileSync('dist/runtime-audit.json', JSON.stringify({
   upstream: JSON.parse(readFileSync('upstream.lock.json', 'utf8')).commit,
-  adaptations: ['Static LLM package version import', 'Messages adapter fetch rejects redirects manually in workerd', 'Native Cordis Runner registry ownership, WorkerLoader sandbox and environment-wide inspect identities', 'Native Loader uses a prebuilt catalog without Node module jobs or executable configuration expressions', 'Original Connection JSON/multipart encoder extracted without its Node RPC host', 'Native FileUploads keeps original admission and receipt behavior with durable cache ownership and a scoped Fetch registry; pure reference and prompt helpers are extracted from the pinned source'],
+  adaptations: ['Static LLM package version import', 'Messages adapter fetch rejects redirects manually in workerd', 'Native Cordis Runner registry ownership, WorkerLoader sandbox and environment-wide inspect identities', 'Native Loader uses a prebuilt catalog without Node module jobs or executable configuration expressions', 'Original Connection JSON/multipart encoder extracted without its Node RPC host', 'Native FileUploads keeps original admission and receipt behavior with durable cache ownership and a scoped Fetch registry; pure reference, image and prompt helpers are extracted from the pinned source', 'Cloudflare Images normalizes native image attachments into immutable Computer files with durable request variants', 'Native DeepSeek Files transport uses an environment-owned SQLite index and confines cleanup to its recorded remote IDs'],
   dynamicPlugins: {runtime: 'Durable Object facet with native Cordis and ToolRuntime', services: ['tools', 'timer', 'scoped asynchronous fs'], directNetwork: false, operationDeadlineMs: 15000},
   computer: { version: JSON.parse(readFileSync('node_modules/@cloudflare/computer/package.json', 'utf8')).version, executionBackends: [] },
   excludedExecutionDependencies: forbiddenWorkspaceDependencies,

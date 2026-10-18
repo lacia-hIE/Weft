@@ -17,6 +17,7 @@
     "deploy": "npm run build && npm run deploy:workers",
     "deploy:check": "npm run build && npm run deploy:workers -- --dry-run",
     "check": "npm run typecheck && npm run test:unit",
+    "test:images:remote": "npm run build && node scripts/verify-native-images.mjs",
     "test:live": "node scripts/verify-live-model.mjs",
     "test:live:workspace": "node scripts/verify-live-workspace.mjs",
     "test:web": "npm run build && playwright test",
@@ -103,6 +104,7 @@
     "tsx": "4.23.15",
     "typescript": "6.0.3",
     "wrangler": "4.151.1",
+    "sharp": "0.35.5",
     "tsdown": "0.22.2",
     "lightningcss": "1.33.0"
   }

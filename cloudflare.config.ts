@@ -17,6 +17,7 @@ export default defineConfig({
     env: {
       UI: bindings.worker({ worker: uiWorker }),
       LOADER: bindings.workerLoader(),
+      IMAGES: bindings.images(),
       SESSIONS: bindings.durableObject({ worker: 'weft-kernel-validation', exportName: 'SessionDO' }),
       WORKSPACES: bindings.durableObject({ worker: 'weft-kernel-validation', exportName: 'WorkspaceDO' }),
       ENVIRONMENTS: bindings.durableObject({ worker: 'weft-kernel-validation', exportName: 'EnvironmentDO' }),

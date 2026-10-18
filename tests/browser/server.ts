@@ -25,11 +25,11 @@ const runtime = createRuntime(
   key
     ? {
         bindings: { MODEL_BACKEND: "deepseek", DEEPSEEK_API_KEY: key },
-        browser: true,
+        browser: true, images: true,
       }
-    : queue ? {browser: true, bindings: {MODEL_BACKEND: 'deepseek', DEEPSEEK_API_KEY: 'queue-browser-fixture', DEEPSEEK_BASE_URL: 'https://browser-model.test/anthropic'}, outbound: queue.outbound}
-      : plugins ? {browser: true, bindings: {MODEL_BACKEND: 'deepseek', DEEPSEEK_API_KEY: 'plugin-browser-fixture', DEEPSEEK_BASE_URL: 'https://model.test/anthropic'}, outbound: plugins.outbound}
-        : { browser: true },
+    : queue ? {browser: true, images: true, bindings: {MODEL_BACKEND: 'deepseek', DEEPSEEK_API_KEY: 'queue-browser-fixture', DEEPSEEK_BASE_URL: 'https://browser-model.test/anthropic'}, outbound: queue.outbound}
+      : plugins ? {browser: true, images: true, bindings: {MODEL_BACKEND: 'deepseek', DEEPSEEK_API_KEY: 'plugin-browser-fixture', DEEPSEEK_BASE_URL: 'https://model.test/anthropic'}, outbound: plugins.outbound}
+        : { browser: true, images: true },
 );
 await runtime.ready;
 // Native Harness opens several concurrent Remote streams. Match CF's HTTP/2

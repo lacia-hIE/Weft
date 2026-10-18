@@ -2,12 +2,14 @@ import { posix } from 'node:path';
 import { Workspace } from '@cloudflare/computer';
 import { FsError } from '@deepseek-ai/dsh-fs';
 import { ROOT, MAX_FILE_BYTES, workspacePath, type FileInfo, type FileRead, type WriteResult, type SearchResult, type WorkspaceOperation } from './protocol.ts';
+import {ComputerImageVariants} from '../../native-attachments/src/image-variants.ts';
 import {ComputerAttachmentFiles, ATTACHMENT_PRIVATE_ROOT} from '../../native-attachments/src/storage.ts';
 
 /** Computer owns file bytes; Weft owns monotone versions and the exposed capability boundary. */
 export class WorkspaceStore {
   private readonly computer: Workspace;
   readonly attachments: ComputerAttachmentFiles;
+  readonly imageVariants: ComputerImageVariants;
   constructor(private readonly storage: DurableObjectStorage) {
     storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_workspace_schema (version INTEGER NOT NULL)');
     const versions = storage.sql.exec<{ version: number }>('SELECT version FROM weft_workspace_schema').toArray();
@@ -21,6 +23,7 @@ export class WorkspaceStore {
     this.computer = new Workspace({ storage, output: false });
     this.computer.provider().mkdirSync(ROOT, { recursive: true });
     this.attachments = new ComputerAttachmentFiles(storage, this.computer.provider(), path => {this.version(path);});
+    this.imageVariants = new ComputerImageVariants(storage, file => {this.attachments.execute({type: 'read', ref: file, offset: 0});});
   }
 
   private revision(): number { return this.storage.sql.exec<{ revision: number }>('SELECT revision FROM weft_workspace_state WHERE id=1').one().revision; }

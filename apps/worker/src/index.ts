@@ -15,6 +15,8 @@ import upstream from '../../../upstream.lock.json';
 import { serveUi } from './ui-http.ts';
 import { WorkspaceDO } from '../../../packages/workspace/src/object.ts';
 import {createNativeFileHost, type NativeFileEndpoint} from '../../../packages/native-files/src/index.ts';
+import {referencedImage} from '../../../.generated/official-image-helpers.ts';
+import {AttachmentError} from '@deepseek-ai/dsh-attachment';
 import uploadRemote from '../../../.generated/official-remotes/packages/client/file-upload/typert.remote-client.js';
 import {FILE_UPLOAD_PATH} from '@weft/upstream/packages/client/file-upload/src/protocol.ts';
 import { workspaceIdSchema, workspaceAddress, workspacePath } from '../../../packages/workspace/src/protocol.ts';
@@ -39,6 +41,7 @@ import { authenticateAccess, sessionAddress, scopeSchema, type SessionScope } fr
 
 export interface Env extends ModelEnvironment {
   LOADER?: WorkerLoader;
+  IMAGES?: ImagesBinding;
   UI: Fetcher;
   SESSIONS: DurableObjectNamespace<SessionDO>;
   WORKSPACES: DurableObjectNamespace<WorkspaceDO>;
@@ -81,7 +84,7 @@ export class SessionDO extends DurableObject<Env> {
     if (config && this.ownerScope) {
       const scope = {tenantId: this.ownerScope.tenantId, environmentId: this.ownerScope.environmentId ?? 'default', workspaceId: config.workspace_id};
       const transport = this.env.WORKSPACES.getByName(workspaceAddress(scope));
-      await reader.configureWorkspace({scope, transport, attachmentTransport: transport, sessionId: this.ownerScope.sessionId, cwd: this.nativeCwd(this.ownerScope.sessionId)});
+      await reader.configureWorkspace({scope, transport, attachmentTransport: transport, sessionId: this.ownerScope.sessionId, cwd: this.nativeCwd(this.ownerScope.sessionId), ...(this.env.IMAGES ? {images: this.env.IMAGES} : {})});
     }
     return reader;
   }
@@ -341,6 +344,21 @@ export class SessionDO extends DurableObject<Env> {
       response.headers.set('cache-control', 'private, no-store');
       return response;
     } finally {await host.dispose();}
+  }
+  async nativeImageAttachment(input: SessionScope, attachmentId: string): Promise<Response> {
+    const scope = this.assertScope(input);
+    const snapshot = readSessionSnapshot(this.ctx.storage, SessionId(scope.sessionId));
+    if (!snapshot) throw new RemoteError('session/not-found', 'Session not found', {sessionId: SessionId(scope.sessionId)});
+    const ref = referencedImage(snapshot.events, attachmentId);
+    if (!ref) throw new RemoteError('session/attachment-invalid', 'Image is not referenced by this session.', {reason: 'ATTACHMENT_NOT_REFERENCED'});
+    const reader = await this.getReader();
+    try {
+      const stored = await (reader.activeRuntime()?.ctx ?? reader.ctx).attachments.readImage(ref);
+      return Response.json({value: {attachment: stored.ref, data: Buffer.from(stored.data).toString('base64')}});
+    } catch (error) {
+      if (error instanceof AttachmentError) throw new RemoteError('session/attachment-invalid', error.message, {reason: error.code});
+      throw error;
+    }
   }
   async nativeFileUpload(input: SessionScope, raw: unknown): Promise<Response> {
     const scope = this.assertScope(input);

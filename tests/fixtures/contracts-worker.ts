@@ -17,6 +17,9 @@ import {AttachmentError} from '@deepseek-ai/dsh-attachment';
 import {storedFilePath} from '../../.generated/official-file-reference.ts';
 import {createHash} from 'node:crypto';
 import type {FileAttachmentRef} from '@deepseek-ai/dsh-attachment';
+import {environmentAddress} from '../../packages/control-plane/src/object.ts';
+import type {ControlScope} from '../../packages/control-plane/src/contracts.ts';
+import type {ModelUploadOperation} from '../../packages/model-provider/src/files-protocol.ts';
 
 export { SessionDO, EnvironmentDO, TenantDO, PluginCapabilities };
 /** Test-only visibility into persistence checkpoints, absent from the production Worker. */
@@ -45,7 +48,7 @@ export class WorkspaceDO extends BaseWorkspaceDO {
   }
 }
 
-interface Env { CONTRACTS: DurableObjectNamespace<ContractsDO>; SESSIONS: DurableObjectNamespace<SessionDO>; WORKSPACES: DurableObjectNamespace<WorkspaceDO> }
+interface Env { CONTRACTS: DurableObjectNamespace<ContractsDO>; SESSIONS: DurableObjectNamespace<SessionDO>; WORKSPACES: DurableObjectNamespace<WorkspaceDO>; ENVIRONMENTS: DurableObjectNamespace<EnvironmentDO> }
 
 async function failure(operation: () => Promise<unknown>): Promise<string> {
   try { await operation(); return 'NO_ERROR'; }
@@ -118,6 +121,7 @@ export class ContractsDO extends DurableObject<Env> {
     let interrupted = 0;
     let uploadCalls = 0, readCalls = 0;
     const transport = {
+      imageVariant: (...args: Parameters<typeof stub.imageVariant>) => stub.imageVariant(...args),
       uploadAttachment: async (...args: Parameters<typeof stub.uploadAttachment>) => {uploadCalls++; return await stub.uploadAttachment(...args);},
       readAttachment: async (...args: Parameters<typeof stub.readAttachment>) => {readCalls++; return await stub.readAttachment(...args);},
     };
@@ -270,6 +274,11 @@ export class ContractsDO extends DurableObject<Env> {
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    if (new URL(request.url).pathname === '/model-uploads') {
+      const input = await request.json() as {address: ControlScope; scope: ControlScope; operation: ModelUploadOperation};
+      try {return await env.ENVIRONMENTS.getByName(environmentAddress(input.address)).nativeModelFiles(input.scope, input.operation);}
+      catch (error) {return Response.json({error: error instanceof Error ? error.message : 'Upload index failed'}, {status: 400});}
+    }
     const object = env.CONTRACTS.getByName(crypto.randomUUID());
     if (new URL(request.url).pathname === '/native-context') return Response.json(await object.nativeContext(new URL(request.url).searchParams.get('stage') ?? 'read'));
     if (new URL(request.url).pathname === '/scope') return Response.json(await object.checkScope());
