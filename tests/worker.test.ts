@@ -83,6 +83,27 @@ test('identity discovery stays stable across email changes and accepts runtime s
   } finally { await runtime.dispose(); }
 });
 
+test('static modules require verified Access audience without depending on per-resource user identity lookups', async () => {
+  const runtime = createRuntime();
+  try {
+    for (const profile of ['alpha', 'no-user-id']) {
+      const response = await runtime.dispatchFetch(url(profile, '/assets/app.js'));
+      assert.equal(response.status, 200, await response.clone().text());
+      assert.match(response.headers.get('content-type')!, /javascript/);
+      assert.equal(response.headers.get('cache-control'), 'private, no-store');
+      assert.equal((await runtime.dispatchFetch(url(profile, '/assets/chunk-KGLTISON,js'))).status, 404);
+    }
+    const denied = await runtime.dispatchFetch(url('no-user-id', '/v1/me'));
+    assert.equal(denied.status, 401);
+    assert.equal((await denied.json() as {code: string}).code, 'ACCESS_USER_IDENTITY_MISSING');
+    for (const [profile, code] of [['anonymous', 'ACCESS_CONTEXT_MISSING'], ['wrong-app', 'ACCESS_AUDIENCE_MISMATCH']]) {
+      const response = await runtime.dispatchFetch(url(profile!, '/assets/app.js'), {headers: {'cf-access-jwt-assertion': 'forged', 'cf-access-authenticated-user-email': users.alpha.email}});
+      assert.equal(response.status, 401);
+      assert.equal((await response.json() as {code: string}).code, code);
+    }
+  } finally {await runtime.dispose();}
+});
+
 test('cookie-authenticated writes reject cross-origin requests', async () => {
   const runtime = createRuntime();
   try {

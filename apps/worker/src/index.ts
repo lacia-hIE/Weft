@@ -599,10 +599,20 @@ export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     try {
       let pathname = new URL(request.url).pathname;
-      const principal = await authenticateAccess(ctx.access, env.ACCESS_AUD, env.ACCESS_TEAM_DOMAIN);
-      if (!principal) throw new HttpError(401, 'Cloudflare Access user login required');
+      const accessDenied = (code: string) => Response.json({error: 'Cloudflare Access user login required', code}, {status: 401, headers: {'cache-control': 'private, no-store'}});
+      if (!env.ACCESS_AUD || !env.ACCESS_TEAM_DOMAIN) return accessDenied('ACCESS_NOT_CONFIGURED');
+      if (!ctx.access) return accessDenied('ACCESS_CONTEXT_MISSING');
+      if (ctx.access.aud !== env.ACCESS_AUD) return accessDenied('ACCESS_AUDIENCE_MISMATCH');
+      // Assets contain no tenant state. Access already authenticated this invocation;
+      // avoid an identity lookup for every concurrent module and font request.
       const ui = serveUi(request, env.UI);
       if (ui) return await ui;
+      let principal;
+      try {principal = await authenticateAccess(ctx.access, env.ACCESS_AUD, env.ACCESS_TEAM_DOMAIN);}
+      catch {
+        return Response.json({error: 'Cloudflare Access identity is temporarily unavailable', code: 'ACCESS_IDENTITY_UNAVAILABLE'}, {status: 503, headers: {'cache-control': 'private, no-store'}});
+      }
+      if (!principal) return accessDenied('ACCESS_USER_IDENTITY_MISSING');
       if (pathname === '/v1/me' && request.method === 'GET') {
         return Response.json({ user: { id: principal.userId, email: principal.email }, tenantId: principal.tenantId }, {
           headers: { 'cache-control': 'private, no-store' },

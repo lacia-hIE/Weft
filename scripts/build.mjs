@@ -68,6 +68,12 @@ const web = await build({
   plugins: [browserNodeModule],
   loader: { '.woff2': 'dataurl', '.woff': 'dataurl', '.ttf': 'dataurl' },
 });
+// Object-valued defines create shared initialization imports even in otherwise
+// independent entries. Compile the recovery entry without the app's build graph.
+const bootstrap = await build({entryPoints: {start: 'apps/web/src/start.ts'}, outdir: 'dist/web', format: 'esm', platform: 'browser', target: 'es2022', minify: true, bundle: false, metafile: true});
+if (Object.values(bootstrap.metafile.outputs).some(output => output.imports.some(item => item.kind !== 'dynamic-import'))) throw new Error('Recovery entry must not depend on application chunks');
+Object.assign(web.metafile.outputs, bootstrap.metafile.outputs);
+Object.assign(web.metafile.inputs, bootstrap.metafile.inputs);
 const assets = {};
 const primitives = web.metafile.outputs['dist/web/ui-runtime/primitives.js'].exports;
 const dockkit = web.metafile.outputs['dist/web/ui-runtime/dockkit.js'].exports;
@@ -101,7 +107,7 @@ for (const directory of [...bundledPackages].sort()) {
   for (const name of licenses) notices += `\n${readFileSync(`${directory}/${name}`, 'utf8')}\n`;
 }
 assets['/licenses.txt'] = { type:'text/plain; charset=utf-8', body:notices };
-assets['/'] = { type: 'text/html; charset=utf-8', body: '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#f2f5f9"><title>Weft · DeepSeek Harness</title><link rel="stylesheet" href="/assets/app.css"></head><body><div id="root"><p style="padding:32px;color:#8090a8">正在连接你的工作空间…</p></div><script type="module" src="/assets/app.js"></script></body></html>' };
+assets['/'] = { type: 'text/html; charset=utf-8', body: '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#f2f5f9"><title>Weft · DeepSeek Harness</title><link rel="stylesheet" href="/assets/app.css"></head><body><div id="root"><p style="padding:32px;color:#8090a8">正在连接你的工作空间…</p></div><script type="module" src="/assets/start.js"></script></body></html>' };
 rmSync('dist/public', { recursive: true, force: true });
 for (const [path, asset] of Object.entries(assets)) {
   const target = resolve('dist/public', path === '/' ? 'index.html' : path.slice(1));

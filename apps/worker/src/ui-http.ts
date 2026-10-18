@@ -14,6 +14,9 @@ export function serveUi(
     url.search = '';
   }
   if (environmentDocument) url.pathname = "/";
+  if (["GET", "HEAD"].includes(request.method) && url.pathname.startsWith('/assets/') && !paths.has(url.pathname)) {
+    return Promise.resolve(new Response('Not found', {status: 404, headers: {'cache-control': 'private, no-store'}}));
+  }
   if (
     !["GET", "HEAD"].includes(request.method) ||
     !paths.has(url.pathname)

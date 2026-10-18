@@ -28,6 +28,8 @@ npm run deploy
 
 Worker 使用 Cloudflare 官方提供的 [`ctx.access`](https://developers.cloudflare.com/workers/configuration/cloudflare-access/) 读取认证身份，不自行信任 `Cf-Access-Jwt-Assertion` 或邮箱头。只有包含邮箱和稳定用户 ID 的人类用户身份可以访问，Service Token 不提供用户入口。写请求要求 JSON，拒绝跨 Origin 或 `Sec-Fetch-Site: cross-site` 请求。
 
+静态资源先检查运行时提供的 Access 上下文及应用 audience，再通过私有资产 Worker 返回，不对每个并发模块请求重复读取用户资料。静态资产不包含租户数据；`/v1/me`、会话和其他业务接口继续要求完整用户身份。缺少上下文、audience 不匹配或用户身份不完整分别返回稳定的鉴权错误码；身份服务异常返回 503。不存在的 `/assets/` 路径在通过 Access 校验后返回 404。独立启动模块捕获应用模块图加载失败，显示重试入口，避免页面永久停在加载提示。
+
 个人租户 ID 为 `user-` 加 SHA-256(JSON([Access 组织域名, 用户 ID]))。不同用户即使使用同一个 Session 名也对应不同的 Durable Object。邮箱变更不改变同一用户 ID 的租户；在 Access 中删除并重建用户可能产生新用户 ID，历史租户迁移需显式处理。原 alpha / beta 验证 Session 不映射给真实用户。
 
 本地 `npm run dev` 使用 `access.dev` 的模拟身份；该设置不参与生产认证。原应用 `VALIDATION_AUTH_JSON` 注册表已停用并从部署中移除。当前默认接入真实 DeepSeek 模型，服务端模型密钥存储于 `DEEPSEEK_API_KEY` Secret，与用户 Access 登录分离。
