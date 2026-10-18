@@ -92,6 +92,13 @@ Cloudflare 原生构建使用专用 `weft-native-builds` 部署凭据；凭据�
 
 ## 独立 Harness 环境
 
-Agent 目录在 `/`，工作台在 `/agents/:environmentId`。新增 EnvironmentDO 保存独立环境的配置、插件与 Session 索引；默认环境采用既有 TenantDO 和资源地址。新环境的 SessionDO / WorkspaceDO 对象名包含环境 ID，现有 namespace 与数据保留。部署命令仍为 `npm run deploy:workers`，Git 推送触发方式不变。
+Agent 目录在 `/`，工作台在 `/agents/:environmentId`。EnvironmentDO 保存每套环境的配置、插件与 Session 索引，默认环境与其他环境同等处理。SessionDO / WorkspaceDO 使用新的 `harness-v1` 寻址，包含租户及环境 ID；不读取、迁移旧对象，旧底层对象尚未物理删除。部署命令仍为 `npm run deploy:workers`，Git 推送触发方式不变。
 
 完整官方客户端接入尚在进行，官方模块构建与多环境回归结果见 [多环境验收](validation/agent-environments.md)。
+
+
+## 原生动态插件运行配置
+
+主 Worker 配置增加 `LOADER` Worker Loader binding 和 `PluginCapabilities` RPC export；不增加公开路由、应用 Token 或 Secret 复制。动态 Host 在 SessionDO 的 facet 中运行，子 Worker 只有绑定所属 session/plugin/run 的文件能力，直接网络关闭。私有 UI Worker 仍先于主 Worker 发布；`main` 推送继续使用既有 Cloudflare Git 自动构建。
+
+原版动态 Cordis 面板提供版本审批、运行、停止与移除，刷新由独立 Weft 模块恢复已批准 Client。仅开启 `allowClientPlugins` 的会话预设装配编写工具。完整官方页面继续通过 `/agents/:environmentId?ui=official` 验证；静态 Plugins 管理器、预设、权限及其他未接通能力见 [剩余验收](architecture/agent-environments.md)。本地 workerd 通过不等于真实 Access 用户完成云端登录后验证。

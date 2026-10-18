@@ -3,12 +3,14 @@ import { Readable } from "node:stream";
 import { readFileSync } from "node:fs";
 import { createRuntime } from "../helpers/miniflare.ts";
 import { modelGate } from './model-gate.ts';
+import { nativePluginModel } from '../helpers/native-plugin-model.ts';
 
 // Test-only bridge. Production serves directly from the authenticated Worker.
 // Native Access identities are supplied by Miniflare, never application headers.
 const live = process.env.WEFT_BROWSER_LIVE === "1";
 const queue = process.env.WEFT_BROWSER_QUEUE === '1' ? modelGate() : undefined;
-if (live && queue) throw new Error('Choose a live provider or the controlled queue provider');
+const plugins = process.env.WEFT_BROWSER_PLUGINS === '1' ? nativePluginModel() : undefined;
+if (Number(live) + Number(!!queue) + Number(!!plugins) > 1) throw new Error('Choose one browser model transport');
 const key = live
   ? readFileSync(".env", "utf8").match(
       /^DEEPSEEK_API_KEY\s*=\s*["']?([^\r\n"']+)/m,
@@ -22,7 +24,9 @@ const runtime = createRuntime(
         bindings: { MODEL_BACKEND: "deepseek", DEEPSEEK_API_KEY: key },
         browser: true,
       }
-    : queue ? {browser: true, bindings: {MODEL_BACKEND: 'deepseek', DEEPSEEK_API_KEY: 'queue-browser-fixture', DEEPSEEK_BASE_URL: 'https://browser-model.test/anthropic'}, outbound: queue.outbound} : { browser: true },
+    : queue ? {browser: true, bindings: {MODEL_BACKEND: 'deepseek', DEEPSEEK_API_KEY: 'queue-browser-fixture', DEEPSEEK_BASE_URL: 'https://browser-model.test/anthropic'}, outbound: queue.outbound}
+      : plugins ? {browser: true, bindings: {MODEL_BACKEND: 'deepseek', DEEPSEEK_API_KEY: 'plugin-browser-fixture', DEEPSEEK_BASE_URL: 'https://model.test/anthropic'}, outbound: plugins.outbound}
+        : { browser: true },
 );
 await runtime.ready;
 const server = createServer(async (request, response) => {

@@ -12,6 +12,7 @@ import { mountPlugins } from '../../../packages/plugin-runtime/src/catalog.ts';
 import { registerIdentityTool } from '../../../packages/harness-runtime/src/validation-tools.ts';
 import { CLIENT_PLUGIN_GUIDE, mountClientPublisher } from '../../../packages/client-plugins/src/tool.ts';
 import { mountClientInspection } from '../../../packages/client-plugins/src/inspect.ts';
+import { NATIVE_PLUGIN_GUIDE } from '../../../packages/native-plugins/src/guide.ts';
 import { controlFor, controlScope } from '../../../packages/control-plane/src/object.ts';
 
 type Reader = Awaited<ReturnType<typeof createSessionReader>>;
@@ -22,7 +23,7 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
   let activeAgent: Agent | undefined;
   const options: RuntimeOptions = {
     sessionId: scope.sessionId,
-    persona: profile ? `${profile.spec.persona}\n${profile.spec.allowClientPlugins ? CLIENT_PLUGIN_GUIDE : ''}` : persona,
+    persona: profile ? `${profile.spec.persona}\n${profile.spec.allowClientPlugins ? presentation ? NATIVE_PLUGIN_GUIDE : CLIENT_PLUGIN_GUIDE : ''}` : persona,
     model: model.model, adapter: model.adapter, presentation,
     ...(model.currentSelection ? {defaultModel: model.currentSelection} : {}),
     ...(model.refresh ? {beforeAssembly: async () => {
@@ -45,7 +46,7 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
       }
       if (profile) {
         await mountPlugins(ctx, profile.spec.plugins);
-        if (profile.spec.allowClientPlugins) {
+        if (profile.spec.allowClientPlugins && !presentation) {
           await mountClientInspection(ctx);
           mountClientPublisher(ctx, input => controlFor(env, controlScope(scope.tenantId, scope.environmentId)).publishClient(controlScope(scope.tenantId, scope.environmentId), input));
         }

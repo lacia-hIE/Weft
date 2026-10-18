@@ -29,6 +29,7 @@ import { remoteStream } from '../../harness-runtime/src/remote-stream.ts';
 import { NativeSettings } from './native-settings.ts';
 import { tenantModelHost, ModelConfigurationError, type ModelEnvironment } from '../../model-provider/src/index.ts';
 import { DATA_LAYOUT_VERSION } from '../../tenant/src/layout.ts';
+import { NativePluginCatalog } from './native-plugins.ts';
 
 export interface TenantEnvironment extends ModelEnvironment {
   TENANTS: DurableObjectNamespace<TenantDO>;
@@ -41,6 +42,19 @@ export const tenantAddress = (tenantId: string): string =>
 
 /** Environment-local Harness configuration, revisions and discoverable sessions. */
 abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
+  private nativePluginCatalog: NativePluginCatalog | undefined;
+  private pluginCatalog(scope: ControlScope) {this.scope(scope); return this.nativePluginCatalog ??= new NativePluginCatalog(this.ctx.storage);}
+  async nativeSyncPlugins(scope: ControlScope, sessionId: string, inventory: unknown, pending: unknown): Promise<void> {id.parse(sessionId); await this.pluginCatalog(scope).sync(sessionId, inventory, pending);}
+  async nativePluginInventory(scope: ControlScope): Promise<Response> {return Response.json({value: this.pluginCatalog(scope).inventory()});}
+  async nativePluginOwner(scope: ControlScope, kind: 'plugin' | 'approval' | 'inspect', resourceId: string): Promise<string | undefined> {return this.pluginCatalog(scope).owner(kind, resourceId);}
+  async nativePluginManifest(scope: ControlScope): Promise<Response> {return Response.json({value: this.pluginCatalog(scope).manifest()});}
+  async nativeSetPluginManifest(scope: ControlScope, providers: unknown): Promise<string[]> {const catalog = this.pluginCatalog(scope); await catalog.setManifest(providers); return catalog.sessions();}
+  async nativePluginEvent(scope: ControlScope, sessionId: string, name: string, args: readonly unknown[]): Promise<void> {
+    const catalog = this.pluginCatalog(scope);
+    if (!['cordis/request-run', 'cordis/request-run-resolved', 'cordis/dynamic-package', 'cordis/dynamic-retract', 'cordis/inspect-query'].includes(name)) throw new Error('Unknown native plugin event');
+    await catalog.event(sessionId, name, args);
+    this.nativeEvents.emit(name, args);
+  }
   private nativeSettings: NativeSettings | undefined;
   private settings(scope: ControlScope): NativeSettings {
     this.scope(scope);

@@ -21,7 +21,7 @@ cp .env.example .env
 npm run dev
 ```
 
-浏览器打开本地地址先进入 Agent 列表，选择环境后进入工作台。先在「Agent 预设」启用插件并发布，再开始会话；需要 Agent 编写 UI 时开启相应选项。界面复用官方 Harness 组件、样式和交互布局。浏览器验证为 `npm run test:web`，真实模型生成插件验证为 `npm run test:web:live`，原版队列交互验证为 `npm run test:web:queue`，首次需 `npx playwright install chromium`。参见 [Web 插件记录](docs/validation/web-plugins.md)。
+浏览器打开本地地址先进入 Agent 列表，选择环境后进入工作台。先在「Agent 预设」启用插件并发布，再开始会话；需要 Agent 编写 UI 时开启相应选项。界面复用官方 Harness 组件、样式和交互布局。浏览器验证为 `npm run test:web`，真实模型生成插件验证为 `npm run test:web:live`，原版队列交互验证为 `npm run test:web:queue`，原生 Cordis 审批与双端插件交互验证为 `npm run test:web:plugins`，首次需 `npx playwright install chromium`。参见 [Web 插件记录](docs/validation/web-plugins.md)。
 
 本地通过 `cloudflare.config.ts` 的 `access.dev` 模拟开发用户；该配置只用于本地运行，不会授予云端访问权限。无需应用 Token 或 `.dev.vars`。先获取当前用户及个人租户 ID，再发送消息：
 
@@ -51,6 +51,7 @@ curl http://localhost:8787/v1/tenants/TENANT_ID/sessions/example/events
 | `packages/plugin-runtime` | 原生服务端插件目录、Config 与装配 |
 | `packages/client-plugins` | TSX 转换、原生 API 检查工具、发布工具 |
 | `packages/dynamic-runner` | Dynamic Workers/Cordis 隔离 runner 验证 |
+| `packages/native-plugins` | 原版动态 Cordis Runner 的持久注册表、审批与隔离 Host facet 适配 |
 | `packages/harness-runtime` | 装配 upstream 插件，通过原有 Agent API 创建、恢复和驱动 Session |
 | `packages/workspace` | Computer WorkspaceDO、原生 Harness 文件系统适配、版本冲突与文件 API |
 | `packages/model-provider` | 按租户解析模型与凭据、复用上游 DeepSeek 适配器、归一化安全错误 |
@@ -73,4 +74,4 @@ npm run deploy:check
 
 云端入口：[Weft](https://weft.luxuncang.com/)，登录后进入 Web UI；用户与租户信息在 `/v1/me`，健康检查同样受 Access 保护。源码保存在 GitHub，Cloudflare 连接 GitHub 仓库；推送代码到 `main` 会触发 Cloudflare 原生 Git 自动构建和部署，无需 GitHub Actions；也可通过 `cf` 手动部署。部署及鉴权说明见 [部署记录](docs/deployment.md)。
 
-完整官方 UI 接入仍在进行中。`/agents/:environmentId?ui=official` 已运行原版 AppWebEntry 与 Web 模块树，会话、模型选择、工作区、设置、环境凭据和全局通知连接真实 DO。SessionDO 热实例保留原生 Agent 上下文，支持持久 Inbox 的排队、编辑、删除和 steer；原生动态插件与部分业务接口仍待接入，默认入口保留过渡工作台。本轮使用全新的 `harness-v1` 数据布局，不迁移旧数据。标准 `npm run build` 包含官方 Remote ABI、原始模块构建和 Boot Graph 生成。范围和验收状态见 [多环境与官方 UI](docs/architecture/agent-environments.md)。
+完整官方 UI 接入仍在进行中。`/agents/:environmentId?ui=official` 已运行原版 AppWebEntry 与 Web 模块树，会话、模型选择、工作区、设置、环境凭据和全局通知连接真实 DO。SessionDO 热实例保留原生 Agent 上下文，支持持久 Inbox 的排队、编辑、删除和 steer；原生动态 Cordis 插件已接通定义、精确版本审批、Host/Client 调用、停止、移除和重建恢复；服务端 Host 在隔离 Dynamic Worker facet 中执行。原版静态 Plugins 管理器、预设、权限及部分业务接口仍待接入，默认入口保留过渡工作台。插件编写仍需在会话预设中开启 `allowClientPlugins`。本轮使用全新的 `harness-v1` 数据布局，不迁移旧数据。标准 `npm run build` 包含官方 Remote ABI、原始模块构建和 Boot Graph 生成。范围和验收状态见 [多环境与官方 UI](docs/architecture/agent-environments.md)。

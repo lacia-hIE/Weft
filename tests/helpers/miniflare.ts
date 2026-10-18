@@ -86,6 +86,7 @@ export function createRuntime(
           scriptPath: resolve("dist/worker.js"),
           compatibilityDate: "2026-07-30",
           compatibilityFlags: ["nodejs_compat", "enable_request_signal"],
+          workerLoaders: {LOADER: {}},
           durableObjects: {
             SESSIONS: {
               className: "SessionDO",

@@ -20,6 +20,15 @@ for (const row of roster) for (const request of [...row.inject ?? [], ...row.ext
   if (!baseline.has(request) && !rows.has(request.replace(/\/client$/, ''))) throw new Error(`Missing official Web dependency ${request}`);
 }
 const unsorted = [];
+// Weft contributes an ordinary native module, never a replacement workbench.
+const environmentId = '@weft/harness-environment';
+const environmentModule = await build({entryPoints: [resolve(root, 'apps/web/src/official/environment-plugin.ts')], bundle: true, platform: 'browser', format: 'cjs', target: 'es2022', minify: true, write: false, external: ['react']});
+const environmentFactory = `globalThis.__ModuleLoader__.load({id:${JSON.stringify(environmentId)},factory(require){const module={exports:{}};const exports=module.exports;${environmentModule.outputFiles[0].text}\nconst published={...module.exports};Object.defineProperty(published,Symbol.toStringTag,{value:'Module'});return published;}});`;
+const environmentDirectory = resolve(output, 'harness', environmentId);
+mkdirSync(environmentDirectory, {recursive: true});
+writeFileSync(resolve(environmentDirectory, 'client.js'), environmentFactory);
+const environmentRev = digest(environmentFactory);
+unsorted.push({id: environmentId, url: `/harness/??${environmentId}/client.js&rev=${environmentRev}`, rev: environmentRev, external: ['react'], inject: ['@deepseek-ai/dsh-cordis-client-runner', '@deepseek-ai/dsh-api-remotes', '@deepseek-ai/dsh-client-ui-renderer', '@deepseek-ai/dsh-client-ui-sidebar']});
 for (const row of roster) {
   const directory = resolve(root, '.generated/official-ui', relative(source.directory, row.directory));
   const primary = ['client.js', 'client.browser.js'].find(file => existsSync(resolve(directory, file)));
@@ -52,5 +61,5 @@ const graph = {rev: digest(JSON.stringify({entries, batches})), release: {versio
 // Validate with the upstream parser, rather than maintaining a second Boot ABI.
 parseBootManifest(graph);
 writeFileSync(resolve(output, 'harness/boot.json'), JSON.stringify(graph) + '\n');
-writeFileSync(resolve(root, '.generated/official-web-boot-report.json'), JSON.stringify({upstream: source.commit, built: report.entries.length, active: entries.length, disabled: report.entries.map(row => row.id).filter(id => !rows.has(id)), graph: relative(root, resolve(output, 'harness/boot.json'))}, null, 2) + '\n');
-console.log(`Prepared ${entries.length} official Web entries and validated the native Boot Graph.`);
+writeFileSync(resolve(root, '.generated/official-web-boot-report.json'), JSON.stringify({upstream: source.commit, built: report.entries.length, officialActive: roster.length, extensions: [environmentId], active: entries.length, disabled: report.entries.map(row => row.id).filter(id => !rows.has(id)), graph: relative(root, resolve(output, 'harness/boot.json'))}, null, 2) + '\n');
+console.log(`Prepared ${roster.length} official Web entries and one Weft extension; validated the native Boot Graph.`);

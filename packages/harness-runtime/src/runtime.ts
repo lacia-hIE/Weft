@@ -73,6 +73,12 @@ export async function openHarnessSession(options: RuntimeOptions): Promise<Harne
     await ctx.plugin(AgentLoop, { agents: [] });
     ctx.llm.registerAdapter([options.model.provider], options.adapter);
     if (options.mountTools) await options.mountTools(ctx);
+    // Install before resume: persisted waking input may start assembling as
+    // soon as the native factory releases the restored Agent.
+    if (options.beforeAssembly) ctx.on('system-prompt/assemble', async (_assembly, _context, next) => {
+      await options.beforeAssembly!();
+      return next();
+    }, {prepend: true});
     const sessionId = SessionId(options.sessionId);
     const agentOptions = options.model;
     const stored = await ctx.get('sessionPersistence')?.stat(sessionId);
@@ -81,10 +87,6 @@ export async function openHarnessSession(options: RuntimeOptions): Promise<Harne
       : await ctx.agents.create({ sessionId, agentOptions, ...(options.meta ? { meta: options.meta } : {}) });
     owned = handle.agent;
     if (options.presentation) mountModelSelection(ctx, handle.agent, options.defaultModel, options.beforeAssembly);
-    if (options.beforeAssembly) handle.agent.ctx.on('system-prompt/assemble', async (_assembly, _context, next) => {
-      await options.beforeAssembly!();
-      return next();
-    }, {prepend: true});
     options.signal?.throwIfAborted();
     options.onAgent?.(handle.agent, ctx);
     return {ctx, agent: handle.agent, dispose};

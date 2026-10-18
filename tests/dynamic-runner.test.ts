@@ -8,6 +8,7 @@ test("Dynamic Worker loads native Cordis, scopes RPC capabilities, blocks egress
     modules: true,
     scriptPath: resolve("dist/dynamic-worker.js"),
     compatibilityDate: "2026-07-30",
+    compatibilityFlags: ["nodejs_compat"],
     workerLoaders: { LOADER: {} },
     bindings: { PLATFORM_SECRET: "must-not-cross-isolate" },
   });

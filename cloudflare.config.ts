@@ -16,6 +16,7 @@ export default defineConfig({
     access: { dev: { aud: accessAudience, identity: { user_uuid: 'local-developer', email: 'dev@example.com' } } },
     env: {
       UI: bindings.worker({ worker: uiWorker }),
+      LOADER: bindings.workerLoader(),
       SESSIONS: bindings.durableObject({ worker: 'weft-kernel-validation', exportName: 'SessionDO' }),
       WORKSPACES: bindings.durableObject({ worker: 'weft-kernel-validation', exportName: 'WorkspaceDO' }),
       ENVIRONMENTS: bindings.durableObject({ worker: 'weft-kernel-validation', exportName: 'EnvironmentDO' }),
@@ -27,6 +28,7 @@ export default defineConfig({
       ACCESS_TEAM_DOMAIN: bindings.text('aigraph.cloudflareaccess.com'),
     },
     exports: {
+      PluginCapabilities: exports.worker(),
       SessionDO: exports.durableObject({ storage: 'sqlite' }),
       WorkspaceDO: exports.durableObject({ storage: 'sqlite' }),
       EnvironmentDO: exports.durableObject({ storage: 'sqlite' }),

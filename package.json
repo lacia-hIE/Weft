@@ -22,6 +22,7 @@
     "test:web": "npm run build && playwright test",
     "test:web:live": "npm run build && WEFT_BROWSER_LIVE=1 playwright test --grep 'real DeepSeek'",
     "test:web:queue": "npm run build && WEFT_BROWSER_QUEUE=1 playwright test tests/browser/queue.spec.ts",
+    "test:web:plugins": "npm run build && WEFT_BROWSER_PLUGINS=1 playwright test tests/browser/native-plugins.spec.ts",
     "upstream:remotes": "npm run upstream:prepare && node scripts/generate-official-remotes.mjs",
     "build:official-ui": "npm run upstream:remotes && node scripts/build-official-ui.mjs && node scripts/prepare-official-boot.mjs"
   },

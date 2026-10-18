@@ -2,6 +2,7 @@ import { build } from 'esbuild';
 import { mkdirSync, readFileSync, writeFileSync, readdirSync, rmSync, cpSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { writeBuildOutput } from './write-build-output.mjs';
+import { nativeCordisPlatform } from './native-cordis-platform.mjs';
 
 // Bundles have no adjacent package.json at runtime. Preserve upstream attribution
 // while converting this one Node loader operation to a static JSON import.
@@ -51,6 +52,8 @@ const browserNodeModule = {
 };
 const dynamicCordis = await build({ entryPoints: [resolve(upstreamDirectory,'vendor/cordis/src/index.ts')], bundle: true, format: 'esm', platform: 'browser', target: 'es2024', minify: true, write: false, tsconfig: '.generated/upstream.source.tsconfig.json' });
 writeFileSync('.generated/dynamic-cordis.ts', `export const cordisModule = ${JSON.stringify(dynamicCordis.outputFiles[0].text)};\n`);
+const nativeKernel = await build({entryPoints: ['packages/native-plugins/src/kernel.ts'], bundle: true, format: 'esm', platform: 'browser', target: 'es2024', minify: true, write: false, external: ['cloudflare:workers', 'node:*', 'weft:plugin-factory'], tsconfig: '.generated/upstream.source.tsconfig.json', plugins: [staticAttribution]});
+writeFileSync('.generated/native-plugin-kernel.ts', `export const kernelModule = ${JSON.stringify(nativeKernel.outputFiles[0].text)};\n`);
 rmSync('dist/web', { recursive: true, force: true });
 const web = await build({
   entryPoints: { app: 'apps/web/src/app.tsx', ...Object.fromEntries(Object.values(JSON.parse(readFileSync('packages/client-plugins/sdk.json','utf8'))).map(name => [`ui-runtime/${name}`, `apps/web/src/runtime/${name}.ts`])) },
@@ -124,7 +127,7 @@ const result = await build({
   target: 'es2024',
   external: ['cloudflare:workers', 'node:*'],
   tsconfig: '.generated/upstream.source.tsconfig.json',
-  plugins: [staticAttribution, providerFetch],
+  plugins: [staticAttribution, providerFetch, nativeCordisPlatform],
   sourcemap: true,
   metafile: true,
 });
@@ -133,6 +136,9 @@ const shippedInputs = Object.entries(result.metafile.outputs['dist/worker.js'].i
   .filter(([, input]) => input.bytesInOutput > 0).map(([path]) => path);
 if (shippedInputs.some(path => /packages\/(host\/webserver|api\/gateway)|node_modules\/ws\//.test(path))) {
   throw new Error('Node host transport leaked into the workerd application bundle');
+}
+if (result.metafile.outputs['dist/worker.js'].imports.some(item => item.path === 'node:vm')) {
+  throw new Error('Node VM sandbox leaked into the workerd application bundle');
 }
 for (const dependency of forbiddenWorkspaceDependencies) {
   if (shippedInputs.some(path => path.includes(`node_modules/${dependency}/`))) {
@@ -144,7 +150,8 @@ const nodeImports = [...new Set(result.metafile.outputs['dist/worker.js'].import
   .filter(item => item.path.startsWith('node:')).map(item => item.path))].sort();
 writeFileSync('dist/runtime-audit.json', JSON.stringify({
   upstream: JSON.parse(readFileSync('upstream.lock.json', 'utf8')).commit,
-  adaptations: ['Static LLM package version import', 'Messages adapter fetch rejects redirects manually in workerd'],
+  adaptations: ['Static LLM package version import', 'Messages adapter fetch rejects redirects manually in workerd', 'Native Cordis Runner registry ownership, WorkerLoader sandbox and environment-wide inspect identities'],
+  dynamicPlugins: {runtime: 'Durable Object facet with native Cordis and ToolRuntime', services: ['tools', 'timer', 'scoped asynchronous fs'], directNetwork: false, operationDeadlineMs: 15000},
   computer: { version: JSON.parse(readFileSync('node_modules/@cloudflare/computer/package.json', 'utf8')).version, executionBackends: [] },
   excludedExecutionDependencies: forbiddenWorkspaceDependencies,
   browser: {

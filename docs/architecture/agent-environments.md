@@ -41,6 +41,18 @@ UI 资产由没有公网入口的 Worker 通过 Static Assets binding 读取；�
 
 `$events`、`session/control` 与 `workspace/follow` 提供环境内的真实通知及重新连接基线。通知本身不持久化，重连重新读取 DO 状态；观察者退出不终止 Agent 执行。浏览器切换采用完整导航，并按租户与环境划分原版客户端持久化键，防止同名 Session 缓存串用。
 
+## 原生动态 Cordis 插件
+
+`packages/native-plugins` 直接挂载固定上游的 `DynamicCordisRunnerService`；define/run/stop、不可变 package、原版审批面板、客户端 runner 和生命周期反馈沿用原实现。`scripts/native-cordis-platform.mjs` 仅在构建时替换注册表所有权、Node VM 沙箱入口和环境全局请求 ID，遇到上游 seam 变化立即构建失败；不修改上游 checkout。
+
+SessionDO SQLite 保存源码、版本、精确版本批准、未来版本授权、待处理请求和运行身份，EnvironmentDO 保存不含源码的目录与请求所属 Session。已批准活动版本在重建后恢复，保持 run ID；存在待批准的新版本时，只恢复旧活动版本，不吞掉新版本的请求或诊断。插件运行状态可恢复，任意 JavaScript 闭包内存并不持久，作者应把业务状态写入工作区。
+
+Host 源码编译为 Dynamic Worker 的静态模块，在 SessionDO 的 Durable Object facet 内运行真实 Cordis 与原版工具契约，父 Worker 不 eval 用户代码。子环境仅获得固定所属 Session/plugin/run 的 FS RPC；没有 Namespace、平台 Secret 或外网出口。支持工具、timer、限定异步 fs，未桥接服务明确拒绝。原生 Agent 的策略仍在父宿主执行；子工具不伪造 Agent 对象。协作取消保留实例，操作超过 15 秒则终止 facet 并收回注册，反馈进入原生 Inbox。该适配不等于任意 npm 安装、完整 Node 系统或跨隔离区自定义 Cordis 服务。
+
+默认预设的 `allowClientPlugins` 为 false。开启后装配五个小型编写工具，调用实际 Runner；只读检查工具复用上游契约，仅列出已桥接的服务与方法、隔离实例自身的工具事件，并补充 Workerd 执行说明。原版 Node HostConfig 检查没有挂载，避免把不存在的文件配置能力伪装成可用。
+
+独立的 `@weft/harness-environment` 浏览器扩展提供 My Agents 导航，并用原版客户端 runner 重新挂载已批准的活动 Client；刷新不会批准待处理的新版本。Client 插件仍与当前浏览器页面同权。原生动态插件面板不等于侧栏静态 Plugins 管理器已完整接通。
+
 ## 验收状态
 
 已实现并验证环境目录创建、配置/文件/插件/同名会话的环境隔离及重启恢复。浏览器验证覆盖目录进入、环境切换卸载及既有工作台回归。旧数据采用与迁移不再是验收目标。
@@ -49,14 +61,14 @@ UI 资产由没有公网入口的 Worker 通过 Static Assets binding 读取；�
 
 官方 Remote 的 30 个包与官方 Web 目录的 69 个客户端模块已使用上游生成器、各包自身的构建配置成功生成。标准 `npm run build` 已包含这条完整构建链，确保全新的 Cloudflare Git 构建也会生成官方产物；构建报告位于 `.generated/official-ui/build-report.json`。
 
-Boot Graph 由真实客户端工厂产物生成，复用官方 `orderByModuleGraph` 和 `parseBootManifest` 排序与校验。当前 Web profile 激活 67 个模块，按上游条件排除仅 Desktop 启用的 product-analytics 与 sidebar-browser。`/agents/:environmentId?ui=official` 已运行这条官方启动链；无参数入口仍保留过渡工作台，直至下面的完整功能验收通过。
+Boot Graph 由真实客户端工厂产物生成，复用官方 `orderByModuleGraph` 和 `parseBootManifest` 排序与校验。当前 Web profile 激活 67 个官方模块，加上独立的 `@weft/harness-environment` 扩展，共 68 个模块；按上游条件排除仅 Desktop 启用的 product-analytics 与 sidebar-browser。`/agents/:environmentId?ui=official` 已运行这条官方启动链；无参数入口仍保留过渡工作台，直至下面的完整功能验收通过。
 
 以下工作仍未完成，目标保持进行中：
 
 1. 继续补齐预设、权限、文件及更多插件的原生配置和 Host 接口、业务投影，并完成 Inbox 的原版页面交互验收；当前未连接的能力返回明确错误。
 2. 验证实时控制流在并发写入、长任务、断线与 DO 重建后的完整一致性，并解决 Session 目录当前 200 条上限。
-3. 验收后将官方 AppWebEntry 设为默认环境入口，并通过独立扩展补充 Weft 导航。
-4. 原生动态插件与官方模块系统、检查工具、配置生命周期的对接。
+3. 验收后将官方 AppWebEntry 设为默认环境入口；独立扩展已补充 My Agents 导航。
+4. 补齐原版静态 Plugins 管理器的包与配置生命周期；继续扩展原生动态插件的 workerd 服务桥接和部署验收。
 5. 完成更多 provider/插件的凭据集成和环境管理生命周期，按新布局验收，不做旧数据兼容。
 6. 在真实模型、多环境、重连、重启和 Cloudflare 部署中验收完整官方 UI。
 

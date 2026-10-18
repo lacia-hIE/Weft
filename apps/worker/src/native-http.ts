@@ -6,6 +6,8 @@ import { clientRequestSchema } from '@weft/upstream/packages/client/connection/s
 import sessionRemote from '../../../.generated/official-remotes/packages/api/session-controller/typert.remote-client.js';
 import workspaceRemote from '../../../.generated/official-remotes/packages/api/workspace-controller/typert.remote-client.js';
 import llmRemote from '../../../.generated/official-remotes/packages/llm/llm/typert.remote-client.js';
+import pluginRemote from '../../../.generated/official-remotes/packages/extensions/cordis-host-runner/typert.remote-client.js';
+import type { NativePluginEndpoint } from '../../../packages/native-plugins/src/host.ts';
 import { MODEL_NAMESPACE } from '../../../packages/control-plane/src/native-settings.ts';
 import { controlFor, controlScope } from '../../../packages/control-plane/src/object.ts';
 import { sessionAddress, scopeSchema, type Principal } from '../../../packages/tenant/src/index.ts';
@@ -68,6 +70,29 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
     rpcId = envelope.rpcId;
     if (envelope.method !== endpoint) throw new RemoteError('gateway/bad-request', 'RPC method does not match endpoint', {});
     const payload = payloadSchema.parse(envelope.payload);
+    if (endpoint.startsWith('dynamicCordisRunner/')) {
+      if (!Object.hasOwn(pluginRemote.methods, endpoint)) throw new RemoteError('gateway/method-unavailable', 'Unknown plugin method', {endpoint});
+      const method = pluginRemote.methods[endpoint as NativePluginEndpoint];
+      const args = method.input({strict: true}).create().parse(payload.args) as Record<string, unknown>;
+      let value: unknown;
+      if (endpoint === 'dynamicCordisRunner/inventory') value = (await (await control.nativePluginInventory(owner)).json() as {value: unknown}).value;
+      else if (endpoint === 'dynamicCordisRunner/syncInspectManifest') {
+        const sessions = await control.nativeSetPluginManifest(owner, args.providers);
+        await Promise.all(sessions.map(id => {const target = session(id); return target.stub.nativePluginManifest(target.scope, args.providers);}));
+        value = null;
+      } else {
+        const sessionId = typeof args.agentId === 'string' ? args.agentId
+          : await control.nativePluginOwner(owner, endpoint === 'dynamicCordisRunner/resolveRequestRun' ? 'approval' : endpoint === 'dynamicCordisRunner/resolveInspectQuery' ? 'inspect' : 'plugin', String(args.requestId ?? args.pluginId));
+        if (!sessionId) {
+          if (endpoint === 'dynamicCordisRunner/resolveRequestRun' || endpoint === 'dynamicCordisRunner/resolveInspectQuery') value = {accepted: false};
+          else throw new RemoteError('gateway/bad-request', 'Plugin is not in this environment', {});
+        } else {
+          const target = session(sessionId);
+          value = (await (await target.stub.nativePluginCall(target.scope, endpoint as NativePluginEndpoint, args)).json() as {value: unknown}).value;
+        }
+      }
+      return Response.json({type: 'server-response', rpcId, result: {ok: true, value: method.result.create().parse(value)}}, {headers: {'cache-control': 'private, no-store'}});
+    }
     if (endpoint.startsWith('settings/') || endpoint.startsWith('credentials/')) {
       const {value} = await (await control.nativeSettingsRequest(owner, endpoint, payload.args)).json() as {value?: unknown};
       return Response.json({type: 'server-response', rpcId, result: {ok: true, value}}, {headers: {'cache-control': 'private, no-store'}});

@@ -8,11 +8,11 @@ import { runHarnessTurn } from '../../packages/harness-runtime/src/runtime.ts';
 import { ScriptedAdapter } from '../../packages/harness-runtime/src/scripted-adapter.ts';
 import { registerIdentityTool } from '../../packages/harness-runtime/src/validation-tools.ts';
 import { initializeSessionStorage, SqliteSessionPersistence } from '../../packages/session-persistence-do/src/index.ts';
-import { SessionDO, EnvironmentDO, TenantDO } from '../../apps/worker/src/index.ts';
+import { SessionDO, EnvironmentDO, TenantDO, PluginCapabilities } from '../../apps/worker/src/index.ts';
 import { sessionAddress } from '../../packages/tenant/src/index.ts';
 import { workspaceAddress } from '../../packages/workspace/src/protocol.ts';
 
-export { SessionDO, WorkspaceDO, EnvironmentDO, TenantDO };
+export { SessionDO, WorkspaceDO, EnvironmentDO, TenantDO, PluginCapabilities };
 
 interface Env { CONTRACTS: DurableObjectNamespace<ContractsDO>; SESSIONS: DurableObjectNamespace<SessionDO>; WORKSPACES: DurableObjectNamespace<WorkspaceDO> }
 

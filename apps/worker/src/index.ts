@@ -1,4 +1,4 @@
-import { DurableObject } from 'cloudflare:workers';
+import { DurableObject, WorkerEntrypoint } from 'cloudflare:workers';
 import { createSessionReader } from '../../../packages/harness-runtime/src/session-reader.ts';
 import { sessionRuntime } from './runtime-options.ts';
 import sessionRemote from '../../../.generated/official-remotes/packages/api/session-controller/typert.remote-client.js';
@@ -24,6 +24,9 @@ import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session';
 import { runHarnessTurn, initializeHarnessSession, renameHarnessSession, renameLiveHarnessSession, selectHarnessModel } from '../../../packages/harness-runtime/src/runtime.ts';
 import { selectLiveHarnessModel } from '../../../packages/harness-runtime/src/model-selection.ts';
 import { NativeSessionHost } from './native-session-host.ts';
+import { NativePlugins, nativePlugins, type NativePluginEndpoint } from '../../../packages/native-plugins/src/host.ts';
+import nativePluginRemote from '../../../.generated/official-remotes/packages/extensions/cordis-host-runner/typert.remote-client.js';
+import { nativePluginFsMethods } from '../../../packages/native-plugins/src/protocol.ts';
 import { turnFailure, ModelConfigurationError, type ModelEnvironment, type TurnFailure } from '../../../packages/model-provider/src/index.ts';
 import type { RuntimeOptions } from '../../../packages/harness-runtime/src/runtime.ts';
 import { RemoteError } from '@deepseek-ai/dsh-typert-protocol';
@@ -31,6 +34,7 @@ import { initializeSessionStorage, SqliteSessionPersistence, readSessionSnapshot
 import { authenticateAccess, sessionAddress, scopeSchema, type SessionScope } from '../../../packages/tenant/src/index.ts';
 
 export interface Env extends ModelEnvironment {
+  LOADER?: WorkerLoader;
   UI: Fetcher;
   SESSIONS: DurableObjectNamespace<SessionDO>;
   WORKSPACES: DurableObjectNamespace<WorkspaceDO>;
@@ -53,6 +57,14 @@ const cancelSchema = z.object({ requestId: z.uuid() }).strict();
 type TurnResult = { ok: true; requestId: string; events: readonly SessionEvent[]; model: { provider: string; model: string } }
   | { ok: false; requestId: string; error: TurnFailure };
 
+/** Immutable capability identity; the child never receives a namespace or secret. */
+export class PluginCapabilities extends WorkerEntrypoint<Env, {scope: SessionScope; pluginId: string; runId: string}> {
+  async callFs(method: string, args: unknown[]): Promise<unknown> {
+    const {scope, pluginId, runId} = this.ctx.props;
+    return this.env.SESSIONS.getByName(sessionAddress(scope)).nativePluginFs(scope, pluginId, runId, method, args);
+  }
+}
+
 /** One tenant-qualified session. RPC methods are reachable only through trusted bindings. */
 export class SessionDO extends DurableObject<Env> {
   private readerPromise: Promise<Awaited<ReturnType<typeof createSessionReader>>> | undefined;
@@ -64,17 +76,34 @@ export class SessionDO extends DurableObject<Env> {
   private getNativeHost(scope: SessionScope): Promise<NativeSessionHost> {
     if (this.nativeHostPromise) return this.nativeHostPromise;
     const pending = this.exclusive(async () => {
-      const stored = this.ctx.storage.sql.exec<{workspace_id: string; agent_document: string}>('SELECT workspace_id,agent_document FROM weft_session_config WHERE id=1').one();
+      const stored = this.ctx.storage.sql.exec<{workspace_id: string; agent_document: string; presentation: number}>('SELECT workspace_id,agent_document,presentation FROM weft_session_config WHERE id=1').one();
+      if (stored.presentation !== 1 || !stored.agent_document) throw new RemoteError('session/not-found', 'Native Session not found', {sessionId: SessionId(scope.sessionId)});
       const profile = JSON.parse(stored.agent_document) as AgentRevision;
       if (profile.upstream !== upstream.commit) throw new Error('Agent runtime revision unavailable');
       const runtime = await sessionRuntime(this.env, this.ctx.storage, scope, profile, stored.workspace_id, profile.spec.persona, true, await this.getReader(), {}, this.nativeCwd(scope.sessionId), false);
       const owner = controlScope(scope.tenantId, scope.environmentId);
-      const host = await NativeSessionHost.open(runtime.options, runtime.turnTimeoutMs, {
+      const pluginsReady = Promise.withResolvers<void>();
+      void pluginsReady.promise.catch(() => {});
+      const host = await NativeSessionHost.open({...runtime.options, beforeAssembly: async () => {await pluginsReady.promise; await runtime.options.beforeAssembly?.();}, mountTools: async ctx => {
+        await runtime.options.mountTools?.(ctx);
+        await NativePlugins.mount(ctx, {
+          state: this.ctx, ...(this.env.LOADER ? {loader: this.env.LOADER} : {}), scope, allowAuthoring: profile.spec.allowClientPlugins,
+          capability: (pluginId, runId) => {
+            const exports = this.ctx.exports as unknown as {PluginCapabilities(options: {props: {scope: SessionScope; pluginId: string; runId: string}}): Fetcher};
+            return exports.PluginCapabilities({props: {scope, pluginId, runId}});
+          },
+          sync: (inventory, pending) => controlFor(this.env, owner).nativeSyncPlugins(owner, scope.sessionId, inventory, pending),
+          event: (name, args) => controlFor(this.env, owner).nativePluginEvent(owner, scope.sessionId, name, args),
+          manifest: async () => (await (await controlFor(this.env, owner).nativePluginManifest(owner)).json() as {value: unknown}).value,
+        });
+      }}, runtime.turnTimeoutMs, {
         waitUntil: promise => {this.ctx.waitUntil(promise);},
         changed: () => this.publishNativeSummary(scope),
         failed: failure => controlFor(this.env, owner).nativeEvent(owner, 'api-session/error', [scope.sessionId, failure.message]),
       });
       this.nativeHost = host;
+      try {await nativePlugins(host.ctx)!.restore(host.agent); pluginsReady.resolve();}
+      catch (error) {pluginsReady.reject(error); this.nativeHost = undefined; await host.dispose(); throw error;}
       return host;
     });
     this.nativeHostPromise = pending;
@@ -228,6 +257,7 @@ export class SessionDO extends DurableObject<Env> {
 
   async nativeHeader(input: SessionScope) {
     const scope = this.assertScope(input);
+    if (!this.ctx.storage.sql.exec('SELECT id FROM weft_session_config WHERE id=1 AND presentation=1').toArray().length) return undefined;
     return readSessionSnapshot(this.ctx.storage, SessionId(scope.sessionId))?.header;
   }
 
@@ -258,6 +288,7 @@ export class SessionDO extends DurableObject<Env> {
 
   async nativeStatus(input: SessionScope): Promise<NativeSummary | undefined> {
     const scope = this.assertScope(input);
+    if (!this.ctx.storage.sql.exec('SELECT id FROM weft_session_config WHERE id=1 AND presentation=1').toArray().length) return undefined;
     const row = this.ctx.storage.sql.exec<{header_json: string; event_count: number}>('SELECT header_json,event_count FROM harness_sessions WHERE id=?', scope.sessionId).toArray()[0];
     if (!row) return undefined;
     const header = JSON.parse(row.header_json) as import('@deepseek-ai/dsh-session').SessionHeader;
@@ -332,6 +363,30 @@ export class SessionDO extends DurableObject<Env> {
     z.boolean().parse(wakeup);
     await (await this.getNativeHost(scope)).deliver(createUserMessage({content: [{type: 'text', text}], source: {kind: 'cordis-host-runner'}}), wakeup);
     await this.ctx.storage.sync();
+  }
+
+  async nativePluginCall(input: SessionScope, endpoint: NativePluginEndpoint, raw: unknown): Promise<Response> {
+    const scope = this.assertScope(input);
+    if (!readSessionSnapshot(this.ctx.storage, SessionId(scope.sessionId))) throw new RemoteError('session/not-found', 'Session not found', {sessionId: SessionId(scope.sessionId)});
+    if (!Object.hasOwn(nativePluginRemote.methods, endpoint)) throw new RemoteError('gateway/method-unavailable', 'Unknown plugin method', {endpoint});
+    const host = await this.getNativeHost(scope);
+    return nativePlugins(host.ctx)!.invoke(endpoint, raw, host.agent);
+  }
+  async nativePluginManifest(input: SessionScope, providers: unknown): Promise<void> {
+    this.assertScope(input);
+    const args = nativePluginRemote.methods['dynamicCordisRunner/syncInspectManifest'].input({strict: true}).create().parse({providers});
+    if (this.nativeHost) nativePlugins(this.nativeHost.ctx)!.runner.syncInspectManifest(args.providers);
+  }
+  async nativePluginFs(input: SessionScope, pluginId: string, runId: string, method: string, args: unknown[]): Promise<unknown> {
+    const scope = this.assertScope(input);
+    const host = this.nativeHost ?? await this.getNativeHost(scope);
+    if (!nativePlugins(host.ctx)?.hasRun(pluginId, runId)) throw new Error('Plugin activation no longer owns this capability');
+    if (!(nativePluginFsMethods as readonly string[]).includes(method)) throw new Error('Filesystem method is not bridged');
+    const fs = host.ctx.get('fs');
+    if (!fs) throw new Error('No filesystem is mounted');
+    const fn = Reflect.get(fs, method);
+    if (typeof fn !== 'function') throw new Error('Filesystem method is unavailable');
+    return Reflect.apply(fn, fs, z.array(z.unknown()).max(5).parse(args));
   }
 
   /** Internal binding transport; external requests are authenticated by the entry Worker. */

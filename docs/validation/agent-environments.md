@@ -86,3 +86,15 @@ SessionDO 热实例跨轮次复用真实 Agent / Cordis Context，结束回答�
 普通浏览器回归 5 项通过，队列专项 1 项通过；严格类型检查通过。首次全量 workerd 回归为 50 项通过、1 项失败，原因是旧标题通知测试假定首条 projection 必为 title。加入原生 Inbox 后多个领域的投影可以交错，测试已改为验证对应 session 的真实 title 事件；完整回归重跑结果在下方记录。
 
 修正后的宿主与 Inbox 完整 workerd 回归 **51 项全部通过**。随后补充的平台凭据 endpoint 约束专项 **3 项全部通过**，含新增的完整地址/路径保护用例：冷、热 Agent 都不向修改后的 endpoint 外发平台密钥，只有环境自己的密钥可用于自定义网关。严格类型检查及最终两个 Worker 的预部署检查通过。浏览器共 8 项通过（普通 5、可控队列 1、真实模型 2）；这些本地 workerd 结果不替代云端 Access 登录后的验收。
+
+
+## 原生动态 Cordis Host 与官方插件面板
+
+原生 Runner 已接通定义、运行、精确版本审批、Client 代码获取、Host invoke、错误回报、停止、移除和检查请求。SessionDO 保存不可变源版本与授权，EnvironmentDO 只保存目录和路由索引。Host 在 SessionDO 的 Dynamic Worker facet 中持有实际 Cordis；支持工具、timer 和限定异步 FS，未桥接服务明确失败。更完整的范围与验证见 [Dynamic Workers](dynamic-runner.md)。
+
+官方 Boot Graph 仍使用原版 67 个 Web 模块，另加一个独立 Weft 扩展，共 68 个。扩展贡献 My Agents 导航，并通过原版 Client runner 重新挂载已经批准的活动 Client；不自动批准新版本，不覆盖上游页面。
+
+动态 Cordis 面板的接通不代表侧栏静态 Plugins 管理器、预设、权限或完整附件能力已接通。默认预设仍禁用插件编写，必须先发布允许 `allowClientPlugins` 的配置。完整官方 UI 目标继续进行，默认入口仍为过渡工作台；本轮不增加旧数据兼容或迁移。
+
+
+2026-10-18 最终回归：**55 项真实 workerd 测试全部通过**，包含新增的插件生命周期、隔离工具/取消/Secret 边界和可执行编写示例。严格类型检查与两个 Worker 的部署 dry-run 通过。普通浏览器 5 项、原版队列 1 项、原生插件面板专项 1 项通过；3 项真实 DeepSeek 浏览器故事分别验证官方聊天、过渡插件生成和原生双端插件。最终原生双端用例耗时 43.6 秒：模型生成代码，用户逐版本批准，按钮调用隔离 Host 写入真实文件，刷新恢复 Client。该结果仍是本地 workerd 与测试 Access 身份的证据，云端登录后验收另行完成。
