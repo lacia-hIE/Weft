@@ -90,6 +90,14 @@ Cloudflare 原生构建使用专用 `weft-native-builds` 部署凭据；凭据�
 
 可在 Cloudflare 控制台的 Worker 构建页面查看提交对应的构建和部署结果；手动部署命令仍可使用。
 
+### Access 与 UI 资源入口
+
+请求路径为自定义域名 `weft.luxuncang.com` → Access 应用 → `weft-kernel-validation` → UI Service Binding → 私有 `weft-ui-assets` → Static Assets。Access 应用的 `domain` 和 public destination 均为 `weft.luxuncang.com`，使用指定策略 `794a6757-ac89-4f8b-8e6a-6d68bef91490`。私有资产 Worker 不直接对用户提供公网入口。
+
+线上日志曾确认，同一次页面加载的部分模块请求没有原生 `ctx.access`，主 Worker 因而返回 `ACCESS_CONTEXT_MISSING`；资源本身存在且可从私有资产服务读取。入口现在优先使用原生上下文，缺失时按照 [Cloudflare 的断言验证方式](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/validating-json/)校验 Access 的请求断言或登录 Cookie。`jose` 在 workerd 中使用 Web Crypto 验证 RS256，仅从配置组织的 `/cdn-cgi/access/certs` 获取公钥，不信任断言中提供的密钥地址；还必须匹配 issuer、audience、有效期和用户声明。原生 audience 不匹配时直接拒绝，不允许断言覆盖。验证公钥临时不可用返回 503，匿名、无效及服务凭据继续被拒绝；此路径没有新增应用 Token 登录。
+
+主 Worker 开启持久化诊断日志，记录 Access 拒绝码、验证服务故障、断言验证成功路径和资产错误状态。日志不记录断言、Cookie 或模型密钥，关闭默认调用日志并移除 URL 查询字符串。浏览器启动失败时可展开“查看错误详情”，查看原始模块错误及失败资源状态。
+
 `scripts/deploy-workers.mjs` 顺序发布两份预构建产物。Workers Builds 注入的 `WRANGLER_CI_MATCH_TAG` / `WRANGLER_CI_OVERRIDE_NAME` 只描述关联的主 Worker，因此发布私有 UI 资产时移除这两个子进程变量，发布主 Worker 时保留原始环境和目标校验；账号与部署凭据保持原样。资产部署失败时不会继续发布主 Worker。
 
 ## 独立 Harness 环境

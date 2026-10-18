@@ -28,7 +28,14 @@ export async function authenticateAccess(
   access: AccessContext | undefined, audience: string | undefined, teamDomain: string | undefined,
 ): Promise<Principal | undefined> {
   if (!access || !audience || !teamDomain || access.aud !== audience) return undefined;
-  const parsed = identitySchema.safeParse(await access.getIdentity());
+  return principalFromVerifiedAccessIdentity(await access.getIdentity(), teamDomain);
+}
+
+/** The caller must establish authenticity before using these identity claims. */
+export async function principalFromVerifiedAccessIdentity(
+  identity: unknown, teamDomain: string,
+): Promise<Principal | undefined> {
+  const parsed = identitySchema.safeParse(identity);
   if (!parsed.success) return undefined;
   const userId = parsed.data.user_uuid ?? parsed.data.sub;
   if (!userId) return undefined; // Service credentials are not user identities.

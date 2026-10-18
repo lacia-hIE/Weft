@@ -29,7 +29,7 @@
 
 `NativeSessionHost` 让 SessionDO 在热实例内持有真实 Agent 和 Cordis Context，轮次结束不会销毁宿主。原版 Inbox 保存排队、编辑、删除及 steer 的 splice 事件；重复 RPC 不会重新插入已经移除的消息。取消保留待处理消息，下一次唤醒后继续按原版轮次规则处理。插件生命周期消息也通过真实 Inbox 投递，可只注入上下文而不调用模型。DO 重建恢复持久事件，不承诺保留热内存；这不引入常驻 Node 进程。原生会话拒绝通过过渡消息接口再次取得写入权。
 
-UI 资产由没有公网入口的 Worker 通过 Static Assets binding 读取；公开入口保持独立，并先验证原生 Access 身份，再通过 Service Binding 调用资产 Worker。这为完整官方客户端及文档预览分块提供资产承载方式。
+UI 资产由没有公网入口的 Worker 通过 Static Assets binding 读取；公开入口先验证 Access，再通过 Service Binding 调用资产 Worker。优先校验原生 `ctx.access` 的 audience；上下文缺失时验证 Access 请求断言或登录 Cookie 的签名与标准声明，不能仅凭客户端身份头放行。业务 API 使用同一验证边界获取用户 ID、派生租户；原生上下文和签名断言产生同一租户。这为完整官方客户端及文档预览分块提供资产承载方式。
 
 官方入口适配在 `apps/web/src/official/`。它调用原版 AppWebEntry，提供环境范围内的 Fetch/SSE transport 和浏览器存储命名空间，由官方模块系统、Loader 和 Slots 挂载界面。页面内部的相对 HTTP 请求通过同源 base 路径指向该环境。原版 Loader 表达式及动态客户端插件依赖 Function，因此仅官方环境文档启用对应 CSP；管理页面维持原来的策略。
 

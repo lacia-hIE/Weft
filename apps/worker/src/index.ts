@@ -38,6 +38,7 @@ import type { RuntimeOptions } from '../../../packages/harness-runtime/src/runti
 import { RemoteError } from '@deepseek-ai/dsh-typert-protocol';
 import { initializeSessionStorage, SqliteSessionPersistence, readSessionSnapshot } from '../../../packages/session-persistence-do/src/index.ts';
 import { authenticateAccess, sessionAddress, scopeSchema, type SessionScope } from '../../../packages/tenant/src/index.ts';
+import {authenticateAccessAssertion, AccessAssertionUnavailable} from '../../../packages/tenant/src/access-assertion.ts';
 
 export interface Env extends ModelEnvironment {
   LOADER?: WorkerLoader;
@@ -622,8 +623,18 @@ export default {
         return Response.json({error: 'Cloudflare Access user login required', code}, {status: 401, headers: {'cache-control': 'private, no-store'}});
       };
       if (!env.ACCESS_AUD || !env.ACCESS_TEAM_DOMAIN) return accessDenied('ACCESS_NOT_CONFIGURED');
-      if (!ctx.access) return accessDenied('ACCESS_CONTEXT_MISSING');
-      if (ctx.access.aud !== env.ACCESS_AUD) return accessDenied('ACCESS_AUDIENCE_MISMATCH');
+      if (ctx.access && ctx.access.aud !== env.ACCESS_AUD) return accessDenied('ACCESS_AUDIENCE_MISMATCH');
+      let assertionPrincipal;
+      if (!ctx.access) {
+        try {assertionPrincipal = await authenticateAccessAssertion(request, env.ACCESS_AUD, env.ACCESS_TEAM_DOMAIN);}
+        catch (error) {
+          if (!(error instanceof AccessAssertionUnavailable)) throw error;
+          console.warn('weft.access.assertion.unavailable', {path: pathname});
+          return Response.json({error: 'Cloudflare Access verification is temporarily unavailable', code: 'ACCESS_ASSERTION_UNAVAILABLE'}, {status: 503, headers: {'cache-control': 'private, no-store'}});
+        }
+        if (!assertionPrincipal) return accessDenied('ACCESS_CONTEXT_MISSING');
+        console.info('weft.access.assertion.accepted', {path: pathname});
+      }
       // Assets contain no tenant state. Access already authenticated this invocation;
       // avoid an identity lookup for every concurrent module and font request.
       const ui = serveUi(request, env.UI);
@@ -633,7 +644,7 @@ export default {
         return response;
       }
       let principal;
-      try {principal = await authenticateAccess(ctx.access, env.ACCESS_AUD, env.ACCESS_TEAM_DOMAIN);}
+      try {principal = assertionPrincipal ?? await authenticateAccess(ctx.access, env.ACCESS_AUD, env.ACCESS_TEAM_DOMAIN);}
       catch {
         console.warn('weft.access.identity.unavailable', {path: pathname});
         return Response.json({error: 'Cloudflare Access identity is temporarily unavailable', code: 'ACCESS_IDENTITY_UNAVAILABLE'}, {status: 503, headers: {'cache-control': 'private, no-store'}});

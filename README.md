@@ -34,7 +34,7 @@ curl http://localhost:8787/v1/tenants/TENANT_ID/sessions/example/messages \
 curl http://localhost:8787/v1/tenants/TENANT_ID/sessions/example/events
 ```
 
-云端使用 Cloudflare Access 邮箱登录和浏览器会话。Worker 只接受运行时 `ctx.access` 的可信身份，并校验应用 audience；Bearer Token 和客户端身份头不作为认证依据。首期每个 Access 用户有独立个人租户，由 Access 组织域名和用户 ID 派生；邮箱不作为租户键，组织成员关系后续接入独立授权层。云端默认模型为 `deepseek-flash`；模型密钥只在服务端配置。`npm run check` 使用确定性模型和模拟 HTTP 响应，不需要模型密钥。
+云端使用 Cloudflare Access 邮箱登录和浏览器会话。Worker 优先使用运行时 `ctx.access`；上下文缺失时，验证 Access 签发的请求断言或 `CF_Authorization` 登录 Cookie 的 RS256 签名、issuer、应用 audience 和有效期。验证公钥只从配置的 Access 组织获取；Bearer Token 和客户端邮箱身份头不作为认证依据。两条路径均使用 Access 用户的不可变 ID 派生同一租户，拒绝服务凭据。首期每个 Access 用户有独立个人租户，邮箱不作为租户键，组织成员关系后续接入独立授权层。云端默认模型为 `deepseek-flash`；模型密钥只在服务端配置。`npm run check` 使用确定性模型和模拟 HTTP 响应，不需要模型密钥。
 
 发送消息时增加 `Accept: text/event-stream` 可获取增量事件；省略时返回完整 JSON。正在运行 `npm run dev` 时，可另开终端执行 `npm run test:live`，验证真实模型工具调用、SSE 和会话恢复。
 
