@@ -1,0 +1,54 @@
+import {test, expect} from '@playwright/test';
+
+test('official preset settings view real compositions, persist defaults and keep existing sessions on their selected preset', async ({page, request}) => {
+  const me = await (await request.get('/v1/me')).json() as {tenantId: string};
+  const id = 'preset-ui-'+crypto.randomUUID().slice(0, 8);
+  const base = `/v1/tenants/${me.tenantId}/environments/${id}`;
+  expect((await request.post(`/v1/tenants/${me.tenantId}/environments`, {data: {id, name: id}})).status()).toBe(201);
+  const rpc = async (method: string, args: unknown) => {
+    const response = await (await request.post(base+'/native/api/'+method, {data: {type: 'client-request', rpcId: crypto.randomUUID(), method, payload: {args}}})).json();
+    expect(response.result.ok, JSON.stringify(response)).toBe(true);
+    return response.result.value;
+  };
+  const settings = async () => {
+    await page.getByRole('button', {name: 'Account menu', exact: true}).click({timeout: 45_000});
+    await page.getByRole('menuitem', {name: 'Settings', exact: true}).click();
+    await page.getByRole('button', {name: 'Agent presets', exact: true}).click();
+  };
+  await page.goto(`/agents/${id}`);
+  await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
+  await settings();
+  const creator = page.locator('[data-agent-preset-id="cordis"]');
+  await expect(creator).toContainText('Creator');
+  await page.getByRole('button', {name: 'View configuration: Creator', exact: true}).click();
+  const viewer = page.getByRole('dialog', {name: 'View configuration · Creator', exact: true});
+  await expect(viewer).toContainText('cordis:tool-skill');
+  await viewer.getByRole('button', {name: 'Close', exact: true}).last().click();
+  await page.getByRole('button', {name: 'Set as new task default: Creator', exact: true}).click();
+  await expect(creator.getByRole('button', {name: 'New task default: Creator', exact: true})).toHaveAttribute('aria-pressed', 'true');
+  await page.reload();
+  await expect(page.getByRole('button', {name: 'Creator', exact: true})).toBeVisible({timeout: 45_000});
+  await page.locator('[contenteditable=true]').fill('Preset UI flow');
+  await page.getByRole('button', {name: 'Send message', exact: true}).click();
+  await expect(page.getByText(/^Tenant: /).last()).toBeVisible({timeout: 30_000});
+  const sessions = await rpc('session/list', {_request: {}});
+  expect(sessions.items).toHaveLength(1);
+  const sessionId = sessions.items[0].sessionId;
+  expect((await rpc('session/projections', {request: {sessionId}})).values.agentPreset).toBe('cordis');
+  await settings();
+  await page.getByRole('button', {name: 'Set as new task default: Standard', exact: true}).click();
+  await expect(page.locator('[data-agent-preset-id="standard"]').getByRole('button', {name: 'New task default: Standard', exact: true})).toHaveAttribute('aria-pressed', 'true');
+  expect((await rpc('session/projections', {request: {sessionId}})).values.agentPreset).toBe('cordis');
+  expect((await rpc('agentPresets/list', {})).presets.find((row: {isDefault: boolean}) => row.isDefault).id).toBe('standard');
+  await page.reload();
+  await page.getByRole('button', {name: 'New session', exact: true}).first().click({timeout: 45_000});
+  await page.getByRole('button', {name: 'Standard', exact: true}).click();
+  await page.locator('[role^="menuitem"]').filter({hasText: 'Creator'}).click();
+  await page.locator('[contenteditable=true]').fill('Staged Creator choice');
+  await page.getByRole('button', {name: 'Send message', exact: true}).click();
+  await expect(page.getByText(/^Tenant: /).last()).toBeVisible({timeout: 30_000});
+  const next = (await rpc('session/list', {_request: {}})).items.find((row: {sessionId: string}) => row.sessionId !== sessionId);
+  expect(next).toBeTruthy();
+  expect((await rpc('session/projections', {request: {sessionId: next.sessionId}})).values.agentPreset).toBe('cordis');
+  expect((await rpc('agentPresets/list', {})).presets.find((row: {isDefault: boolean}) => row.isDefault).id).toBe('standard');
+});

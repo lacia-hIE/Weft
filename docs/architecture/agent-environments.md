@@ -49,9 +49,21 @@ SessionDO SQLite 保存源码、版本、精确版本批准、未来版本授权
 
 Host 源码编译为 Dynamic Worker 的静态模块，在 SessionDO 的 Durable Object facet 内运行真实 Cordis 与原版工具契约，父 Worker 不 eval 用户代码。子环境仅获得固定所属 Session/plugin/run 的 FS RPC；没有 Namespace、平台 Secret 或外网出口。支持工具、timer、限定异步 fs，未桥接服务明确拒绝。原生 Agent 的策略仍在父宿主执行；子工具不伪造 Agent 对象。协作取消保留实例，操作超过 15 秒则终止 facet 并收回注册，反馈进入原生 Inbox。该适配不等于任意 npm 安装、完整 Node 系统或跨隔离区自定义 Cordis 服务。
 
-默认预设的 `allowClientPlugins` 为 false。开启后装配五个小型编写工具，调用实际 Runner；只读检查工具复用上游契约，仅列出已桥接的服务与方法、隔离实例自身的工具事件，并补充 Workerd 执行说明。原版 Node HostConfig 检查没有挂载，避免把不存在的文件配置能力伪装成可用。
+默认预设的 `allowClientPlugins` 为 false；内置 Creator（ID `cordis`）为 true，可以在原版 Agent presets 中选择。开启后装配五个小型编写工具，调用实际 Runner；只读检查工具复用上游契约，仅列出已桥接的服务与方法、隔离实例自身的工具事件，并补充 Workerd 执行说明。原版 Node HostConfig 检查没有挂载，避免把不存在的文件配置能力伪装成可用。
 
 独立的 `@weft/harness-environment` 浏览器扩展提供 My Agents 导航，并用原版客户端 runner 重新挂载已批准的活动 Client；刷新不会批准待处理的新版本。Client 插件仍与当前浏览器页面同权。原生动态插件面板不等于侧栏静态 Plugins 管理器已完整接通。
+
+## 原生预设与静态组合
+
+`packages/native-composition` 挂载原版 Loader 和 AgentPresetRegistry，使用其真实配置树、工具作用域、保留代际、选择校验及 `agent-preset/selected` 事件。固定模块与校验器共享 `plugin-runtime` 的同一目录；Loader 只接收预构建 `cordis:` 引用和字面配置。构建适配去掉 Node 内部模块加载和配置表达式求值，替换为明确的 admission 边界；上游源码保持不变。Host 侧不运行用户提供的配置 JavaScript。
+
+EnvironmentDO 保存预设版本，提供原版列表、只读 YAML 声明和默认选择。它使用真实组合上下文及所属环境的 Computer FS 校验激活，不创建 Agent 或会话写入者。Standard / Creator 初始化为持久预设，Creator 使用原版 ID `cordis`；更具体的可用服务仍以 workerd 能力检查为准。默认选择沿用原版 `agent-preset-registry.selectedDefault` schema、修订号与设置协议。
+
+SessionDO 在真实 Agent 的 setup 阶段绑定冻结的预设；已有会话不会因环境发布新版本而改变能力。首轮前的选择调用原版 registry，持久化原生选择事件；创建 header 保持原始身份，当前选择由 projection 表示。提示词入队和预设切换共用 admission 锁，替换后的旧宿主不会接受新消息。Persona、模型默认值及动态编写开关在新的会话宿主中使用所选快照。
+
+预设切换保存准备快照与事件边界；重建只在边界之后发现对应的原生选择事件时提升快照。测试分别模拟事件已提交和事件未提交的中断窗口。冷读复用原版 AgentPreset 和 Todo 投影；不会为读取历史启动 Agent 或调用模型。
+
+组合、冻结、恢复与原版页面操作的验证范围见 [原生预设验证](../validation/native-presets.md)。
 
 ## 验收状态
 
@@ -61,15 +73,15 @@ Host 源码编译为 Dynamic Worker 的静态模块，在 SessionDO 的 Durable 
 
 官方 Remote 的 30 个包与官方 Web 目录的 69 个客户端模块已使用上游生成器、各包自身的构建配置成功生成。标准 `npm run build` 已包含这条完整构建链，确保全新的 Cloudflare Git 构建也会生成官方产物；构建报告位于 `.generated/official-ui/build-report.json`。
 
-Boot Graph 由真实客户端工厂产物生成，复用官方 `orderByModuleGraph` 和 `parseBootManifest` 排序与校验。当前 Web profile 激活 67 个官方模块，加上独立的 `@weft/harness-environment` 扩展，共 68 个模块；按上游条件排除仅 Desktop 启用的 product-analytics 与 sidebar-browser。`/agents/:environmentId?ui=official` 已运行这条官方启动链；无参数入口仍保留过渡工作台，直至下面的完整功能验收通过。
+Boot Graph 由真实客户端工厂产物生成，复用官方 `orderByModuleGraph` 和 `parseBootManifest` 排序与校验。当前 Web profile 激活 67 个官方模块，加上独立的 `@weft/harness-environment` 扩展，共 68 个模块；按上游条件排除仅 Desktop 启用的 product-analytics 与 sidebar-browser。`/agents/:environmentId` 默认运行这条官方启动链，Agent 卡片直接进入官方页面。`?ui=transition` 保留过渡实现的显式验证入口，不作为产品默认路径。默认环境文档采用原版 Loader 所需 CSP，管理入口维持独立策略。
 
 以下工作仍未完成，目标保持进行中：
 
-1. 继续补齐预设、权限、文件及更多插件的原生配置和 Host 接口、业务投影，并完成 Inbox 的原版页面交互验收；当前未连接的能力返回明确错误。
+1. 继续补齐预设编辑、权限、文件及更多插件的原生配置和 Host 接口、业务投影；原版 Inbox 和预设选择的页面交互已验收，未连接能力返回明确错误。
 2. 验证实时控制流在并发写入、长任务、断线与 DO 重建后的完整一致性，并解决 Session 目录当前 200 条上限。
-3. 验收后将官方 AppWebEntry 设为默认环境入口；独立扩展已补充 My Agents 导航。
+3. 完成剩余业务接口后移除过渡界面；官方 AppWebEntry 已设为默认入口，独立扩展提供 My Agents 导航。
 4. 补齐原版静态 Plugins 管理器的包与配置生命周期；继续扩展原生动态插件的 workerd 服务桥接和部署验收。
 5. 完成更多 provider/插件的凭据集成和环境管理生命周期，按新布局验收，不做旧数据兼容。
 6. 在真实模型、多环境、重连、重启和 Cloudflare 部署中验收完整官方 UI。
 
-当前 `harness-shell.tsx` 是保留既有功能的过渡入口，不是完整官方 Web App；验收时不能把它计为官方 UI 接入完成。
+`harness-shell.tsx` 仅通过显式参数保留为回归入口，不能将这些回归计为原版界面的功能验收。默认入口切换也不等于全部 Host 接口已经完成。

@@ -14,13 +14,16 @@ interface Env {
   NATIVE_PLUGINS: DurableObjectNamespace<NativePluginBench>;
 }
 export class NativePluginBench extends DurableObject<Env> {
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    initializeSessionStorage(ctx.storage);
+  }
   private host: Promise<HarnessSessionHost> | undefined;
   private platform: NativePluginPlatform | undefined;
   private fiber: Fiber | undefined;
   private handlers = new Map<string, (args: unknown) => Promise<unknown>>();
   private toolController: AbortController | undefined;
   async action(action: string, input: {source?: string; method?: string; args?: unknown}) {
-    initializeSessionStorage(this.ctx.storage);
     const host = await (this.host ??= openHarnessSession({sessionId: 'native-plugin', persona: 'test', model: {provider: 'validation', model: 'scripted'}, adapter: new ScriptedAdapter(), mountPersistence: async ctx => {await ctx.plugin(SqliteSessionPersistence, {storage: this.ctx.storage});}}));
     const platform = this.platform ??= new NativePluginPlatform(this.ctx, this.env.LOADER, {owner: this.ctx.id.toString()});
     if (action === 'start') {

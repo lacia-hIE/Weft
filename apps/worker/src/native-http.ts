@@ -7,6 +7,7 @@ import sessionRemote from '../../../.generated/official-remotes/packages/api/ses
 import workspaceRemote from '../../../.generated/official-remotes/packages/api/workspace-controller/typert.remote-client.js';
 import llmRemote from '../../../.generated/official-remotes/packages/llm/llm/typert.remote-client.js';
 import pluginRemote from '../../../.generated/official-remotes/packages/extensions/cordis-host-runner/typert.remote-client.js';
+import presetRemote from '../../../.generated/official-remotes/packages/preset/agent-preset-registry/typert.remote-client.js';
 import type { NativePluginEndpoint } from '../../../packages/native-plugins/src/host.ts';
 import { MODEL_NAMESPACE } from '../../../packages/control-plane/src/native-settings.ts';
 import { controlFor, controlScope } from '../../../packages/control-plane/src/object.ts';
@@ -70,6 +71,19 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
     rpcId = envelope.rpcId;
     if (envelope.method !== endpoint) throw new RemoteError('gateway/bad-request', 'RPC method does not match endpoint', {});
     const payload = payloadSchema.parse(envelope.payload);
+    if (endpoint === 'agentPresets/list' || endpoint === 'agentPresets/read') {
+      const method = presetRemote.methods[endpoint];
+      const args = method.input({strict: true}).create().parse(payload.args);
+      const {value} = await (await control.nativePreset(owner, endpoint, args)).json() as {value: unknown};
+      return Response.json({type: 'server-response', rpcId, result: {ok: true, value: method.result.create().parse(value)}}, {headers: {'cache-control': 'private, no-store'}});
+    }
+    if (endpoint === 'agentPresets/select') {
+      const method = presetRemote.methods[endpoint];
+      const args = method.input({strict: true}).create().parse(payload.args);
+      const target = session(args.agentId);
+      const value = await target.stub.nativeSelectPreset(target.scope, args.agentPreset);
+      return Response.json({type: 'server-response', rpcId, result: {ok: true, value: method.result.create().parse(value)}}, {headers: {'cache-control': 'private, no-store'}});
+    }
     if (endpoint.startsWith('dynamicCordisRunner/')) {
       if (!Object.hasOwn(pluginRemote.methods, endpoint)) throw new RemoteError('gateway/method-unavailable', 'Unknown plugin method', {endpoint});
       const method = pluginRemote.methods[endpoint as NativePluginEndpoint];
@@ -139,15 +153,16 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
           sessionId = SessionId(crypto.randomUUID());
           target = session(sessionId);
         }
-        const binding = input.agentPreset ? {id: input.agentPreset} : undefined;
+        const binding = input.agentPreset === undefined ? undefined : {id: input.agentPreset};
         if (!await target.stub.nativeCreate(target.scope, binding, 'default', workspace.path)) {
           sessionId = SessionId(crypto.randomUUID());
           target = session(sessionId);
           if (!await target.stub.nativeCreate(target.scope, binding, 'default', workspace.path)) throw new RemoteError('gateway/internal', 'New Session identity was already used', {});
         }
         await control.nativeAttachWorkspace(owner, workspace.workspaceId, sessionId);
-        const header = await target.stub.nativeHeader(target.scope);
-        value = {sessionId, ...(header?.agentPreset ? {agentPreset: header.agentPreset} : {})};
+        const projections = sessionRemote.methods['session/projections'].result.create().parse(await (await target.stub.nativeProjections(target.scope)).json());
+        const selected = projections?.kind === 'sequenced' ? projections.values.agentPreset : undefined;
+        value = {sessionId, ...(typeof selected === 'string' ? {agentPreset: selected} : {})};
         break;
       }
       case 'session/list': {

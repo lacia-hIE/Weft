@@ -26,7 +26,9 @@ import { sessionAddress, type SessionScope } from '../../tenant/src/index.ts';
 import sessionRemote from '../../../.generated/official-remotes/packages/api/session-controller/typert.remote-client.js';
 import type { SessionControlFrame, SessionProjectionBaseline } from '@deepseek-ai/dsh-api-session-controller/types';
 import { remoteStream } from '../../harness-runtime/src/remote-stream.ts';
-import { NativeSettings } from './native-settings.ts';
+import { NativeSettings, PRESET_NAMESPACE } from './native-settings.ts';
+import {readNativePresets} from '../../native-composition/src/profile-host.ts';
+import {mountWorkspace} from '../../workspace/src/provider.ts';
 import { tenantModelHost, ModelConfigurationError, type ModelEnvironment } from '../../model-provider/src/index.ts';
 import { DATA_LAYOUT_VERSION } from '../../tenant/src/layout.ts';
 import { NativePluginCatalog } from './native-plugins.ts';
@@ -59,6 +61,7 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
   private settings(scope: ControlScope): NativeSettings {
     this.scope(scope);
     this.ensureDefault();
+    this.ensureNativePresets();
     const tenantId = scope.tenantId;
     return this.nativeSettings ??= new NativeSettings(this.ctx.storage, {
       providerBase: () => ({baseURL: tenantModelHost(this.env, tenantId).baseURL, maxTokens: 8192, thinking: 'disabled', reasoningEffort: 'off', streamIdleTimeoutMs: Number(this.env.MODEL_IDLE_TIMEOUT_MS ?? '60000'), retryPolicy: {mode: 'normal', maxRetries: 0}, apiKeyEnv: 'DEEPSEEK_API_KEY'}),
@@ -70,10 +73,26 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
         return key ? {value: key, source: 'platform'} : undefined;
       },
       changed: (event, args) => this.nativeEvents.emit(event, args),
+      validatePreset: id => {if (!this.latest(id)) throw new Error('Unknown preset');},
     });
   }
   async nativeSettingsRequest(scope: ControlScope, endpoint: string, args: unknown): Promise<Response> {
     return this.settings(scope).invoke(endpoint, args);
+  }
+  async nativePresetDefault(scope: ControlScope): Promise<string> {
+    const value = this.settings(scope).value(PRESET_NAMESPACE);
+    return String(value.selectedDefault ?? value.default);
+  }
+  async nativeProfile(scope: ControlScope, preset: string, revision?: number): Promise<Response> {
+    this.scope(scope); this.ensureDefault(); this.ensureNativePresets();
+    return Response.json({value: await this.agent(scope, preset, revision)});
+  }
+  async nativePresetIds(scope: ControlScope): Promise<string[]> {return (await this.state(scope)).agents.map(row => row.spec.id);}
+  async nativePreset(scope: ControlScope, endpoint: 'agentPresets/list' | 'agentPresets/read', args: unknown): Promise<Response> {
+    const defaultId = await this.nativePresetDefault(scope);
+    const profiles = (await this.state(scope)).agents;
+    const volume = {...scope, workspaceId: 'default'};
+    return readNativePresets(profiles, defaultId, endpoint, args, ctx => mountWorkspace(ctx, {scope: volume, transport: this.env.WORKSPACES.getByName(workspaceAddress(volume)), cwd: '/workspace'}));
   }
   /** Private binding only: never dispatch this snapshot as a client Remote. */
   async nativeModelConfiguration(scope: ControlScope): Promise<Response> {
@@ -218,6 +237,14 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
       1,
       JSON.stringify(value),
     );
+  }
+  private ensureNativePresets(): void {
+    const original = this.latest('default')!;
+    for (const [id, name, allowClientPlugins] of [['standard', 'Standard', false], ['cordis', 'Creator', true]] as const) {
+      if (this.latest(id)) continue;
+      const value: AgentRevision = {...structuredClone(original), revision: 1, publishedAt: new Date().toISOString(), spec: {...structuredClone(original.spec), id, name, allowClientPlugins}};
+      this.ctx.storage.sql.exec('INSERT INTO agents VALUES (?,?,?)', id, 1, JSON.stringify(value));
+    }
   }
   async state(tenantId: ControlScope): Promise<TenantState> {
     this.scope(tenantId);

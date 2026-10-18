@@ -6,7 +6,7 @@ test('official Inbox controls edit, remove and steer durable queued messages acr
   const environment = 'official-queue-'+crypto.randomUUID().slice(0, 8);
   const base = `/v1/tenants/${me.tenantId}/environments/${environment}`;
   expect((await request.post(`/v1/tenants/${me.tenantId}/environments`, {data: {id: environment, name: environment}})).status()).toBe(201);
-  await page.goto(`/agents/${environment}?ui=official`);
+  await page.goto(`/agents/${environment}`);
   await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
   const input = page.locator('[contenteditable=true]');
   await input.fill('active request');

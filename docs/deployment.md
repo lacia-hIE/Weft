@@ -102,3 +102,10 @@ Agent 目录在 `/`，工作台在 `/agents/:environmentId`。EnvironmentDO 保�
 主 Worker 配置增加 `LOADER` Worker Loader binding 和 `PluginCapabilities` RPC export；不增加公开路由、应用 Token 或 Secret 复制。动态 Host 在 SessionDO 的 facet 中运行，子 Worker 只有绑定所属 session/plugin/run 的文件能力，直接网络关闭。私有 UI Worker 仍先于主 Worker 发布；`main` 推送继续使用既有 Cloudflare Git 自动构建。
 
 原版动态 Cordis 面板提供版本审批、运行、停止与移除，刷新由独立 Weft 模块恢复已批准 Client。仅开启 `allowClientPlugins` 的会话预设装配编写工具。完整官方页面继续通过 `/agents/:environmentId?ui=official` 验证；静态 Plugins 管理器、预设、权限及其他未接通能力见 [剩余验收](architecture/agent-environments.md)。本地 workerd 通过不等于真实 Access 用户完成云端登录后验证。
+
+
+## 官方默认入口与预设
+
+`/agents/:environmentId` 默认启动原版 AppWebEntry，Agent 列表无需实验参数。`?ui=transition` 是过渡实现的显式回归入口。环境文档的 CSP 随入口选择同步，只有官方环境页面启用原版 Loader 所需的表达式执行；管理页面的策略不变。
+
+原版预设列表、只读声明、默认设置及首轮前选择使用 EnvironmentDO / SessionDO 的真实数据。预构建组合使用原版 Loader / AgentPresetRegistry，拒绝 Node 文件加载和服务端 JavaScript 配置表达式。预设与 Todo 的冷读投影、冻结版本和中断恢复见 [多环境验收](validation/agent-environments.md)。静态 Plugins 包与配置管理、权限、文件附件和其余接口仍在继续接入。

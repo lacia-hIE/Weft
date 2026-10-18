@@ -8,6 +8,7 @@ function response(tool?: {name: string; input: unknown}): Response {
   const event = (type: string, data: object) => `event: ${type}\ndata: ${JSON.stringify({type, ...data})}\n\n`;
   return new Response(event('message_start', {message: {usage: {input_tokens: 10, output_tokens: 0}}}) + event('content_block_start', {index: 0, content_block: tool ? {type: 'tool_use', id: 'plugin-'+randomUUID(), name: tool.name, input: {}} : {type: 'text', text: ''}}) + event('content_block_delta', {index: 0, delta: tool ? {type: 'input_json_delta', partial_json: JSON.stringify(tool.input)} : {type: 'text_delta', text: 'Native plugin ready for review'}}) + event('content_block_stop', {index: 0}) + event('message_delta', {delta: {stop_reason: tool ? 'tool_use' : 'end_turn'}, usage: {output_tokens: 4}}) + event('message_stop', {}), {headers: {'content-type': 'text/event-stream'}});
 }
+export {response as nativeFixtureResponse};
 function receiptIn(value: unknown): {pluginId: string; packageId: string} | undefined {
   if (typeof value === 'string') {try {return receiptIn(JSON.parse(value));} catch {return undefined;}}
   if (!value || typeof value !== 'object') return;

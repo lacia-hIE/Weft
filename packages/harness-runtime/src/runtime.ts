@@ -1,5 +1,5 @@
 import { Context } from '@deepseek-ai/cordis';
-import AgentRegistry, { type Agent, type AssistantStreamFrame, type AgentCancelCause } from '@deepseek-ai/dsh-agent';
+import AgentRegistry, { type Agent, type AssistantStreamFrame, type AgentCancelCause, type AgentSetup } from '@deepseek-ai/dsh-agent';
 import AgentLoop from '@deepseek-ai/dsh-agent-loop';
 import LlmRuntime, { createUserMessage, type LlmAdapter } from '@deepseek-ai/dsh-llm';
 import SessionStore, { SessionId, type Session, type SessionEvent } from '@deepseek-ai/dsh-session';
@@ -32,6 +32,7 @@ export interface RuntimeOptions {
   onSessionDisposed?: (session: Session) => void;
   mountPersistence?: (ctx: Context) => Promise<void>;
   mountTools?: (ctx: Context) => Promise<void>;
+  setupAgent?: AgentSetup;
   beforeAssembly?: () => Promise<void>;
   defaultModel?: () => import('@deepseek-ai/dsh-agent').ModelSelection;
 }
@@ -83,8 +84,8 @@ export async function openHarnessSession(options: RuntimeOptions): Promise<Harne
     const agentOptions = options.model;
     const stored = await ctx.get('sessionPersistence')?.stat(sessionId);
     const handle = stored
-      ? await ctx.agents.resume({ resumeSessionId: sessionId, agentOptions })
-      : await ctx.agents.create({ sessionId, agentOptions, ...(options.meta ? { meta: options.meta } : {}) });
+      ? await ctx.agents.resume({ resumeSessionId: sessionId, agentOptions, ...(options.setupAgent ? {setup: options.setupAgent} : {}) })
+      : await ctx.agents.create({ sessionId, agentOptions, ...(options.setupAgent ? {setup: options.setupAgent} : {}), ...(options.meta ? { meta: options.meta } : {}) });
     owned = handle.agent;
     if (options.presentation) mountModelSelection(ctx, handle.agent, options.defaultModel, options.beforeAssembly);
     options.signal?.throwIfAborted();

@@ -38,6 +38,7 @@ export function createRuntime(
     bindings?: Record<string, string>;
     outbound?: V4FetchHandler;
     browser?: boolean;
+    scriptPath?: string;
   } = {},
 ): Miniflare {
   const profiles = [
@@ -83,7 +84,7 @@ export function createRuntime(
           serviceBindings: { UI: "assets" },
           routes: [`${profile.name}.local/*`],
           modules: true,
-          scriptPath: resolve("dist/worker.js"),
+          scriptPath: resolve(model.scriptPath ?? "dist/worker.js"),
           compatibilityDate: "2026-07-30",
           compatibilityFlags: ["nodejs_compat", "enable_request_signal"],
           workerLoaders: {LOADER: {}},

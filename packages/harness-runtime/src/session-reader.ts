@@ -7,6 +7,10 @@ import type { AssistantStreamFrame, Agent } from '@deepseek-ai/dsh-agent';
 import { installModelSelectionProjection } from './model-selection.ts';
 import { turnBoundaryProjectionDefinition } from '@deepseek-ai/dsh-agent-loop';
 import { inboxProjectionDefinition } from '@weft/upstream/packages/core/agent-loop/src/inbox.ts';
+import {agentPresetProjectionDefinition} from '@weft/upstream/packages/preset/agent-preset-registry/src/session.ts';
+import SystemPrompt from '@deepseek-ai/dsh-system-prompt';
+import Tools from '@deepseek-ai/dsh-tools';
+import * as Todo from '@deepseek-ai/dsh-tool-todo';
 import type { SessionSearchRequest, SessionSearchExecContext, SessionSearchPage, SessionSearchHit, SessionEventSearchRequest, SessionEventSearchPage } from '@deepseek-ai/dsh-session-query';
 import { SessionHistoryController } from '@weft/upstream/packages/api/session-controller/src/history.ts';
 import type {} from '@weft/upstream/packages/subagent/subagent/src/projection.ts';
@@ -38,8 +42,14 @@ export async function createSessionReader(storage: DurableObjectStorage) {
   try {
     await ctx.plugin(ReaderSessions);
     await ctx.plugin(Projections);
+    // Install the original fold on the read side too. No Agent or writer is
+    // created here; tool execution remains in the actual session host.
+    await ctx.plugin(SystemPrompt, {personaPrefix: ''});
+    await ctx.plugin(Tools);
+    await ctx.plugin(Todo, {allowParallelInProgress: false});
     ctx.sessionProjections.register(turnBoundaryProjectionDefinition);
     ctx.sessionProjections.register(inboxProjectionDefinition);
+    ctx.sessionProjections.register(agentPresetProjectionDefinition);
     installModelSelectionProjection(ctx);
     await ctx.plugin(Title, {fallbackMaxWords: 5, fallbackMaxBytes: 40, maxTitleBytes: 80});
     await ctx.plugin(SqliteSessionPersistence, {storage});

@@ -11,6 +11,7 @@ interface Owner {
   changed(): Promise<void>;
   failed(failure: TurnFailure): Promise<void>;
 }
+export class NativeHostReplacedError extends Error {}
 
 /** A DO owns this native Agent root across turns, including its plugin fibers. */
 export class NativeSessionHost {
@@ -87,6 +88,7 @@ export class NativeSessionHost {
   }
   async prompt(request: SessionPromptRequest): Promise<void> {
     await this.serialized(async () => {
+      if (this.closed) throw new NativeHostReplacedError('Native host was replaced before admission');
       if (this.seen(request.requestId)) return;
       if (request.content.some(block => block.type !== 'text')) throw new RemoteError('session/attachment-invalid', 'Attachment admission is not connected yet', {reason: 'attachment-unavailable'});
       const content = request.content.flatMap(block => block.type === 'text' ? [block] : []);
@@ -104,6 +106,16 @@ export class NativeSessionHost {
       // consumed by a running turn. No model await is held by the prompt RPC.
       await this.ctx.get('sessionPersistence')?.flush();
       this.changed();
+    });
+  }
+  async reconfigureBlank<T>(preset: string, operation: () => Promise<T>): Promise<T> {
+    return this.serialized(async () => {
+      if (this.closed) throw new NativeHostReplacedError('Native host was replaced before configuration');
+      const boundary = this.ctx.sessionProjections.stateOf(this.agent.session, 'turnBoundary');
+      if (this.agent.status === 'running' || this.agent.inbox.nextTurn.length || this.agent.inbox.nextStep.length || (boundary && (boundary.lastTurn > 0 || boundary.openTurnStartSeq !== null))) {
+        throw new RemoteError('agent-preset/locked', 'This session has already started', {sessionId: this.agent.id, agentPreset: preset});
+      }
+      return operation();
     });
   }
   async updateQueue(request: SessionUpdateQueueRequest): Promise<void> {

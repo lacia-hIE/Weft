@@ -2,7 +2,7 @@
 
 结论：可作为纯 workerd 的服务端动态代码执行底座。本地 Miniflare/workerd 已验证 isolate 中原生 Cordis、限定租户的 RPC、阻止外网、宿主 Secret 不传入，以及插件失败后宿主继续工作。代码 packages/dynamic-runner，测试 tests/dynamic-runner.test.ts。
 
-当前是技术验证：生产未声明 LOADER，Web 发布不会调用它，尚未替换官方 Node VM runner 或桥接完整 Harness 工具、事件、持久化、双端动态包协议。
+`packages/dynamic-runner` 保留为独立的单次调用技术验证，不是生产调用路径。生产 Worker 已声明 LOADER，原生 Node VM runner 的替代、持久注册表和双端动态包接入见下方“原生 Harness Host facet”；完整 Harness 服务图仍待扩展。
 
 get() 的 ID 对租户、revision、源码、配置计算摘要。每次调用创建 Cordis Context，装配插件，调用 pluginApi.run 后销毁。env 只有配置及受限宿主 RPC；globalOutbound:null 阻止 fetch/connect。已配置 CPU/子请求上限，本地测试不作为云端 CPU 限制证据。
 
@@ -22,7 +22,7 @@ UI 插件仍在浏览器 Cordis 执行；原生 Host 已使用下方 facet 适�
 
 `npm run test:web:plugins` 使用可控模型 HTTP 传输；原版 AppWebEntry、审批面板、Client runner、Host facets、FS RPC 和存储都是真实实现。浏览器批准后点击插件按钮写文件，刷新重新挂载已批准 Client，停止/重跑/移除及 My Agents 导航均有交互验证。真实模型用例由 `npm run test:web:live` 运行；测试身份为本地 Access 模拟，不能替代云端允许用户登录后的验收。
 
-默认预设禁用插件编写，需要先发布 `allowClientPlugins: true` 的预设。这里只接通原生动态 Cordis 面板，侧栏静态 Plugins 包管理器、通用 npm 安装和完整 Host 服务图仍未完成。插件闭包变量会在 facet 重建后重新初始化；持久业务数据应写入工作区。平台 Dynamic Workers/facets 限额仍然适用，本地测试不证明云端上限或 CPU 限制。
+默认预设禁用插件编写；现在可在原版 Agent presets 页面选择内置 Creator（`cordis`），不需要通过过渡界面发布开关。这里只接通原生动态 Cordis 面板，侧栏静态 Plugins 包管理器、通用 npm 安装和完整 Host 服务图仍未完成。插件闭包变量会在 facet 重建后重新初始化；持久业务数据应写入工作区。平台 Dynamic Workers/facets 限额仍然适用，本地测试不证明云端上限或 CPU 限制。
 
 当前单 Worker 请求最多 4 个不同 Dynamic Workers 并发，DO I/O 上下文最多 10 个，需要限制编排并发。[平台限制](https://developers.cloudflare.com/dynamic-workers/platform/limits/)
 

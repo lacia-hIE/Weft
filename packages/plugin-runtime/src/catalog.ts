@@ -1,4 +1,4 @@
-import type { Context } from "@deepseek-ai/cordis";
+import type { Context, Plugin } from "@deepseek-ai/cordis";
 import * as Todo from "@deepseek-ai/dsh-tool-todo";
 import * as Time from "@deepseek-ai/dsh-time-context";
 import * as Repeat from "@deepseek-ai/dsh-repeat-tool-reminder";
@@ -12,6 +12,7 @@ export interface PluginSelection {
 }
 interface Entry {
   id: string;
+  module: Plugin;
   title: string;
   description: string;
   workspace: boolean;
@@ -21,11 +22,26 @@ interface Entry {
   mount(ctx: Context, config: Record<string, unknown>): Promise<void>;
 }
 
+async function mountSkills(ctx: Context, config: Record<string, unknown>): Promise<void> {
+  const cwd = ctx.workingDirectory.defaultDirectory;
+  await ctx.plugin(Skills, {});
+  await ctx.plugin(SkillFiles, {
+    includeDefaultRoots: false, watch: false,
+    dshHome: `${cwd}/.dsh`, agentsHome: `${cwd}/.agents`,
+    customSkillDirs: [`${cwd}/.agents/skills`],
+  });
+  await ctx.plugin(SkillTool, SkillTool.Config(config));
+}
+
+/** The original modules are compiled into the Worker, never fetched at runtime. */
+const SkillBundle = {name: 'workerd-skill-bundle', Config: SkillTool.Config, inject: ['workingDirectory'], apply: mountSkills};
+
 // Only the platform adapter lives here. Schemas, tools, projections and lifecycle
 // come from the same pinned upstream tree as the AgentLoop and browser renderer.
 const entries: Entry[] = [
   {
     id: "tool-todo",
+    module: Todo,
     title: "任务清单",
     description: "官方 todo_write 工具与持久化任务事件。",
     workspace: false,
@@ -40,6 +56,7 @@ const entries: Entry[] = [
   },
   {
     id: "time-context",
+    module: Time,
     title: "时间上下文",
     description: "为 Agent 注入带时区的原生时间上下文。",
     workspace: false,
@@ -62,6 +79,7 @@ const entries: Entry[] = [
   },
   {
     id: "repeat-tool-reminder",
+    module: Repeat,
     title: "重复调用提醒",
     description: "通过官方 Agent 钩子提醒重复工具调用。",
     workspace: false,
@@ -93,6 +111,7 @@ const entries: Entry[] = [
   },
   {
     id: "tool-skill",
+    module: SkillBundle,
     title: "Skills",
     description:
       "官方 SKILL.md 发现、目录上下文与 skill 工具；目录 /workspace/.agents/skills。",
@@ -107,20 +126,10 @@ const entries: Entry[] = [
       )
         throw new Error("Invalid catalog description length");
     },
-    mount: async (ctx, config) => {
-      const cwd = ctx.workingDirectory.defaultDirectory;
-      await ctx.plugin(Skills, {});
-      await ctx.plugin(SkillFiles, {
-        includeDefaultRoots: false,
-        watch: false,
-        dshHome: `${cwd}/.dsh`,
-        agentsHome: `${cwd}/.agents`,
-        customSkillDirs: [`${cwd}/.agents/skills`],
-      });
-      await ctx.plugin(SkillTool, SkillTool.Config(config));
-    },
+    mount: mountSkills,
   },
 ];
+export const prebuiltPluginModules = Object.fromEntries(entries.map(entry => [entry.id, entry.module]));
 
 export const pluginCatalog = entries.map(
   ({ id, title, description, workspace, schema, defaults }) => ({

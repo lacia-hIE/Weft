@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync, readdirSync, rmSync, cpSync, ex
 import { resolve } from 'node:path';
 import { writeBuildOutput } from './write-build-output.mjs';
 import { nativeCordisPlatform } from './native-cordis-platform.mjs';
+import { nativeCompositionPlatform } from './native-composition-platform.mjs';
 
 // Bundles have no adjacent package.json at runtime. Preserve upstream attribution
 // while converting this one Node loader operation to a static JSON import.
@@ -119,7 +120,7 @@ if (existsSync('.generated/official-web-assets/harness/boot.json')) {
 writeFileSync('.generated/ui-paths.ts', `export const uiPaths: string[] = ${JSON.stringify(paths)};\n`);
 writeFileSync('dist/web-metafile.json', JSON.stringify(web.metafile, null, 2) + '\n');
 const result = await build({
-  entryPoints: { worker: 'apps/worker/src/index.ts', 'assets-worker':'apps/assets/src/index.ts', 'contracts-worker': 'tests/fixtures/contracts-worker.ts', 'dynamic-worker': 'tests/fixtures/dynamic-worker.ts' },
+  entryPoints: { worker: 'apps/worker/src/index.ts', 'assets-worker':'apps/assets/src/index.ts', 'contracts-worker': 'tests/fixtures/contracts-worker.ts', 'dynamic-worker': 'tests/fixtures/dynamic-worker.ts', 'composition-worker': 'tests/fixtures/composition-worker.ts', 'preset-worker': 'tests/fixtures/preset-worker.ts' },
   outdir: 'dist',
   bundle: true,
   format: 'esm',
@@ -127,7 +128,7 @@ const result = await build({
   target: 'es2024',
   external: ['cloudflare:workers', 'node:*'],
   tsconfig: '.generated/upstream.source.tsconfig.json',
-  plugins: [staticAttribution, providerFetch, nativeCordisPlatform],
+  plugins: [staticAttribution, providerFetch, nativeCordisPlatform, nativeCompositionPlatform],
   sourcemap: true,
   metafile: true,
 });
@@ -150,7 +151,7 @@ const nodeImports = [...new Set(result.metafile.outputs['dist/worker.js'].import
   .filter(item => item.path.startsWith('node:')).map(item => item.path))].sort();
 writeFileSync('dist/runtime-audit.json', JSON.stringify({
   upstream: JSON.parse(readFileSync('upstream.lock.json', 'utf8')).commit,
-  adaptations: ['Static LLM package version import', 'Messages adapter fetch rejects redirects manually in workerd', 'Native Cordis Runner registry ownership, WorkerLoader sandbox and environment-wide inspect identities'],
+  adaptations: ['Static LLM package version import', 'Messages adapter fetch rejects redirects manually in workerd', 'Native Cordis Runner registry ownership, WorkerLoader sandbox and environment-wide inspect identities', 'Native Loader uses a prebuilt catalog without Node module jobs or executable configuration expressions'],
   dynamicPlugins: {runtime: 'Durable Object facet with native Cordis and ToolRuntime', services: ['tools', 'timer', 'scoped asynchronous fs'], directNetwork: false, operationDeadlineMs: 15000},
   computer: { version: JSON.parse(readFileSync('node_modules/@cloudflare/computer/package.json', 'utf8')).version, executionBackends: [] },
   excludedExecutionDependencies: forbiddenWorkspaceDependencies,

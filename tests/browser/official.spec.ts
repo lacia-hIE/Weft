@@ -17,7 +17,7 @@ test('the official Harness entry sends native turns, restores history and scopes
     expect(envelope.result.ok, JSON.stringify(envelope)).toBe(true);
     return envelope.result.value;
   };
-  const loaded = await page.goto(`/agents/${first}?ui=official`);
+  const loaded = await page.goto(`/agents/${first}`);
   expect(loaded!.headers()['content-security-policy']).toContain("base-uri 'self'");
   await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
   await expect(page.getByRole('button', {name: 'Select model, current scripted', exact: true})).toBeVisible({timeout: 45_000});
@@ -41,7 +41,7 @@ test('the official Harness entry sends native turns, restores history and scopes
   // real environment to exercise both the server boundary and page persistence.
   await native(second, 'session/create', {request: {sessionId: commonId}});
   await native(second, 'session/rename', {request: {sessionId: commonId, title: 'Second environment session'}});
-  await page.goto(`/agents/${second}?ui=official`);
+  await page.goto(`/agents/${second}`);
   await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
   await expect(page.getByRole('button', {name: 'Select model, current scripted', exact: true})).toBeVisible({timeout: 45_000});
   await expect(page.getByText(message, {exact: true})).toHaveCount(0);
@@ -51,7 +51,7 @@ test('the official Harness entry sends native turns, restores history and scopes
     sessionStorage.setItem('same-native-key', 'second session state');
     localStorage.clear(); sessionStorage.clear();
   });
-  await page.goto(`/agents/${first}?ui=official`);
+  await page.goto(`/agents/${first}`);
   await expect(page.getByText('Tenant: '+me.tenantId, {exact: true})).toBeVisible();
   expect(await page.evaluate(() => [localStorage.getItem('same-native-key'), sessionStorage.getItem('same-native-key')])).toEqual(['first environment', 'first session state']);
   expect(failures).toEqual([]);
@@ -63,7 +63,7 @@ test('the official entry uses real DeepSeek and restores its native history', as
   const environment = 'official-live-'+crypto.randomUUID().slice(0, 8);
   const created = await request.post(`/v1/tenants/${me.tenantId}/environments`, {data: {id: environment, name: environment}});
   expect(created.status()).toBe(201);
-  await page.goto(`/agents/${environment}?ui=official`);
+  await page.goto(`/agents/${environment}`);
   await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
   await expect(page.getByRole('button', {name: /Select model, current DeepSeek/})).toBeVisible({timeout: 45_000});
   await page.locator('[contenteditable=true]').fill('只回复这一行，不调用工具：WEFT_OFFICIAL_UI_OK');
@@ -89,7 +89,7 @@ test('official Models settings save real scoped credentials and configuration wi
     await page.getByRole('button', {name: 'Models', exact: true}).click();
     await page.getByRole('button', {name: 'Edit DeepSeek (deepseek-official)', exact: true}).click();
   };
-  await page.goto(`/agents/${id}?ui=official`);
+  await page.goto(`/agents/${id}`);
   await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
   await openSettings();
   await page.getByRole('textbox', {name: 'API key', exact: true}).fill('browser-settings-key-fixture');

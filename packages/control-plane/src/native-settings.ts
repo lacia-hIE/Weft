@@ -11,11 +11,13 @@ import { credentialRef, type CredentialRef, type ResolvedCredential } from '@dee
 import { RemoteError } from '@deepseek-ai/dsh-typert-protocol';
 import settingsRemote from '../../../.generated/official-remotes/packages/api/settings-controller/typert.remote-client.js';
 import { DurableCredentials } from './native-credentials.ts';
+import AgentPresets from '@deepseek-ai/dsh-agent-preset-registry';
 
 // The official composition's entry id differs from its provider package name.
 // The curated Models editor addresses this entry id.
 export const MODEL_NAMESPACE = 'llm-deepseek';
 export const DEFAULT_MODEL_NAMESPACE = 'agent-default-model';
+export const PRESET_NAMESPACE = 'agent-preset-registry';
 type Section = Record<string, unknown>;
 interface Namespace {
   id: string; schema: Schema; base(): Section; autoGenerate: boolean;
@@ -26,6 +28,7 @@ export interface NativeSettingsHost {
   modelBase(): Section;
   credential(ref: CredentialRef): ResolvedCredential | undefined;
   changed(event: string, args: readonly unknown[]): void;
+  validatePreset?(id: string): void;
 }
 const object = (value: unknown): value is Section => value !== null && typeof value === 'object' && !Array.isArray(value);
 function reference(value: string): CredentialRef {
@@ -69,6 +72,7 @@ export class NativeSettings {
         if (new URL(options.baseURL).protocol !== 'https:') throw new Error('Provider endpoint must use HTTPS');
       }},
       {id: DEFAULT_MODEL_NAMESPACE, schema: AgentDefaultModelConfig.Config, base: () => host.modelBase(), autoGenerate: false, validate: () => {}},
+      {id: PRESET_NAMESPACE, schema: AgentPresets.Config, base: () => ({default: 'default'}), autoGenerate: false, validate: value => {host.validatePreset?.(String(value.selectedDefault ?? value.default));}},
       {id: 'ui-settings', schema: DeveloperToolsConfig, base: () => ({}), autoGenerate: false, validate: () => {}},
       {id: 'ui-settings-general', schema: WelcomeConfig, base: () => ({}), autoGenerate: false, validate: () => {}},
     ];

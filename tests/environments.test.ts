@@ -99,14 +99,14 @@ test("Harness environments isolate presets, modules, files and same-name session
       ).status,
       403,
     );
-    const initial = (await state("coding")).agents[0]!;
+    const initial = (await state("coding")).agents.find(profile => profile.spec.id === 'default')!;
     const published = await request("/environments/coding/agents", "POST", {
       spec: { ...initial.spec, name: "Coding preset" },
       expectedRevision: 1,
     });
     assert.equal(published.status, 200, await published.clone().text());
-    assert.equal((await state("research")).agents[0]!.revision, 1);
-    assert.equal((await state("default")).agents[0]!.revision, 1);
+    assert.equal((await state("research")).agents.find(profile => profile.spec.id === 'default')!.revision, 1);
+    assert.equal((await state("default")).agents.find(profile => profile.spec.id === 'default')!.revision, 1);
     const file = "/workspace/shared-name.txt";
     assert.equal(
       (
@@ -281,7 +281,7 @@ test("environment model choices use the published session revision and server-ow
         (
           await request(`/environments/${environment}/agents`, {
             spec: {
-              ...state.agents[0]!.spec,
+              ...state.agents.find(profile => profile.spec.id === 'default')!.spec,
               model: {
                 provider: "deepseek",
                 name:
@@ -306,7 +306,7 @@ test("environment model choices use the published session revision and server-ow
       (
         await request("/environments/coding/agents", {
           spec: {
-            ...coding.agents[0]!.spec,
+            ...coding.agents.find(profile => profile.spec.id === 'default')!.spec,
             model: { provider: "deepseek", name: "deepseek-flash" },
           },
           expectedRevision: 2,

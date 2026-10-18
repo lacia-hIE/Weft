@@ -6,10 +6,15 @@ async function openEnvironment(page: Page, request: APIRequestContext) {
   const environment = 'native-plugins-'+crypto.randomUUID().slice(0, 8);
   const base = `/v1/tenants/${me.tenantId}/environments/${environment}`;
   expect((await request.post(`/v1/tenants/${me.tenantId}/environments`, {data: {id: environment, name: environment}})).status()).toBe(201);
-  const original = await (await request.get(base+'/agents/default')).json();
-  expect((await request.post(base+'/agents', {data: {spec: {...original.spec, allowClientPlugins: true}, expectedRevision: original.revision}})).status()).toBe(200);
-  await page.goto(`/agents/${environment}?ui=official`);
+  await page.goto(`/agents/${environment}`);
   await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
+  await page.getByRole('button', {name: 'Account menu', exact: true}).click({timeout: 45_000});
+  await page.getByRole('menuitem', {name: 'Settings', exact: true}).click();
+  await page.getByRole('button', {name: 'Agent presets', exact: true}).click();
+  await page.getByRole('button', {name: 'Set as new task default: Creator', exact: true}).click();
+  await expect(page.getByRole('button', {name: 'New task default: Creator', exact: true})).toHaveAttribute('aria-pressed', 'true');
+  await page.reload();
+  await expect(page.getByRole('button', {name: 'Creator', exact: true})).toBeVisible({timeout: 45_000});
   return {base};
 }
 

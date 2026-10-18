@@ -83,7 +83,7 @@ test("tenant control plane publishes native plugin plans, freezes sessions and p
     );
   try {
     const state = (await (await request("/state")).json()) as TenantState;
-    const initial = state.agents[0]!;
+    const initial = state.agents.find(profile => profile.spec.id === 'default')!;
     assert.equal(initial.revision, 1);
     assert.equal(initial.spec.allowClientPlugins, false);
     const catalog = (await (await request("/plugins")).json()) as {
@@ -235,7 +235,7 @@ test("tenant control plane publishes native plugin plans, freezes sessions and p
     await runtime.dispose();
     runtime = createRuntime(directory, model);
     const recovered = (await (await request("/state")).json()) as TenantState;
-    assert.equal(recovered.agents[0]!.revision, 2);
+    assert.equal(recovered.agents.find(profile => profile.spec.id === 'default')!.revision, 2);
     assert.equal(recovered.sessions.length, 2);
     assert.equal(
       (

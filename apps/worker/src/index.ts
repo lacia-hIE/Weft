@@ -23,7 +23,8 @@ import type {} from '@deepseek-ai/dsh-cordis-host-runner';
 import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session';
 import { runHarnessTurn, initializeHarnessSession, renameHarnessSession, renameLiveHarnessSession, selectHarnessModel } from '../../../packages/harness-runtime/src/runtime.ts';
 import { selectLiveHarnessModel } from '../../../packages/harness-runtime/src/model-selection.ts';
-import { NativeSessionHost } from './native-session-host.ts';
+import { NativeSessionHost, NativeHostReplacedError } from './native-session-host.ts';
+import {replaceNativePreset, nativePresetDefinition} from '../../../packages/native-composition/src/index.ts';
 import { NativePlugins, nativePlugins, type NativePluginEndpoint } from '../../../packages/native-plugins/src/host.ts';
 import nativePluginRemote from '../../../.generated/official-remotes/packages/extensions/cordis-host-runner/typert.remote-client.js';
 import { nativePluginFsMethods } from '../../../packages/native-plugins/src/protocol.ts';
@@ -76,6 +77,7 @@ export class SessionDO extends DurableObject<Env> {
   private getNativeHost(scope: SessionScope): Promise<NativeSessionHost> {
     if (this.nativeHostPromise) return this.nativeHostPromise;
     const pending = this.exclusive(async () => {
+      this.recoverNativePreset(scope);
       const stored = this.ctx.storage.sql.exec<{workspace_id: string; agent_document: string; presentation: number}>('SELECT workspace_id,agent_document,presentation FROM weft_session_config WHERE id=1').one();
       if (stored.presentation !== 1 || !stored.agent_document) throw new RemoteError('session/not-found', 'Native Session not found', {sessionId: SessionId(scope.sessionId)});
       const profile = JSON.parse(stored.agent_document) as AgentRevision;
@@ -131,6 +133,7 @@ export class SessionDO extends DurableObject<Env> {
     super(ctx, env);
     initializeSessionStorage(ctx.storage);
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_session_config (id INTEGER PRIMARY KEY CHECK(id=1), workspace_id TEXT, agent_document TEXT, presentation INTEGER NOT NULL DEFAULT 0)');
+    ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_pending_preset (id INTEGER PRIMARY KEY CHECK(id=1), document TEXT NOT NULL)');
   }
 
   private assertScope(input: SessionScope): SessionScope {
@@ -139,6 +142,52 @@ export class SessionDO extends DurableObject<Env> {
       throw new Error('Session scope does not match the addressed object');
     }
     return scope;
+  }
+  private recoverNativePreset(scope: SessionScope): void {
+    const row = this.ctx.storage.sql.exec<{document: string}>('SELECT document FROM weft_pending_preset WHERE id=1').toArray()[0];
+    if (!row) return;
+    const pending = JSON.parse(row.document) as {beforeSeq: number; profile: AgentRevision};
+    const snapshot = readSessionSnapshot(this.ctx.storage, SessionId(scope.sessionId));
+    this.ctx.storage.transactionSync(() => {
+      if (snapshot?.events.some(event => event.seq > pending.beforeSeq && event.type === 'agent-preset/selected' && event.data.agentPreset === pending.profile.spec.id)) {
+        this.ctx.storage.sql.exec('UPDATE weft_session_config SET agent_document=? WHERE id=1', JSON.stringify(pending.profile));
+      }
+      this.ctx.storage.sql.exec('DELETE FROM weft_pending_preset WHERE id=1');
+    });
+  }
+  async nativeSelectPreset(input: SessionScope, preset: string, revision?: number): Promise<string> {
+    const scope = this.assertScope(input);
+    id.parse(preset);
+    const host = await this.getNativeHost(scope);
+    const value = await this.exclusive(() => host.reconfigureBlank(preset, async () => {
+      const owner = controlScope(scope.tenantId, scope.environmentId);
+      const control = controlFor(this.env, owner);
+      const {value: profile} = await (await control.nativeProfile(owner, preset, revision)).json() as {value?: AgentRevision};
+      if (!profile) throw new RemoteError('agent-preset/not-found', 'Unknown preset', {agentPreset: preset, available: await control.nativePresetIds(owner)});
+      if (profile.upstream !== upstream.commit) throw new Error('Agent runtime revision unavailable');
+      const stored = this.ctx.storage.sql.exec<{agent_document: string}>('SELECT agent_document FROM weft_session_config WHERE id=1').one();
+      const current = JSON.parse(stored.agent_document) as AgentRevision;
+      if (current.spec.id === profile.spec.id && current.revision === profile.revision) return profile.spec.id;
+      this.ctx.storage.sql.exec('INSERT INTO weft_pending_preset VALUES (1,?) ON CONFLICT(id) DO UPDATE SET document=excluded.document', JSON.stringify({beforeSeq: host.agent.session.seq - 1, profile}));
+      try {
+        await replaceNativePreset(host.ctx, nativePresetDefinition(profile));
+        const selected = await host.ctx.agentPresets.select(host.agent, preset);
+        await host.ctx.sessionPersistence.flush();
+        this.ctx.storage.transactionSync(() => {
+          this.ctx.storage.sql.exec('UPDATE weft_session_config SET agent_document=? WHERE id=1', JSON.stringify(profile));
+          this.ctx.storage.sql.exec('DELETE FROM weft_pending_preset WHERE id=1');
+        });
+        await this.ctx.storage.sync();
+        await control.trackSession(owner, {id: scope.sessionId, title: host.ctx.sessionTitle.get(host.agent.session)?.title ?? '', agentId: profile.spec.id, revision: profile.revision, workspaceId: this.ctx.storage.sql.exec<{workspace_id: string}>('SELECT workspace_id FROM weft_session_config WHERE id=1').one().workspace_id, updatedAt: new Date().toISOString()});
+        return selected;
+      } finally {
+        try {await host.dispose();}
+        finally {if (this.nativeHost === host) {this.nativeHost = undefined; this.nativeHostPromise = undefined;}}
+      }
+    }));
+    await this.getNativeHost(scope);
+    await this.publishNativeSummary(scope);
+    return value;
   }
 
   /** Serialize turns across awaits; DO input gates alone do not serialize model I/O. */
@@ -220,39 +269,37 @@ export class SessionDO extends DurableObject<Env> {
   /** Native Web creation opens a real persisted Session before its first prompt. */
   async nativeCreate(input: SessionScope, binding?: AgentBinding, workspaceId?: string, cwd?: string): Promise<boolean> {
     const scope = this.assertScope(input);
-    return this.exclusive(async () => {
+    const known = this.ctx.storage.sql.exec<{workspace_id: string; agent_document: string; presentation: number}>('SELECT workspace_id,agent_document,presentation FROM weft_session_config WHERE id=1').toArray()[0];
+    const existing = readSessionSnapshot(this.ctx.storage, SessionId(scope.sessionId));
+    if (known && existing) {
+      if (known.presentation !== 1 || existing.events.some(event => event.type === 'turn/start') || (workspaceId && workspaceId !== known.workspace_id) || (cwd && workspacePath(cwd) !== (existing.header.cwd ?? '/workspace'))) return false;
+      const profile = JSON.parse(known.agent_document) as AgentRevision;
+      try {await this.nativeSelectPreset(scope, binding?.id ?? profile.spec.id, binding?.revision ?? (binding ? undefined : profile.revision));}
+      catch (error) {if (error instanceof RemoteError && error.code === 'agent-preset/locked') return false; throw error;}
+      return true;
+    }
+    if (existing || known) return false;
+    const result = await this.exclusive(async () => {
+      if (this.ctx.storage.sql.exec('SELECT id FROM weft_session_config WHERE id=1').toArray().length) return 'race' as const;
+      if (readSessionSnapshot(this.ctx.storage, SessionId(scope.sessionId))) return false;
       const owner = controlScope(scope.tenantId, scope.environmentId);
       const control = controlFor(this.env, owner);
-      const stored = this.ctx.storage.sql.exec<{workspace_id: string | null; agent_document: string | null}>('SELECT workspace_id,agent_document FROM weft_session_config WHERE id=1').toArray()[0];
-      let profile = stored?.agent_document ? JSON.parse(stored.agent_document) as AgentRevision : await control.agent(owner, binding?.id ?? 'default', binding?.revision);
-      if (!profile) throw new Error('Agent preset not found');
-      const snapshot = readSessionSnapshot(this.ctx.storage, SessionId(scope.sessionId));
-      if (snapshot?.events.some(event => event.type === 'turn/start')) return false;
-      if (this.nativeHost) {
-        if (this.nativeHost.agent.status === 'running' || this.nativeHost.agent.inbox.nextTurn.length || this.nativeHost.agent.inbox.nextStep.length) return false;
-        const previous = this.nativeHost;
-        this.nativeHost = undefined; this.nativeHostPromise = undefined;
-        await previous.dispose();
-      }
-      if (stored && binding && (profile.spec.id !== binding.id || (binding.revision !== undefined && profile.revision !== binding.revision))) {
-        if (snapshot?.events.some(event => event.type === 'turn/start')) throw new Error('Session preset is fixed after its first turn');
-        profile = await control.agent(owner, binding.id, binding.revision);
-        if (!profile) throw new Error('Agent preset not found');
-      }
+      const requested = binding?.id ?? (await control.nativePresetDefault(owner));
+      const {value: profile} = await (await control.nativeProfile(owner, requested, binding?.revision)).json() as {value?: AgentRevision};
+      if (!profile) throw new RemoteError('agent-preset/not-found', 'Unknown preset', {agentPreset: requested, available: await control.nativePresetIds(owner)});
       if (profile.upstream !== upstream.commit) throw new Error('Agent runtime revision unavailable');
-      const attachedWorkspace = workspaceId ?? stored?.workspace_id ?? profile.spec.workspaceId;
+      const attachedWorkspace = workspaceId ?? profile.spec.workspaceId;
       workspaceIdSchema.parse(attachedWorkspace);
-      if (stored && workspaceId && stored.workspace_id !== workspaceId && snapshot?.events.some(event => event.type === 'turn/start')) throw new Error('Session workspace is fixed after its first turn');
       const reader = await this.getReader();
-      const directory = workspacePath(cwd ?? snapshot?.header.cwd ?? '/workspace');
+      const directory = workspacePath(cwd ?? '/workspace');
       const runtime = await sessionRuntime(this.env, this.ctx.storage, scope, profile, attachedWorkspace, profile.spec.persona, true, reader, {}, directory, false);
-      if (snapshot) this.ctx.storage.sql.exec('UPDATE harness_sessions SET header_json=? WHERE id=?', JSON.stringify({...snapshot.header, cwd: directory, agentPreset: profile.spec.id}), scope.sessionId);
       await initializeHarnessSession(runtime.options);
       this.ctx.storage.sql.exec('INSERT INTO weft_session_config (id,workspace_id,agent_document,presentation) VALUES (1,?,?,1) ON CONFLICT(id) DO UPDATE SET workspace_id=excluded.workspace_id,agent_document=excluded.agent_document,presentation=1', attachedWorkspace, JSON.stringify(profile));
       await control.trackSession(owner, {id: scope.sessionId, title: '', agentId: profile.spec.id, revision: profile.revision, workspaceId: attachedWorkspace, updatedAt: new Date().toISOString()});
       await this.publishNativeSummary(scope);
       return true;
     });
+    return result === 'race' ? this.nativeCreate(scope, binding, workspaceId, cwd) : result;
   }
 
   async nativeHeader(input: SessionScope) {
@@ -333,7 +380,10 @@ export class SessionDO extends DurableObject<Env> {
     if (request.sessionId !== scope.sessionId) throw new Error('Session identity mismatch');
     if (!readSessionSnapshot(this.ctx.storage, SessionId(scope.sessionId))) throw new RemoteError('session/not-found', 'Session not found', {sessionId: request.sessionId});
     try {
-      await (await this.getNativeHost(scope)).prompt(request);
+      for (let attempt = 0;; attempt++) {
+        try {await (await this.getNativeHost(scope)).prompt(request); break;}
+        catch (error) {if (!(error instanceof NativeHostReplacedError) || attempt >= 1) throw error;}
+      }
       await this.ctx.storage.sync();
     } catch (error) {
       if (error instanceof ModelConfigurationError && error.code === 'MODEL_NOT_CONFIGURED') throw new RemoteError('session/provider-credentials-unavailable', error.message, {});
