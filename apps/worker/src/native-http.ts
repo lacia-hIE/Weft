@@ -10,6 +10,8 @@ import pluginRemote from '../../../.generated/official-remotes/packages/extensio
 import presetRemote from '../../../.generated/official-remotes/packages/preset/agent-preset-registry/typert.remote-client.js';
 import inventoryRemote from '../../../.generated/official-remotes/packages/host/plugin-inventory/typert.remote-client.js';
 import managerRemote from '../../../.generated/official-remotes/packages/boot/plugin-manager/typert.remote-client.js';
+import fileRemote from '../../../.generated/official-remotes/packages/api/workspace-files/typert.remote-client.js';
+import type {NativeFileEndpoint} from '../../../packages/native-files/src/index.ts';
 import type { NativePluginEndpoint } from '../../../packages/native-plugins/src/host.ts';
 import { MODEL_NAMESPACE } from '../../../packages/control-plane/src/native-settings.ts';
 import { controlFor, controlScope } from '../../../packages/control-plane/src/object.ts';
@@ -24,6 +26,19 @@ type Endpoint = keyof typeof sessionRemote.methods;
 /** Official Connection envelopes and generated codecs at the CF host boundary. */
 export async function handleNativeRequest(request: Request, env: Env, principal: Principal, environmentId?: string): Promise<Response | undefined> {
   const pathname = new URL(request.url).pathname;
+  const observerCancel = /^\/v1\/tenants\/([^/]+)\/native\/file-observers\/cancel$/.exec(pathname);
+  if (observerCancel) {
+    if (observerCancel[1] !== principal.tenantId) throw new HttpError(403, 'Tenant access denied');
+    if (request.method !== 'POST') throw new HttpError(405, 'Expected POST');
+    assertSameOrigin(request);
+    const input = z.object({sessionId: z.string(), observerId: z.uuid()}).strict().safeParse(await readJson(request, 4096));
+    if (!input.success) throw new HttpError(400, 'Invalid file observer cancellation');
+    const parsed = scopeSchema.safeParse({tenantId: principal.tenantId, sessionId: input.data.sessionId, ...(environmentId ? {environmentId} : {})});
+    if (!parsed.success) throw new HttpError(400, 'Invalid file observer scope');
+    const scope = parsed.data;
+    await env.SESSIONS.getByName(sessionAddress(scope)).nativeCancelFileObserver(scope, input.data.observerId);
+    return new Response(null, {status: 204, headers: {'cache-control': 'private, no-store'}});
+  }
   const auxiliary = /^\/v1\/tenants\/([^/]+)\/native\/(open-in-app\/apps|plugins\/boot)$/.exec(pathname);
   if (auxiliary) {
     if (auxiliary[1] !== principal.tenantId) throw new HttpError(403, 'Tenant access denied');
@@ -48,6 +63,14 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
   try {
     const raw = await readJson(request, 65_536);
     if (match[2] === 'streams') {
+      if (endpoint === 'workspaceFiles/changes') {
+        const observerId = z.uuid().parse(request.headers.get('x-weft-observer-id'));
+        const args = fileRemote.methods[endpoint].input({strict: true}).create().parse(payloadSchema.parse(raw).args);
+        const target = session(args.workspaceFileScopeId);
+        return await target.stub.fetch(new Request('https://session.internal/native-file-changes', {
+          method: 'POST', body: JSON.stringify({scope: target.scope, operation: 'native-file-changes', observerId, args}), signal: request.signal,
+        }));
+      }
       if (endpoint === '$events') {
         z.object({args: z.object({}).strict()}).strict().parse(raw);
         return await control.fetch(new Request('https://environment.internal/native-events', {method: 'POST', body: JSON.stringify({operation: 'native-events', scope: owner}), signal: request.signal}));
@@ -73,6 +96,15 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
     rpcId = envelope.rpcId;
     if (envelope.method !== endpoint) throw new RemoteError('gateway/bad-request', 'RPC method does not match endpoint', {});
     const payload = payloadSchema.parse(envelope.payload);
+    if (endpoint.startsWith('workspaceFiles/')) {
+      if (endpoint === 'workspaceFiles/changes' || !Object.hasOwn(fileRemote.methods, endpoint)) {
+        throw new RemoteError('gateway/method-unavailable', 'Unknown file method', {endpoint});
+      }
+      const method = fileRemote.methods[endpoint as NativeFileEndpoint];
+      const args = method.input({strict: true}).create().parse(payload.args);
+      const target = session(args.workspaceFileScopeId);
+      return await target.stub.nativeFileCall(target.scope, endpoint as NativeFileEndpoint, args, rpcId);
+    }
     if (endpoint === 'agentPresets/list' || endpoint === 'agentPresets/read' || endpoint === 'pluginInventory/list' || endpoint === 'pluginManager/listPlugins' || endpoint === 'pluginManager/listBundles') {
       const method = {...presetRemote.methods, ...inventoryRemote.methods, ...managerRemote.methods}[endpoint];
       const args = method.input({strict: true}).create().parse(payload.args);

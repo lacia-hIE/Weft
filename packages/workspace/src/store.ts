@@ -85,17 +85,27 @@ export class WorkspaceStore {
           if (!info) throw new FsError('Workspace directory not found', 'FS_NOT_FOUND');
           if (info.type !== 'directory') throw new FsError('Expected a directory', 'FS_NOT_DIRECTORY');
           const names = this.computer.provider().readdirSync(path) as string[];
-          if (names.length > 1000) throw new FsError('Directory listing exceeds the entry limit', 'FS_TOO_LARGE');
-          return names.sort().map(name => this.metadata(this.guardedPath(posix.join(path, name)))!);
+          if (operation.limit === undefined && names.length > 1000) throw new FsError('Directory listing exceeds the entry limit', 'FS_TOO_LARGE');
+          return names.sort().slice(0, operation.limit ?? 1000).map(name => this.metadata(this.guardedPath(posix.join(path, name)))!);
         }
         if (operation.type === 'bytes') {
           const info = this.metadata(path);
           if (!info) throw new FsError('Workspace file not found', 'FS_NOT_FOUND');
           if (info.type !== 'file') throw new FsError('Expected a regular workspace file', 'FS_NOT_REGULAR_FILE');
-          if (info.size > MAX_FILE_BYTES || (operation.maxBytes !== undefined && info.size > operation.maxBytes)) throw new FsError('Read exceeds the byte limit', 'FS_TOO_LARGE');
-          const bytes = this.computer.provider().readFileSync(path);
-          if (typeof bytes === 'string') throw new FsError('Unexpected encoding', 'FS_IO_ERROR');
-          return new Uint8Array(bytes.subarray(operation.offset, operation.offset + operation.length));
+          if (operation.maxBytes !== undefined && info.size > operation.maxBytes) throw new FsError('Read exceeds the byte limit', 'FS_TOO_LARGE');
+          const bytes = new Uint8Array(Math.min(operation.length, Math.max(0, info.size - operation.offset)));
+          if (!bytes.length) return bytes;
+          const fs = this.computer.provider();
+          const fd = fs.openSync(path, 'r');
+          let read = 0;
+          try {
+            while (read < bytes.length) {
+              const count = fs.readSync(fd, bytes, read, bytes.length - read, operation.offset + read);
+              if (!count) break;
+              read += count;
+            }
+          } finally { fs.closeSync(fd); }
+          return bytes.subarray(0, read);
         }
         if (operation.type === 'search') return this.search(path, operation.query, operation.limit);
         const info = this.metadata(path);

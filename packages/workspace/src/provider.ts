@@ -5,10 +5,11 @@ import WorkingDirectory from '@deepseek-ai/dsh-working-directory';
 import * as FileTools from '@deepseek-ai/dsh-tool-fs';
 import * as ObservationPolicy from '@deepseek-ai/dsh-fs-observation-policy';
 import { defineTool } from '@deepseek-ai/dsh-tools';
-import { workspaceAddress, workspacePath, ROOT, MAX_FILE_BYTES, type WorkspaceScope, type WorkspaceTransport, type WorkspaceOperation, type FileInfo, type FileRead, type WriteResult, type SearchResult } from './protocol.ts';
+import { workspaceAddress, workspacePath, ROOT, MAX_BYTE_RANGE_BYTES, MAX_BINARY_FILE_BYTES, type WorkspaceScope, type WorkspaceTransport, type WorkspaceOperation, type FileInfo, type FileRead, type WriteResult, type SearchResult } from './protocol.ts';
 
-interface ProviderConfig { scope: WorkspaceScope; transport: WorkspaceTransport; cwd?: string }
+interface ProviderConfig { scope: WorkspaceScope; transport: WorkspaceTransport; cwd?: string; listLimit?: number }
 export class ComputerFileSystem extends FileSystem {
+  private readonly watchBacklogs = new Map<string, Set<{pending: number}>>();
   constructor(ctx: Context, private readonly config: ProviderConfig) { super(ctx); }
   private async call<T>(operation: WorkspaceOperation, signal?: AbortSignal): Promise<T> {
     signal?.throwIfAborted();
@@ -37,6 +38,7 @@ export class ComputerFileSystem extends FileSystem {
   }
   override async stat(target: FsTarget, signal?: AbortSignal): Promise<FsInfo | undefined> {
     const info = await this.call<FileInfo | null>({ type: 'stat', path: this.path(target) }, signal);
+    for (const backlog of this.watchBacklogs.get(target.targetKey) ?? []) backlog.pending = 0;
     return info ? { version: FsVersion(info.version), type: info.type, size: info.size } : undefined;
   }
   override async lstat(path: string, opts?: { cwd?: string }, signal?: AbortSignal): Promise<FsPathInfo | undefined> {
@@ -46,8 +48,18 @@ export class ComputerFileSystem extends FileSystem {
     return (await this.call<FileRead>({ type: 'read', path: this.path(target) }, signal)).content;
   }
   override async streamText(target: FsTarget, signal?: AbortSignal): Promise<AsyncIterable<string>> {
-    const content = await this.readText(target, signal);
-    return (async function* () { for (let offset = 0; offset < content.length; offset += 8192) { signal?.throwIfAborted(); yield content.slice(offset, offset + 8192); } })();
+    const fs = this;
+    return (async function* () {
+      const decoder = new TextDecoder('utf-8', {fatal: true});
+      for (let offset = 0;; offset += 16_384) {
+        const bytes = await fs.bytes(target, {offset, length: 16_384}, signal);
+        let text: string;
+        try { text = decoder.decode(bytes, {stream: bytes.length === 16_384}); }
+        catch { throw new FsError('Workspace file is not UTF-8 text', 'FS_NOT_TEXT'); }
+        if (text) yield text;
+        if (bytes.length < 16_384) return;
+      }
+    })();
   }
   private async bytes(target: FsTarget, range: { offset: number; length: number; maxBytes?: number }, signal?: AbortSignal): Promise<Uint8Array> {
     signal?.throwIfAborted();
@@ -62,15 +74,16 @@ export class ComputerFileSystem extends FileSystem {
   }
   override async readBytes(target: FsTarget, signal: AbortSignal | undefined, maxBytes: number): Promise<Uint8Array> {
     if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) throw new FsError('Invalid read bound', 'FS_IO_ERROR');
-    return this.bytes(target, { offset: 0, length: MAX_FILE_BYTES, maxBytes: Math.min(maxBytes, MAX_FILE_BYTES) }, signal);
+    const limit = Math.min(maxBytes, MAX_BINARY_FILE_BYTES);
+    return this.bytes(target, { offset: 0, length: limit, maxBytes: limit }, signal);
   }
   override async readByteRange(target: FsTarget, range: { offset: number; length: number }, signal?: AbortSignal): Promise<Uint8Array> {
     if (!Number.isSafeInteger(range.offset) || !Number.isSafeInteger(range.length) || range.offset < 0 || range.length < 0) throw new FsError('Invalid byte range', 'FS_IO_ERROR');
-    if (range.length > MAX_FILE_BYTES) throw new FsError('Read exceeds the byte limit', 'FS_TOO_LARGE');
+    if (range.length > MAX_BYTE_RANGE_BYTES || range.offset + range.length > Number.MAX_SAFE_INTEGER) throw new FsError('Read exceeds the byte limit', 'FS_TOO_LARGE');
     return this.bytes(target, range, signal);
   }
   override async listDir(target: FsTarget, signal?: AbortSignal): Promise<FsDirEntry[]> {
-    const entries = await this.call<FileInfo[]>({ type: 'list', path: this.path(target) }, signal);
+    const entries = await this.call<FileInfo[]>({ type: 'list', path: this.path(target), ...(this.config.listLimit ? {limit: this.config.listLimit} : {}) }, signal);
     return entries.map(info => ({ name: posix.basename(info.path), type: info.type, target: { displayPath: info.path, targetKey: FsTargetKey(this.key(info.path)) }, size: info.size, version: FsVersion(info.version) }));
   }
   override async writeText(target: FsTarget, content: string, expected?: FsWriteIntent, signal?: AbortSignal): Promise<FsWriteOutcome> {
@@ -80,6 +93,62 @@ export class ComputerFileSystem extends FileSystem {
   override async editText(target: FsTarget, edit: FsEditRequest, expected?: { version: FsVersion }, signal?: AbortSignal): Promise<FsEditOutcome> {
     const result = await this.call<WriteResult>({ type: 'edit', path: this.path(target), ...edit, ...(expected ? { expectedVersion: expected.version } : {}) }, signal);
     return { version: FsVersion(result.version), before: result.before!, after: result.after };
+  }
+  override async watch(target: FsTarget, changed: (error?: Error) => void, signal: AbortSignal): Promise<() => Promise<void>> {
+    signal.throwIfAborted();
+    if (!this.config.transport.changes) throw new FsError('Workspace watching is unavailable', 'FS_IO_ERROR');
+    const response = await this.config.transport.changes(this.config.scope, this.path(target));
+    if (!response.ok) {
+      const failure = await response.json() as {error: string; code: FsErrorCode};
+      throw new FsError(failure.error, failure.code);
+    }
+    if (!response.body) throw new FsError('Workspace watch has no body', 'FS_IO_ERROR');
+    const watchId = response.headers.get('x-weft-watch-id');
+    const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+    const backlog = {pending: 0};
+    const backlogs = this.watchBacklogs.get(target.targetKey) ?? new Set<{pending: number}>();
+    backlogs.add(backlog); this.watchBacklogs.set(target.targetKey, backlogs);
+    let pending = '', closed = false;
+    const close = async () => {
+      if (closed) return;
+      closed = true;
+      backlogs.delete(backlog);
+      if (!backlogs.size) this.watchBacklogs.delete(target.targetKey);
+      signal.removeEventListener('abort', aborted);
+      await Promise.all([
+        reader.cancel(),
+        ...(watchId && this.config.transport.closeChanges ? [this.config.transport.closeChanges(this.config.scope, watchId)] : []),
+      ]);
+    };
+    const aborted = () => { void close().catch(() => {}); };
+    signal.addEventListener('abort', aborted, {once: true});
+    const frame = async (): Promise<string> => {
+      for (;;) {
+        const end = pending.indexOf('\n');
+        if (end >= 0) { const value = pending.slice(0, end); pending = pending.slice(end + 1); return value; }
+        const next = await reader.read();
+        if (next.done) throw new FsError('Workspace watch ended; reconnect to refresh', 'FS_IO_ERROR');
+        pending += next.value;
+        if (pending.length > 64) throw new FsError('Invalid workspace watch frame', 'FS_IO_ERROR');
+      }
+    };
+    try {
+      signal.throwIfAborted();
+      if (await frame() !== 'ready') throw new FsError('Workspace watch did not initialize', 'FS_IO_ERROR');
+      signal.throwIfAborted();
+    } catch (error) { await close(); throw error; }
+    void (async () => {
+      try {
+        while (!closed) {
+          if (await frame() !== 'change') throw new FsError('Invalid workspace watch frame', 'FS_IO_ERROR');
+          if (++backlog.pending > 64) throw new FsError('File observer backlog exceeded; reconnect to refresh', 'FS_IO_ERROR');
+          if (!closed) changed();
+        }
+      } catch (error) {
+        if (!closed) changed(error instanceof Error ? error : new FsError('Workspace watch failed', 'FS_IO_ERROR'));
+      } finally { await close().catch(() => {}); }
+    })();
+    return close;
   }
 }
 

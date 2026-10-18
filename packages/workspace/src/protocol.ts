@@ -8,6 +8,8 @@ export const workspaceScopeSchema = z.object({ tenantId: workspaceIdSchema, work
 export type WorkspaceScope = z.infer<typeof workspaceScopeSchema>;
 export const ROOT = '/workspace';
 export const MAX_FILE_BYTES = 256 * 1024;
+export const MAX_BYTE_RANGE_BYTES = 2 * 1024 * 1024;
+export const MAX_BINARY_FILE_BYTES = 32 * 1024 * 1024;
 const path = z.string().min(1).max(2048);
 const version = z.string().min(1).max(100);
 const intent = z.discriminatedUnion('kind', [
@@ -17,9 +19,9 @@ const intent = z.discriminatedUnion('kind', [
 export const workspaceOperationSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('stat'), path }).strict(),
   z.object({ type: z.literal('read'), path }).strict(),
-  z.object({ type: z.literal('list'), path }).strict(),
+  z.object({ type: z.literal('list'), path, limit: z.number().int().min(1).max(5001).optional() }).strict(),
   z.object({ type: z.literal('mkdir'), path }).strict(),
-  z.object({ type: z.literal('bytes'), path, offset: z.number().int().min(0), length: z.number().int().min(0).max(MAX_FILE_BYTES), maxBytes: z.number().int().min(0).max(MAX_FILE_BYTES).optional() }).strict(),
+  z.object({ type: z.literal('bytes'), path, offset: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER), length: z.number().int().min(0).max(MAX_BINARY_FILE_BYTES), maxBytes: z.number().int().min(0).max(MAX_BINARY_FILE_BYTES).optional() }).strict(),
   z.object({ type: z.literal('write'), path, content: z.string().max(MAX_FILE_BYTES), expected: intent.optional() }).strict(),
   z.object({ type: z.literal('edit'), path, oldString: z.string().min(1).max(MAX_FILE_BYTES), newString: z.string().max(MAX_FILE_BYTES), replaceAll: z.boolean(), expectedVersion: version.optional() }).strict(),
   z.object({ type: z.literal('search'), path, query: z.string().min(1).max(1000), limit: z.number().int().min(1).max(100).default(50) }).strict(),
@@ -29,7 +31,11 @@ export interface FileInfo { path: string; type: 'file' | 'directory'; size: numb
 export interface FileRead extends FileInfo { content: string }
 export interface WriteResult { operation: 'create' | 'update'; version: string; before: string | null; after: string; revision: number }
 export interface SearchResult { matches: { path: string; line: number; text: string }[]; truncated: boolean }
-export interface WorkspaceTransport { call(scope: WorkspaceScope, operation: WorkspaceOperation): Promise<Response> }
+export interface WorkspaceTransport {
+  call(scope: WorkspaceScope, operation: WorkspaceOperation): Promise<Response>;
+  changes?(scope: WorkspaceScope, path: string): Promise<Response>;
+  closeChanges?(scope: WorkspaceScope, watchId: string): Promise<void>;
+}
 
 export function workspaceAddress(scope: WorkspaceScope): string { return JSON.stringify([DATA_LAYOUT_VERSION, 'workspace', scope.tenantId, scope.environmentId ?? 'default', scope.workspaceId]); }
 export function workspacePath(path: string, cwd = ROOT): string {

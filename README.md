@@ -40,6 +40,8 @@ curl http://localhost:8787/v1/tenants/TENANT_ID/sessions/example/events
 
 创建文件 Session 时，在消息 JSON 中传入 `workspaceId`（例如 `project`），即可使用原生 `read`、`write`、`edit` 和 `workspace_search`。绑定在 Session 中持久保存，后续请求可省略；同一用户的多个 Session 可绑定同一个 Workspace 共享文件。真实文件工具验证命令为 `npm run test:live:workspace`。
 
+官方 Harness 的 Files 侧栏通过原版 `WorkspaceFiles` 读取所属环境的真实文件，支持目录、分页文本、字节预览和变更订阅；具体范围与附件待接入项见 [原版文件验证](docs/validation/native-files.md)。当前按新的原生数据布局开发，不要求保留旧数据兼容或迁移。
+
 目录职责：
 
 | 路径 | 职责 |
@@ -51,6 +53,7 @@ curl http://localhost:8787/v1/tenants/TENANT_ID/sessions/example/events
 | `packages/plugin-runtime` | 预构建原生插件的模块、Schema、校验与装配目录 |
 | `packages/harness-profile` | 实际内置配置包、profile 依赖和 Cordis 声明 patch |
 | `packages/native-composition` | 原版 Loader / AgentPresetRegistry、插件清单与持久管理适配 |
+| `packages/native-files` | 原版 WorkspaceFiles、会话文件范围、字节附件编码和预览订阅 |
 | `packages/client-plugins` | TSX 转换、原生 API 检查工具、发布工具 |
 | `packages/dynamic-runner` | Dynamic Workers/Cordis 隔离 runner 验证 |
 | `packages/native-plugins` | 原版动态 Cordis Runner 的持久注册表、审批与隔离 Host facet 适配 |

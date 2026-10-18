@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import type { SessionFollowFrame } from '@deepseek-ai/dsh-api-session-controller/types';
 import type { RemoteEventDownlinkFrame } from '@weft/upstream/packages/api/gateway/src/stream-protocol.ts';
-import { createRuntime, tenantId, url } from './miniflare.ts';
+import { createRuntime, tenantId, url, type User } from './miniflare.ts';
 
 type Runtime = ReturnType<typeof createRuntime>;
-export function nativeClient(runtime: () => Runtime, environment = 'default', user = 'alpha' as const) {
+export function nativeClient(runtime: () => Runtime, environment = 'default', user: User = 'alpha') {
   const base = `/v1/tenants/${tenantId(user)}/environments/${environment}/native`;
   return {
     async raw(endpoint: string, args: unknown, method = endpoint) {
@@ -23,9 +23,11 @@ export function nativeClient(runtime: () => Runtime, environment = 'default', us
       return body.result.value as T;
     },
     async stream<T>(endpoint: string, args: unknown) {
+      const abort = new AbortController();
+      const observerId = endpoint === 'workspaceFiles/changes' ? crypto.randomUUID() : undefined;
       const response = await runtime().dispatchFetch(url(user, `${base}/streams/${endpoint}`), {
-        method: 'POST', headers: {'content-type': 'application/json'},
-        body: JSON.stringify({args}),
+        method: 'POST', headers: {'content-type': 'application/json', ...(observerId ? {'x-weft-observer-id': observerId} : {})},
+        body: JSON.stringify({args}), signal: abort.signal,
       });
       assert.equal(response.status, 200);
       assert.match(response.headers.get('content-type')!, /text\/event-stream/);
@@ -33,6 +35,7 @@ export function nativeClient(runtime: () => Runtime, environment = 'default', us
       const decoder = new TextDecoder();
       let pending = '';
       return {
+        observerId,
         async next(): Promise<T> {
           for (;;) {
             const end = pending.indexOf('\n\n');
@@ -49,7 +52,16 @@ export function nativeClient(runtime: () => Runtime, environment = 'default', us
             pending += decoder.decode(part.value, {stream: true});
           }
         },
-        close: () => reader.cancel(),
+        close: async () => {
+          if (observerId) {
+            const sessionId = (args as {workspaceFileScopeId: string}).workspaceFileScopeId;
+            const response = await runtime().dispatchFetch(url(user, base+'/file-observers/cancel'), {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({sessionId, observerId})});
+            assert.equal(response.status, 204);
+          }
+          abort.abort();
+          try {await reader.cancel();}
+          catch (error) {if (error !== abort.signal.reason) throw error;}
+        },
       };
     },
     follow(sessionId: string) {

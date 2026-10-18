@@ -1,6 +1,9 @@
-import { createServer } from "node:http";
+import { createSecureServer } from "node:http2";
 import { Readable } from "node:stream";
-import { readFileSync } from "node:fs";
+import { readFileSync, mkdtempSync, rmSync } from "node:fs";
+import {execFileSync} from 'node:child_process';
+import {join} from 'node:path';
+import {tmpdir} from 'node:os';
 import { createRuntime } from "../helpers/miniflare.ts";
 import { modelGate } from './model-gate.ts';
 import { nativePluginModel } from '../helpers/native-plugin-model.ts';
@@ -29,7 +32,12 @@ const runtime = createRuntime(
         : { browser: true },
 );
 await runtime.ready;
-const server = createServer(async (request, response) => {
+// Native Harness opens several concurrent Remote streams. Match CF's HTTP/2
+// multiplexing instead of exhausting the browser's six HTTP/1 connections.
+const tlsDirectory = mkdtempSync(join(tmpdir(), 'weft-browser-tls-'));
+const cert = join(tlsDirectory, 'cert.pem'), keyFile = join(tlsDirectory, 'key.pem');
+execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', keyFile, '-out', cert, '-subj', '/CN=localhost', '-addext', 'subjectAltName=IP:127.0.0.1,DNS:localhost', '-days', '1'], {stdio: 'ignore'});
+const server = createSecureServer({key: readFileSync(keyFile), cert: readFileSync(cert), allowHTTP1: true}, async (request, response) => {
   try {
     if (queue && request.url === '/__test/model-gate') {
       if (request.method === 'POST') queue.release();
@@ -41,19 +49,22 @@ const server = createServer(async (request, response) => {
     for await (const part of request) buffers.push(Buffer.from(part));
     const headers = new Headers();
     for (const [name, value] of Object.entries(request.headers))
-      if (value && name !== "host")
+      if (value && name !== "host" && !name.startsWith(':'))
         headers.set(name, Array.isArray(value) ? value.join(", ") : value);
     if (headers.has("origin")) headers.set("origin", "http://alpha.local");
     const body = Buffer.concat(buffers);
+    const abort = new AbortController();
+    response.on('close', () => {if (!response.writableEnded) abort.abort();});
     const result = await runtime.dispatchFetch(
       "http://alpha.local" + request.url,
       {
         method: request.method ?? "GET",
         headers: [...headers],
+        signal: abort.signal,
         ...(body.length ? { body } : {}),
       },
     );
-    response.writeHead(result.status, Object.fromEntries(result.headers));
+    response.writeHead(result.status, Object.fromEntries([...result.headers].filter(([name]) => !['connection', 'keep-alive', 'transfer-encoding', 'upgrade'].includes(name))));
     if (result.body) {
       const stream = Readable.fromWeb(result.body as never);
       response.on('close', () => { if (!response.writableEnded) stream.destroy(); });
@@ -71,6 +82,7 @@ server.listen(4173, "127.0.0.1", () => {
 async function close(): Promise<void> {
   server.close();
   await runtime.dispose();
+  rmSync(tlsDirectory, {recursive: true, force: true});
   process.exit(0);
 }
 process.on("SIGTERM", () => {

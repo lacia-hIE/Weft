@@ -35,6 +35,8 @@ UI 资产由没有公网入口的 Worker 通过 Static Assets binding 读取；�
 
 工作区注册表使用官方记录 schema，保存到 EnvironmentDO 的 SQLite，并通过官方 Workspace 协议提供排序、会话归属、固定与归档。官方 Workspace 对应环境文件系统中的真实目录，会话使用该目录作为 cwd；目录创建和文件操作落到 WorkspaceDO 的 Computer 文件系统。删除注册不会删除文件或会话。
 
+`packages/native-files` 接通原版 `WorkspaceFiles` 服务的目录、文本分页、字节预览与变更订阅。只读宿主读取实际会话 header，不激活 Agent 或获得写入权；相对路径依照会话 cwd，文件系统能力仍严格限制在所属租户与环境卷。原版 Connection 的 multipart 编码函数和生成的 Typert codec 保留真实字节类型，WorkspaceDO 提供落盘后的失效通知及明确关闭 RPC。上传及提示词附件属于后续独立接入项，见 [文件 Host 验证](../validation/native-files.md)。
+
 配置宿主位于 `packages/control-plane/src/native-settings.ts`，复用官方 DeepSeek API-key、默认模型、开发工具和欢迎确认的 Config schema，以及原生 volatile form、plainConfig 和 secret redaction。官方 Models 编辑器使用原版 composition entry ID `llm-deepseek`，对应 API-key provider 包；运行路由使用 `deepseek-official`。SQLite 保存用户覆盖层和修订号，过期表单拒绝覆盖新版本；数组替换和路径编辑保留继承/重置语义。配置不伪装为本地 YAML 文件。
 
 `DurableCredentials` 实现原生 CredentialProvider seam，按环境保存凭据引用与插件记录。客户端仅能写入密钥、读取配置状态；实际值只经服务端可信绑定送往执行宿主。平台回退密钥限定服务端配置的完整 endpoint；环境更改域名或 base path 后须提供自己的密钥。模型请求捕获一致的 endpoint/credential 配置快照。运行中的设置变更在下一次原生 prompt assembly 前重新解析，不改动已经开始的模型请求。

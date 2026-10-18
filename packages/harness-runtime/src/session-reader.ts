@@ -15,6 +15,9 @@ import type { SessionSearchRequest, SessionSearchExecContext, SessionSearchPage,
 import { SessionHistoryController } from '@weft/upstream/packages/api/session-controller/src/history.ts';
 import type {} from '@weft/upstream/packages/subagent/subagent/src/projection.ts';
 import { SqliteSessionPersistence } from '../../session-persistence-do/src/index.ts';
+import WorkingDirectory from '@deepseek-ai/dsh-working-directory';
+import {ComputerFileSystem} from '../../workspace/src/provider.ts';
+import type {WorkspaceScope, WorkspaceTransport} from '../../workspace/src/protocol.ts';
 
 // The official Web profile also leaves full-text indexing disabled by default.
 class DurableSessionQuery extends Query {
@@ -30,6 +33,7 @@ class DurableSessionQuery extends Query {
 export async function createSessionReader(storage: DurableObjectStorage) {
   const ctx = new Context();
   let active: {agent: Agent; ctx: Context} | undefined;
+  let workspace: Promise<void> | undefined;
   // Borrow the actual live Session for native observations. It stays attached
   // to its writer's store; a second attachment would violate native ownership.
   // A cold observation of an active writer would synthesize interrupted-turn
@@ -61,6 +65,12 @@ export async function createSessionReader(storage: DurableObjectStorage) {
     });
     return {
       ctx, history,
+      configureWorkspace(config: {scope: WorkspaceScope; transport: WorkspaceTransport; cwd: string}): Promise<void> {
+        return workspace ??= (async () => {
+          await ctx.plugin(ComputerFileSystem, config);
+          await ctx.plugin(WorkingDirectory, {defaultDirectory: config.cwd});
+        })();
+      },
       activeRuntime: () => active,
       created(session: Session): void { ctx.emit('session/created', session); },
       sessionDisposed(session: Session): void { ctx.emit('session/disposed', session); },

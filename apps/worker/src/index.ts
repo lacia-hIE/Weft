@@ -14,6 +14,7 @@ import { id } from '../../../packages/control-plane/src/contracts.ts';
 import upstream from '../../../upstream.lock.json';
 import { serveUi } from './ui-http.ts';
 import { WorkspaceDO } from '../../../packages/workspace/src/object.ts';
+import {createNativeFileHost, type NativeFileEndpoint} from '../../../packages/native-files/src/index.ts';
 import { workspaceIdSchema, workspaceAddress, workspacePath } from '../../../packages/workspace/src/protocol.ts';
 export { WorkspaceDO, TenantDO, EnvironmentDO };
 import { z } from 'zod';
@@ -69,7 +70,18 @@ export class PluginCapabilities extends WorkerEntrypoint<Env, {scope: SessionSco
 /** One tenant-qualified session. RPC methods are reachable only through trusted bindings. */
 export class SessionDO extends DurableObject<Env> {
   private readerPromise: Promise<Awaited<ReturnType<typeof createSessionReader>>> | undefined;
-  private getReader() { return this.readerPromise ??= createSessionReader(this.ctx.storage); }
+  private ownerScope: SessionScope | undefined;
+  private readonly fileObservers = new Map<string, () => Promise<void>>();
+  private readonly cancelledFileObservers = new Map<string, number>();
+  private async getReader() {
+    const reader = await (this.readerPromise ??= createSessionReader(this.ctx.storage));
+    const config = this.ctx.storage.sql.exec<{workspace_id: string}>('SELECT workspace_id FROM weft_session_config WHERE id=1 AND presentation=1').toArray()[0];
+    if (config && this.ownerScope) {
+      const scope = {tenantId: this.ownerScope.tenantId, environmentId: this.ownerScope.environmentId ?? 'default', workspaceId: config.workspace_id};
+      await reader.configureWorkspace({scope, transport: this.env.WORKSPACES.getByName(workspaceAddress(scope)), cwd: this.nativeCwd(this.ownerScope.sessionId)});
+    }
+    return reader;
+  }
   private tail: Promise<void> = Promise.resolve();
   private readonly requests = new Map<string, AbortController>();
   private nativeHost: NativeSessionHost | undefined;
@@ -141,6 +153,7 @@ export class SessionDO extends DurableObject<Env> {
     if (!this.ctx.id.equals(this.env.SESSIONS.idFromName(sessionAddress(scope)))) {
       throw new Error('Session scope does not match the addressed object');
     }
+    this.ownerScope = scope;
     return scope;
   }
   private recoverNativePreset(scope: SessionScope): void {
@@ -308,6 +321,37 @@ export class SessionDO extends DurableObject<Env> {
     return readSessionSnapshot(this.ctx.storage, SessionId(scope.sessionId))?.header;
   }
 
+  private async fileHost(input: SessionScope) {
+    const scope = this.assertScope(input);
+    const config = this.ctx.storage.sql.exec<{workspace_id: string}>('SELECT workspace_id FROM weft_session_config WHERE id=1 AND presentation=1 AND EXISTS (SELECT 1 FROM harness_sessions WHERE id=?)', scope.sessionId).toArray()[0];
+    if (!config) {
+      throw new RemoteError('session/not-found', 'Session not found', {sessionId: SessionId(scope.sessionId)});
+    }
+    const workspaceScope = {tenantId: scope.tenantId, environmentId: scope.environmentId ?? 'default', workspaceId: config.workspace_id};
+    return createNativeFileHost(this.ctx.storage, workspaceScope, scope.sessionId, this.env.WORKSPACES.getByName(workspaceAddress(workspaceScope)));
+  }
+
+  async nativeFileCall(input: SessionScope, endpoint: NativeFileEndpoint, args: unknown, rpcId: string): Promise<Response> {
+    const host = await this.fileHost(input);
+    try {
+      const response = await host.call(endpoint, args, rpcId);
+      response.headers.set('cache-control', 'private, no-store');
+      return response;
+    } finally {await host.dispose();}
+  }
+
+  async nativeCancelFileObserver(input: SessionScope, observerId: string): Promise<void> {
+    this.assertScope(input);
+    z.uuid().parse(observerId);
+    const stop = this.fileObservers.get(observerId);
+    if (stop) await stop();
+    else {
+      for (const [id, expires] of this.cancelledFileObservers) if (expires < Date.now()) this.cancelledFileObservers.delete(id);
+      if (this.cancelledFileObservers.size >= 64) this.cancelledFileObservers.delete(this.cancelledFileObservers.keys().next().value!);
+      this.cancelledFileObservers.set(observerId, Date.now() + 30_000);
+    }
+  }
+
   async nativePage(input: SessionScope, raw: unknown): Promise<Response> {
     const scope = this.assertScope(input);
     const {request} = sessionRemote.methods['session/page'].input({strict: true}).create().parse({request: raw});
@@ -442,6 +486,33 @@ export class SessionDO extends DurableObject<Env> {
   /** Internal binding transport; external requests are authenticated by the entry Worker. */
   override async fetch(request: Request): Promise<Response> {
     const raw: unknown = await request.json();
+    if (typeof raw === 'object' && raw !== null && 'operation' in raw && raw.operation === 'native-file-changes') {
+      const envelope = z.object({scope: scopeSchema, operation: z.literal('native-file-changes'), observerId: z.uuid(), args: z.unknown()}).strict().parse(raw);
+      this.assertScope(envelope.scope);
+      const cancelledUntil = this.cancelledFileObservers.get(envelope.observerId) ?? 0;
+      this.cancelledFileObservers.delete(envelope.observerId);
+      if (cancelledUntil > Date.now()) throw new RemoteError('gateway/bad-request', 'File observer was cancelled', {});
+      if (this.fileObservers.size >= 32 || this.fileObservers.has(envelope.observerId)) throw new RemoteError('gateway/bad-request', 'File observer limit or duplicate identity', {});
+      const abort = new AbortController();
+      if (request.signal.aborted) abort.abort();
+      else request.signal.addEventListener('abort', () => abort.abort(), {once: true});
+      const pending = this.fileHost(envelope.scope);
+      let closing: Promise<void> | undefined;
+      let lease: ReturnType<typeof setTimeout> | undefined;
+      const stop = () => closing ??= (async () => {
+        clearTimeout(lease);
+        abort.abort();
+        try {await (await pending).dispose();}
+        finally {this.fileObservers.delete(envelope.observerId);}
+      })();
+      this.fileObservers.set(envelope.observerId, stop);
+      // The native stream supervisor reconnects with a fresh ready baseline.
+      // Bound orphan lifetime even if a disconnected carrier loses cancellation.
+      lease = setTimeout(() => this.ctx.waitUntil(stop()), 120_000);
+      const host = await pending.catch(error => {clearTimeout(lease); this.fileObservers.delete(envelope.observerId); throw error;});
+      try { return await host.changes(envelope.args, abort, stop); }
+      catch (error) {await stop(); throw error;}
+    }
     if (typeof raw === 'object' && raw !== null && 'operation' in raw && raw.operation === 'native-follow') {
       const envelope = z.object({scope: scopeSchema, operation: z.literal('native-follow'), args: z.unknown()}).strict().parse(raw);
       const scope = this.assertScope(envelope.scope);
