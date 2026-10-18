@@ -16,29 +16,38 @@ import { NATIVE_PLUGIN_GUIDE } from '../../../packages/native-plugins/src/guide.
 import { controlFor, controlScope } from '../../../packages/control-plane/src/object.ts';
 import {mountNativeComposition, nativePresetDefinition} from '../../../packages/native-composition/src/index.ts';
 import type {Context} from '@deepseek-ai/cordis';
+import AgentLoop from '@deepseek-ai/dsh-agent-loop';
+import {updateVolatile} from '@deepseek-ai/cosmokit';
 
 type Reader = Awaited<ReturnType<typeof createSessionReader>>;
 export async function sessionRuntime(env: Env, storage: DurableObjectStorage, scope: SessionScope, profile: AgentRevision | undefined, workspaceId: string | null, persona: string, presentation: boolean, reader?: Reader, hooks: Pick<RuntimeOptions, 'onEvent' | 'onFrame'> = {}, cwd = '/workspace', requireCredential = true) {
   const owner = controlScope(scope.tenantId, scope.environmentId);
   const configuration = await readEnvironmentModelConfiguration(await controlFor(env, owner).nativeModelConfiguration(owner));
   const model = resolveTenantModel(env, scope.tenantId, profile?.spec.model, configuration, requireCredential);
+  const loop = await (await controlFor(env, owner).nativeLoopConfiguration(owner)).json() as {maxParallelToolCalls: number};
   let activeAgent: Agent | undefined;
   let composition: Context | undefined;
+  let runtimeRoot: Context | undefined;
   const options: RuntimeOptions = {
     sessionId: scope.sessionId,
     persona: profile ? `${profile.spec.persona}\n${profile.spec.allowClientPlugins ? presentation ? NATIVE_PLUGIN_GUIDE : CLIENT_PLUGIN_GUIDE : ''}` : persona,
     model: model.model, adapter: model.adapter, presentation,
+    agentLoop: {maxParallelToolCalls: loop.maxParallelToolCalls},
     ...(model.currentSelection ? {defaultModel: model.currentSelection} : {}),
-    ...(model.refresh ? {beforeAssembly: async () => {
-      const next = await readEnvironmentModelConfiguration(await controlFor(env, owner).nativeModelConfiguration(owner));
-      model.refresh!(next);
-    }} : {}),
+    beforeAssembly: async () => {
+      if (model.refresh) {
+        const next = await readEnvironmentModelConfiguration(await controlFor(env, owner).nativeModelConfiguration(owner));
+        model.refresh(next);
+      }
+      const next = await (await controlFor(env, owner).nativeLoopConfiguration(owner)).json() as {maxParallelToolCalls: number};
+      if (runtimeRoot) updateVolatile(runtimeRoot.agentLoop.config.maxParallelToolCalls, AgentLoop.Config({maxParallelToolCalls: next.maxParallelToolCalls}).maxParallelToolCalls);
+    },
     ...(presentation ? {meta: {cwd, ...(profile ? {agentPreset: profile.spec.id} : {})}} : {}),
     ...(presentation && profile ? {setupAgent: async (ctx, agent) => {
       if (!composition) throw new Error('Native composition is not ready');
       await composition.agentPresets.mount(ctx, composition.sessionProjections.stateOf(agent.session, 'agentPreset') ?? profile.spec.id);
     }} : {}),
-    onAgent: (agent, ctx) => { activeAgent = agent; reader?.activate(agent, ctx); },
+    onAgent: (agent, ctx) => { activeAgent = agent; runtimeRoot = ctx; reader?.activate(agent, ctx); },
     onAgentDisposed: agent => { if (activeAgent === agent) activeAgent = undefined; reader?.dispose(agent); },
     onSessionCreated: session => { reader?.created(session); },
     onSessionDisposed: session => { reader?.sessionDisposed(session); },

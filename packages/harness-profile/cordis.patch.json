@@ -1,0 +1,22 @@
+[
+  {"insert": [
+    {"id": "preset-default", "name": "cordis:agent-preset", "config": {
+      "id": "default", "name": "DeepSeek Assistant", "plugins": [
+        {"id": "tool-todo", "name": "cordis:tool-todo", "config": {"allowParallelInProgress": false}},
+        {"id": "tool-skill", "name": "cordis:tool-skill", "isolate": {"skills": true}, "config": {"catalogDescriptionMaxLength": 500}}
+      ]
+    }},
+    {"id": "preset-standard", "name": "cordis:agent-preset", "config": {
+      "id": "standard", "name": "Standard", "plugins": [
+        {"id": "tool-todo", "name": "cordis:tool-todo", "config": {"allowParallelInProgress": false}},
+        {"id": "tool-skill", "name": "cordis:tool-skill", "isolate": {"skills": true}, "config": {"catalogDescriptionMaxLength": 500}}
+      ]
+    }},
+    {"id": "preset-cordis", "name": "cordis:agent-preset", "config": {
+      "id": "cordis", "name": "Creator", "plugins": [
+        {"id": "tool-todo", "name": "cordis:tool-todo", "config": {"allowParallelInProgress": false}},
+        {"id": "tool-skill", "name": "cordis:tool-skill", "isolate": {"skills": true}, "config": {"catalogDescriptionMaxLength": 500}}
+      ]
+    }}
+  ]}
+]

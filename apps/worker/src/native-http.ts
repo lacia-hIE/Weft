@@ -8,6 +8,8 @@ import workspaceRemote from '../../../.generated/official-remotes/packages/api/w
 import llmRemote from '../../../.generated/official-remotes/packages/llm/llm/typert.remote-client.js';
 import pluginRemote from '../../../.generated/official-remotes/packages/extensions/cordis-host-runner/typert.remote-client.js';
 import presetRemote from '../../../.generated/official-remotes/packages/preset/agent-preset-registry/typert.remote-client.js';
+import inventoryRemote from '../../../.generated/official-remotes/packages/host/plugin-inventory/typert.remote-client.js';
+import managerRemote from '../../../.generated/official-remotes/packages/boot/plugin-manager/typert.remote-client.js';
 import type { NativePluginEndpoint } from '../../../packages/native-plugins/src/host.ts';
 import { MODEL_NAMESPACE } from '../../../packages/control-plane/src/native-settings.ts';
 import { controlFor, controlScope } from '../../../packages/control-plane/src/object.ts';
@@ -71,11 +73,15 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
     rpcId = envelope.rpcId;
     if (envelope.method !== endpoint) throw new RemoteError('gateway/bad-request', 'RPC method does not match endpoint', {});
     const payload = payloadSchema.parse(envelope.payload);
-    if (endpoint === 'agentPresets/list' || endpoint === 'agentPresets/read') {
-      const method = presetRemote.methods[endpoint];
+    if (endpoint === 'agentPresets/list' || endpoint === 'agentPresets/read' || endpoint === 'pluginInventory/list' || endpoint === 'pluginManager/listPlugins' || endpoint === 'pluginManager/listBundles') {
+      const method = {...presetRemote.methods, ...inventoryRemote.methods, ...managerRemote.methods}[endpoint];
       const args = method.input({strict: true}).create().parse(payload.args);
       const {value} = await (await control.nativePreset(owner, endpoint, args)).json() as {value: unknown};
       return Response.json({type: 'server-response', rpcId, result: {ok: true, value: method.result.create().parse(value)}}, {headers: {'cache-control': 'private, no-store'}});
+    }
+    if (endpoint.startsWith('pluginManager/')) {
+      const {value} = await (await control.nativeManagePlugins(owner, endpoint, payload.args)).json() as {value: unknown};
+      return Response.json({type: 'server-response', rpcId, result: {ok: true, value}}, {headers: {'cache-control': 'private, no-store'}});
     }
     if (endpoint === 'agentPresets/select') {
       const method = presetRemote.methods[endpoint];

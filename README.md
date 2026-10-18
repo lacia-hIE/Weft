@@ -49,7 +49,8 @@ curl http://localhost:8787/v1/tenants/TENANT_ID/sessions/example/events
 | `apps/assets` | 无公网入口的 UI 资产 Worker；主入口在 Access 鉴权后通过 Service Binding 调用 |
 | `packages/control-plane` | TenantDO、不可变 Agent/客户端版本、Session 索引 |
 | `packages/plugin-runtime` | 预构建原生插件的模块、Schema、校验与装配目录 |
-| `packages/native-composition` | 原版 Loader / AgentPresetRegistry 的 workerd 适配、作用域与配置查看 |
+| `packages/harness-profile` | 实际内置配置包、profile 依赖和 Cordis 声明 patch |
+| `packages/native-composition` | 原版 Loader / AgentPresetRegistry、插件清单与持久管理适配 |
 | `packages/client-plugins` | TSX 转换、原生 API 检查工具、发布工具 |
 | `packages/dynamic-runner` | Dynamic Workers/Cordis 隔离 runner 验证 |
 | `packages/native-plugins` | 原版动态 Cordis Runner 的持久注册表、审批与隔离 Host facet 适配 |
@@ -75,4 +76,4 @@ npm run deploy:check
 
 云端入口：[Weft](https://weft.luxuncang.com/)，登录后进入 Web UI；用户与租户信息在 `/v1/me`，健康检查同样受 Access 保护。源码保存在 GitHub，Cloudflare 连接 GitHub 仓库；推送代码到 `main` 会触发 Cloudflare 原生 Git 自动构建和部署，无需 GitHub Actions；也可通过 `cf` 手动部署。部署及鉴权说明见 [部署记录](docs/deployment.md)。
 
-完整官方 UI 接入仍在进行中。`/agents/:environmentId` 默认运行原版 AppWebEntry 与 Web 模块树，会话、模型选择、工作区、设置、环境凭据和全局通知连接真实 DO。SessionDO 热实例保留原生 Agent 上下文，支持持久 Inbox 的排队、编辑、删除和 steer；原生动态 Cordis 插件已接通定义、精确版本审批、Host/Client 调用、停止、移除和重建恢复；服务端 Host 在隔离 Dynamic Worker facet 中执行。原版预设列表、声明查看、默认模式和首轮前选择已接通，并保留原生作用域与版本冻结。Creator（原版 ID `cordis`）开启插件编写；原版静态 Plugins 管理器、预设编辑、权限及部分业务接口仍待接入。`?ui=transition` 仅保留过渡界面的显式验证入口。本轮使用全新的 `harness-v1` 数据布局，不迁移旧数据。标准 `npm run build` 包含官方 Remote ABI、原始模块构建和 Boot Graph 生成。范围和验收状态见 [多环境与官方 UI](docs/architecture/agent-environments.md)。
+完整官方 UI 接入仍在进行中。`/agents/:environmentId` 默认运行原版 AppWebEntry 与 Web 模块树，会话、模型选择、工作区、设置、环境凭据和全局通知连接真实 DO。SessionDO 热实例保留原生 Agent 上下文，支持持久 Inbox 的排队、编辑、删除和 steer；原生动态 Cordis 插件已接通定义、精确版本审批、Host/Client 调用、停止、移除和重建恢复；服务端 Host 在隔离 Dynamic Worker facet 中执行。原版预设列表、声明查看、默认模式和首轮前选择已接通，并保留原生作用域与版本冻结。Creator（原版 ID `cordis`）开启插件编写；原版 Plugins 页面已接通真实配置包清单、预设条目启停和 Agent loop 并行调用表单；通用包安装、预设编辑、权限及部分业务接口仍待接入。`?ui=transition` 仅保留过渡界面的显式验证入口。本轮使用全新的 `harness-v1` 数据布局，不迁移旧数据。标准 `npm run build` 包含官方 Remote ABI、原始模块构建和 Boot Graph 生成。范围和验收状态见 [多环境与官方 UI](docs/architecture/agent-environments.md)。

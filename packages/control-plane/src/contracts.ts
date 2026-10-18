@@ -10,6 +10,7 @@ export const agentSchema = z
       .array(z.object({ id, config: z.record(z.string(), z.json()) }).strict())
       .max(20),
     allowClientPlugins: z.boolean(),
+    disabled: z.boolean().optional(),
     model: z
       .object({
         provider: z.literal("deepseek"),
@@ -28,6 +29,7 @@ export interface AgentSpec {
   workspaceId: string;
   plugins: { id: string; config: Record<string, unknown> }[];
   allowClientPlugins: boolean;
+  disabled?: boolean | undefined;
   model?: { provider: "deepseek"; name: string } | undefined;
 }
 export interface AgentRevision {

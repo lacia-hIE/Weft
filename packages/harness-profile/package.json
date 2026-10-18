@@ -1,0 +1,8 @@
+{
+  "name": "@weft/harness-profile",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Harness agent presets for an isolated Weft environment.",
+  "type": "module",
+  "dsh": {"bundle": {"patch": "./cordis.patch.json"}}
+}

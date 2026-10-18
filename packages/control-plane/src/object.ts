@@ -26,8 +26,10 @@ import { sessionAddress, type SessionScope } from '../../tenant/src/index.ts';
 import sessionRemote from '../../../.generated/official-remotes/packages/api/session-controller/typert.remote-client.js';
 import type { SessionControlFrame, SessionProjectionBaseline } from '@deepseek-ai/dsh-api-session-controller/types';
 import { remoteStream } from '../../harness-runtime/src/remote-stream.ts';
-import { NativeSettings, PRESET_NAMESPACE } from './native-settings.ts';
-import {readNativePresets} from '../../native-composition/src/profile-host.ts';
+import { NativeSettings, PRESET_NAMESPACE, LOOP_NAMESPACE } from './native-settings.ts';
+import {readNativePresets, type CompositionEndpoint} from '../../native-composition/src/profile-host.ts';
+import {profileDefinitions} from '../../harness-profile/src/index.ts';
+import {manageNativePlugins} from '../../native-composition/src/manager.ts';
 import {mountWorkspace} from '../../workspace/src/provider.ts';
 import { tenantModelHost, ModelConfigurationError, type ModelEnvironment } from '../../model-provider/src/index.ts';
 import { DATA_LAYOUT_VERSION } from '../../tenant/src/layout.ts';
@@ -72,27 +74,43 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
         const key = ref === 'DEEPSEEK_API_KEY' ? tenantModelHost(this.env, tenantId).apiKey : undefined;
         return key ? {value: key, source: 'platform'} : undefined;
       },
-      changed: (event, args) => this.nativeEvents.emit(event, args),
-      validatePreset: id => {if (!this.latest(id)) throw new Error('Unknown preset');},
+      changed: (event, args) => {
+        this.nativeEvents.emit(event, args);
+        if (event === 'settings/document-updated' && args[0] === PRESET_NAMESPACE) this.nativeEvents.emit('plugin-manager/changed', [{reason: 'plugin'}]);
+      },
+      validatePreset: id => {const value = this.latest(id); if (!value || value.spec.disabled) throw new Error('Unknown preset');},
     });
   }
   async nativeSettingsRequest(scope: ControlScope, endpoint: string, args: unknown): Promise<Response> {
     return this.settings(scope).invoke(endpoint, args);
   }
-  async nativePresetDefault(scope: ControlScope): Promise<string> {
+  private presetDefault(scope: ControlScope): string {
     const value = this.settings(scope).value(PRESET_NAMESPACE);
     return String(value.selectedDefault ?? value.default);
   }
+  async nativePresetDefault(scope: ControlScope): Promise<string> {return this.presetDefault(scope);}
+  async nativeLoopConfiguration(scope: ControlScope): Promise<Response> {
+    return Response.json(this.settings(scope).value(LOOP_NAMESPACE));
+  }
   async nativeProfile(scope: ControlScope, preset: string, revision?: number): Promise<Response> {
     this.scope(scope); this.ensureDefault(); this.ensureNativePresets();
-    return Response.json({value: await this.agent(scope, preset, revision)});
+    const value = await this.agent(scope, preset, revision);
+    return Response.json({value: value?.spec.disabled ? undefined : value});
   }
-  async nativePresetIds(scope: ControlScope): Promise<string[]> {return (await this.state(scope)).agents.map(row => row.spec.id);}
-  async nativePreset(scope: ControlScope, endpoint: 'agentPresets/list' | 'agentPresets/read', args: unknown): Promise<Response> {
+  async nativePresetIds(scope: ControlScope): Promise<string[]> {return (await this.state(scope)).agents.filter(row => !row.spec.disabled).map(row => row.spec.id);}
+  async nativePreset(scope: ControlScope, endpoint: CompositionEndpoint, args: unknown): Promise<Response> {
     const defaultId = await this.nativePresetDefault(scope);
     const profiles = (await this.state(scope)).agents;
     const volume = {...scope, workspaceId: 'default'};
     return readNativePresets(profiles, defaultId, endpoint, args, ctx => mountWorkspace(ctx, {scope: volume, transport: this.env.WORKSPACES.getByName(workspaceAddress(volume)), cwd: '/workspace'}));
+  }
+  async nativeManagePlugins(scope: ControlScope, endpoint: string, raw: unknown): Promise<Response> {
+    this.scope(scope); this.ensureDefault(); this.ensureNativePresets();
+    return manageNativePlugins({
+      profiles: async () => (await this.state(scope)).agents,
+      defaultPreset: () => this.nativePresetDefault(scope),
+      publish: (spec, revision) => this.publishAgent(scope, spec, revision),
+    }, endpoint, raw);
   }
   /** Private binding only: never dispatch this snapshot as a client Remote. */
   async nativeModelConfiguration(scope: ControlScope): Promise<Response> {
@@ -225,10 +243,7 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
           "You are a helpful assistant. Use the workspace and available plugins to complete the user’s request.",
         workspaceId: "default",
         allowClientPlugins: false,
-        plugins: [
-          { id: "tool-todo", config: { allowParallelInProgress: false } },
-          { id: "tool-skill", config: { catalogDescriptionMaxLength: 500 } },
-        ],
+        plugins: profileDefinitions.find(definition => definition.id === 'default')!.plugins.map(row => ({id: row.id!, config: structuredClone(row.config) as Record<string, unknown>})),
       },
     };
     this.ctx.storage.sql.exec(
@@ -240,9 +255,10 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
   }
   private ensureNativePresets(): void {
     const original = this.latest('default')!;
-    for (const [id, name, allowClientPlugins] of [['standard', 'Standard', false], ['cordis', 'Creator', true]] as const) {
+    for (const definition of profileDefinitions.filter(definition => definition.id !== 'default')) {
+      const {id, name = id} = definition;
       if (this.latest(id)) continue;
-      const value: AgentRevision = {...structuredClone(original), revision: 1, publishedAt: new Date().toISOString(), spec: {...structuredClone(original.spec), id, name, allowClientPlugins}};
+      const value: AgentRevision = {...structuredClone(original), revision: 1, publishedAt: new Date().toISOString(), spec: {...structuredClone(original.spec), id, name, allowClientPlugins: id === 'cordis', plugins: definition.plugins.map(row => ({id: row.id!, config: structuredClone(row.config) as Record<string, unknown>}))}};
       this.ctx.storage.sql.exec('INSERT INTO agents VALUES (?,?,?)', id, 1, JSON.stringify(value));
     }
   }
@@ -293,6 +309,7 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
         { status: 400 },
       );
     }
+    if (parsed.data.disabled && parsed.data.id === this.presetDefault(tenantId)) return Response.json({error: 'Select another new-task default before disabling this preset'}, {status: 409});
     const current = this.latest(parsed.data.id)?.revision ?? 0;
     if (expectedRevision !== current)
       return Response.json(
@@ -320,7 +337,7 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
       value.revision,
       JSON.stringify(value),
     );
-    await this.ctx.storage.sync();
+    await this.settings(tenantId).invalidate(PRESET_NAMESPACE);
     return Response.json(value);
   }
   async agent(

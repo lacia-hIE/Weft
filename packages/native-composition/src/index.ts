@@ -1,17 +1,19 @@
-import { Context, type Fiber } from '@deepseek-ai/cordis';
+import { Context } from '@deepseek-ai/cordis';
 import Loader from '@deepseek-ai/cordis-plugin-loader';
 import Group from '@deepseek-ai/cordis-plugin-group';
 import AgentPresets, {type PresetDefinition} from '@deepseek-ai/dsh-agent-preset-registry';
+import AgentPreset from '@deepseek-ai/dsh-agent-preset';
+import {profileEntry, presetEntryId} from '../../harness-profile/src/index.ts';
 import {prebuiltPluginModules, type PluginSelection} from '../../plugin-runtime/src/catalog.ts';
-const declarations = new WeakMap<Context, Map<string, Fiber>>();
+const compositions = new WeakSet<Context>();
 
 export async function replaceNativePreset(ctx: Context, definition: PresetDefinition): Promise<void> {
-  const mounted = declarations.get(ctx);
-  if (!mounted) throw new Error('Native composition is not mounted');
-  await mounted.get(definition.id)?.dispose();
-  const fiber = ctx.plugin({name: 'weft-preset:'+definition.id, inject: ['agentPresets'], async* apply(child) {yield await child.agentPresets.register(definition);}});
-  mounted.set(definition.id, fiber);
-  await fiber.await();
+  if (!compositions.has(ctx)) throw new Error('Native composition is not mounted');
+  const id = presetEntryId(definition.id);
+  const existing = ctx.loader.store[id];
+  if (existing) {await existing.fiber?.dispose(); ctx.loader.remove(id);}
+  await ctx.loader.create(profileEntry(definition));
+  await ctx.loader.resolve(id).fiber?.await();
 }
 
 /** Real Loader tree over modules included in this Worker, without disk imports. */
@@ -24,12 +26,15 @@ class WorkerdLoader extends Loader {
 }
 
 /** Native preset generations and scope binding; no replacement Agent runtime. */
-export async function mountNativeComposition(ctx: Context, definitions: readonly PresetDefinition[], defaultId: string): Promise<AgentPresets> {
+export async function mountNativeComposition(ctx: Context, definitions: readonly PresetDefinition[], defaultId: string, disabled: readonly string[] = []): Promise<AgentPresets> {
   await ctx.plugin(WorkerdLoader, {baseUrl: 'https://weft.invalid/prebuilt/'});
-  Object.assign(ctx.loader.builtins, {group: Group, ...prebuiltPluginModules});
+  Object.assign(ctx.loader.builtins, {group: Group, 'agent-preset': AgentPreset, ...prebuiltPluginModules});
   await ctx.plugin(AgentPresets, {default: defaultId});
-  declarations.set(ctx, new Map());
-  for (const definition of definitions) await replaceNativePreset(ctx, definition);
+  compositions.add(ctx);
+  for (const definition of definitions) {
+    await ctx.loader.create(profileEntry(definition, disabled.includes(definition.id)));
+    await ctx.loader.resolve(presetEntryId(definition.id)).fiber?.await();
+  }
   return ctx.agentPresets;
 }
 

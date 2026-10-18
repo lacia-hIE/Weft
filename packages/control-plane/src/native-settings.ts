@@ -12,12 +12,14 @@ import { RemoteError } from '@deepseek-ai/dsh-typert-protocol';
 import settingsRemote from '../../../.generated/official-remotes/packages/api/settings-controller/typert.remote-client.js';
 import { DurableCredentials } from './native-credentials.ts';
 import AgentPresets from '@deepseek-ai/dsh-agent-preset-registry';
+import AgentLoop from '@deepseek-ai/dsh-agent-loop';
 
 // The official composition's entry id differs from its provider package name.
 // The curated Models editor addresses this entry id.
 export const MODEL_NAMESPACE = 'llm-deepseek';
 export const DEFAULT_MODEL_NAMESPACE = 'agent-default-model';
 export const PRESET_NAMESPACE = 'agent-preset-registry';
+export const LOOP_NAMESPACE = 'agent-loop';
 type Section = Record<string, unknown>;
 interface Namespace {
   id: string; schema: Schema; base(): Section; autoGenerate: boolean;
@@ -73,6 +75,7 @@ export class NativeSettings {
       }},
       {id: DEFAULT_MODEL_NAMESPACE, schema: AgentDefaultModelConfig.Config, base: () => host.modelBase(), autoGenerate: false, validate: () => {}},
       {id: PRESET_NAMESPACE, schema: AgentPresets.Config, base: () => ({default: 'default'}), autoGenerate: false, validate: value => {host.validatePreset?.(String(value.selectedDefault ?? value.default));}},
+      {id: LOOP_NAMESPACE, schema: AgentLoop.Config, base: () => ({agents: []}), autoGenerate: false, validate: () => {}},
       {id: 'ui-settings', schema: DeveloperToolsConfig, base: () => ({}), autoGenerate: false, validate: () => {}},
       {id: 'ui-settings-general', schema: WelcomeConfig, base: () => ({}), autoGenerate: false, validate: () => {}},
     ];
@@ -101,6 +104,18 @@ export class NativeSettings {
   }
   describe(): SettingsDescribeValue {
     return {writable: true, hasDocument: false, namespaces: this.namespaces.map(ns => this.view(ns.id))};
+  }
+  /** Preset declarations are dependencies of the roster/default settings view. */
+  async invalidate(id: string): Promise<void> {
+    this.namespace(id);
+    let revision = 0;
+    this.storage.transactionSync(() => {
+      const current = this.row(id);
+      revision = current.revision + 1;
+      this.storage.sql.exec('INSERT INTO weft_settings VALUES (?,?,?) ON CONFLICT(ns) DO UPDATE SET revision=excluded.revision,document=excluded.document', id, revision, JSON.stringify(current.user));
+    });
+    await this.storage.sync();
+    this.host.changed('settings/document-updated', [id, revision]);
   }
   private async write(id: string, expected: number | undefined, change: (user: Section, schema: Schema) => Section): Promise<SettingsNamespaceView> {
     const ns = this.namespace(id);

@@ -33,6 +33,7 @@ export interface RuntimeOptions {
   mountPersistence?: (ctx: Context) => Promise<void>;
   mountTools?: (ctx: Context) => Promise<void>;
   setupAgent?: AgentSetup;
+  agentLoop?: {maxParallelToolCalls: number};
   beforeAssembly?: () => Promise<void>;
   defaultModel?: () => import('@deepseek-ai/dsh-agent').ModelSelection;
 }
@@ -71,7 +72,7 @@ export async function openHarnessSession(options: RuntimeOptions): Promise<Harne
     await ctx.plugin(ToolRuntime);
     await ctx.plugin(AgentRegistry);
     if (options.mountPersistence) await options.mountPersistence(ctx);
-    await ctx.plugin(AgentLoop, { agents: [] });
+    await ctx.plugin(AgentLoop, { agents: [], ...options.agentLoop });
     ctx.llm.registerAdapter([options.model.provider], options.adapter);
     if (options.mountTools) await options.mountTools(ctx);
     // Install before resume: persisted waking input may start assembling as

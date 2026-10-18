@@ -1,0 +1,5 @@
+{
+  "private": true,
+  "dependencies": {"@weft/harness-profile": "0.1.0"},
+  "dsh": {"profile": {"bundles": ["@weft/harness-profile"]}}
+}

@@ -57,6 +57,8 @@ Host 源码编译为 Dynamic Worker 的静态模块，在 SessionDO 的 Durable 
 
 `packages/native-composition` 挂载原版 Loader 和 AgentPresetRegistry，使用其真实配置树、工具作用域、保留代际、选择校验及 `agent-preset/selected` 事件。固定模块与校验器共享 `plugin-runtime` 的同一目录；Loader 只接收预构建 `cordis:` 引用和字面配置。构建适配去掉 Node 内部模块加载和配置表达式求值，替换为明确的 admission 边界；上游源码保持不变。Host 侧不运行用户提供的配置 JavaScript。
 
+`packages/harness-profile` 提供真实的部署内置配置包、profile 依赖声明和 Cordis patch。预设通过原版 AgentPreset 插件成为 Loader 条目，不再由额外的声明 Fiber 表持有。初始预设取自同一配置包，环境中的发布版本作为用户配置层；包声明与实际版本不匹配时直接失败。
+
 EnvironmentDO 保存预设版本，提供原版列表、只读 YAML 声明和默认选择。它使用真实组合上下文及所属环境的 Computer FS 校验激活，不创建 Agent 或会话写入者。Standard / Creator 初始化为持久预设，Creator 使用原版 ID `cordis`；更具体的可用服务仍以 workerd 能力检查为准。默认选择沿用原版 `agent-preset-registry.selectedDefault` schema、修订号与设置协议。
 
 SessionDO 在真实 Agent 的 setup 阶段绑定冻结的预设；已有会话不会因环境发布新版本而改变能力。首轮前的选择调用原版 registry，持久化原生选择事件；创建 header 保持原始身份，当前选择由 projection 表示。提示词入队和预设切换共用 admission 锁，替换后的旧宿主不会接受新消息。Persona、模型默认值及动态编写开关在新的会话宿主中使用所选快照。
@@ -64,6 +66,18 @@ SessionDO 在真实 Agent 的 setup 阶段绑定冻结的预设；已有会话�
 预设切换保存准备快照与事件边界；重建只在边界之后发现对应的原生选择事件时提升快照。测试分别模拟事件已提交和事件未提交的中断窗口。冷读复用原版 AgentPreset 和 Todo 投影；不会为读取历史启动 Agent 或调用模型。
 
 组合、冻结、恢复与原版页面操作的验证范围见 [原生预设验证](../validation/native-presets.md)。
+
+## 原版 Plugins 页面与配置
+
+Plugins 页面已接通原版 `pluginInventory/list`、`pluginManager/listPlugins`、`listBundles` 和预设条目的启停。清单读取原版 `readPluginInventory`，运行状态来自实际 Loader Fiber；配置包信息来自部署内的 manifest、profile 依赖和真实 patch，读取不创建 Agent 或会话写入者。它表示当前环境声明的组合状态，已有会话的保留版本继续由各 SessionDO 持有。
+
+管理适配在 `packages/native-composition/src/manager.ts`，只取得当前环境的读取和发布能力；EnvironmentDO 保留 scope 校验、SQLite 版本、CAS 和持久化职责。停用预设发布新版本，阻止新任务选择该预设，已有会话继续使用冻结快照。当前新任务默认预设和必要的配置包不能停用或删除。默认检查、版本比较和插入之间不跨异步边界，避免并发操作留下失效的默认值。
+
+预设声明发布会推进其依赖的 `agent-preset-registry` 设置修订号，发出原版设置和插件变更事件；默认选择变化也使管理清单失效。因此任务选择器和 Plugins 开关可以更新，不依靠手动刷新或伪造连接重置。
+
+原版 Agent loop 页面消费原生 Config schema 中的 `maxParallelToolCalls`，不开放 factory 的 `agents` 数组。SessionDO 在 prompt assembly 前刷新实际 AgentLoop 的 Volatile 引用，当前工具组仍使用已经捕获的并发上限；下一步与重启后的执行使用已保存值。模型凭据仍在独立可信快照中解析。
+
+当前配置包管理不等于通用 npm 安装器已经完成。安装、检查或移除未接通的包返回明确拒绝，不生成假的下载日志、安装成功或包库存。验证范围见 [Plugins 管理与 Loop 配置](../validation/native-plugin-management.md)。
 
 ## 验收状态
 
@@ -80,7 +94,7 @@ Boot Graph 由真实客户端工厂产物生成，复用官方 `orderByModuleGra
 1. 继续补齐预设编辑、权限、文件及更多插件的原生配置和 Host 接口、业务投影；原版 Inbox 和预设选择的页面交互已验收，未连接能力返回明确错误。
 2. 验证实时控制流在并发写入、长任务、断线与 DO 重建后的完整一致性，并解决 Session 目录当前 200 条上限。
 3. 完成剩余业务接口后移除过渡界面；官方 AppWebEntry 已设为默认入口，独立扩展提供 My Agents 导航。
-4. 补齐原版静态 Plugins 管理器的包与配置生命周期；继续扩展原生动态插件的 workerd 服务桥接和部署验收。
+4. 继续补齐静态插件包的安装、更新、卸载及更多配置生命周期；原版 Plugins 的真实配置包清单、预设条目启停和 Agent loop 表单已接入。扩展动态插件的 workerd 服务桥接和部署验收。
 5. 完成更多 provider/插件的凭据集成和环境管理生命周期，按新布局验收，不做旧数据兼容。
 6. 在真实模型、多环境、重连、重启和 Cloudflare 部署中验收完整官方 UI。
 

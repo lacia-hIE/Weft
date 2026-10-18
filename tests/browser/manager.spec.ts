@@ -1,0 +1,56 @@
+import {test, expect} from '@playwright/test';
+
+test('the official Plugins page renders actual profile entries, persists preset enablement and saves the native Agent loop form', async ({page, request}) => {
+  const me = await (await request.get('/v1/me')).json() as {tenantId: string};
+  const id = 'manager-'+crypto.randomUUID().slice(0, 8);
+  const base = `/v1/tenants/${me.tenantId}/environments/${id}`;
+  expect((await request.post(`/v1/tenants/${me.tenantId}/environments`, {data: {id, name: id}})).status()).toBe(201);
+  const rpc = async (method: string, args: unknown) => {
+    const response = await (await request.post(base+'/native/api/'+method, {data: {type: 'client-request', rpcId: crypto.randomUUID(), method, payload: {args}}})).json();
+    expect(response.result.ok, JSON.stringify(response)).toBe(true);
+    return response.result.value;
+  };
+  const plugins = async () => {
+    await page.getByRole('button', {name: 'Plugins', exact: true}).click({timeout: 45_000});
+    await expect(page.locator('[data-plugin-panel]')).toBeVisible();
+  };
+  await page.goto('/agents/'+id);
+  await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
+  await plugins();
+  await page.getByRole('button', {name: 'View Agent presets', exact: true}).click({timeout: 45_000});
+  const creator = page.locator('[data-plugin-row="preset-cordis"]');
+  await expect(creator).toContainText('Creator');
+  await expect(creator.getByRole('switch')).toBeChecked();
+  await expect(page.locator('[data-plugin-row="preset-default"]').getByRole('switch')).toBeDisabled();
+  await creator.getByRole('switch').click();
+  await expect(creator.getByRole('switch')).not.toBeChecked();
+  expect((await rpc('pluginInventory/list', {})).entries.find((row: {entryId: string}) => row.entryId === 'preset-cordis')).toMatchObject({enabled: false, fiberPhase: null});
+  await page.getByRole('button', {name: 'New session', exact: true}).first().click();
+  await page.getByRole('button', {name: 'DeepSeek Assistant', exact: true}).click();
+  await expect(page.locator('[role^="menuitem"]').filter({hasText: 'Standard'})).toBeVisible();
+  await expect(page.locator('[role^="menuitem"]').filter({hasText: 'Creator'})).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await page.reload();
+  await plugins();
+  await page.getByRole('button', {name: 'View Agent presets', exact: true}).click();
+  await expect(creator.getByRole('switch')).not.toBeChecked();
+  await creator.getByRole('switch').click();
+  await expect(creator.getByRole('switch')).toBeChecked();
+  const description = await rpc('settings/describe', {});
+  await rpc('settings/update', {ns: 'agent-preset-registry', patch: {selectedDefault: 'cordis'}, expectedRevision: description.namespaces.find((row: {ns: string}) => row.ns === 'agent-preset-registry').revision});
+  await expect(creator.getByRole('switch')).toBeDisabled();
+  await expect(page.locator('[data-plugin-row="preset-default"]').getByRole('switch')).toBeEnabled();
+  await page.reload();
+  await plugins();
+  await page.getByRole('button', {name: 'View Agent loop', exact: true}).click();
+  const cap = page.getByRole('textbox', {name: 'Parallel tool calls', exact: true});
+  await cap.fill('1');
+  await page.getByRole('button', {name: 'Save', exact: true}).click();
+  await expect(page.getByRole('button', {name: 'Save', exact: true})).toBeDisabled();
+  const state = await rpc('settings/describe', {});
+  expect(state.namespaces.find((row: {ns: string}) => row.ns === 'agent-loop').value.maxParallelToolCalls).toBe(1);
+  await page.reload();
+  await plugins();
+  await page.getByRole('button', {name: 'View Agent loop', exact: true}).click();
+  await expect(cap).toHaveValue('1');
+});
