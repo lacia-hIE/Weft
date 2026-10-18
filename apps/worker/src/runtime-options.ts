@@ -66,7 +66,7 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
       registerIdentityTool(ctx, scope.tenantId);
       if (workspaceId !== null) {
         const workspace = {tenantId: scope.tenantId, workspaceId, ...(scope.environmentId ? {environmentId: scope.environmentId} : {})};
-        await mountWorkspace(ctx, {scope: workspace, transport: env.WORKSPACES.getByName(workspaceAddress(workspace)), cwd});
+        await mountWorkspace(ctx, {scope: workspace, transport: env.WORKSPACES.getByName(workspaceAddress(workspace)), cwd, readImage: presentation && env.IMAGES !== undefined});
         if (presentation) await mountNativeAttachments(ctx, {storage, scope: workspace, sessionId: scope.sessionId, transport: env.WORKSPACES.getByName(workspaceAddress(workspace)), ...(env.IMAGES ? {images: env.IMAGES} : {})});
       }
       if (profile) {

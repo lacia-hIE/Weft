@@ -7,7 +7,7 @@ import * as ObservationPolicy from '@deepseek-ai/dsh-fs-observation-policy';
 import { defineTool } from '@deepseek-ai/dsh-tools';
 import { workspaceAddress, workspacePath, ROOT, MAX_BYTE_RANGE_BYTES, MAX_BINARY_FILE_BYTES, type WorkspaceScope, type WorkspaceTransport, type WorkspaceOperation, type FileInfo, type FileRead, type WriteResult, type SearchResult } from './protocol.ts';
 
-interface ProviderConfig { scope: WorkspaceScope; transport: WorkspaceTransport; cwd?: string; listLimit?: number }
+interface ProviderConfig { scope: WorkspaceScope; transport: WorkspaceTransport; cwd?: string; listLimit?: number; readImage?: boolean }
 export class ComputerFileSystem extends FileSystem {
   private readonly watchBacklogs = new Map<string, Set<{pending: number}>>();
   constructor(ctx: Context, private readonly config: ProviderConfig) { super(ctx); }
@@ -161,7 +161,7 @@ export async function mountWorkspace(ctx: Context, config: ProviderConfig): Prom
   const cwd = config.cwd ?? ROOT;
   await ctx.plugin(WorkingDirectory, { defaultDirectory: cwd });
   await ctx.plugin(ObservationPolicy);
-  await ctx.plugin(FileTools, { readImage: false });
+  await ctx.plugin(FileTools, {readImage: config.readImage ?? false});
   ctx.tools.register(defineTool({
     name: 'workspace_search', description: 'Search literal text within the attached workspace. Returns bounded matching lines.',
     parameters: { query: { type: 'string', required: true }, path: { type: 'string', description: 'Directory or file under /workspace. Defaults to /workspace.' } },

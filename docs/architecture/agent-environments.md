@@ -37,7 +37,7 @@ UI 资产由没有公网入口的 Worker 通过 Static Assets binding 读取；�
 
 `packages/native-files` 接通原版 `WorkspaceFiles` 服务的目录、文本分页、字节预览与变更订阅。只读宿主读取实际会话 header，不激活 Agent 或获得写入权；相对路径依照会话 cwd，文件系统能力仍严格限制在所属租户与环境卷。原版 Connection 的 multipart 编码函数和生成的 Typert codec 保留真实字节类型，WorkspaceDO 提供落盘后的失效通知及明确关闭 RPC，见 [文件 Host 验证](../validation/native-files.md)。
 
-`packages/native-attachments` 接通原版 FileUploads 的通用文件上传和提示词回执流程。实际 Agent 持有回执缓存，SessionDO SQLite 保存回执及绑定；WorkspaceDO 使用 Computer 分块写入、校验摘要并原子发布不可变文件。上传、排队、移除、消费、重复请求与冷恢复保留原生语义。原版输入框和后台上传器直接使用该协议，不引入 Node 传输或应用 Token。图片输入通过 Cloudflare Images 规范化到环境文件系统，原版图库与模型 Files API 使用真实内容及持久映射，具体范围见 [附件验证](../validation/native-attachments.md) 与 [图片验证](../validation/native-images.md)。
+`packages/native-attachments` 接通原版 FileUploads 的通用文件上传和提示词回执流程。实际 Agent 持有回执缓存，SessionDO SQLite 保存回执及绑定；WorkspaceDO 使用 Computer 分块写入、校验摘要并原子发布不可变文件。上传、排队、移除、消费、重复请求与冷恢复保留原生语义。原版输入框和后台上传器直接使用该协议，不引入 Node 传输或应用 Token。图片输入通过 Cloudflare Images 规范化到环境文件系统，原版图库与模型 Files API 使用真实内容及持久映射。原生会话在配置 Images binding 时启用原版 `read_image`，从同一环境卷读取图片，并保留原版模型能力门控、存储和工具结果语义。具体范围见 [附件验证](../validation/native-attachments.md) 与 [图片验证](../validation/native-images.md)。
 
 配置宿主位于 `packages/control-plane/src/native-settings.ts`，复用官方 DeepSeek API-key、默认模型、开发工具和欢迎确认的 Config schema，以及原生 volatile form、plainConfig 和 secret redaction。官方 Models 编辑器使用原版 composition entry ID `llm-deepseek`，对应 API-key provider 包；运行路由使用 `deepseek-official`。SQLite 保存用户覆盖层和修订号，过期表单拒绝覆盖新版本；数组替换和路径编辑保留继承/重置语义。配置不伪装为本地 YAML 文件。
 

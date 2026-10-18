@@ -42,7 +42,7 @@ curl http://localhost:8787/v1/tenants/TENANT_ID/sessions/example/events
 
 官方 Harness 的 Files 侧栏通过原版 `WorkspaceFiles` 读取所属环境的真实文件，支持目录、分页文本、字节预览和变更订阅；具体范围与附件待接入项见 [原版文件验证](docs/validation/native-files.md)。当前按新的原生数据布局开发，不要求保留旧数据兼容或迁移。
 
-官方输入框已接通通用文件上传，回执按 Session 持久化，文件可以随提示词进入原生队列并由真实工具读取，详见 [原版附件验证](docs/validation/native-attachments.md)。图片输入通过 Cloudflare Images 解码并保存到环境的 Computer 卷；原版图片历史、查看器和 DeepSeek Files API 已接通，上传缓存按环境隔离，详见 [原版图片验证](docs/validation/native-images.md)。
+官方输入框已接通通用文件上传，回执按 Session 持久化，文件可以随提示词进入原生队列并由真实工具读取，详见 [原版附件验证](docs/validation/native-attachments.md)。图片输入通过 Cloudflare Images 解码并保存到环境的 Computer 卷；原版图片历史、查看器和 DeepSeek Files API 已接通，上传缓存按环境隔离。原生会话的 Agent 还可通过原版 `read_image` 查看工作区已有图片，详见 [原版图片验证](docs/validation/native-images.md)。
 
 目录职责：
 

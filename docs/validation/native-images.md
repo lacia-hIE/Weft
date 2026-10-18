@@ -20,6 +20,14 @@ Images binding 检查声明 MIME 与实际格式、方向后的尺寸和像素�
 
 平台密钥可能由多个租户或环境共享。原版按远端文件名前缀扫描的清理策略不能直接用于此场景；本实现仅删除当前环境、当前凭据命名空间索引中的远端 ID。其他环境不会因为配额恢复而被清理。进程在远端上传成功和索引发布之间终止时，可能留下不在索引内的远端对象，依赖 provider TTL；完整附件保留和垃圾回收仍需实现。
 
+## 工作区图片工具
+
+原生会话配置 Images binding 后，FileTools 注册固定上游的原版 `read_image`，不用自建工具或伪造图片描述。它先要求调用路由明确声明 image 输入，再通过限定在当前环境的 fs 读取有界字节；未知 / 纯文本模型在文件 I/O 前拒绝。图片由同一个 AttachmentStore 完整解码、规范化并持久发布，原版工具结果包含真实图片引用，后续模型请求使用真实 DeepSeek Files 上传。
+
+`tests/native-image-tool.test.ts` 验证真实上传文件、工具执行、请求像素、历史读取和跨会话引用拒绝；还覆盖缺少 codec 时不注册、未声明图片能力的模型、越界路径和伪图片。失败以原版可恢复工具结果返回，不发布图片引用。原版工具执行详情默认折叠，图片沿用原版展开与查看交互。旧消息接口不挂载原生图片存储，因此继续关闭该工具。
+
+`tests/browser/image-tool-live.spec.ts` 只把工作区路径发给真实模型，校验码仍仅存在于图片像素中。验收检查真实 `read_image` 调用、工具结果图片和模型识别；刷新后依次展开执行摘要、图片调用组与单次调用，解码实际图片并打开 / 关闭 Lightbox。点击调用标题展开卡片，点击文件名则打开原版 Files 预览，这是上游的两条不同交互。
+
 ## 验证方法
 
 `tests/native-images.test.ts` 在真实本地 workerd 验证原版提示词、摘要和名称、会话读取授权、重启历史、无效批次不发布、四种格式、GIF 第一帧、最大源字节、单条图片数量和合计上限。实际 DeepSeek Files transport 配合确定性 HTTP fixture 验证真实 WebP 上传、模型 file ID、冷启动缓存复用、共享密钥下的环境 / 租户隔离和配额清理。`tests/persistence.test.ts` 通过真实私有 EnvironmentDO RPC 验证并发发布、过期替换、旧代清理、凭据隔离、scope 拒绝及重启恢复。
@@ -34,7 +42,7 @@ npm run test:images:remote
 
 该命令构建当前代码后，以 `cf dev` 在本机启动测试专用 Worker，连接真实远端 Images binding，Computer / SQLite 留在本地。测试 Worker 不发布、不配置公网入口、不使用应用 Token。验证包括透明 PNG / WebP、JPEG、动态图第一帧、EXIF 旋转、P3 转 sRGB、16 位转 8 位，并独立解码比较实际像素；还覆盖坏输入、尺寸拒绝、缩放几何、质量阶梯、无 codec 的缓存读回、20,000,000 字节和持久内容损坏。选择后的报告保存在 `.generated/native-images-remote-validation.json`。
 
-真实 DeepSeek 与真实 Images 服务分别完成本地 workerd 联调；它们不替代允许用户通过 Access 登录后的云端完整 UI 验收。工作区 `read_image` 工具仍未启用，本文接通的是输入框图片与其原生历史和模型投影。子 Agent、权限、更多 provider、通用静态插件安装与编辑、环境删除和剩余业务投影仍属于完整官方 UI 目标，不能因为图片功能通过便宣布全部完成。
+真实 DeepSeek 与真实 Images 服务分别完成本地 workerd 联调；它们不替代允许用户通过 Access 登录后的云端完整 UI 验收。子 Agent、权限、更多 provider、通用静态插件安装与编辑、环境删除和剩余业务投影仍属于完整官方 UI 目标，不能因为图片功能通过便宣布全部完成。
 
 ## 本地验收记录
 
@@ -44,8 +52,9 @@ npm run test:images:remote
 | workerd 全量 | 80 / 80；合并 Access 修复后，图片与鉴权专项 14 / 14 | `.generated/native-images-release-unit.log`、`native-images-post-access-unit.log` |
 | 常规浏览器 | 10 项通过、7 项条件跳过；合并后的启动失败恢复专项另 1 项通过 | `.generated/native-images-release-web.log`、`native-images-post-access-bootstrap.log` |
 | 原版 Inbox、动态 Cordis 插件 | 各 1 项通过 | `.generated/native-images-release-queue.log`、`native-images-release-controlled.log` |
-| 真实 DeepSeek 浏览器 | 5 项通过：文件工具读取、图片识别、双端插件、原版聊天恢复及文件工具编写 UI 插件 | `.generated/native-images-release-live.log` |
+| 真实 DeepSeek 浏览器 | 6 项通过：文件工具读取、输入框图片识别、工作区图片工具、双端插件、原版聊天恢复及文件工具编写 UI 插件 | `.generated/native-read-image-release-live.log` |
 | 真实远端 Images | 四种格式、四角 EXIF 旋转、色彩 / 透明度、缩放、质量阶梯、冷缓存、字节上限与损坏拒绝通过 | `.generated/native-images-release-remote-oriented.log`、`native-images-remote-validation.json` |
-| 严格 TypeScript、两个 Worker 部署预检 | 通过，Images binding 仅配置到主 Worker | `.generated/native-images-final-types.log`、`native-images-final-dryrun.log` |
+| 严格 TypeScript、两个 Worker 部署预检 | 通过，Images binding 仅配置到主 Worker | `.generated/native-read-image-release-types.log`、`native-read-image-dryrun.log` |
+| 工作区图片工具 | 新增工具与原有工作区回归 10 / 10；真实模型、刷新后的工具图片卡片和 Lightbox 专项 1 / 1 | `.generated/native-read-image-release-unit.log`、`native-read-image-live-card.log` |
 
 条件跳过不算通过，也不代替真实模型和远端 Images 专项；对应验证记录独立保存。已发布版本与 Git 构建、Worker 版本、binding 和匿名入口保护的核对结果保存在 `.generated/native-images-deployment-summary.json`，只有记录存在且与实际部署匹配时才能视为部署已验收。该记录不声明用户 Access 会话中的云端功能验收已经完成。
