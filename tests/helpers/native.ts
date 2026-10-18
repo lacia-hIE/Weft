@@ -4,12 +4,12 @@ import type { RemoteEventDownlinkFrame } from '@weft/upstream/packages/api/gatew
 import { createRuntime, tenantId, url, type User } from './miniflare.ts';
 
 type Runtime = ReturnType<typeof createRuntime>;
-export function nativeClient(runtime: () => Runtime, environment = 'default', user: User = 'alpha') {
+export function nativeClient(runtime: () => Runtime, environment = 'default', user: User = 'alpha', jsonHeaders: Record<string, string> = {}) {
   const base = `/v1/tenants/${tenantId(user)}/environments/${environment}/native`;
   return {
     async raw(endpoint: string, args: unknown, method = endpoint) {
       const response = await runtime().dispatchFetch(url(user, `${base}/api/${endpoint}`), {
-        method: 'POST', headers: {'content-type': 'application/json'},
+        method: 'POST', headers: {...jsonHeaders, 'content-type': 'application/json'},
         body: JSON.stringify({type: 'client-request', rpcId: 'fixture-rpc', method, payload: {args}}),
       });
       assert.equal(response.status, 200, await response.clone().text());

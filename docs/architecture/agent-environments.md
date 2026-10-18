@@ -35,7 +35,9 @@ UI 资产由没有公网入口的 Worker 通过 Static Assets binding 读取；�
 
 工作区注册表使用官方记录 schema，保存到 EnvironmentDO 的 SQLite，并通过官方 Workspace 协议提供排序、会话归属、固定与归档。官方 Workspace 对应环境文件系统中的真实目录，会话使用该目录作为 cwd；目录创建和文件操作落到 WorkspaceDO 的 Computer 文件系统。删除注册不会删除文件或会话。
 
-`packages/native-files` 接通原版 `WorkspaceFiles` 服务的目录、文本分页、字节预览与变更订阅。只读宿主读取实际会话 header，不激活 Agent 或获得写入权；相对路径依照会话 cwd，文件系统能力仍严格限制在所属租户与环境卷。原版 Connection 的 multipart 编码函数和生成的 Typert codec 保留真实字节类型，WorkspaceDO 提供落盘后的失效通知及明确关闭 RPC。上传及提示词附件属于后续独立接入项，见 [文件 Host 验证](../validation/native-files.md)。
+`packages/native-files` 接通原版 `WorkspaceFiles` 服务的目录、文本分页、字节预览与变更订阅。只读宿主读取实际会话 header，不激活 Agent 或获得写入权；相对路径依照会话 cwd，文件系统能力仍严格限制在所属租户与环境卷。原版 Connection 的 multipart 编码函数和生成的 Typert codec 保留真实字节类型，WorkspaceDO 提供落盘后的失效通知及明确关闭 RPC，见 [文件 Host 验证](../validation/native-files.md)。
+
+`packages/native-attachments` 接通原版 FileUploads 的通用文件上传和提示词回执流程。实际 Agent 持有回执缓存，SessionDO SQLite 保存回执及绑定；WorkspaceDO 使用 Computer 分块写入、校验摘要并原子发布不可变文件。上传、排队、移除、消费、重复请求与冷恢复保留原生语义。原版输入框和后台上传器直接使用该协议，不引入 Node 传输或应用 Token。图片准入仍明确不可用，具体范围见 [附件验证](../validation/native-attachments.md)。
 
 配置宿主位于 `packages/control-plane/src/native-settings.ts`，复用官方 DeepSeek API-key、默认模型、开发工具和欢迎确认的 Config schema，以及原生 volatile form、plainConfig 和 secret redaction。官方 Models 编辑器使用原版 composition entry ID `llm-deepseek`，对应 API-key provider 包；运行路由使用 `deepseek-official`。SQLite 保存用户覆盖层和修订号，过期表单拒绝覆盖新版本；数组替换和路径编辑保留继承/重置语义。配置不伪装为本地 YAML 文件。
 
@@ -83,9 +85,9 @@ Plugins 页面已接通原版 `pluginInventory/list`、`pluginManager/listPlugin
 
 ## 验收状态
 
-已实现并验证环境目录创建、配置/文件/插件/同名会话的环境隔离及重启恢复。浏览器验证覆盖目录进入、环境切换卸载及既有工作台回归。旧数据采用与迁移不再是验收目标。
+已实现并验证环境目录创建、配置/文件/插件/同名会话的环境隔离及重启恢复。浏览器验证覆盖目录进入、环境切换卸载及既有工作台回归。旧数据兼容与迁移不再是验收目标。
 
-已接通官方协议的会话创建、列表、分页、订阅、标题、模型选择、提示词、取消，以及工作区、目录选择和全局通知。模型投影复用官方定义，请求装配复用原生模型切换钩子；冷启动后恢复所选路由。原生 Inbox 已接通排队、编辑、删除、steer 和持久恢复；附件、子 Agent 与更多业务投影仍需接入。提示词只有在原生 Inbox 入队事件同步存储后才确认接受，用户消息在原版驱动消费时进入历史；缺失能力明确拒绝。
+已接通官方协议的会话创建、列表、分页、订阅、标题、模型选择、提示词、取消，以及工作区、目录选择和全局通知。模型投影复用官方定义，请求装配复用原生模型切换钩子；冷启动后恢复所选路由。原生 Inbox 已接通排队、编辑、删除、steer、通用文件附件和持久恢复；图片准入、子 Agent 与更多业务投影仍需接入。提示词只有在原生 Inbox 入队事件同步存储后才确认接受，用户消息在原版驱动消费时进入历史；缺失能力明确拒绝。
 
 官方 Remote 的 30 个包与官方 Web 目录的 69 个客户端模块已使用上游生成器、各包自身的构建配置成功生成。标准 `npm run build` 已包含这条完整构建链，确保全新的 Cloudflare Git 构建也会生成官方产物；构建报告位于 `.generated/official-ui/build-report.json`。
 

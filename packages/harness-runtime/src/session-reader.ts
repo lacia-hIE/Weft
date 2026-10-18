@@ -18,6 +18,8 @@ import { SqliteSessionPersistence } from '../../session-persistence-do/src/index
 import WorkingDirectory from '@deepseek-ai/dsh-working-directory';
 import {ComputerFileSystem} from '../../workspace/src/provider.ts';
 import type {WorkspaceScope, WorkspaceTransport} from '../../workspace/src/protocol.ts';
+import {ComputerAttachmentStore, type AttachmentTransport} from '../../native-attachments/src/store.ts';
+import {ApiSessionList} from '@weft/upstream/packages/api/session-controller/src/list.ts';
 
 // The official Web profile also leaves full-text indexing disabled by default.
 class DurableSessionQuery extends Query {
@@ -65,10 +67,12 @@ export async function createSessionReader(storage: DurableObjectStorage) {
     });
     return {
       ctx, history,
-      configureWorkspace(config: {scope: WorkspaceScope; transport: WorkspaceTransport; cwd: string}): Promise<void> {
+      configureWorkspace(config: {scope: WorkspaceScope; transport: WorkspaceTransport; cwd: string; sessionId: string; attachmentTransport: AttachmentTransport}): Promise<void> {
         return workspace ??= (async () => {
           await ctx.plugin(ComputerFileSystem, config);
           await ctx.plugin(WorkingDirectory, {defaultDirectory: config.cwd});
+          await ctx.plugin(ComputerAttachmentStore, {scope: config.scope, sessionId: config.sessionId, transport: config.attachmentTransport});
+          new ApiSessionList(ctx, 8);
         })();
       },
       activeRuntime: () => active,

@@ -2,10 +2,12 @@ import { posix } from 'node:path';
 import { Workspace } from '@cloudflare/computer';
 import { FsError } from '@deepseek-ai/dsh-fs';
 import { ROOT, MAX_FILE_BYTES, workspacePath, type FileInfo, type FileRead, type WriteResult, type SearchResult, type WorkspaceOperation } from './protocol.ts';
+import {ComputerAttachmentFiles, ATTACHMENT_PRIVATE_ROOT} from '../../native-attachments/src/storage.ts';
 
 /** Computer owns file bytes; Weft owns monotone versions and the exposed capability boundary. */
 export class WorkspaceStore {
   private readonly computer: Workspace;
+  readonly attachments: ComputerAttachmentFiles;
   constructor(private readonly storage: DurableObjectStorage) {
     storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_workspace_schema (version INTEGER NOT NULL)');
     const versions = storage.sql.exec<{ version: number }>('SELECT version FROM weft_workspace_schema').toArray();
@@ -18,9 +20,16 @@ export class WorkspaceStore {
     });
     this.computer = new Workspace({ storage, output: false });
     this.computer.provider().mkdirSync(ROOT, { recursive: true });
+    this.attachments = new ComputerAttachmentFiles(storage, this.computer.provider(), path => {this.version(path);});
   }
 
   private revision(): number { return this.storage.sql.exec<{ revision: number }>('SELECT revision FROM weft_workspace_state WHERE id=1').one().revision; }
+  private version(path: string): number {
+    const revision = this.revision() + 1;
+    this.storage.sql.exec('UPDATE weft_workspace_state SET revision=? WHERE id=1', revision);
+    this.storage.sql.exec('INSERT INTO weft_file_versions VALUES (?, ?) ON CONFLICT(path) DO UPDATE SET version=excluded.version', path, revision);
+    return revision;
+  }
   private guardedPath(raw: string): string {
     const path = workspacePath(raw);
     let prefix = '';
@@ -59,9 +68,7 @@ export class WorkspaceStore {
     if (new TextEncoder().encode(after).byteLength > MAX_FILE_BYTES) throw new FsError('Workspace file exceeds the text limit', 'FS_TOO_LARGE');
     this.computer.provider().mkdirSync(posix.dirname(path), { recursive: true });
     this.computer.provider().writeFileSync(path, after, 'utf8');
-    const revision = this.revision() + 1;
-    this.storage.sql.exec('UPDATE weft_workspace_state SET revision=? WHERE id=1', revision);
-    this.storage.sql.exec('INSERT INTO weft_file_versions VALUES (?, ?) ON CONFLICT(path) DO UPDATE SET version=excluded.version', path, revision);
+    const revision = this.version(path);
     return { operation: before === null ? 'create' : 'update', before, after, version: String(revision), revision };
   }
 
@@ -70,6 +77,7 @@ export class WorkspaceStore {
     try {
       return this.storage.transactionSync(() => {
         const path = this.guardedPath(operation.path);
+        if (['write', 'edit', 'mkdir'].includes(operation.type) && (path === ATTACHMENT_PRIVATE_ROOT || path.startsWith(ATTACHMENT_PRIVATE_ROOT+'/'))) throw new FsError('Attachment storage is immutable', 'FS_PERMISSION_DENIED');
         if (operation.type === 'stat') return this.metadata(path) ?? null;
         if (operation.type === 'read') return this.read(path);
         if (operation.type === 'mkdir') {
@@ -138,6 +146,7 @@ export class WorkspaceStore {
     let entries = 0, bytes = 0;
     while (pending.length) {
       const path = this.guardedPath(pending.pop()!);
+      if (path === ATTACHMENT_PRIVATE_ROOT && path !== root) continue;
       const info = this.metadata(path);
       if (!info) throw new FsError('Workspace search path not found', 'FS_NOT_FOUND');
       if (++entries > 1000) return { matches, truncated: true };

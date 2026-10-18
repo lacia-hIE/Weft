@@ -5,6 +5,9 @@ import { canonicalClientTimeZone } from '@deepseek-ai/dsh-util-time';
 import { RemoteError } from '@deepseek-ai/dsh-typert-protocol';
 import { openHarnessSession, type RuntimeOptions, type HarnessSessionHost } from '../../../packages/harness-runtime/src/runtime.ts';
 import { turnFailure, type TurnFailure } from '../../../packages/model-provider/src/index.ts';
+import {resolvePromptFileReceipts} from '../../../.generated/official-prompt-files.ts';
+import {AttachmentError} from '@deepseek-ai/dsh-attachment';
+import type {} from '../../../packages/native-attachments/src/index.ts';
 
 interface Owner {
   waitUntil(promise: Promise<unknown>): void;
@@ -90,17 +93,24 @@ export class NativeSessionHost {
     await this.serialized(async () => {
       if (this.closed) throw new NativeHostReplacedError('Native host was replaced before admission');
       if (this.seen(request.requestId)) return;
-      if (request.content.some(block => block.type !== 'text')) throw new RemoteError('session/attachment-invalid', 'Attachment admission is not connected yet', {reason: 'attachment-unavailable'});
-      const content = request.content.flatMap(block => block.type === 'text' ? [block] : []);
-      if (!content.some(block => block.text.trim().length)) throw new RemoteError('gateway/bad-request', 'Prompt content is empty', {});
+      if (!request.content.some(block => block.type !== 'text' || block.text.trim().length)) throw new RemoteError('gateway/bad-request', 'Prompt content is empty', {});
       const timeZone = request.clientTimeZone === undefined ? undefined : canonicalClientTimeZone(request.clientTimeZone);
       if (request.clientTimeZone !== undefined && timeZone === undefined) throw new RemoteError('session/invalid-time-zone', 'Invalid client time zone', {value: request.clientTimeZone});
       if (this.agent.inbox.nextTurn.length + this.agent.inbox.nextStep.length >= 32) throw new RemoteError('session/agent-busy', 'Session inbox is full', {reason: 'queue-full'});
       await this.options.beforeAssembly?.();
       this.agent.ctx.fiber.assertActive();
+      const uploads = this.ctx.fileUploads;
+      const admission = resolvePromptFileReceipts(request.content, id => uploads.resolve(this.agent, id));
+      let content;
+      try {content = await this.ctx.attachments.admitPromptContent(admission.content);}
+      catch (error) {if (error instanceof AttachmentError) throw new RemoteError('session/attachment-invalid', error.message, {reason: error.code}); throw error;}
+      if (this.closed) throw new NativeHostReplacedError('Native host was replaced during attachment admission');
+      this.agent.ctx.fiber.assertActive();
+      using binding = uploads.bindPrompt(this.agent, admission.receiptIds, request.requestId);
       const message = createUserMessage({content, source: {kind: 'user', rpcId: request.requestId, ...(timeZone === undefined ? {} : {clientTimeZone: timeZone})}});
       if (request.mode === 'steer') this.agent.steer(message);
       else this.agent.followup(message);
+      binding.commit();
       this.watch();
       // Native inbox splices are durable admission, even before the message is
       // consumed by a running turn. No model await is held by the prompt RPC.
@@ -130,7 +140,11 @@ export class NativeSessionHost {
           if (!request.action.content.some(block => block.type === 'text' && block.text.trim().length)) throw new RemoteError('gateway/bad-request', 'Queue edit content is empty', {});
           this.agent.inbox.replace(request.itemId, freezeMessage<UserMessage>({...message, content: [...request.action.content]})); break;
         }
-        case 'remove': this.agent.inbox.remove(request.itemId); break;
+        case 'remove': {
+          this.agent.inbox.remove(request.itemId);
+          if (message.source.kind === 'user' && 'rpcId' in message.source && typeof message.source.rpcId === 'string') this.ctx.fileUploads.retirePrompt(this.agent, message.source.rpcId);
+          break;
+        }
         case 'steer': {
           if (!turn || this.agent.status !== 'running') throw new RemoteError('session/steer-unavailable', 'Current turn no longer accepts steering', {itemId: request.itemId});
           this.agent.inbox.remove(request.itemId); this.agent.steer(message); this.watch(); break;

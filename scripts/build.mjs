@@ -5,6 +5,7 @@ import { writeBuildOutput } from './write-build-output.mjs';
 import { nativeCordisPlatform } from './native-cordis-platform.mjs';
 import { nativeCompositionPlatform } from './native-composition-platform.mjs';
 import {prepareConnectionResponse} from './official-connection-response.mjs';
+import {nativeAttachmentsPlatform, prepareAttachmentHelpers} from './native-attachments-platform.mjs';
 
 // Bundles have no adjacent package.json at runtime. Preserve upstream attribution
 // while converting this one Node loader operation to a static JSON import.
@@ -47,6 +48,7 @@ const providerFetch = {
 mkdirSync('dist', { recursive: true });
 const upstreamDirectory = JSON.parse(readFileSync('.generated/upstream-source.json','utf8')).directory;
 prepareConnectionResponse(upstreamDirectory);
+prepareAttachmentHelpers(upstreamDirectory);
 const browserNodeModule = {
   name: 'official-loader-browser-boundary',
   setup(builder) {
@@ -130,7 +132,7 @@ const result = await build({
   target: 'es2024',
   external: ['cloudflare:workers', 'node:*'],
   tsconfig: '.generated/upstream.source.tsconfig.json',
-  plugins: [staticAttribution, providerFetch, nativeCordisPlatform, nativeCompositionPlatform],
+  plugins: [staticAttribution, providerFetch, nativeCordisPlatform, nativeCompositionPlatform, nativeAttachmentsPlatform],
   sourcemap: true,
   metafile: true,
 });
@@ -139,6 +141,9 @@ const shippedInputs = Object.entries(result.metafile.outputs['dist/worker.js'].i
   .filter(([, input]) => input.bytesInOutput > 0).map(([path]) => path);
 if (shippedInputs.some(path => /packages\/(host\/webserver|api\/gateway|client\/connection\/src\/rpc-host\.ts)|node_modules\/ws\//.test(path))) {
   throw new Error('Node host transport leaked into the workerd application bundle');
+}
+if (shippedInputs.some(path => /packages\/attachment\/attachment-local\/src\/(store|normalization|image)\.ts$/.test(path))) {
+  throw new Error('Node local attachment/image backend leaked into the workerd application bundle');
 }
 if (result.metafile.outputs['dist/worker.js'].imports.some(item => item.path === 'node:vm')) {
   throw new Error('Node VM sandbox leaked into the workerd application bundle');
@@ -153,7 +158,7 @@ const nodeImports = [...new Set(result.metafile.outputs['dist/worker.js'].import
   .filter(item => item.path.startsWith('node:')).map(item => item.path))].sort();
 writeFileSync('dist/runtime-audit.json', JSON.stringify({
   upstream: JSON.parse(readFileSync('upstream.lock.json', 'utf8')).commit,
-  adaptations: ['Static LLM package version import', 'Messages adapter fetch rejects redirects manually in workerd', 'Native Cordis Runner registry ownership, WorkerLoader sandbox and environment-wide inspect identities', 'Native Loader uses a prebuilt catalog without Node module jobs or executable configuration expressions', 'Original Connection JSON/multipart encoder extracted without its Node RPC host'],
+  adaptations: ['Static LLM package version import', 'Messages adapter fetch rejects redirects manually in workerd', 'Native Cordis Runner registry ownership, WorkerLoader sandbox and environment-wide inspect identities', 'Native Loader uses a prebuilt catalog without Node module jobs or executable configuration expressions', 'Original Connection JSON/multipart encoder extracted without its Node RPC host', 'Native FileUploads keeps original admission and receipt behavior with durable cache ownership and a scoped Fetch registry; pure reference and prompt helpers are extracted from the pinned source'],
   dynamicPlugins: {runtime: 'Durable Object facet with native Cordis and ToolRuntime', services: ['tools', 'timer', 'scoped asynchronous fs'], directNetwork: false, operationDeadlineMs: 15000},
   computer: { version: JSON.parse(readFileSync('node_modules/@cloudflare/computer/package.json', 'utf8')).version, executionBackends: [] },
   excludedExecutionDependencies: forbiddenWorkspaceDependencies,

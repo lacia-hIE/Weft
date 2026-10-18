@@ -12,6 +12,8 @@ import inventoryRemote from '../../../.generated/official-remotes/packages/host/
 import managerRemote from '../../../.generated/official-remotes/packages/boot/plugin-manager/typert.remote-client.js';
 import fileRemote from '../../../.generated/official-remotes/packages/api/workspace-files/typert.remote-client.js';
 import type {NativeFileEndpoint} from '../../../packages/native-files/src/index.ts';
+import uploadRemote from '../../../.generated/official-remotes/packages/client/file-upload/typert.remote-client.js';
+import {FILE_UPLOAD_PATH} from '@weft/upstream/packages/client/file-upload/src/protocol.ts';
 import type { NativePluginEndpoint } from '../../../packages/native-plugins/src/host.ts';
 import { MODEL_NAMESPACE } from '../../../packages/control-plane/src/native-settings.ts';
 import { controlFor, controlScope } from '../../../packages/control-plane/src/object.ts';
@@ -26,6 +28,24 @@ type Endpoint = keyof typeof sessionRemote.methods;
 /** Official Connection envelopes and generated codecs at the CF host boundary. */
 export async function handleNativeRequest(request: Request, env: Env, principal: Principal, environmentId?: string): Promise<Response | undefined> {
   const pathname = new URL(request.url).pathname;
+  const upload = /^\/v1\/tenants\/([^/]+)\/native\/api\/session\/uploadFileBinary$/.exec(pathname);
+  if (upload) {
+    if (upload[1] !== principal.tenantId) throw new HttpError(403, 'Tenant access denied');
+    assertSameOrigin(request);
+    if (request.method !== 'POST') return new Response(null, {status: 405, headers: {allow: 'POST'}});
+    if (request.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase() !== 'application/octet-stream') return new Response('content type must be application/octet-stream', {status: 415});
+    const url = new URL(request.url);
+    const parsed = scopeSchema.safeParse({tenantId: principal.tenantId, sessionId: url.searchParams.get('sessionId'), ...(environmentId ? {environmentId} : {})});
+    if (!parsed.success) return new Response('valid sessionId is required', {status: 400});
+    const scope = parsed.data;
+    url.pathname = FILE_UPLOAD_PATH;
+    try {
+      return await env.SESSIONS.getByName(sessionAddress(scope)).fetch(new Request(url, {method: 'POST', headers: {'content-type': 'application/octet-stream', 'x-weft-session-scope': JSON.stringify(scope)}, body: request.body, signal: request.signal}));
+    } catch (error) {
+      const failure = remoteErrorOf(error) ?? {code: 'gateway/internal', message: 'File upload failed', details: {}};
+      return Response.json({ok: false, error: {code: failure.code, message: failure.message, details: failure.details}}, {headers: {'cache-control': 'no-store'}});
+    }
+  }
   const observerCancel = /^\/v1\/tenants\/([^/]+)\/native\/file-observers\/cancel$/.exec(pathname);
   if (observerCancel) {
     if (observerCancel[1] !== principal.tenantId) throw new HttpError(403, 'Tenant access denied');
@@ -61,7 +81,7 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
   };
   const notFound = (sessionId: string): never => { throw new RemoteError('session/not-found', 'Session not found', {sessionId: SessionId(sessionId)}); };
   try {
-    const raw = await readJson(request, 65_536);
+    const raw = await readJson(request, endpoint === 'fileUploads/upload' ? 8 * 1024 * 1024 : 65_536);
     if (match[2] === 'streams') {
       if (endpoint === 'workspaceFiles/changes') {
         const observerId = z.uuid().parse(request.headers.get('x-weft-observer-id'));
@@ -96,6 +116,13 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
     rpcId = envelope.rpcId;
     if (envelope.method !== endpoint) throw new RemoteError('gateway/bad-request', 'RPC method does not match endpoint', {});
     const payload = payloadSchema.parse(envelope.payload);
+    if (endpoint === 'fileUploads/upload') {
+      const method = uploadRemote.methods[endpoint];
+      const args = method.input({strict: true}).create().parse(payload.args);
+      const target = session(args.agentId);
+      const {value} = await (await target.stub.nativeFileUpload(target.scope, args)).json() as {value: unknown};
+      return Response.json({type: 'server-response', rpcId, result: {ok: true, value: method.result.create().parse(value)}}, {headers: {'cache-control': 'private, no-store'}});
+    }
     if (endpoint.startsWith('workspaceFiles/')) {
       if (endpoint === 'workspaceFiles/changes' || !Object.hasOwn(fileRemote.methods, endpoint)) {
         throw new RemoteError('gateway/method-unavailable', 'Unknown file method', {endpoint});

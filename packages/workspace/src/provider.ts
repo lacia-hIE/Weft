@@ -31,6 +31,9 @@ export class ComputerFileSystem extends FileSystem {
     return { targetKey: FsTargetKey(this.key(canonical)), displayPath: canonical };
   }
   override processPath(target: FsTarget): string { return this.path(target); }
+  override processPathFromHostPath(hostPath: string): string | undefined {
+    try {return workspacePath(hostPath);} catch {return undefined;}
+  }
   override fileUrl(target: FsTarget): string { return `file://${this.path(target).split('/').map(encodeURIComponent).join('/')}`; }
   override contains(parent: FsTarget, child: FsTarget): boolean {
     const root = this.path(parent), path = this.path(child);

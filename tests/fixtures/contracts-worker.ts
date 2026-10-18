@@ -1,6 +1,6 @@
 import { Workspace } from '@cloudflare/computer';
 import { WorkspaceStore } from '../../packages/workspace/src/store.ts';
-import { WorkspaceDO } from '../../packages/workspace/src/object.ts';
+import { WorkspaceDO as BaseWorkspaceDO } from '../../packages/workspace/src/object.ts';
 import { DurableObject } from 'cloudflare:workers';
 import { Context } from '@deepseek-ai/cordis';
 import SessionStore, { SessionId, SessionSeq, type SessionEvent } from '@deepseek-ai/dsh-session';
@@ -10,9 +10,40 @@ import { registerIdentityTool } from '../../packages/harness-runtime/src/validat
 import { initializeSessionStorage, SqliteSessionPersistence } from '../../packages/session-persistence-do/src/index.ts';
 import { SessionDO, EnvironmentDO, TenantDO, PluginCapabilities } from '../../apps/worker/src/index.ts';
 import { sessionAddress } from '../../packages/tenant/src/index.ts';
-import { workspaceAddress } from '../../packages/workspace/src/protocol.ts';
+import { workspaceAddress, workspaceScopeSchema, type WorkspaceScope } from '../../packages/workspace/src/protocol.ts';
+import {ComputerAttachmentStore} from '../../packages/native-attachments/src/store.ts';
+import {ATTACHMENT_ROOT, attachmentOperationSchema, type AttachmentOperation} from '../../packages/native-attachments/src/storage.ts';
+import {AttachmentError} from '@deepseek-ai/dsh-attachment';
+import {storedFilePath} from '../../.generated/official-file-reference.ts';
+import {createHash} from 'node:crypto';
+import type {FileAttachmentRef} from '@deepseek-ai/dsh-attachment';
 
-export { SessionDO, WorkspaceDO, EnvironmentDO, TenantDO, PluginCapabilities };
+export { SessionDO, EnvironmentDO, TenantDO, PluginCapabilities };
+/** Test-only visibility into persistence checkpoints, absent from the production Worker. */
+export class WorkspaceDO extends BaseWorkspaceDO {
+  private readonly testFiles: WorkspaceStore;
+  constructor(ctx: DurableObjectState, env: Env) {super(ctx, env); this.testFiles = new WorkspaceStore(ctx.storage);}
+  /** Private upload capability; it never becomes a filesystem tool operation. */
+  async attachment(input: WorkspaceScope, raw: AttachmentOperation): Promise<Response> {
+    const scope = workspaceScopeSchema.safeParse(input);
+    if (!scope.success || !this.ctx.id.equals(this.env.WORKSPACES.idFromName(workspaceAddress(scope.data)))) return Response.json({error: 'Workspace scope mismatch', code: 'FS_SANDBOX_DENIED'}, {status: 403});
+    const parsed = attachmentOperationSchema.safeParse(raw);
+    if (!parsed.success) return Response.json({error: 'Invalid attachment operation', code: 'ATTACHMENT_WRITE_FAILED'}, {status: 400});
+    try {
+      const value = this.testFiles.attachments.execute(parsed.data);
+      await this.ctx.storage.sync();
+      if (value instanceof Uint8Array) return new Response(new Uint8Array(value).buffer, {headers: {'content-type': 'application/octet-stream', 'cache-control': 'private, no-store'}});
+      return Response.json({value}, {headers: {'cache-control': 'private, no-store'}});
+    } catch (error) {
+      const failure = error instanceof AttachmentError ? error : new AttachmentError('Attachment storage operation failed.', parsed.data.type === 'read' ? 'ATTACHMENT_READ_FAILED' : 'ATTACHMENT_WRITE_FAILED');
+      return Response.json({error: failure.message, code: failure.code}, {status: failure.code === 'ATTACHMENT_NOT_FOUND' ? 404 : 400});
+    }
+  }
+
+  async stagedBytes(): Promise<number> {
+    return this.ctx.storage.sql.exec<{bytes: number}>('SELECT COALESCE(SUM(bytes),0) AS bytes FROM weft_attachment_uploads').one().bytes;
+  }
+}
 
 interface Env { CONTRACTS: DurableObjectNamespace<ContractsDO>; SESSIONS: DurableObjectNamespace<SessionDO>; WORKSPACES: DurableObjectNamespace<WorkspaceDO> }
 
@@ -77,6 +108,82 @@ export class ContractsDO extends DurableObject<Env> {
     let futureFormat = '';
     try { new WorkspaceStore(this.ctx.storage); } catch (error) { futureFormat = (error as Error).message; }
     return { wrongScope: wrong.status, symlink, rejected, afterRollback, revisionAfterRollback: committed.revision, bytes: Array.from(bytes), binary, futureFormat };
+  }
+
+  async checkAttachments() {
+    const scope = {tenantId: 'alpha', workspaceId: 'attachment-cleanup'};
+    const stub = this.env.WORKSPACES.getByName(workspaceAddress(scope));
+    const wrong = await stub.uploadAttachment({...scope, tenantId: 'beta'}, 'owner', undefined, new ReadableStream({type: 'bytes', start(controller) {controller.close();}}));
+    const ctx = new Context();
+    let interrupted = 0;
+    let uploadCalls = 0, readCalls = 0;
+    const transport = {
+      uploadAttachment: async (...args: Parameters<typeof stub.uploadAttachment>) => {uploadCalls++; return await stub.uploadAttachment(...args);},
+      readAttachment: async (...args: Parameters<typeof stub.readAttachment>) => {readCalls++; return await stub.readAttachment(...args);},
+    };
+    try {
+      await ctx.plugin(ComputerAttachmentStore, {scope, sessionId: 'owner', transport});
+      for (let i = 0; i < 16; i++) {
+        try {
+          await ctx.attachments.saveFileStream({data: (async function* () {yield new Uint8Array(65_536); while (await stub.stagedBytes() < 65_536) await new Promise(resolve => setTimeout(resolve, 1)); throw new Error('injected upload interruption');})()});
+        } catch (error) {if (error instanceof Error && error.message === 'injected upload interruption') interrupted++;}
+      }
+      const abort = new AbortController();
+      let cancelled = false;
+      try {
+        await ctx.attachments.saveFileStream({signal: abort.signal, data: (async function* () {
+          yield new Uint8Array(65_536);
+          while (await stub.stagedBytes() < 65_536) await new Promise(resolve => setTimeout(resolve, 1));
+          abort.abort(new Error('injected upload cancellation'));
+        })()});
+      } catch (error) {cancelled = error instanceof Error && error.message === 'injected upload cancellation';}
+      const ids: string[] = [];
+      for (let i = 0; i < 16; i++) {
+        const response = await stub.attachment(scope, {type: 'begin', sessionId: 'owner'});
+        if (!response.ok) throw new Error('Interrupted upload leaked a staging slot');
+        ids.push(((await response.json()) as {value: {uploadId: string}}).value.uploadId);
+      }
+      const bounded = await stub.attachment(scope, {type: 'begin', sessionId: 'owner'});
+      for (const uploadId of ids) await (await stub.attachment(scope, {type: 'abort', sessionId: 'owner', uploadId})).json();
+      const successful = await ctx.attachments.saveFile({name: 'good.bin', data: new Uint8Array([0, 255, 1, 2])});
+      const verified: number[] = [];
+      for await (const chunk of ctx.attachments.readFileStream(successful)) verified.push(...chunk);
+      uploadCalls = 0; readCalls = 0;
+      const expected = createHash('sha256');
+      const large = await ctx.attachments.saveFileStream({name: 'large.bin', data: (async function* () {
+        for (let i = 0; i < 34; i++) {
+          const chunk = new Uint8Array(1024 * 1024);
+          for (let start = 0; start < chunk.length; start += 65_536) crypto.getRandomValues(chunk.subarray(start, start + 65_536));
+          expected.update(chunk);
+          yield chunk;
+        }
+      })()});
+      const actual = createHash('sha256');
+      let largeBytes = 0;
+      for await (const chunk of ctx.attachments.readFileStream(large)) {actual.update(chunk); largeBytes += chunk.byteLength;}
+      const largeIntegrity = actual.digest('hex') === expected.digest('hex');
+
+      const files = new WorkspaceStore(this.ctx.storage);
+      const begin = files.attachments.execute({type: 'begin', sessionId: 'owner', name: 'atomic.bin'}) as {uploadId: string};
+      const apply = (sessionId: string, offset: number) => files.attachments.execute({type: 'append', sessionId, uploadId: begin.uploadId, offset, data: new Uint8Array([0, 255, 1, 2])});
+      const code = (operation: () => unknown) => {try {operation(); return 'NO_ERROR';} catch (error) {return (error as {code?: string}).code ?? 'STORAGE_FAILURE';}};
+      apply('owner', 0);
+      const foreign = code(() => apply('other-session', 4));
+      const order = code(() => apply('owner', 1));
+      const corrupt = code(() => files.attachments.execute({type: 'commit', sessionId: 'owner', uploadId: begin.uploadId, sha256: '0'.repeat(64)}));
+      this.ctx.storage.sql.exec("CREATE TRIGGER reject_attachment_version BEFORE INSERT ON weft_file_versions BEGIN SELECT RAISE(ABORT, 'injected'); END");
+      const sha256 = createHash('sha256').update(new Uint8Array([0, 255, 1, 2])).digest('hex');
+      const commit = () => files.attachments.execute({type: 'commit', sessionId: 'owner', uploadId: begin.uploadId, sha256});
+      const publication = code(commit);
+      const afterRollback = files.execute({type: 'list', path: '/workspace'});
+      const stagedAfterRollback = this.ctx.storage.sql.exec<{count: number}>('SELECT COUNT(*) AS count FROM weft_attachment_uploads').one().count;
+      this.ctx.storage.sql.exec('DROP TRIGGER reject_attachment_version');
+      const ref = commit() as FileAttachmentRef;
+      const path = storedFilePath(ATTACHMENT_ROOT, ref);
+      const immutable = code(() => files.execute({type: 'write', path, content: 'tampered'}));
+      const revision = this.ctx.storage.sql.exec<{revision: number}>('SELECT revision FROM weft_workspace_state WHERE id=1').one().revision;
+      return {wrongScope: wrong.status, interrupted, cancelled, stagingLimit: bounded.status, verified, largeBytes, largeIntegrity, uploadCalls, readCalls, foreign, order, corrupt, publication, afterRollback, stagedAfterRollback, immutable, revision};
+    } finally {await ctx.fiber.dispose();}
   }
 
   async checkStorage() {
@@ -167,6 +274,7 @@ export default {
     if (new URL(request.url).pathname === '/native-context') return Response.json(await object.nativeContext(new URL(request.url).searchParams.get('stage') ?? 'read'));
     if (new URL(request.url).pathname === '/scope') return Response.json(await object.checkScope());
     if (new URL(request.url).pathname === '/workspace-contracts') return Response.json(await object.checkWorkspace());
+    if (new URL(request.url).pathname === '/attachment-contracts') return Response.json(await object.checkAttachments());
     if (new URL(request.url).pathname === '/storage') return Response.json(await object.checkStorage());
     return Response.json(await object.resumeInterrupted(await request.json()));
   },

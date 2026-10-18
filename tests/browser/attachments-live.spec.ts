@@ -1,0 +1,31 @@
+import {test, expect} from '@playwright/test';
+import type {SessionEvent} from '@deepseek-ai/dsh-session';
+
+test('real DeepSeek reads an uploaded file through the original composer and native filesystem tool', async ({page, request}) => {
+  test.skip(process.env.WEFT_BROWSER_LIVE !== '1', 'Requires the configured live provider');
+  const me = await (await request.get('/v1/me')).json() as {tenantId: string};
+  const id = 'live-attachment-'+crypto.randomUUID().slice(0, 8);
+  const base = `/v1/tenants/${me.tenantId}/environments/${id}`;
+  expect((await request.post(`/v1/tenants/${me.tenantId}/environments`, {data: {id, name: id}})).status()).toBe(201);
+  const created = page.waitForResponse(response => response.url().endsWith('/native/api/session/create'), {timeout: 45_000});
+  await page.goto('/agents/'+id);
+  await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
+  await created;
+  await expect(page.getByRole('button', {name: /Select model, current DeepSeek/})).toBeVisible({timeout: 45_000});
+  await page.locator('[contenteditable=true]').fill('使用 read 工具读取我上传的 live-upload.txt，最终只回复文件中的完整校验码这一行。');
+  const checksum = 'WEFT_NATIVE_ATTACHMENT_'+crypto.randomUUID();
+  const uploaded = page.waitForResponse(response => response.url().includes('/native/api/session/uploadFileBinary'));
+  await page.locator('input[type="file"]').first().setInputFiles({name: 'live-upload.txt', mimeType: 'text/plain', buffer: Buffer.from(checksum)});
+  expect((await uploaded).status()).toBe(200);
+  await expect(page.getByText('live-upload.txt', {exact: true}).last()).toBeVisible();
+  await page.getByRole('button', {name: 'Send message', exact: true}).click();
+  await expect(page.getByText(checksum, {exact: true}).last()).toBeVisible({timeout: 120_000});
+  const sessions = await (await request.post(base+'/native/api/session/list', {data: {type: 'client-request', rpcId: crypto.randomUUID(), method: 'session/list', payload: {args: {_request: {}}}}})).json();
+  const sessionId = sessions.result.value.items[0].sessionId;
+  const {events} = await (await request.get(base+'/sessions/'+sessionId+'/events')).json() as {events: SessionEvent[]};
+  expect(events.some(event => event.type === 'tool/call' && event.data.name === 'read')).toBe(true);
+  const answer = events.filter(event => event.type === 'assistant/message').flatMap(event => event.data.message.content).filter(block => block.type === 'text').map(block => block.text).join('\n');
+  expect(answer).toContain(checksum);
+  await page.reload();
+  await expect(page.getByText(checksum, {exact: true}).last()).toBeVisible({timeout: 45_000});
+});

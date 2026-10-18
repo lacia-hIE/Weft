@@ -18,6 +18,7 @@ import {mountNativeComposition, nativePresetDefinition} from '../../../packages/
 import type {Context} from '@deepseek-ai/cordis';
 import AgentLoop from '@deepseek-ai/dsh-agent-loop';
 import {updateVolatile} from '@deepseek-ai/cosmokit';
+import {mountNativeAttachments} from '../../../packages/native-attachments/src/index.ts';
 
 type Reader = Awaited<ReturnType<typeof createSessionReader>>;
 export async function sessionRuntime(env: Env, storage: DurableObjectStorage, scope: SessionScope, profile: AgentRevision | undefined, workspaceId: string | null, persona: string, presentation: boolean, reader?: Reader, hooks: Pick<RuntimeOptions, 'onEvent' | 'onFrame'> = {}, cwd = '/workspace', requireCredential = true) {
@@ -47,7 +48,7 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
       if (!composition) throw new Error('Native composition is not ready');
       await composition.agentPresets.mount(ctx, composition.sessionProjections.stateOf(agent.session, 'agentPreset') ?? profile.spec.id);
     }} : {}),
-    onAgent: (agent, ctx) => { activeAgent = agent; runtimeRoot = ctx; reader?.activate(agent, ctx); },
+    onAgent: (agent, ctx) => { activeAgent = agent; runtimeRoot = ctx; ctx.get('weftNativeUploadRegistry')?.reconcile(agent); reader?.activate(agent, ctx); },
     onAgentDisposed: agent => { if (activeAgent === agent) activeAgent = undefined; reader?.dispose(agent); },
     onSessionCreated: session => { reader?.created(session); },
     onSessionDisposed: session => { reader?.sessionDisposed(session); },
@@ -59,6 +60,7 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
       if (workspaceId !== null) {
         const workspace = {tenantId: scope.tenantId, workspaceId, ...(scope.environmentId ? {environmentId: scope.environmentId} : {})};
         await mountWorkspace(ctx, {scope: workspace, transport: env.WORKSPACES.getByName(workspaceAddress(workspace)), cwd});
+        if (presentation) await mountNativeAttachments(ctx, {storage, scope: workspace, sessionId: scope.sessionId, transport: env.WORKSPACES.getByName(workspaceAddress(workspace))});
       }
       if (profile) {
         if (presentation) {await mountNativeComposition(ctx, [nativePresetDefinition(profile)], profile.spec.id); composition = ctx;}

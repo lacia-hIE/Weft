@@ -137,19 +137,25 @@ test('native file previews remain available after workerd restart without activa
 
 test('the original directory cap reports truncation beyond 2000 real Computer entries', {timeout: 120_000}, async () => {
   const runtime = createRuntime(undefined, {browser: true});
-  const api = nativeClient(() => runtime);
+  // Do not retain local HTTP connections across native JSON RPCs.
+  const api = nativeClient(() => runtime, 'default', 'alpha', {connection: 'close'});
   try {
     await api.call('session/create', {request: {sessionId: 'large-directory'}});
     for (let start = 0; start <= 2000; start += 32) {
       const count = Math.min(32, 2001 - start);
       const writes = await Promise.all(Array.from({length: count}, (_, offset) => write(runtime, 'many/file-'+String(start+offset).padStart(4, '0')+'.txt', '')));
       assert.ok(writes.every(response => response.status === 200));
+      await Promise.all(writes.map(response => response.json()));
     }
     const listing = await api.call<WorkspaceDirectoryListing>('workspaceFiles/list', {workspaceFileScopeId: 'large-directory', path: 'many'});
     assert.equal(listing.entries.length, 2000);
     assert.equal(listing.truncated, true);
     assert.equal(listing.entries.at(-1)?.name, 'file-1999.txt');
-    const last = await api.call<{absolutePath: string}>('workspaceFiles/stat', {workspaceFileScopeId: 'large-directory', path: 'many/file-2000.txt'});
+    const last = await api.call<{absolutePath: string}>('workspaceFiles/stat', {workspaceFileScopeId: 'large-directory', path: 'many/file-2000.txt'}).catch(error => {
+      const cause = (error as {cause?: {message?: string; code?: string; socket?: unknown}}).cause;
+      console.error('Large directory transport failure', JSON.stringify({message: cause?.message, code: cause?.code, socket: cause?.socket}));
+      throw error;
+    });
     assert.equal(last.absolutePath, '/workspace/many/file-2000.txt');
   } finally {await runtime.dispose();}
 });

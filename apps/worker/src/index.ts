@@ -15,6 +15,8 @@ import upstream from '../../../upstream.lock.json';
 import { serveUi } from './ui-http.ts';
 import { WorkspaceDO } from '../../../packages/workspace/src/object.ts';
 import {createNativeFileHost, type NativeFileEndpoint} from '../../../packages/native-files/src/index.ts';
+import uploadRemote from '../../../.generated/official-remotes/packages/client/file-upload/typert.remote-client.js';
+import {FILE_UPLOAD_PATH} from '@weft/upstream/packages/client/file-upload/src/protocol.ts';
 import { workspaceIdSchema, workspaceAddress, workspacePath } from '../../../packages/workspace/src/protocol.ts';
 export { WorkspaceDO, TenantDO, EnvironmentDO };
 import { z } from 'zod';
@@ -78,7 +80,8 @@ export class SessionDO extends DurableObject<Env> {
     const config = this.ctx.storage.sql.exec<{workspace_id: string}>('SELECT workspace_id FROM weft_session_config WHERE id=1 AND presentation=1').toArray()[0];
     if (config && this.ownerScope) {
       const scope = {tenantId: this.ownerScope.tenantId, environmentId: this.ownerScope.environmentId ?? 'default', workspaceId: config.workspace_id};
-      await reader.configureWorkspace({scope, transport: this.env.WORKSPACES.getByName(workspaceAddress(scope)), cwd: this.nativeCwd(this.ownerScope.sessionId)});
+      const transport = this.env.WORKSPACES.getByName(workspaceAddress(scope));
+      await reader.configureWorkspace({scope, transport, attachmentTransport: transport, sessionId: this.ownerScope.sessionId, cwd: this.nativeCwd(this.ownerScope.sessionId)});
     }
     return reader;
   }
@@ -90,8 +93,8 @@ export class SessionDO extends DurableObject<Env> {
     if (this.nativeHostPromise) return this.nativeHostPromise;
     const pending = this.exclusive(async () => {
       this.recoverNativePreset(scope);
-      const stored = this.ctx.storage.sql.exec<{workspace_id: string; agent_document: string; presentation: number}>('SELECT workspace_id,agent_document,presentation FROM weft_session_config WHERE id=1').one();
-      if (stored.presentation !== 1 || !stored.agent_document) throw new RemoteError('session/not-found', 'Native Session not found', {sessionId: SessionId(scope.sessionId)});
+      const stored = this.ctx.storage.sql.exec<{workspace_id: string; agent_document: string; presentation: number}>('SELECT workspace_id,agent_document,presentation FROM weft_session_config WHERE id=1').toArray()[0];
+      if (!stored || stored.presentation !== 1 || !stored.agent_document) throw new RemoteError('session/not-found', 'Native Session not found', {sessionId: SessionId(scope.sessionId)});
       const profile = JSON.parse(stored.agent_document) as AgentRevision;
       if (profile.upstream !== upstream.commit) throw new Error('Agent runtime revision unavailable');
       const runtime = await sessionRuntime(this.env, this.ctx.storage, scope, profile, stored.workspace_id, profile.spec.persona, true, await this.getReader(), {}, this.nativeCwd(scope.sessionId), false);
@@ -339,6 +342,16 @@ export class SessionDO extends DurableObject<Env> {
       return response;
     } finally {await host.dispose();}
   }
+  async nativeFileUpload(input: SessionScope, raw: unknown): Promise<Response> {
+    const scope = this.assertScope(input);
+    const method = uploadRemote.methods['fileUploads/upload'];
+    const args = method.input({strict: true}).create().parse(raw);
+    if (args.agentId !== scope.sessionId) throw new RemoteError('gateway/bad-request', 'Upload agent scope mismatch', {});
+    const host = await this.getNativeHost(scope);
+    const value = await host.ctx.fileUploads.upload(host.agent, args.request, new AbortController().signal);
+    await this.ctx.storage.sync();
+    return Response.json({value: method.result.create().parse(value)});
+  }
 
   async nativeCancelFileObserver(input: SessionScope, observerId: string): Promise<void> {
     this.assertScope(input);
@@ -485,6 +498,14 @@ export class SessionDO extends DurableObject<Env> {
 
   /** Internal binding transport; external requests are authenticated by the entry Worker. */
   override async fetch(request: Request): Promise<Response> {
+    if (new URL(request.url).pathname === FILE_UPLOAD_PATH) {
+      const scope = this.assertScope(scopeSchema.parse(JSON.parse(request.headers.get('x-weft-session-scope') ?? 'null')));
+      if (new URL(request.url).searchParams.get('sessionId') !== scope.sessionId) throw new RemoteError('gateway/bad-request', 'Upload session scope mismatch', {});
+      const host = await this.getNativeHost(scope);
+      const response = await host.ctx.weftConnectionRoutes.dispatch(request);
+      await this.ctx.storage.sync();
+      return response;
+    }
     const raw: unknown = await request.json();
     if (typeof raw === 'object' && raw !== null && 'operation' in raw && raw.operation === 'native-file-changes') {
       const envelope = z.object({scope: scopeSchema, operation: z.literal('native-file-changes'), observerId: z.uuid(), args: z.unknown()}).strict().parse(raw);

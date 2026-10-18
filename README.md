@@ -42,6 +42,8 @@ curl http://localhost:8787/v1/tenants/TENANT_ID/sessions/example/events
 
 官方 Harness 的 Files 侧栏通过原版 `WorkspaceFiles` 读取所属环境的真实文件，支持目录、分页文本、字节预览和变更订阅；具体范围与附件待接入项见 [原版文件验证](docs/validation/native-files.md)。当前按新的原生数据布局开发，不要求保留旧数据兼容或迁移。
 
+官方输入框已接通通用文件上传，回执按 Session 持久化，文件可以随提示词进入原生队列并由真实工具读取。图片作为模型输入仍待接入，详见 [原版附件验证](docs/validation/native-attachments.md)。
+
 目录职责：
 
 | 路径 | 职责 |
@@ -54,6 +56,7 @@ curl http://localhost:8787/v1/tenants/TENANT_ID/sessions/example/events
 | `packages/harness-profile` | 实际内置配置包、profile 依赖和 Cordis 声明 patch |
 | `packages/native-composition` | 原版 Loader / AgentPresetRegistry、插件清单与持久管理适配 |
 | `packages/native-files` | 原版 WorkspaceFiles、会话文件范围、字节附件编码和预览订阅 |
+| `packages/native-attachments` | 原版 FileUploads、持久会话回执、不可变 Computer 文件与分块传输 |
 | `packages/client-plugins` | TSX 转换、原生 API 检查工具、发布工具 |
 | `packages/dynamic-runner` | Dynamic Workers/Cordis 隔离 runner 验证 |
 | `packages/native-plugins` | 原版动态 Cordis Runner 的持久注册表、审批与隔离 Host facet 适配 |

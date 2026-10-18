@@ -23,6 +23,32 @@ function contractsRuntime(persist?: string): Miniflare {
   return new Miniflare({...options, ...(persist ? {resourcePersistencePath: persist} : {})});
 }
 
+test('attachment streaming cleans interruptions, bounds staging and rolls back publication without losing verified bytes', async () => {
+  const runtime = contractsRuntime();
+  try {
+    const response = await runtime.dispatchFetch('http://localhost/attachment-contracts');
+    assert.equal(response.status, 200, await response.clone().text());
+    const value = await response.json() as Record<string, unknown>;
+    assert.equal(value.wrongScope, 403);
+    assert.equal(value.interrupted, 16);
+    assert.equal(value.cancelled, true);
+    assert.equal(value.stagingLimit, 400);
+    assert.deepEqual(value.verified, [0, 255, 1, 2]);
+    assert.equal(value.largeBytes, 34 * 1024 * 1024);
+    assert.equal(value.largeIntegrity, true);
+    assert.equal(value.uploadCalls, 1);
+    assert.equal(value.readCalls, 1);
+    assert.equal(value.foreign, 'ATTACHMENT_NOT_FOUND');
+    assert.equal(value.order, 'ATTACHMENT_WRITE_FAILED');
+    assert.equal(value.corrupt, 'ATTACHMENT_CORRUPT');
+    assert.equal(value.publication, 'STORAGE_FAILURE');
+    assert.deepEqual(value.afterRollback, []);
+    assert.equal(value.stagedAfterRollback, 1);
+    assert.equal(value.immutable, 'FS_PERMISSION_DENIED');
+    assert.equal(value.revision, 1);
+  } finally {await runtime.dispose();}
+});
+
 test('native plugin context remains parked in the durable Inbox across workerd restart and is consumed by the next prompt', {timeout: 60_000}, async () => {
   const directory = await mkdtemp(resolve(tmpdir(), 'weft-native-context-'));
   let runtime = contractsRuntime(directory);

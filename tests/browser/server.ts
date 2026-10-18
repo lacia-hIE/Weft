@@ -45,14 +45,15 @@ const server = createSecureServer({key: readFileSync(keyFile), cert: readFileSyn
       response.end(JSON.stringify({calls: queue.calls()}));
       return;
     }
+    const streamingUpload = request.method === 'POST' && request.url?.split('?', 1)[0]?.endsWith('/native/api/session/uploadFileBinary');
     const buffers: Buffer[] = [];
-    for await (const part of request) buffers.push(Buffer.from(part));
+    if (!streamingUpload) for await (const part of request) buffers.push(Buffer.from(part));
     const headers = new Headers();
     for (const [name, value] of Object.entries(request.headers))
       if (value && name !== "host" && !name.startsWith(':'))
         headers.set(name, Array.isArray(value) ? value.join(", ") : value);
     if (headers.has("origin")) headers.set("origin", "http://alpha.local");
-    const body = Buffer.concat(buffers);
+    const body = streamingUpload ? Readable.toWeb(request) : Buffer.concat(buffers);
     const abort = new AbortController();
     response.on('close', () => {if (!response.writableEnded) abort.abort();});
     const result = await runtime.dispatchFetch(
@@ -61,7 +62,7 @@ const server = createSecureServer({key: readFileSync(keyFile), cert: readFileSyn
         method: request.method ?? "GET",
         headers: [...headers],
         signal: abort.signal,
-        ...(body.length ? { body } : {}),
+        ...(streamingUpload ? {body: body as never, duplex: 'half' as const} : (body as Buffer).length ? {body: body as Buffer} : {}),
       },
     );
     response.writeHead(result.status, Object.fromEntries([...result.headers].filter(([name]) => !['connection', 'keep-alive', 'transfer-encoding', 'upgrade'].includes(name))));

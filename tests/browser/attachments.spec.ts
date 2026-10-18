@@ -1,0 +1,35 @@
+import {test, expect} from '@playwright/test';
+import {createHash} from 'node:crypto';
+import {writeFile} from 'node:fs/promises';
+
+test('the original composer uploads a file before the first prompt and restores its native attachment after refresh', async ({page, request}, testInfo) => {
+  const me = await (await request.get('/v1/me')).json() as {tenantId: string};
+  const id = 'attachments-'+crypto.randomUUID().slice(0, 8);
+  const base = `/v1/tenants/${me.tenantId}/environments/${id}`;
+  const bytes = Buffer.alloc(34 * 1024 * 1024, 0x61);
+  bytes.set(Buffer.from('WEFT_NATIVE_UPLOADED_INVOICE'));
+  expect((await request.post(`/v1/tenants/${me.tenantId}/environments`, {data: {id, name: id}})).status()).toBe(201);
+  const created = page.waitForResponse(response => response.url().endsWith('/native/api/session/create'), {timeout: 45_000});
+  await page.goto('/agents/'+id);
+  await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
+  await created;
+  await expect(page.getByRole('button', {name: 'Select model, current scripted', exact: true})).toBeVisible({timeout: 45_000});
+  await page.locator('[contenteditable=true]').fill('Use this uploaded invoice');
+  const filePath = testInfo.outputPath('browser-invoice.txt');
+  await writeFile(filePath, bytes);
+  const uploading = page.waitForResponse(response => response.url().includes('/native/api/session/uploadFileBinary'), {timeout: 120_000});
+  await page.locator('input[type="file"]').first().setInputFiles(filePath, {timeout: 45_000});
+  const upload = await uploading;
+  expect(upload.status()).toBe(200);
+  await expect(page.getByText('browser-invoice.txt', {exact: true}).last()).toBeVisible();
+  await page.getByRole('button', {name: 'Send message', exact: true}).click();
+  await expect(page.getByText('Tenant: '+me.tenantId, {exact: true})).toBeVisible({timeout: 30_000});
+  await expect(page.getByText('browser-invoice.txt', {exact: true}).last()).toBeVisible();
+  await page.reload();
+  await expect(page.getByText('browser-invoice.txt', {exact: true}).last()).toBeVisible({timeout: 45_000});
+  const sessions = await (await request.post(base+'/native/api/session/list', {data: {type: 'client-request', rpcId: crypto.randomUUID(), method: 'session/list', payload: {args: {_request: {}}}}})).json();
+  const sessionId = sessions.result.value.items[0].sessionId;
+  const events = await (await request.get(base+'/sessions/'+sessionId+'/events')).json();
+  expect(JSON.stringify(events)).toContain('sha256:'+createHash('sha256').update(bytes).digest('hex'));
+  expect(JSON.stringify(events)).not.toContain('WEFT_NATIVE_UPLOADED_INVOICE');
+});
