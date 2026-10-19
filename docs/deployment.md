@@ -23,12 +23,16 @@ npm run deploy
 - 应用：`Weft`，ID `c087ebda-0e03-4204-bc71-a99f2be49a6c`，保护完整域名 `weft.luxuncang.com`。
 - 引用已有可复用策略 `luxuncang`，ID `794a6757-ac89-4f8b-8e6a-6d68bef91490`，允许 `@luxuncang.com` 邮箱；未额外允许 QQ 邮箱。
 - 应用 audience 固定在 `cloudflare.config.ts`；重新创建 Access 应用时必须更新并重新部署。
-- `workers.dev` 和 preview URL 显式关闭。即使出现其他入口，缺少可信 `ctx.access` 或 audience 不匹配的请求也会被 Worker 拒绝。
+- `workers.dev` 和 preview URL 显式关闭。即使出现其他入口，缺少可信 Access 身份或 audience 不匹配的请求也会被 Worker 拒绝。
 - 使用域名级 Access 应用，便于后续接入 WebSocket；当前未启用不支持 WebSocket 的 Worker 级 Access 规则。
 
-Worker 使用 Cloudflare 官方提供的 [`ctx.access`](https://developers.cloudflare.com/workers/configuration/cloudflare-access/) 读取认证身份，不自行信任 `Cf-Access-Jwt-Assertion` 或邮箱头。只有包含邮箱和稳定用户 ID 的人类用户身份可以访问，Service Token 不提供用户入口。写请求要求 JSON，拒绝跨 Origin 或 `Sec-Fetch-Site: cross-site` 请求。
+生产请求链路为 `浏览器 → 域名级 Access 应用 → weft-kernel-validation → UI Service Binding → weft-ui-assets / Static Assets`。业务 API 由主 Worker 路由至所属环境的 Durable Objects。Access 应用的域名、destinations 和策略配置在 Zero Trust 中；`cloudflare.config.ts` 的 `worker.domains` 声明 Worker 自定义域名，`access.dev` 仅模拟本地身份，不负责创建生产 Access 应用。
 
-静态资源先检查运行时提供的 Access 上下文及应用 audience，再通过私有资产 Worker 返回，不对每个并发模块请求重复读取用户资料。静态资产不包含租户数据；`/v1/me`、会话和其他业务接口继续要求完整用户身份。缺少上下文、audience 不匹配或用户身份不完整分别返回稳定的鉴权错误码；身份服务异常返回 503。不存在的 `/assets/` 路径在通过 Access 校验后返回 404。独立启动模块捕获应用模块图加载失败，显示重试入口，避免页面永久停在加载提示。
+Worker 优先使用 Cloudflare 官方提供的 [`ctx.access`](https://developers.cloudflare.com/workers/configuration/cloudflare-access/) 读取认证身份。上下文缺失时，验证 `Cf-Access-Jwt-Assertion` 或 `CF_Authorization` 登录 Cookie 的 RS256 签名、组织 issuer、应用 audience 和有效期；公钥只从配置组织的 Access 证书端点获取。不接受未验证的断言、客户端邮箱头或应用 Bearer Token。只有包含邮箱和稳定用户 ID 的人类用户身份可以访问，Service Token 不提供用户入口。写请求要求 JSON，拒绝跨 Origin 或 `Sec-Fetch-Site: cross-site` 请求。
+
+静态资源通过 Access 校验后从私有资产 Worker 返回，不对每个并发模块请求重复读取用户资料。静态资产不包含租户数据；`/v1/me`、会话和其他业务接口继续要求完整用户身份。无可验证身份、audience 不匹配或用户身份不完整分别返回稳定的鉴权错误码；身份服务或验证公钥获取异常返回 503。不存在的 `/assets/` 路径在通过 Access 校验后返回 404。独立启动模块捕获应用模块图加载失败，显示重试入口，避免页面永久停在加载提示。
+
+2026-10-19 的资源加载排查确认 Access 应用的域名和 destinations 均为 `weft.luxuncang.com`，策略引用也匹配。原先的随机模块 401 来自主 Worker 的 `ACCESS_CONTEXT_MISSING`，不能据此判断为资源不存在或 Access 未绑定域名。版本 `3bbb92f` 已增加签名断言验证；线上日志已观察到原先失败模块及原生 API 的 `weft.access.assertion.accepted`。这验证了实际请求的鉴权路径，完整登录后界面操作仍需单独验收。
 
 个人租户 ID 为 `user-` 加 SHA-256(JSON([Access 组织域名, 用户 ID]))。不同用户即使使用同一个 Session 名也对应不同的 Durable Object。邮箱变更不改变同一用户 ID 的租户；在 Access 中删除并重建用户可能产生新用户 ID，历史租户迁移需显式处理。原 alpha / beta 验证 Session 不映射给真实用户。
 
