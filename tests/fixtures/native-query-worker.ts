@@ -89,6 +89,16 @@ export class QueryDO extends DurableObject<Env> {
           break;
         }
         case 'search': value = await ctx.sessionQuery.searchSessions(input.query!); break;
+        case 'runtime-search': {
+          const runtime = new Context();
+          try {
+            await runtime.plugin(Sessions); await runtime.plugin(Projections);
+            await runtime.plugin(SqliteSessionPersistence, {storage: this.ctx.storage});
+            await installDurableSessionQuery(runtime, this.ctx.storage, 'runtime');
+            value = await runtime.sessionQuery.searchSessions(input.query!);
+          } finally {await runtime.fiber.dispose();}
+          break;
+        }
         case 'api-search': value = await (this.list ??= new ApiSessionList(ctx, 8)).search(input.text!, request.signal); break;
         case 'events': value = await ctx.sessionQuery.searchEvents(input.events!); break;
         case 'reset':

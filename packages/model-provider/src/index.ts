@@ -9,19 +9,13 @@ import type { Options as DeepSeekOptions } from '@weft/upstream/packages/llm/llm
 import { ScriptedAdapter } from '../../harness-runtime/src/scripted-adapter.ts';
 import type { RuntimeOptions } from '../../harness-runtime/src/runtime.ts';
 
+// Replaced with a literal by the build. Production cannot enable validation adapters.
+declare const WEFT_VALIDATION_BUILD: boolean;
 export interface ModelEnvironment {
   MODEL_BACKEND?: string;
-  DEEPSEEK_API_KEY?: string;
-  DEEPSEEK_MODEL?: string;
-  DEEPSEEK_BASE_URL?: string;
-  MODEL_IDLE_TIMEOUT_MS?: string;
   MODEL_TURN_TIMEOUT_MS?: string;
-  TENANT_MODEL_CONFIG_JSON?: string;
 }
 
-const tenantConfig = z.object({ apiKey: z.string().trim().min(1), model: z.string().min(1).optional() }).strict();
-const registrySchema = z.record(z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/), tenantConfig);
-const duration = z.coerce.number().int().min(1).max(600_000);
 const messages: Record<string, string> = {
   AUTH: 'Model provider rejected its configured credential',
   QUOTA: 'Model provider quota is exhausted',
@@ -58,7 +52,7 @@ class SafeDeepSeekAdapter extends DeepSeekAdapter {
 
 export class ModelConfigurationError extends Error {
   constructor(readonly code: 'MODEL_NOT_CONFIGURED' | 'MODEL_CONFIGURATION_INVALID') {
-    super(code === 'MODEL_NOT_CONFIGURED' ? 'No model credential configured for this tenant' : 'Invalid server model configuration');
+    super(code === 'MODEL_NOT_CONFIGURED' ? 'Configure an API key in Settings → Models for this environment' : 'Invalid environment model configuration');
   }
 }
 
@@ -82,35 +76,24 @@ export async function readEnvironmentModelConfiguration(response: Response): Pro
   return await response.json() as EnvironmentModelConfig;
 }
 
-/** Only this host-owned layer may supply shared credential fallbacks. */
-export function tenantModelHost(env: ModelEnvironment, tenantId: string) {
-  try {
-    const registry = env.TENANT_MODEL_CONFIG_JSON ? registrySchema.parse(JSON.parse(env.TENANT_MODEL_CONFIG_JSON)) : undefined;
-    const config = registry && Object.hasOwn(registry, tenantId) ? registry[tenantId] : undefined;
-    return {apiKey: registry ? config?.apiKey : env.DEEPSEEK_API_KEY?.trim(), model: config?.model ?? env.DEEPSEEK_MODEL ?? 'deepseek-flash', baseURL: env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com/anthropic'};
-  } catch { throw new ModelConfigurationError('MODEL_CONFIGURATION_INVALID'); }
-}
-
-/** Host-owned resolution: HTTP clients cannot select credentials or provider endpoints. */
+/** Resolve only the environment settings persisted by the original Models editor. */
 export function resolveTenantModel(env: ModelEnvironment, tenantId: string, selectedModel?: { provider: "deepseek"; name: string }, settings?: EnvironmentModelConfig, requireCredential = true, capabilities: Pick<DeepSeekAdapterOptions, 'resolveAttachments' | 'resolveImageAccess' | 'resolveFiles'> = {}): ResolvedModel {
-  if (env.MODEL_BACKEND === 'scripted') {
+  if (WEFT_VALIDATION_BUILD && env.MODEL_BACKEND === 'scripted') {
     return { model: { provider: 'validation', model: 'scripted' }, adapter: new ScriptedAdapter(), turnTimeoutMs: 60_000 };
   }
-  if (env.MODEL_BACKEND !== 'deepseek') throw new ModelConfigurationError('MODEL_CONFIGURATION_INVALID');
   try {
-    const host = tenantModelHost(env, tenantId);
-    const apiKey = settings ? settings.apiKey : host.apiKey;
+    const apiKey = settings?.apiKey;
     if (!apiKey && requireCredential) throw new ModelConfigurationError('MODEL_NOT_CONFIGURED');
-    const model = settings?.defaultModel?.model ?? selectedModel?.name ?? host.model;
-    const baseURL = settings?.providerOptions.baseURL ?? host.baseURL;
-    // HTTPS is mandatory, including custom gateways. No client-provided URL is accepted.
+    const model = settings?.defaultModel?.model ?? selectedModel?.name ?? 'deepseek-flash';
+    const baseURL = settings?.providerOptions.baseURL ?? 'https://api.deepseek.com/anthropic';
+    // HTTPS is mandatory for the endpoint saved in this environment’s Models settings.
     if (new URL(baseURL).protocol !== 'https:' || !model.trim()) throw new Error('Invalid route');
     const connectionFor = (configuration: EnvironmentModelConfig | undefined) => resolveAdapterOptions({
       maxTokens: 8192, thinking: 'disabled', reasoningEffort: 'off',
-      streamIdleTimeoutMs: duration.parse(env.MODEL_IDLE_TIMEOUT_MS ?? '60000'),
+      streamIdleTimeoutMs: 60_000,
       retryPolicy: { mode: 'normal', maxRetries: 0 },
       ...configuration?.providerOptions,
-      baseURL: configuration?.providerOptions.baseURL ?? host.baseURL,
+      baseURL: configuration?.providerOptions.baseURL ?? 'https://api.deepseek.com/anthropic',
     });
     let current = settings;
     let connection = connectionFor(settings);
@@ -118,7 +101,7 @@ export function resolveTenantModel(env: ModelEnvironment, tenantId: string, sele
     if (apiKey) credentials.set(connection, apiKey);
     const currentSelection = (): ModelSelection => {
       const selection = current?.defaultModel;
-      return {provider: 'deepseek-official', model: selection?.model ?? selectedModel?.name ?? host.model,
+      return {provider: 'deepseek-official', model: selection?.model ?? selectedModel?.name ?? 'deepseek-flash',
         ...(selection?.reasoningEffort === undefined ? {} : {reasoningEffort: ReasoningEffortId(selection.reasoningEffort)})};
     };
     const adapter: SafeDeepSeekAdapter = new SafeDeepSeekAdapter({
@@ -138,7 +121,7 @@ export function resolveTenantModel(env: ModelEnvironment, tenantId: string, sele
       prepareExtensions: async () => ({ fields: {}, accept: async () => {} }),
     });
     if (settings?.defaultModel && settings.defaultModel.provider !== 'deepseek-official') throw new Error('Unsupported provider');
-    return {model: currentSelection(), adapter, turnTimeoutMs: duration.parse(env.MODEL_TURN_TIMEOUT_MS ?? '180000'), currentSelection,
+    return {model: currentSelection(), adapter, turnTimeoutMs: WEFT_VALIDATION_BUILD && env.MODEL_TURN_TIMEOUT_MS ? z.coerce.number().int().min(1).max(600_000).parse(env.MODEL_TURN_TIMEOUT_MS) : 180_000, currentSelection,
       refresh: configuration => {
         if (!configuration.apiKey) throw new ModelConfigurationError('MODEL_NOT_CONFIGURED');
         const snapshot = connectionFor(configuration);

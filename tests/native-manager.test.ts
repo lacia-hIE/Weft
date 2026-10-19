@@ -23,12 +23,12 @@ test('the original plugin inventory reads real Loader entries and durable manage
   try {
     const inventory = await api.call<PluginInventorySnapshot>('pluginInventory/list', {});
     assert.equal(inventory.managementAvailable, true);
-    assert.deepEqual(inventory.entries.map(row => row.entryId).sort(), ['preset-cordis', 'preset-default', 'preset-standard']);
+    assert.deepEqual(inventory.entries.map(row => row.entryId).sort(), ['preset-cordis', 'preset-default', 'preset-delegator', 'preset-standard']);
     assert.ok(inventory.entries.every(row => row.moduleName === 'cordis:agent-preset' && row.enabled && row.fiberPhase === 'active'));
     assert.equal(inventory.agentPresets?.find(row => row.id === 'cordis')?.rows.find(row => row.entryId === 'tool-todo')?.fiberPhase, 'active');
     const bundles = await api.call<BundleInfo[]>('pluginManager/listBundles', {});
     assert.deepEqual(bundles.map(bundle => bundle.name), ['@weft/harness-profile']);
-    assert.equal(bundles[0]?.rows.length, 3);
+    assert.equal(bundles[0]?.rows.length, 4);
     const plugins = await api.call<PluginInfo[]>('pluginManager/listPlugins', {});
     assert.equal(plugins.find(row => row.entryId === 'preset-default')?.readOnlyReason, 'management-required');
     await api.call('session/create', {request: {sessionId: 'retained', agentPreset: 'cordis'}});

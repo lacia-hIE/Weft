@@ -7,30 +7,35 @@ import {tmpdir} from 'node:os';
 import { createRuntime } from "../helpers/miniflare.ts";
 import { modelGate } from './model-gate.ts';
 import { nativePluginModel } from '../helpers/native-plugin-model.ts';
+import {nativeSubagentModel} from '../helpers/native-subagent-model.ts';
 
 // Test-only bridge. Production serves directly from the authenticated Worker.
 // Native Access identities are supplied by Miniflare, never application headers.
 const live = process.env.WEFT_BROWSER_LIVE === "1";
+const production = process.env.WEFT_BROWSER_PRODUCTION === "1";
 const queue = process.env.WEFT_BROWSER_QUEUE === '1' ? modelGate() : undefined;
 const plugins = process.env.WEFT_BROWSER_PLUGINS === '1' ? nativePluginModel() : undefined;
-if (Number(live) + Number(!!queue) + Number(!!plugins) > 1) throw new Error('Choose one browser model transport');
+const subagents = process.env.WEFT_BROWSER_SUBAGENTS === '1' ? nativeSubagentModel() : undefined;
+if (Number(live) + Number(!!queue) + Number(!!plugins) + Number(!!subagents) > 1) throw new Error('Choose one browser model transport');
 const key = live
   ? readFileSync(".env", "utf8").match(
       /^DEEPSEEK_API_KEY\s*=\s*["']?([^\r\n"']+)/m,
     )?.[1]
   : undefined;
 if (live && !key) throw new Error("Missing live model configuration");
-const runtime = createRuntime(
-  undefined,
-  key
+const runtimeDirectory = subagents ? mkdtempSync(join(tmpdir(), 'weft-browser-subagents-')) : undefined;
+const modelOptions = key
     ? {
+        scriptPath: "dist/worker.js",
         bindings: { MODEL_BACKEND: "deepseek", DEEPSEEK_API_KEY: key },
         browser: true, images: true,
       }
     : queue ? {browser: true, images: true, bindings: {MODEL_BACKEND: 'deepseek', DEEPSEEK_API_KEY: 'queue-browser-fixture', DEEPSEEK_BASE_URL: 'https://browser-model.test/anthropic'}, outbound: queue.outbound}
       : plugins ? {browser: true, images: true, bindings: {MODEL_BACKEND: 'deepseek', DEEPSEEK_API_KEY: 'plugin-browser-fixture', DEEPSEEK_BASE_URL: 'https://model.test/anthropic'}, outbound: plugins.outbound}
-        : { browser: true, images: true },
-);
+        : subagents ? {browser: true, images: true, bindings: {MODEL_BACKEND: 'deepseek', DEEPSEEK_API_KEY: 'subagent-browser-fixture', DEEPSEEK_BASE_URL: 'https://subagent-model.test/anthropic'}, outbound: subagents.outbound}
+        : { browser: true, images: true, ...(production ? {scriptPath: "dist/worker.js"} : {}) };
+let runtime = createRuntime(runtimeDirectory, modelOptions);
+let restarting: Promise<void> | undefined;
 await runtime.ready;
 // Native Harness opens several concurrent Remote streams. Match CF's HTTP/2
 // multiplexing instead of exhausting the browser's six HTTP/1 connections.
@@ -39,6 +44,18 @@ const cert = join(tlsDirectory, 'cert.pem'), keyFile = join(tlsDirectory, 'key.p
 execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', keyFile, '-out', cert, '-subj', '/CN=localhost', '-addext', 'subjectAltName=IP:127.0.0.1,DNS:localhost', '-days', '1'], {stdio: 'ignore'});
 const server = createSecureServer({key: readFileSync(keyFile), cert: readFileSync(cert), allowHTTP1: true}, async (request, response) => {
   try {
+    if (subagents && request.method === 'POST' && request.url === '/__test/subagent-restart') {
+      restarting ??= (async () => {await runtime.dispose(); runtime = createRuntime(runtimeDirectory, modelOptions); await runtime.ready;})();
+      try {await restarting;} finally {restarting = undefined;}
+      response.writeHead(204); response.end(); return;
+    }
+    await restarting;
+    if (subagents && request.url === '/__test/subagent-model') {
+      if (request.method === 'POST') subagents.release();
+      response.writeHead(200, {'content-type': 'application/json'});
+      response.end(JSON.stringify({calls: subagents.observations.length}));
+      return;
+    }
     if (queue && request.url === '/__test/model-gate') {
       if (request.method === 'POST') queue.release();
       response.writeHead(200, {'content-type': 'application/json'});
@@ -82,8 +99,10 @@ server.listen(4173, "127.0.0.1", () => {
 });
 async function close(): Promise<void> {
   server.close();
+  await restarting;
   await runtime.dispose();
   rmSync(tlsDirectory, {recursive: true, force: true});
+  if (runtimeDirectory) rmSync(runtimeDirectory, {recursive: true, force: true});
   process.exit(0);
 }
 process.on("SIGTERM", () => {

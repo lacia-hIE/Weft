@@ -7,12 +7,13 @@ import { Config as WelcomeConfig } from '@weft/upstream/packages/client/ui-setti
 import { plainConfig, projectForm, volatileForm, isVolatilePath } from '@weft/upstream/packages/settings/settings/src/schema.ts';
 import { redactSecrets } from '@weft/upstream/packages/settings/settings/src/redact.ts';
 import type { SettingsNamespaceView, SettingsDescribeValue, SettingsPathOpView } from '@deepseek-ai/dsh-settings/types';
-import { credentialRef, type CredentialRef, type ResolvedCredential } from '@deepseek-ai/dsh-credentials';
+import { credentialRef, type CredentialRef } from '@deepseek-ai/dsh-credentials';
 import { RemoteError } from '@deepseek-ai/dsh-typert-protocol';
 import settingsRemote from '../../../.generated/official-remotes/packages/api/settings-controller/typert.remote-client.js';
 import { DurableCredentials } from './native-credentials.ts';
 import AgentPresets from '@deepseek-ai/dsh-agent-preset-registry';
 import AgentLoop from '@deepseek-ai/dsh-agent-loop';
+import Subagents from '@deepseek-ai/dsh-subagent';
 
 // The official composition's entry id differs from its provider package name.
 // The curated Models editor addresses this entry id.
@@ -20,6 +21,7 @@ export const MODEL_NAMESPACE = 'llm-deepseek';
 export const DEFAULT_MODEL_NAMESPACE = 'agent-default-model';
 export const PRESET_NAMESPACE = 'agent-preset-registry';
 export const LOOP_NAMESPACE = 'agent-loop';
+export const SUBAGENT_NAMESPACE = 'subagent';
 type Section = Record<string, unknown>;
 interface Namespace {
   id: string; schema: Schema; base(): Section; autoGenerate: boolean;
@@ -28,7 +30,6 @@ interface Namespace {
 export interface NativeSettingsHost {
   providerBase(): Section;
   modelBase(): Section;
-  credential(ref: CredentialRef): ResolvedCredential | undefined;
   changed(event: string, args: readonly unknown[]): void;
   validatePreset?(id: string): void;
 }
@@ -67,7 +68,7 @@ export class NativeSettings {
   private readonly namespaces: Namespace[];
   constructor(private readonly storage: DurableObjectStorage, private readonly host: NativeSettingsHost) {
     storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_settings (ns TEXT PRIMARY KEY, revision INTEGER NOT NULL, document TEXT NOT NULL)');
-    this.credentials = new DurableCredentials(new Context(), storage, ref => host.credential(ref), (event, ref) => host.changed(event, [ref]));
+    this.credentials = new DurableCredentials(new Context(), storage, (event, ref) => host.changed(event, [ref]));
     this.namespaces = [
       {id: MODEL_NAMESPACE, schema: DeepSeekConfig, base: () => host.providerBase(), autoGenerate: false, validate: value => {
         const options = resolveAdapterOptions(value as DeepSeekOptions);
@@ -76,6 +77,7 @@ export class NativeSettings {
       {id: DEFAULT_MODEL_NAMESPACE, schema: AgentDefaultModelConfig.Config, base: () => host.modelBase(), autoGenerate: false, validate: () => {}},
       {id: PRESET_NAMESPACE, schema: AgentPresets.Config, base: () => ({default: 'default'}), autoGenerate: false, validate: value => {host.validatePreset?.(String(value.selectedDefault ?? value.default));}},
       {id: LOOP_NAMESPACE, schema: AgentLoop.Config, base: () => ({agents: []}), autoGenerate: false, validate: () => {}},
+      {id: SUBAGENT_NAMESPACE, schema: Subagents.Config, base: () => ({}), autoGenerate: false, validate: () => {}},
       {id: 'ui-settings', schema: DeveloperToolsConfig, base: () => ({}), autoGenerate: false, validate: () => {}},
       {id: 'ui-settings-general', schema: WelcomeConfig, base: () => ({}), autoGenerate: false, validate: () => {}},
     ];
@@ -140,11 +142,7 @@ export class NativeSettings {
   }
   async modelConfiguration() {
     const provider = this.value(MODEL_NAMESPACE);
-    let key = await this.credentials.resolve(credentialRef(String(provider.apiKeyEnv)));
-    // An editable endpoint must never receive a host-owned fallback credential.
-    // Compare the full base path too: same-origin custom gateways are still custom.
-    const endpoint = (value: unknown) => new URL(String(value)).href.replace(/\/+$/, '');
-    if (key && key.source !== 'environment' && endpoint(provider.baseURL) !== endpoint(this.host.providerBase().baseURL)) key = undefined;
+    const key = await this.credentials.resolve(credentialRef(String(provider.apiKeyEnv)));
     const defaults = this.value(DEFAULT_MODEL_NAMESPACE);
     const explicit = Object.keys(this.row(DEFAULT_MODEL_NAMESPACE).user).length > 0;
     return {providerOptions: provider as DeepSeekOptions, ...(key ? {apiKey: key.value} : {}), ...(explicit ? {defaultModel: {provider: String(defaults.provider), model: String(defaults.model), ...(defaults.reasoningEffort === undefined ? {} : {reasoningEffort: String(defaults.reasoningEffort)})}} : {})};

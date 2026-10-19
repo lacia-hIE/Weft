@@ -46,9 +46,10 @@ const declarationOnlyPackages = {
   // Inspection references the gateway's types; its Node HTTP implementation is
   // never bundled into Weft. Consume its own declarations at this boundary.
   '@deepseek-ai/dsh-api-gateway': 'packages/api/gateway/src/index.ts',
-  // History references host composition through subagent/preset types. Those
-  // Node-only packages are declaration boundaries, never runtime substitutes.
+  // Keep each Host class and its internal imports on the same declaration
+  // boundary. Runtime builds still resolve the unmodified original sources.
   '@deepseek-ai/dsh-subagent': 'packages/subagent/subagent/src/index.ts',
+  '@deepseek-ai/dsh-subagent/internal': 'packages/subagent/subagent/src/internal.ts',
   '@deepseek-ai/dsh-agent-preset-registry': 'packages/preset/agent-preset-registry/src/index.ts',
   '@deepseek-ai/dsh-app-boot': 'packages/boot/app-boot/src/index.ts',
   '@deepseek-ai/dsh-cmdline': 'packages/boot/cmdline/src/index.ts',

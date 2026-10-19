@@ -1,10 +1,10 @@
-// Run against `npm run dev`, which reads the ignored .env model credential.
+// Run against `npm run dev` after configuring this environment in Settings → Models.
 // This opt-in smoke is separate from the keyless regression suite.
 import assert from 'node:assert/strict';
 
 const base = 'http://localhost:8787';
 const identity = await fetch(`${base}/v1/me`);
-assert.equal(identity.status, 200, 'Start npm run dev with DEEPSEEK_API_KEY in .env');
+assert.equal(identity.status, 200, 'Start npm run dev and configure Settings → Models');
 const { tenantId } = await identity.json();
 const sessionId = `live-deepseek-${Date.now()}`;
 const path = `${base}/v1/tenants/${tenantId}/sessions/${sessionId}`;
@@ -27,7 +27,7 @@ const frames = text.trim().split('\n\n').map(frame => {
 });
 assert.equal(frames.find(frame => frame.event === 'error'), undefined, 'Model stream failed');
 assert.equal(frames.at(-1)?.event, 'done');
-assert.equal(frames.at(-1).data.model.provider, 'deepseek');
+assert.equal(frames.at(-1).data.model.provider, 'deepseek-official');
 const before = await (await fetch(`${path}/events`)).json();
 assert.ok(before.events.some(event => event.type === 'tool/call'), 'Model must actually invoke the tool');
 assert.equal(before.events.at(-1).data.reason.kind, 'completed');

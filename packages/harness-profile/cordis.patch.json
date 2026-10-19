@@ -12,6 +12,14 @@
         {"id": "tool-skill", "name": "cordis:tool-skill", "isolate": {"skills": true}, "config": {"catalogDescriptionMaxLength": 500}}
       ]
     }},
+    {"id": "preset-delegator", "name": "cordis:agent-preset", "config": {
+      "id": "delegator", "name": "Delegator", "plugins": [
+        {"id": "tool-todo", "name": "cordis:tool-todo", "config": {"allowParallelInProgress": false}},
+        {"id": "tool-skill", "name": "cordis:tool-skill", "isolate": {"skills": true}, "config": {"catalogDescriptionMaxLength": 500}},
+        {"id": "tool-subagent", "name": "cordis:tool-subagent", "config": {"provider": "spawn"}},
+        {"id": "tool-subagent-control", "name": "cordis:tool-subagent-control", "config": {}}
+      ]
+    }},
     {"id": "preset-cordis", "name": "cordis:agent-preset", "config": {
       "id": "cordis", "name": "Creator", "plugins": [
         {"id": "tool-todo", "name": "cordis:tool-todo", "config": {"allowParallelInProgress": false}},

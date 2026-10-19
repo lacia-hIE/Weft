@@ -12,16 +12,17 @@ import SystemPrompt from '@deepseek-ai/dsh-system-prompt';
 import Tools from '@deepseek-ai/dsh-tools';
 import * as Todo from '@deepseek-ai/dsh-tool-todo';
 import { SessionHistoryController } from '@weft/upstream/packages/api/session-controller/src/history.ts';
+import Subagents from '@deepseek-ai/dsh-subagent';
 import type {} from '@weft/upstream/packages/subagent/subagent/src/projection.ts';
 import { SqliteSessionPersistence } from '../../session-persistence-do/src/index.ts';
 import WorkingDirectory from '@deepseek-ai/dsh-working-directory';
 import {ComputerFileSystem} from '../../workspace/src/provider.ts';
 import type {WorkspaceScope, WorkspaceTransport} from '../../workspace/src/protocol.ts';
 import {ComputerAttachmentStore, type AttachmentTransport} from '../../native-attachments/src/store.ts';
-import {ApiSessionList} from '@weft/upstream/packages/api/session-controller/src/list.ts';
+import {nativeSessionList} from './session-list.ts';
 
 /** Reuse native cold-read, projections, pagination, follow and assistant continuity. */
-export async function createSessionReader(storage: DurableObjectStorage) {
+export async function createSessionReader(storage: DurableObjectStorage, promoteRoot?: (sessionId: SessionId) => void) {
   const ctx = new Context();
   let active: {agent: Agent; ctx: Context} | undefined;
   let workspace: Promise<void> | undefined;
@@ -31,12 +32,12 @@ export async function createSessionReader(storage: DurableObjectStorage) {
   // closers and make a reconnect cursor advance beyond the durable log.
   class ReaderSessions extends Sessions {
     override get(id: SessionId): Session | undefined {
-      return active?.agent.session.id === id ? active.agent.session : super.get(id);
+      return active?.ctx.sessions.get(id) ?? super.get(id);
     }
     override list(): Session[] {
       const sessions = super.list();
-      const live = active?.agent.session;
-      return live && !sessions.some(session => session.id === live.id) ? [...sessions, live] : sessions;
+      const seen = new Set(sessions.map(session => session.id));
+      return [...sessions, ...(active?.ctx.sessions.list() ?? []).filter(session => !seen.has(session.id))];
     }
   }
   try {
@@ -55,9 +56,11 @@ export async function createSessionReader(storage: DurableObjectStorage) {
     await ctx.plugin(SqliteSessionPersistence, {storage});
     await installDurableSessionQuery(ctx, storage);
     const history = new SessionHistoryController(ctx, observation => {
-      // SessionDO owns execution. A browser history lease does not create a
-      // second in-memory Agent or take the durable writer from the turn queue.
+      // The physical owner activates its one native host after the snapshot.
+      // This read Context never creates an Agent or takes the durable writer.
+      const id = observation.header.id;
       observation[Symbol.dispose]();
+      promoteRoot?.(id);
     });
     return {
       ctx, history,
@@ -65,8 +68,9 @@ export async function createSessionReader(storage: DurableObjectStorage) {
         return workspace ??= (async () => {
           await ctx.plugin(ComputerFileSystem, config);
           await ctx.plugin(WorkingDirectory, {defaultDirectory: config.cwd});
+          await ctx.plugin(Subagents, {});
           await ctx.plugin(ComputerAttachmentStore, {scope: config.scope, sessionId: config.sessionId, transport: config.attachmentTransport, ...(config.images ? {images: config.images} : {})});
-          new ApiSessionList(ctx, 8);
+          nativeSessionList(ctx);
         })();
       },
       activeRuntime: () => active,

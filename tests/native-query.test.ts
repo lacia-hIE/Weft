@@ -19,6 +19,19 @@ async function call<Value>(instance: Miniflare, body: object, owner = 'query'): 
 }
 type Page = SessionSearchPage<SessionSearchHit>;
 
+test('opening the native execution query cannot clear the reader live corpus or invalidate its cursor', async () => {
+  const instance = runtime();
+  try {
+    await call(instance, {mode: 'live', id: 'live-a', text: 'shared live needle'});
+    await call(instance, {mode: 'live', id: 'live-b', text: 'shared live needle'});
+    const first = await call<Page>(instance, {mode: 'search', query: {query: 'needle', limit: 1}});
+    assert.ok(first.nextCursor);
+    assert.equal((await call<Page>(instance, {mode: 'runtime-search', query: {query: 'needle'}})).items.length, 0);
+    const second = await call<Page>(instance, {mode: 'search', query: {query: 'needle', limit: 1, cursor: first.nextCursor}});
+    assert.equal(new Set([...first.items, ...second.items].map(item => item.header.id)).size, 2);
+  } finally {await instance.dispose();}
+});
+
 test('the official SQLite provider searches a complete durable corpus, preserves ranking and invalidates stale cursors', async () => {
   const instance = runtime();
   try {

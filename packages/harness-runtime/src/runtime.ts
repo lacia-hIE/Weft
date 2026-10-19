@@ -25,7 +25,7 @@ export interface RuntimeOptions {
   signal?: AbortSignal;
   cancellationCause?: () => AgentCancelCause;
   onEvent?: (event: SessionEvent, session: Session) => void;
-  onFrame?: (frame: AssistantStreamFrame) => void;
+  onFrame?: (frame: AssistantStreamFrame, agent: Agent) => void;
   onAgent?: (agent: Agent, ctx: Context) => void;
   onAgentDisposed?: (agent: Agent) => void;
   onSessionCreated?: (session: Session) => void;
@@ -60,9 +60,9 @@ export async function openHarnessSession(options: RuntimeOptions): Promise<Harne
   })();
   try {
     options.signal?.throwIfAborted();
-    if (options.onEvent) ctx.on('session/event', (session, event) => { options.onEvent!(structuredClone(event), session); });
-    if (options.onFrame) ctx.on('agent/assistant-stream', ({ frame }) => { options.onFrame!(structuredClone(frame)); });
-    if (options.onSessionCreated) ctx.on('session/created', session => { options.onSessionCreated!(session); });
+    if (options.onEvent) ctx.on('session/event', (session, event) => { options.onEvent!(structuredClone(event), session); }, {global: true});
+    if (options.onFrame) ctx.on('agent/assistant-stream', ({ frame, agent }) => { options.onFrame!(structuredClone(frame), agent); }, {global: true});
+    if (options.onSessionCreated) ctx.on('session/created', session => { options.onSessionCreated!(session); }, {global: true});
     await ctx.plugin(LlmRuntime);
     await ctx.plugin(SessionStore);
     await ctx.plugin(SessionProjectionRegistry);

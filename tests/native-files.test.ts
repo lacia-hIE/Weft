@@ -143,9 +143,11 @@ test('the original directory cap reports truncation beyond 2000 real Computer en
     await api.call('session/create', {request: {sessionId: 'large-directory'}});
     for (let start = 0; start <= 2000; start += 32) {
       const count = Math.min(32, 2001 - start);
-      const writes = await Promise.all(Array.from({length: count}, (_, offset) => write(runtime, 'many/file-'+String(start+offset).padStart(4, '0')+'.txt', '')));
-      assert.ok(writes.every(response => response.status === 200));
-      await Promise.all(writes.map(response => response.json()));
+      await Promise.all(Array.from({length: count}, async (_, offset) => {
+        const response = await write(runtime, 'many/file-'+String(start+offset).padStart(4, '0')+'.txt', '');
+        assert.equal(response.status, 200);
+        await response.json();
+      }));
     }
     const listing = await api.call<WorkspaceDirectoryListing>('workspaceFiles/list', {workspaceFileScopeId: 'large-directory', path: 'many'});
     assert.equal(listing.entries.length, 2000);

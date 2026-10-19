@@ -26,12 +26,12 @@ import { sessionAddress, type SessionScope } from '../../tenant/src/index.ts';
 import sessionRemote from '../../../.generated/official-remotes/packages/api/session-controller/typert.remote-client.js';
 import type { SessionControlFrame, SessionProjectionBaseline } from '@deepseek-ai/dsh-api-session-controller/types';
 import { remoteStream } from '../../harness-runtime/src/remote-stream.ts';
-import { NativeSettings, PRESET_NAMESPACE, LOOP_NAMESPACE } from './native-settings.ts';
+import { NativeSettings, PRESET_NAMESPACE, LOOP_NAMESPACE, SUBAGENT_NAMESPACE } from './native-settings.ts';
 import {readNativePresets, type CompositionEndpoint} from '../../native-composition/src/profile-host.ts';
 import {profileDefinitions} from '../../harness-profile/src/index.ts';
 import {manageNativePlugins} from '../../native-composition/src/manager.ts';
 import {mountWorkspace} from '../../workspace/src/provider.ts';
-import { tenantModelHost, ModelConfigurationError, type ModelEnvironment } from '../../model-provider/src/index.ts';
+import { ModelConfigurationError, type ModelEnvironment } from '../../model-provider/src/index.ts';
 import {SqliteModelUploadIndex, type ModelUploadOperation} from '../../model-provider/src/files-protocol.ts';
 import { DATA_LAYOUT_VERSION } from '../../tenant/src/layout.ts';
 import { NativePluginCatalog } from './native-plugins.ts';
@@ -40,6 +40,8 @@ import {mapConcurrent} from '../../native-query/src/concurrent.ts';
 import {remoteErrorOf} from '@deepseek-ai/dsh-typert-protocol';
 import type {SessionEvent} from '@deepseek-ai/dsh-session';
 import type {SessionReadMetadata} from '../../session-persistence-do/src/index.ts';
+
+declare const WEFT_VALIDATION_BUILD: boolean;
 
 export interface TenantEnvironment extends ModelEnvironment {
   TENANTS: DurableObjectNamespace<TenantDO>;
@@ -57,22 +59,25 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
     this.scope(scope);
     if (this.nativeSearch) return this.nativeSearch;
     const target = (sessionId: string) => {
-      const address: SessionScope = {...scope, sessionId: id.parse(sessionId)};
+      const address: SessionScope = {...scope, sessionId: id.parse(this.nativeSessionRoot(scope, sessionId) ?? sessionId)};
       return {scope: address, stub: this.env.SESSIONS.getByName(sessionAddress(address))};
     };
     return this.nativeSearch = new NativeSessionSearch(this.ctx.storage, {
-      ids: async signal => {signal?.throwIfAborted(); return (await this.sessionIndex(scope)).map(record => record.id);},
+      ids: async signal => {
+        signal?.throwIfAborted();
+        return [...(await this.sessionIndex(scope)).map(record => record.id), ...this.ctx.storage.sql.exec<{id: string}>('SELECT id FROM native_child_owners ORDER BY id').toArray().map(row => row.id)];
+      },
       metadata: async (sessionId, signal) => {
         signal?.throwIfAborted(); const session = target(sessionId);
         const value = await (await session.stub.fetch(new Request('https://session.internal/native-search-metadata', {
-          method: 'POST', body: JSON.stringify({scope: session.scope, operation: 'native-search-metadata'}), ...(signal ? {signal} : {}),
+          method: 'POST', body: JSON.stringify({scope: session.scope, sessionId, operation: 'native-search-metadata'}), ...(signal ? {signal} : {}),
         }))).json() as {value?: SessionReadMetadata};
         signal?.throwIfAborted(); return value.value;
       },
       page: async (sessionId, offset, end, signal) => {
         signal?.throwIfAborted(); const session = target(sessionId);
         const value = await (await session.stub.fetch(new Request('https://session.internal/native-search-page', {
-          method: 'POST', body: JSON.stringify({scope: session.scope, operation: 'native-search-page', offset, end}), ...(signal ? {signal} : {}),
+          method: 'POST', body: JSON.stringify({scope: session.scope, sessionId, operation: 'native-search-page', offset, end}), ...(signal ? {signal} : {}),
         }))).json() as {events: SessionEvent[]};
         signal?.throwIfAborted(); return value.events;
       },
@@ -103,16 +108,11 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
     this.scope(scope);
     this.ensureDefault();
     this.ensureNativePresets();
-    const tenantId = scope.tenantId;
     return this.nativeSettings ??= new NativeSettings(this.ctx.storage, {
-      providerBase: () => ({baseURL: tenantModelHost(this.env, tenantId).baseURL, maxTokens: 8192, thinking: 'disabled', reasoningEffort: 'off', streamIdleTimeoutMs: Number(this.env.MODEL_IDLE_TIMEOUT_MS ?? '60000'), retryPolicy: {mode: 'normal', maxRetries: 0}, apiKeyEnv: 'DEEPSEEK_API_KEY'}),
-      modelBase: () => this.env.MODEL_BACKEND === 'scripted'
+      providerBase: () => ({baseURL: 'https://api.deepseek.com/anthropic', maxTokens: 8192, thinking: 'disabled', reasoningEffort: 'off', streamIdleTimeoutMs: 60_000, retryPolicy: {mode: 'normal', maxRetries: 0}, apiKeyEnv: 'DEEPSEEK_API_KEY'}),
+      modelBase: () => WEFT_VALIDATION_BUILD && this.env.MODEL_BACKEND === 'scripted'
         ? {provider: 'validation', model: 'scripted'}
-        : {provider: 'deepseek-official', model: this.latest('default')?.spec.model?.name ?? tenantModelHost(this.env, tenantId).model},
-      credential: ref => {
-        const key = ref === 'DEEPSEEK_API_KEY' ? tenantModelHost(this.env, tenantId).apiKey : undefined;
-        return key ? {value: key, source: 'platform'} : undefined;
-      },
+        : {provider: 'deepseek-official', model: this.latest('default')?.spec.model?.name ?? 'deepseek-flash'},
       changed: (event, args) => {
         this.nativeEvents.emit(event, args);
         if (event === 'settings/document-updated' && args[0] === PRESET_NAMESPACE) this.nativeEvents.emit('plugin-manager/changed', [{reason: 'plugin'}]);
@@ -130,6 +130,9 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
   async nativePresetDefault(scope: ControlScope): Promise<string> {return this.presetDefault(scope);}
   async nativeLoopConfiguration(scope: ControlScope): Promise<Response> {
     return Response.json(this.settings(scope).value(LOOP_NAMESPACE));
+  }
+  async nativeSubagentConfiguration(scope: ControlScope): Promise<Response> {
+    return Response.json(this.settings(scope).value(SUBAGENT_NAMESPACE));
   }
   async nativeProfile(scope: ControlScope, preset: string, revision?: number): Promise<Response> {
     this.scope(scope); this.ensureDefault(); this.ensureNativePresets();
@@ -180,18 +183,24 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
         const values = await mapConcurrent(records, async row => {const target=session(row.id); return target.stub.nativeHeader(target.scope);});
         return values.filter(value => value !== undefined);
       },
-      running: async id => {const target=session(id); return (await target.stub.nativeStatus(target.scope))?.running ?? false;},
-      cancel: async id => {const target=session(id); await target.stub.nativeCancel(target.scope);},
+      activity: async id => {const target=session(id); return await (await target.stub.nativeWorkspaceActivity(target.scope)).json() as import('@deepseek-ai/dsh-workspace/types').SessionActivity[];},
+      stop: async id => {const target=session(id); await target.stub.nativeWorkspaceStop(target.scope);},
     });
   }
   async nativeWorkspace(scope: ControlScope, endpoint: string, args: unknown): Promise<Response> {
     const catalog = this.workspaces(scope);
-    if (endpoint === 'workspace/initializeDefault') {
-      z.object({}).strict().parse(args);
-      const workspace = await catalog.initializeDefault();
-      return Response.json({value: workspace ? {workspace} : undefined});
+    try {
+      if (endpoint === 'workspace/initializeDefault') {
+        z.object({}).strict().parse(args);
+        const workspace = await catalog.initializeDefault();
+        return Response.json({value: workspace ? {workspace} : undefined});
+      }
+      return await catalog.invoke(endpoint, args);
+    } catch (error) {
+      const failure = remoteErrorOf(error) ?? (error instanceof z.ZodError ? {code: 'gateway/bad-request', message: 'Invalid workspace arguments', details: {}} : undefined);
+      if (!failure) throw error;
+      return Response.json({error: {isDSHRemoteError: true, code: failure.code, message: failure.message, details: failure.details}});
     }
-    return catalog.invoke(endpoint, args);
   }
   async nativeResolveWorkspace(scope: ControlScope, workspaceId?: string, cwd?: string) {
     return this.workspaces(scope).resolve(workspaceId, cwd);
@@ -207,6 +216,7 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
     ctx.storage.sql.exec(
       "CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, document TEXT NOT NULL)",
     );
+    ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS native_child_owners (id TEXT PRIMARY KEY, parent_id TEXT NOT NULL, root_id TEXT NOT NULL)');
     ctx.storage.sql.exec(
       "CREATE TABLE IF NOT EXISTS client_plugins (id TEXT PRIMARY KEY, revision TEXT NOT NULL, enabled INTEGER NOT NULL)",
     );
@@ -215,6 +225,21 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
     );
   }
   protected abstract scope(scope: ControlScope): void;
+  nativeSessionRoot(scope: ControlScope, sessionId: string): string | undefined {
+    this.scope(scope); id.parse(sessionId);
+    if (this.ctx.storage.sql.exec('SELECT id FROM sessions WHERE id=?', sessionId).toArray().length) return sessionId;
+    return this.ctx.storage.sql.exec<{root_id: string}>('SELECT root_id FROM native_child_owners WHERE id=?', sessionId).toArray()[0]?.root_id;
+  }
+  nativeRegisterChild(scope: ControlScope, rootId: string, parentId: string, childId: string): void {
+    this.scope(scope); id.parse(rootId); id.parse(parentId); id.parse(childId);
+    if (childId === rootId || this.nativeSessionRoot(scope, parentId) !== rootId) throw new Error('Invalid native child owner');
+    this.ctx.storage.transactionSync(() => {
+      if (this.ctx.storage.sql.exec('SELECT id FROM sessions WHERE id=?', childId).toArray().length) throw new Error('Child id belongs to a root session');
+      const known = this.ctx.storage.sql.exec<{parent_id: string; root_id: string}>('SELECT parent_id,root_id FROM native_child_owners WHERE id=?', childId).toArray()[0];
+      if (known && (known.parent_id !== parentId || known.root_id !== rootId)) throw new Error('Native child owner cannot change');
+      this.ctx.storage.sql.exec('INSERT INTO native_child_owners VALUES (?,?,?) ON CONFLICT(id) DO NOTHING', childId, parentId, rootId);
+    });
+  }
   nativeDefaultModel(scope: ControlScope) {
     this.scope(scope);
     this.ensureDefault();
@@ -259,9 +284,9 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
         const records = await this.sessionIndex(body.scope);
         await mapConcurrent(records, async row => {
           const scope = {...owner, sessionId: row.id};
-          const raw: unknown = await (await this.env.SESSIONS.getByName(sessionAddress(scope)).nativeProjections(scope)).json();
-          const value = sessionRemote.methods['session/projections'].result.create().parse(raw);
-          if (value?.kind === 'sequenced') projections[row.id] = {asOfSeq: value.asOfSeq, values: value.values};
+          const raw: unknown = await (await this.env.SESSIONS.getByName(sessionAddress(scope)).nativeSessionSummaries(scope)).json();
+          const value = sessionRemote.methods['session/list'].result.create().parse(raw);
+          for (const item of value.items) if (item.projections?.kind === 'sequenced') projections[item.sessionId] = {asOfSeq: item.projections.asOfSeq, values: item.projections.values};
         }, abort.signal);
         return {type: 'baseline', value: {projections}};
       });
@@ -417,6 +442,7 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
   ): Promise<void> {
     this.scope(tenantId);
     id.parse(record.id);
+    if (this.ctx.storage.sql.exec('SELECT id FROM native_child_owners WHERE id=?', record.id).toArray().length) throw new Error('Session id belongs to a native child');
     const previous = this.ctx.storage.sql
       .exec<{
         document: string;

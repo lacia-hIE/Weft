@@ -12,7 +12,7 @@ import type {} from '../../../packages/native-attachments/src/index.ts';
 interface Owner {
   waitUntil(promise: Promise<unknown>): void;
   changed(): Promise<void>;
-  failed(failure: TurnFailure): Promise<void>;
+  failed(failure: TurnFailure, sessionId?: string): Promise<void>;
 }
 export class NativeHostReplacedError extends Error {}
 
@@ -22,7 +22,7 @@ export class NativeSessionHost {
   private admission = Promise.resolve();
   private publication = Promise.resolve();
   private driver: Promise<void> | undefined;
-  private timer: ReturnType<typeof setTimeout> | undefined;
+  private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
   private closed = false;
   private constructor(private readonly options: RuntimeOptions, private readonly turnTimeoutMs: number, private readonly owner: Owner) {}
 
@@ -31,16 +31,17 @@ export class NativeSessionHost {
     host.runtime = await openHarnessSession({...options, onEvent: (event, session) => {
       options.onEvent?.(event, session);
       if (event.type === 'turn/start') {
-        host.clearTimer();
-        host.timer = setTimeout(() => {
-          host.runtime?.agent.cancel({kind: 'hook', reason: 'turn-deadline'}, {keepInbox: true});
-          owner.waitUntil(owner.failed({code: 'TURN_TIMEOUT', message: 'Turn deadline exceeded', status: 504}));
-        }, turnTimeoutMs);
-      } else if (event.type === 'turn/end') host.clearTimer();
+        host.clearTimer(session.id);
+        host.timers.set(session.id, setTimeout(() => {
+          host.runtime?.ctx.agents.get(session.id)?.cancel({kind: 'hook', reason: 'turn-deadline'}, {keepInbox: true});
+          owner.waitUntil(owner.failed({code: 'TURN_TIMEOUT', message: 'Turn deadline exceeded', status: 504}, session.id));
+        }, turnTimeoutMs));
+      } else if (event.type === 'turn/end') host.clearTimer(session.id);
       host.changed();
     }});
-    host.runtime.ctx.on('agent/status', () => {host.changed(); host.watch();});
-    host.runtime.ctx.on('agent/error', ({error}) => {owner.waitUntil(owner.failed(turnFailure(error)));});
+    host.runtime.ctx.on('agent/status', () => {host.changed(); host.watch();}, {global: true});
+    host.runtime.ctx.on('agent/error', ({error, agent}) => {owner.waitUntil(owner.failed(turnFailure(error), agent.id));}, {global: true});
+    host.runtime.ctx.on('agent/disposed', ({agent}) => {host.clearTimer(agent.id);}, {global: true});
     host.runtime.ctx.sessionProjections.onChanged(() => {host.changed();});
     host.changed();
     // Cold recovery can release persisted queued input after factory setup.
@@ -50,7 +51,7 @@ export class NativeSessionHost {
 
   get ctx() { return this.runtime!.ctx; }
   get agent() { return this.runtime!.agent; }
-  private clearTimer(): void {if (this.timer !== undefined) clearTimeout(this.timer); this.timer = undefined;}
+  private clearTimer(id: string): void {const timer = this.timers.get(id); if (timer !== undefined) clearTimeout(timer); this.timers.delete(id);}
   private changed(): void {
     if (!this.runtime || this.closed) return;
     this.publication = this.publication.catch(() => {}).then(async () => {
@@ -61,15 +62,19 @@ export class NativeSessionHost {
     this.owner.waitUntil(this.publication);
   }
   private watch(): void {
-    if (this.driver || this.closed || this.agent.status !== 'running') return;
+    const running = () => this.ctx.agents.list().some(agent => agent.status === 'running');
+    if (this.driver || this.closed || !running()) return;
     const drive = async () => {
-      do {await this.agent.whenIdle(); await this.ctx.get('sessionPersistence')?.flush();}
-      while (!this.closed && this.agent.status === 'running');
+      do {
+        await this.agent.whenIdle();
+        await this.ctx.get('subagents')?.waitForChildren(this.agent);
+        await this.ctx.get('sessionPersistence')?.flush();
+      } while (!this.closed && running());
       this.changed();
     };
     const pending = drive().finally(() => {
       if (this.driver === pending) this.driver = undefined;
-      if (!this.closed && this.agent.status === 'running') this.watch();
+      if (!this.closed && running()) this.watch();
     });
     this.driver = pending;
     this.owner.waitUntil(pending);
@@ -164,7 +169,7 @@ export class NativeSessionHost {
     });
   }
   async dispose(): Promise<void> {
-    this.closed = true; this.clearTimer();
+    this.closed = true; for (const id of this.timers.keys()) this.clearTimer(id);
     await this.runtime?.dispose();
     await this.publication.catch(() => {});
   }

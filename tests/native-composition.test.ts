@@ -15,7 +15,7 @@ test('official preset roster and declaration views reflect real environment prof
   const api = nativeClient(() => runtime);
   try {
     const roster = await api.call<{presets: {id: string; isDefault: boolean; broken?: string}[]}>('agentPresets/list', {});
-    assert.deepEqual(roster.presets.map(row => row.id).sort(), ['cordis','default','standard']);
+    assert.deepEqual(roster.presets.map(row => row.id).sort(), ['cordis','default','delegator','standard']);
     assert.ok(roster.presets.every(row => row.broken === undefined), JSON.stringify(roster));
     assert.equal(roster.presets.find(row => row.isDefault)?.id, 'default');
     const document = await api.call<{agentPreset: string; content: string}>('agentPresets/read', {agentPreset: 'cordis'});

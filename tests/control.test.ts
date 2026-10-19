@@ -93,10 +93,10 @@ test("tenant control plane publishes native plugin plans, freezes sessions and p
         fields: unknown[];
       }[];
     };
-    assert.equal(catalog.plugins.length, 4);
+    assert.equal(catalog.plugins.length, 6);
     assert.ok(
       catalog.plugins.every(
-        (plugin) => plugin.schema.refs && plugin.fields.length,
+        (plugin) => plugin.schema.refs && Array.isArray(plugin.fields),
       ),
     );
     for (const plugins of [

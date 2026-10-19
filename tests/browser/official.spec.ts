@@ -87,11 +87,19 @@ test('official Models settings save real scoped credentials and configuration wi
     await page.getByRole('button', {name: 'Account menu', exact: true}).click({timeout: 45_000});
     await page.getByRole('menuitem', {name: 'Settings', exact: true}).click();
     await page.getByRole('button', {name: 'Models', exact: true}).click();
-    await page.getByRole('button', {name: 'Edit DeepSeek (deepseek-official)', exact: true}).click();
+    // The original editor automatically expands an unconfigured provider.
+    const key = page.getByRole('textbox', {name: 'API key', exact: true});
+    const edit = page.getByRole('button', {name: 'Edit DeepSeek (deepseek-official)', exact: true});
+    await expect(key.or(edit)).toBeVisible();
+    if (await edit.isVisible()) await edit.click();
   };
   await page.goto(`/agents/${id}`);
   await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
   await openSettings();
+  if (process.env.WEFT_BROWSER_PRODUCTION === '1') {
+    await expect(page.getByText('No API key saved for this environment. Enter your API key here.', {exact: true})).toBeVisible();
+    await expect(page.getByText(/Env var not detected|configure DEEPSEEK_API_KEY/)).toHaveCount(0);
+  }
   await page.getByRole('textbox', {name: 'API key', exact: true}).fill('browser-settings-key-fixture');
   await page.getByText('Customized settings', {exact: true}).click();
   await page.getByRole('textbox', {name: 'Base URL', exact: true}).fill('https://browser-model.test/anthropic');

@@ -18,7 +18,7 @@ test('native settings and write-only credentials persist by environment and cont
     return new Response(event('message_start', {message: {usage: {input_tokens: 10, output_tokens: 0}}}) + event('content_block_start', {index: 0, content_block: {type: 'text', text: ''}}) + event('content_block_delta', {index: 0, delta: {type: 'text_delta', text: 'configured response'}}) + event('content_block_stop', {index: 0}) + event('message_delta', {delta: {stop_reason: 'end_turn'}, usage: {output_tokens: 3}}) + event('message_stop', {}), {headers: {'content-type': 'text/event-stream'}});
   };
   const bindings = {MODEL_BACKEND: 'deepseek', DEEPSEEK_API_KEY: 'platform-settings-fixture', DEEPSEEK_BASE_URL: 'https://model.test/anthropic'};
-  let runtime = createRuntime(directory, {browser: true, bindings, outbound});
+  let runtime = createRuntime(directory, {browser: true, configureModel: false, scriptPath: 'dist/worker.js', bindings, outbound});
   const a = nativeClient(() => runtime, 'a'), b = nativeClient(() => runtime, 'b');
   const provider = 'llm-deepseek';
   const describe = () => a.call<SettingsDescribeValue>('settings/describe', {});
@@ -40,7 +40,7 @@ test('native settings and write-only credentials persist by environment and cont
     try {
       await a.call('credentials/set', {ref: 'PROJECT_KEY', value: 'only-environment-a-fixture'});
       assert.match(JSON.stringify(await events.next()), /credentials\/reference-updated/);
-      assert.deepEqual(await a.call('credentials/describe', {refs: ['PROJECT_KEY', 'DEEPSEEK_API_KEY']}), {PROJECT_KEY: {configured: true, source: 'environment', writable: true}, DEEPSEEK_API_KEY: {configured: true, source: 'platform', writable: true}});
+      assert.deepEqual(await a.call('credentials/describe', {refs: ['PROJECT_KEY', 'DEEPSEEK_API_KEY']}), {PROJECT_KEY: {configured: true, source: 'environment', writable: true}, DEEPSEEK_API_KEY: {configured: false, writable: true}});
       assert.deepEqual(await b.call('credentials/describe', {refs: ['PROJECT_KEY']}), {PROJECT_KEY: {configured: false, writable: true}});
       const changed = await a.call<SettingsNamespaceView>('settings/update', {ns: provider, patch: {apiKeyEnv: 'PROJECT_KEY', baseURL: 'https://project.test/anthropic', maxTokens: 37, models: [{id: 'project-coder', name: 'Project Coder'}]}, expectedRevision: ns.revision});
       assert.equal(changed.revision, 1);
@@ -62,15 +62,16 @@ test('native settings and write-only credentials persist by environment and cont
     await a.call('session/create', {request: {sessionId: 'choose'}});
     await a.call('session/selectModel', {request: {sessionId: 'choose', provider: 'deepseek-official', model: 'project-coder'}});
     assert.match(JSON.stringify((await describe()).namespaces.find(row => row.ns === 'agent-default-model')!.value), /project-coder/);
-    await runtime.dispose(); runtime = createRuntime(directory, {browser: true, bindings, outbound});
+    await runtime.dispose(); runtime = createRuntime(directory, {browser: true, configureModel: false, scriptPath: 'dist/worker.js', bindings, outbound});
     await send(a, 'a', 'after-restart');
     assert.equal(calls.at(-1)!.body.model, 'project-coder');
     assert.equal(calls.at(-1)!.body.max_tokens, 37);
     assert.equal(calls.at(-1)!.key, 'only-environment-a-fixture');
     assert.equal(new URL(calls.at(-1)!.url).hostname, 'project.test');
+    await b.call('credentials/set', {ref: 'DEEPSEEK_API_KEY', value: 'only-environment-b-fixture'});
     await send(b, 'b', 'other-environment');
     assert.equal(calls.at(-1)!.body.model, 'deepseek-flash');
-    assert.equal(calls.at(-1)!.key, 'platform-settings-fixture');
+    assert.equal(calls.at(-1)!.key, 'only-environment-b-fixture');
     assert.equal(calls.at(-1)!.body.max_tokens, 8192);
     assert.doesNotMatch(JSON.stringify(await describe()), /only-environment-a-fixture|platform-settings-fixture/);
     await a.call('credentials/unset', {ref: 'PROJECT_KEY'});
@@ -81,38 +82,36 @@ test('native settings and write-only credentials persist by environment and cont
   } finally { await runtime.dispose(); await rm(directory, {recursive: true, force: true}); }
 });
 
-test('platform model credentials stay bound to the host endpoint and custom endpoints require an environment-owned key', {timeout: 60_000}, async () => {
+test('production ignores all legacy model bindings and uses only user model settings, including after key removal', {timeout: 60_000}, async () => {
   const calls: {url: string; key: string | null}[] = [];
-  const runtime = createRuntime(undefined, {browser: true, bindings: {MODEL_BACKEND: 'deepseek', DEEPSEEK_API_KEY: 'host-bound-fixture', DEEPSEEK_BASE_URL: 'https://platform.test/anthropic'}, outbound: async request => {
+  const runtime = createRuntime(undefined, {browser: true, configureModel: false, scriptPath: 'dist/worker.js', bindings: {MODEL_BACKEND: 'scripted', DEEPSEEK_API_KEY: 'legacy-host-fixture', DEEPSEEK_MODEL: 'legacy-host-model', DEEPSEEK_BASE_URL: 'https://legacy.test/anthropic', TENANT_MODEL_CONFIG_JSON: '{broken', MODEL_IDLE_TIMEOUT_MS: 'invalid', MODEL_TURN_TIMEOUT_MS: 'invalid'}, outbound: async request => {
     calls.push({url: request.url, key: request.headers.get('x-api-key')});
     const event = (type: string, data: object) => `event: ${type}\ndata: ${JSON.stringify({type, ...data})}\n\n`;
-    return new Response(event('message_start', {message: {usage: {input_tokens: 1, output_tokens: 0}}}) + event('content_block_start', {index: 0, content_block: {type: 'text', text: 'bound credential'}}) + event('content_block_stop', {index: 0}) + event('message_delta', {delta: {stop_reason: 'end_turn'}, usage: {output_tokens: 2}}) + event('message_stop', {}), {headers: {'content-type': 'text/event-stream'}});
+    return new Response(event('message_start', {message: {usage: {input_tokens: 1, output_tokens: 0}}}) + event('content_block_start', {index: 0, content_block: {type: 'text', text: 'user credential'}}) + event('content_block_stop', {index: 0}) + event('message_delta', {delta: {stop_reason: 'end_turn'}, usage: {output_tokens: 2}}) + event('message_stop', {}), {headers: {'content-type': 'text/event-stream'}});
   }});
   const api = nativeClient(() => runtime);
-  const prompt = () => api.raw('session/prompt', {request: {sessionId: 'endpoint-bound', requestId: randomUUID(), mode: 'queue', content: [{type: 'text', text: 'reply'}]}});
-  const idle = () => runtime.dispatchFetch(url('alpha', `/v1/tenants/${tenantId('alpha')}/environments/default/sessions/endpoint-bound/events`));
-  const configure = (baseURL: string, expectedRevision: number) => api.call('settings/update', {ns: 'llm-deepseek', patch: {baseURL}, expectedRevision});
+  const prompt = () => api.raw('session/prompt', {request: {sessionId: 'user-model', requestId: randomUUID(), mode: 'queue', content: [{type: 'text', text: 'reply'}]}});
+  const idle = () => runtime.dispatchFetch(url('alpha', `/v1/tenants/${tenantId('alpha')}/environments/default/sessions/user-model/events`));
   try {
-    await configure('https://platform.test/untrusted', 0);
-    await api.call('session/create', {request: {sessionId: 'endpoint-bound'}});
+    const settings = await api.call<SettingsDescribeValue>('settings/describe', {});
+    const provider = settings.namespaces.find(row => row.ns === 'llm-deepseek')!;
+    assert.match(JSON.stringify(provider.value), /api.deepseek.com/);
+    assert.doesNotMatch(JSON.stringify(settings), /legacy-host|legacy.test/);
+    assert.deepEqual(await api.call('credentials/describe', {refs: ['DEEPSEEK_API_KEY']}), {DEEPSEEK_API_KEY: {configured: false, writable: true}});
+    const catalog = await api.call<{default: {model: string}}>('session/modelCatalog', {});
+    assert.equal(catalog.default.model, 'deepseek-flash');
+    await api.call('session/create', {request: {sessionId: 'user-model'}});
     assert.equal((await prompt()).result.error?.code, 'session/provider-credentials-unavailable');
-    await configure('https://custom.test/anthropic', 1);
+    await api.call('settings/update', {ns: 'llm-deepseek', patch: {baseURL: 'https://user.test/anthropic'}, expectedRevision: 0});
     assert.equal((await prompt()).result.error?.code, 'session/provider-credentials-unavailable');
-    assert.equal(calls.length, 0, 'neither a changed path nor another host receives the fallback key');
-    await configure('https://platform.test/anthropic/', 2);
+    assert.equal(calls.length, 0);
+    await api.call('credentials/set', {ref: 'DEEPSEEK_API_KEY', value: 'user-owned-fixture'});
     assert.equal((await prompt()).result.ok, true);
     assert.equal((await idle()).status, 200);
-    assert.equal(calls.length, 1);
-    assert.equal(calls[0]!.key, 'host-bound-fixture');
-    await configure('https://custom.test/anthropic', 3);
+    assert.deepEqual(calls, [{url: 'https://user.test/anthropic/v1/messages', key: 'user-owned-fixture'}]);
+    await api.call('credentials/unset', {ref: 'DEEPSEEK_API_KEY'});
     assert.equal((await prompt()).result.error?.code, 'session/provider-credentials-unavailable');
-    assert.equal(calls.length, 1, 'the already warm Agent also refuses to forward the fallback key');
-    await api.call('credentials/set', {ref: 'DEEPSEEK_API_KEY', value: 'environment-bound-fixture'});
-    assert.equal((await prompt()).result.ok, true);
-    assert.equal((await idle()).status, 200);
-    assert.equal(calls.length, 2);
-    assert.equal(new URL(calls[1]!.url).origin, 'https://custom.test');
-    assert.equal(calls[1]!.key, 'environment-bound-fixture');
+    assert.equal(calls.length, 1, 'a warm Agent must not use an old snapshot or a host credential');
   } finally {await runtime.dispose();}
 });
 
@@ -136,7 +135,7 @@ test('a live native turn adopts configuration and credential changes at its next
     await api.call('session/prompt', {request: {sessionId: 'live', requestId: randomUUID(), mode: 'queue', content: [{type: 'text', text: 'use your identity tool'}]}});
     await started;
     await api.call('credentials/set', {ref: 'NEXT_KEY', value: 'after-fixture'});
-    await api.call('settings/update', {ns: 'llm-deepseek', patch: {apiKeyEnv: 'NEXT_KEY', baseURL: 'https://after.test/anthropic', maxTokens: 41}, expectedRevision: 0});
+    await api.call('settings/update', {ns: 'llm-deepseek', patch: {apiKeyEnv: 'NEXT_KEY', baseURL: 'https://after.test/anthropic', maxTokens: 41}, expectedRevision: 1});
     release();
     assert.equal((await runtime.dispatchFetch(url('alpha', `/v1/tenants/${tenantId('alpha')}/environments/default/sessions/live/events`))).status, 200);
     assert.equal(calls.length, 2);

@@ -3,6 +3,7 @@ import { tsImport } from "tsx/esm/api";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { resolve, relative } from "node:path";
 import { pathToFileURL } from "node:url";
+import {modelsSettingsPlatform} from "./models-settings-platform.mjs";
 import { officialUiRoster } from "./official-ui-roster.mjs";
 
 const root = resolve(import.meta.dirname, "..");
@@ -69,6 +70,7 @@ for (const row of roster) {
       outDir: resolve(output, relative(source.directory, row.directory)),
       tsconfig: configPath,
       plugins: [
+        modelsSettingsPlatform,
         {
           name: "weft-generated-official-remotes",
           resolveId: {

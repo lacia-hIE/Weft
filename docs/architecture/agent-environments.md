@@ -41,7 +41,7 @@ UI 资产由没有公网入口的 Worker 通过 Static Assets binding 读取；�
 
 配置宿主位于 `packages/control-plane/src/native-settings.ts`，复用官方 DeepSeek API-key、默认模型、开发工具和欢迎确认的 Config schema，以及原生 volatile form、plainConfig 和 secret redaction。官方 Models 编辑器使用原版 composition entry ID `llm-deepseek`，对应 API-key provider 包；运行路由使用 `deepseek-official`。SQLite 保存用户覆盖层和修订号，过期表单拒绝覆盖新版本；数组替换和路径编辑保留继承/重置语义。配置不伪装为本地 YAML 文件。
 
-`DurableCredentials` 实现原生 CredentialProvider seam，按环境保存凭据引用与插件记录。客户端仅能写入密钥、读取配置状态；实际值只经服务端可信绑定送往执行宿主。平台回退密钥限定服务端配置的完整 endpoint；环境更改域名或 base path 后须提供自己的密钥。模型请求捕获一致的 endpoint/credential 配置快照。运行中的设置变更在下一次原生 prompt assembly 前重新解析，不改动已经开始的模型请求。
+`DurableCredentials` 实现原生 CredentialProvider seam，按环境保存凭据引用与插件记录。客户端仅能写入密钥、读取配置状态；实际值只经服务端可信绑定送往执行宿主。模型密钥、endpoint 与模型选择仅来自用户在 Models 保存的环境设置，不读取平台环境变量，也没有共享凭据回退。模型请求捕获一致的 endpoint/credential 配置快照。运行中的设置变更在下一次原生 prompt assembly 前重新解析，不改动已经开始的模型请求。
 
 `$events`、`session/control` 与 `workspace/follow` 提供环境内的真实通知及重新连接基线。通知本身不持久化，重连重新读取 DO 状态；观察者退出不终止 Agent 执行。浏览器切换采用完整导航，并按租户与环境划分原版客户端持久化键，防止同名 Session 缓存串用。
 
@@ -91,7 +91,7 @@ Plugins 页面已接通原版 `pluginInventory/list`、`pluginManager/listPlugin
 
 已实现并验证环境目录创建、配置/文件/插件/同名会话的环境隔离及重启恢复。浏览器验证覆盖目录进入、环境切换卸载及既有工作台回归。旧数据兼容与迁移不再是验收目标。
 
-已接通官方协议的会话创建、列表、分页、订阅、标题、模型选择、提示词、取消，以及工作区、目录选择和全局通知。模型投影复用官方定义，请求装配复用原生模型切换钩子；冷启动后恢复所选路由。原生 Inbox 已接通排队、编辑、删除、steer、通用文件附件、图片提示词和持久恢复；子 Agent 与更多业务投影仍需接入。图片采用 Cloudflare Images、环境内 Computer 存储和持久请求衍生版本，DeepSeek 上传映射由当前环境的 SQLite 保存，清理仅操作该环境记录的远端文件 ID。原版图片读取协议验证附件确实被当前会话引用，冷读不创建 Agent。详见 [原版图片验证](../validation/native-images.md)。提示词只有在原生 Inbox 入队事件同步存储后才确认接受，用户消息在原版驱动消费时进入历史；缺失能力明确拒绝。
+已接通官方协议的会话创建、列表、分页、订阅、标题、模型选择、提示词、取消，以及工作区、目录选择和全局通知。模型投影复用官方定义，请求装配复用原生模型切换钩子；冷启动后恢复所选路由。原生 Inbox 已接通排队、编辑、删除、steer、通用文件附件、图片提示词和持久恢复；原生子 Agent 的 spawn / fork、历史、后续消息与中断已接通，独立子预设及更多业务投影继续接入。图片采用 Cloudflare Images、环境内 Computer 存储和持久请求衍生版本，DeepSeek 上传映射由当前环境的 SQLite 保存，清理仅操作该环境记录的远端文件 ID。原版图片读取协议验证附件确实被当前会话引用，冷读不创建 Agent。详见 [原版图片验证](../validation/native-images.md) 与 [原生子 Agent](../validation/native-subagents.md)。提示词只有在原生 Inbox 入队事件同步存储后才确认接受，用户消息在原版驱动消费时进入历史；缺失能力明确拒绝。
 
 官方 Remote 的 30 个包与官方 Web 目录的 69 个客户端模块已使用上游生成器、各包自身的构建配置成功生成。标准 `npm run build` 已包含这条完整构建链，确保全新的 Cloudflare Git 构建也会生成官方产物；构建报告位于 `.generated/official-ui/build-report.json`。
 

@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { ReadableStream } from 'node:stream/web';
 import { test } from 'node:test';
 import { Response, type V4FetchHandler } from 'miniflare';
+import {nativeClient} from './helpers/native.ts';
 import { createRuntime, send, tenantId, url, sessionPath, type SessionResponse } from './helpers/miniflare.ts';
 
 const bindings = { MODEL_BACKEND: 'deepseek', DEEPSEEK_API_KEY: 'secret-platform-key', DEEPSEEK_BASE_URL: 'https://model.test/anthropic' };
@@ -142,7 +143,7 @@ test('truncated or malformed provider streams fail and preserve a readable sessi
   }
 });
 
-test('tenant credential registry is exclusive and never falls back across users', async () => {
+test('user model settings are exclusive and never fall back across users', async () => {
   const keys: string[] = [];
   const runtime = createRuntime(undefined, { bindings: { ...bindings, TENANT_MODEL_CONFIG_JSON: JSON.stringify({
     [tenantId('alpha')]: { apiKey: 'alpha-private-model-key', model: 'tenant-custom-model' },
@@ -160,10 +161,10 @@ test('tenant credential registry is exclusive and never falls back across users'
   } finally { await runtime.dispose(); }
 });
 
-test('invalid server configuration and absent credentials fail before creating session history', async () => {
+test('production ignores server model variables and missing user credentials fail before creating session history', async () => {
   for (const overrides of [{ DEEPSEEK_API_KEY: '' }, { DEEPSEEK_BASE_URL: 'http://insecure.test' }, { TENANT_MODEL_CONFIG_JSON: '{broken' }]) {
     let count = 0;
-    const runtime = createRuntime(undefined, { bindings: { ...bindings, ...overrides }, outbound: async () => { count++; return streamResponse(textPrefix + textSuffix); } });
+    const runtime = createRuntime(undefined, { configureModel: false, scriptPath: 'dist/worker.js', bindings: { ...bindings, ...overrides }, outbound: async () => { count++; return streamResponse(textPrefix + textSuffix); } });
     try {
       assert.equal((await send(runtime, 'alpha', 'unconfigured', 'hello')).status, 503);
       assert.equal((await runtime.dispatchFetch(url('alpha', sessionPath('alpha', 'unconfigured', 'events')))).status, 404);
@@ -284,6 +285,7 @@ test('a disconnected SSE consumer cannot hold the session queue beyond its deadl
   const hang = stalled();
   const runtime = createRuntime(undefined, { bindings: { ...bindings, MODEL_IDLE_TIMEOUT_MS: '250' }, outbound: async (request, miniflare) => ++count === 1 ? hang(request, miniflare) : streamResponse(textPrefix + textSuffix) });
   try {
+    await nativeClient(() => runtime).call('settings/describe', {});
     const controller = new AbortController();
     const endpoint = new URL(sessionPath('alpha', 'disconnect', 'messages'), await runtime.ready);
     const response = await fetch(endpoint, {

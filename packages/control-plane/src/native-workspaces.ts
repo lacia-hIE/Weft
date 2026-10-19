@@ -2,7 +2,7 @@ import { posix } from 'node:path';
 import { RemoteError } from '@deepseek-ai/dsh-typert-protocol';
 import { brandString } from '@deepseek-ai/dsh-brand';
 import { SessionId, type SessionHeader } from '@deepseek-ai/dsh-session';
-import type { WorkspaceId } from '@deepseek-ai/dsh-workspace/types';
+import type { WorkspaceId, SessionActivity } from '@deepseek-ai/dsh-workspace/types';
 import type { WorkspaceView, WorkspaceBaseline, WorkspaceFollowFrame } from '@deepseek-ai/dsh-api-workspace-controller/types';
 import { workspaceRecord, workspaceDomainState, type WorkspaceRecord, type WorkspaceDomainState } from '@weft/upstream/packages/workspace/workspace/src/spec.ts';
 import remote from '../../../.generated/official-remotes/packages/api/workspace-controller/typert.remote-client.js';
@@ -13,8 +13,8 @@ export interface NativeWorkspaceHost {
   files(operation: WorkspaceOperation): Promise<Response>;
   header(id: string): Promise<SessionHeader | undefined>;
   headers(): Promise<SessionHeader[]>;
-  running(id: string): Promise<boolean>;
-  cancel(id: string): Promise<void>;
+  activity(id: string): Promise<readonly SessionActivity[]>;
+  stop(id: string): Promise<void>;
 }
 type Method = keyof typeof remote.methods;
 const wid = (id: string) => brandString<WorkspaceId>(id);
@@ -172,10 +172,13 @@ export class NativeWorkspaces {
         case 'workspace/archiveSession': case 'workspace/unarchiveSession': case 'workspace/pinSession': case 'workspace/unpinSession': {
           const method = remote.methods[endpoint];
           const {request} = method.input({strict: true}).create().parse(args);
+          if (endpoint === 'workspace/archiveSession' && this.state().archivedSessionIds.includes(request.sessionId)) {
+            value = {archivedSessionIds: this.state().archivedSessionIds}; break;
+          }
           if (!await this.host.header(request.sessionId)) throw new RemoteError('session/not-found', 'Session not found', {sessionId: request.sessionId});
-          if (endpoint === 'workspace/archiveSession' && await this.host.running(request.sessionId)) {
-            if (!('stopActivity' in request && request.stopActivity)) throw new RemoteError('workspace/session-active', 'Session is running', {sessionId: request.sessionId, activity: [{kind: 'turn'}]});
-            await this.host.cancel(request.sessionId);
+          if (endpoint === 'workspace/archiveSession' && !('stopActivity' in request && request.stopActivity)) {
+            const activity = await this.host.activity(request.sessionId);
+            if (activity.length) throw new RemoteError('workspace/session-active', 'Session has active work', {sessionId: request.sessionId, activity});
           }
           value = await this.commit(() => {
             const state = this.state();
@@ -186,7 +189,12 @@ export class NativeWorkspaces {
             if (endpoint === 'workspace/unpinSession') pinned = pinned.filter(id => id !== request.sessionId);
             this.storeState({...state, archivedSessionIds: archived, pinnedSessionIds: pinned});
             return endpoint.includes('archive') ? {archivedSessionIds: archived} : {pinnedSessionIds: pinned};
-          }); break;
+          });
+          if (endpoint === 'workspace/archiveSession' && 'stopActivity' in request && request.stopActivity) {
+            try {await this.host.stop(request.sessionId);}
+            catch {console.warn('weft.workspace.stop.failed', {sessionId: request.sessionId});}
+          }
+          break;
         }
         case 'directoryPicker/list': {
           const input = remote.methods[endpoint].input({strict: true}).create().parse(args);

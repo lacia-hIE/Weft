@@ -36,7 +36,7 @@ Worker 优先使用 Cloudflare 官方提供的 [`ctx.access`](https://developers
 
 个人租户 ID 为 `user-` 加 SHA-256(JSON([Access 组织域名, 用户 ID]))。不同用户即使使用同一个 Session 名也对应不同的 Durable Object。邮箱变更不改变同一用户 ID 的租户；在 Access 中删除并重建用户可能产生新用户 ID，历史租户迁移需显式处理。原 alpha / beta 验证 Session 不映射给真实用户。
 
-本地 `npm run dev` 使用 `access.dev` 的模拟身份；该设置不参与生产认证。原应用 `VALIDATION_AUTH_JSON` 注册表已停用并从部署中移除。当前默认接入真实 DeepSeek 模型，服务端模型密钥存储于 `DEEPSEEK_API_KEY` Secret，与用户 Access 登录分离。
+本地 `npm run dev` 使用 `access.dev` 的模拟身份；该设置不参与生产认证。原应用 `VALIDATION_AUTH_JSON` 注册表已停用并从部署中移除。模型由用户在各环境的 Settings → Models 中配置，本地与生产均不读取 `.env` 或 Worker 模型 Secret。
 
 ## GitHub 关联
 
@@ -62,17 +62,17 @@ Cloudflare 原生构建使用专用 `weft-native-builds` 部署凭据；凭据�
 
 ## 真实模型部署
 
-`cloudflare.config.ts` 指定 `MODEL_BACKEND=deepseek`、`DEEPSEEK_MODEL=deepseek-flash` 及 `DEEPSEEK_API_KEY` Secret。首次部署通过权限为 `0600` 的临时 secrets JSON 文件提供模型密钥，再执行 `npx cf deploy --secrets-file /path/to/secrets.json`；发布成功后删除临时副本。后续手动部署和原生 GitHub 构建沿用 Cloudflare 的 Secret。
+进入环境后，打开官方 **Settings → Models**，保存 API Key、模型和需要时的 HTTPS endpoint。凭据按环境保存在 Durable Object SQLite 中，设置接口只返回配置状态，不回读密钥；每个用户、每套环境单独配置。更改在下一次模型调用前生效，已经开始的请求保留一致的配置快照。
 
-默认由平台提供共享模型凭据，用户 Session 和历史仍按个人租户隔离。服务端解析器支持 `TENANT_MODEL_CONFIG_JSON` Secret：键为实际 `tenantId`，值为 `{ "apiKey": "...", "model": "deepseek-flash" }`。启用该 Secret 时应在配置的 `worker.env` 中声明对应 `bindings.secret()` 并部署；此时注册表独占，缺席租户返回 `MODEL_NOT_CONFIGURED`，不会回退到平台共享密钥。官方 UI 的 Models 设置已可保存环境自己的密钥；密钥不会读取回客户端。平台回退密钥只用于服务端配置的 endpoint，自定义域名或 base path 要求环境自己的密钥。
+Worker 不再读取 `DEEPSEEK_API_KEY`、`DEEPSEEK_MODEL`、`DEEPSEEK_BASE_URL`、`TENANT_MODEL_CONFIG_JSON` 或模型期限环境变量。平台没有共享密钥回退；删除用户密钥即使在热 Agent 中也会阻止下一次调用。新环境可以先进入设置、查看历史和模型目录；发送消息前未配置凭据则返回原生 `session/provider-credentials-unavailable`，提示用户前往 Models。
 
-可在服务端配置中声明 `DEEPSEEK_BASE_URL`、`MODEL_IDLE_TIMEOUT_MS` 和 `MODEL_TURN_TIMEOUT_MS` 文本绑定，调整网关与期限；默认分别为官方 Anthropic 兼容 API、60 秒和 180 秒。网关必须使用 HTTPS，无 URL 凭据、查询参数或片段，HTTP 客户端不能覆盖这些配置。当前自动模型重试关闭，避免隐藏重放；后续在幂等和任务恢复设计中明确重试策略。
+官方 API 地址和 `deepseek-flash` 是可编辑设置的初始值，不是部署变量。流空闲期限默认 60 秒，对应环境设置中的 `llm-deepseek.streamIdleTimeoutMs`；原版 Models 卡片未提供该字段的专门控件。整个回合期限由宿主固定为 180 秒。当前自动模型重试默认关闭。自定义 endpoint 必须使用 HTTPS，并通过原版配置校验。
 
-2026-10-16 真实模型版本已由 `cf deploy` 发布：`bc3db012-0947-4963-aa8c-bea2507cd52b`。模型密钥已写入 Cloudflare Secret，临时部署文件已删除。真实 DeepSeek 的工具调用、SSE 与第二回合恢复在本地 workerd 中通过；Access 用户登录后的云端端到端验证仍需允许的用户完成。
+生产构建会删除验证专用的 scripted adapter 与短期限开关。`dist/test-worker.js` 只供本地测试，部署产物始终是 `dist/worker.js`。真实模型浏览器测试将测试凭据通过实际设置 API 写入对应环境，并运行生产 Worker，不以 Worker Secret 配置模型。这些验证仍不替代允许用户的云端 Access 登录后验收。
 
 ## Workspace 部署
 
-新增 `WORKSPACES` 绑定与 `WorkspaceDO` SQLite export；`cf deploy` 管理对应生命周期声明。现有 SessionDO 命名和存储保留。工作区使用 `@cloudflare/computer@0.5.1`，无 Container 或执行后端；无需增加模型以外的 Secret。文件 API、Session 绑定及验证细节见 [Workspace 记录](validation/workspace.md)。
+新增 `WORKSPACES` 绑定与 `WorkspaceDO` SQLite export；`cf deploy` 管理对应生命周期声明。现有 SessionDO 命名和存储保留。工作区使用 `@cloudflare/computer@0.5.1`，无 Container 或执行后端；无需平台模型 Secret。文件 API、Session 绑定及验证细节见 [Workspace 记录](validation/workspace.md)。
 
 2026-10-16 Workspace 版本发布成功：`d621df0e-aeda-4add-91f7-0cefa9fa25c8`。已复核 WorkspaceDO 为 SQLite namespace `340c996ea191459484a0ce6059072943`，SessionDO namespace 保留。模型 Secret、指定 Access 策略及 GitHub 原生仓库关联保留，自动构建与预览构建均关闭。云端文件入口的未登录及伪造身份请求会跳转 Access 登录。
 

@@ -5,6 +5,9 @@ import * as Repeat from "@deepseek-ai/dsh-repeat-tool-reminder";
 import Skills from "@deepseek-ai/dsh-skill";
 import * as SkillFiles from "@deepseek-ai/dsh-skill-filesystem";
 import * as SkillTool from "@deepseek-ai/dsh-tool-skill";
+import * as Subagent from '@deepseek-ai/dsh-tool-subagent';
+import * as SubagentControl from '@deepseek-ai/dsh-tool-subagent-control';
+import z from '@deepseek-ai/schemastery';
 
 export interface PluginSelection {
   id: string;
@@ -35,10 +38,28 @@ async function mountSkills(ctx: Context, config: Record<string, unknown>): Promi
 
 /** The original modules are compiled into the Worker, never fetched at runtime. */
 const SkillBundle = {name: 'workerd-skill-bundle', Config: SkillTool.Config, inject: ['workingDirectory'], apply: mountSkills};
+const SubagentControlBundle = {...SubagentControl, Config: z.object({})};
 
 // Only the platform adapter lives here. Schemas, tools, projections and lifecycle
 // come from the same pinned upstream tree as the AgentLoop and browser renderer.
 const entries: Entry[] = [
+  {
+    id: 'tool-subagent', module: Subagent, title: '子 Agent',
+    description: '官方委派工具；spawn 创建独立上下文，fork 继承已完成的父会话。',
+    workspace: true, schema: Subagent.Config, defaults: {provider: 'spawn'},
+    validate: config => {
+      const value = Subagent.Config(config as unknown as Subagent.Config);
+      if (!['spawn', 'fork'].includes(value.provider)) throw new Error('Unsupported subagent provider');
+    },
+    mount: async (ctx, config) => {await ctx.plugin(Subagent, Subagent.Config(config as unknown as Subagent.Config));},
+  },
+  {
+    id: 'tool-subagent-control', module: SubagentControlBundle, title: '子 Agent 控制',
+    description: '官方 send_message 与 interrupt_agent 工具。',
+    workspace: true, schema: SubagentControlBundle.Config, defaults: {},
+    validate: config => {SubagentControlBundle.Config(config);},
+    mount: async ctx => {await ctx.plugin(SubagentControl);},
+  },
   {
     id: "tool-todo",
     module: Todo,

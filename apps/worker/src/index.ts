@@ -35,10 +35,12 @@ import nativePluginRemote from '../../../.generated/official-remotes/packages/ex
 import { nativePluginFsMethods } from '../../../packages/native-plugins/src/protocol.ts';
 import { turnFailure, ModelConfigurationError, type ModelEnvironment, type TurnFailure } from '../../../packages/model-provider/src/index.ts';
 import type { RuntimeOptions } from '../../../packages/harness-runtime/src/runtime.ts';
-import { RemoteError } from '@deepseek-ai/dsh-typert-protocol';
+import { RemoteError, remoteErrorOf } from '@deepseek-ai/dsh-typert-protocol';
 import { initializeSessionStorage, SqliteSessionPersistence, readSessionSnapshot, readSessionMetadata, readSessionEventPage } from '../../../packages/session-persistence-do/src/index.ts';
 import { authenticateAccess, sessionAddress, scopeSchema, type SessionScope } from '../../../packages/tenant/src/index.ts';
 import {authenticateAccessAssertion, AccessAssertionUnavailable} from '../../../packages/tenant/src/access-assertion.ts';
+import {subagentRemote, type SubagentEndpoint} from '../../../packages/native-subagents/src/protocol.ts';
+import {nativeSessionList} from '../../../packages/harness-runtime/src/session-list.ts';
 
 export interface Env extends ModelEnvironment {
   LOADER?: WorkerLoader;
@@ -80,7 +82,14 @@ export class SessionDO extends DurableObject<Env> {
   private readonly fileObservers = new Map<string, () => Promise<void>>();
   private readonly cancelledFileObservers = new Map<string, number>();
   private async getReader() {
-    const reader = await (this.readerPromise ??= createSessionReader(this.ctx.storage));
+    const reader = await (this.readerPromise ??= createSessionReader(this.ctx.storage, sessionId => {
+      const scope = this.ownerScope;
+      if (!scope || scope.sessionId !== sessionId) throw new Error('Root promotion address mismatch');
+      this.ctx.waitUntil(this.getNativeHost(scope).then(() => {}).catch(async error => {
+        const owner = controlScope(scope.tenantId, scope.environmentId);
+        await controlFor(this.env, owner).nativeEvent(owner, 'api-session/error', [sessionId, turnFailure(error).message]);
+      }));
+    }));
     const config = this.ctx.storage.sql.exec<{workspace_id: string}>('SELECT workspace_id FROM weft_session_config WHERE id=1 AND presentation=1').toArray()[0];
     if (config && this.ownerScope) {
       const scope = {tenantId: this.ownerScope.tenantId, environmentId: this.ownerScope.environmentId ?? 'default', workspaceId: config.workspace_id};
@@ -120,7 +129,7 @@ export class SessionDO extends DurableObject<Env> {
       }}, runtime.turnTimeoutMs, {
         waitUntil: promise => {this.ctx.waitUntil(promise);},
         changed: () => this.publishNativeSummary(scope),
-        failed: failure => controlFor(this.env, owner).nativeEvent(owner, 'api-session/error', [scope.sessionId, failure.message]),
+        failed: (failure, sessionId) => controlFor(this.env, owner).nativeEvent(owner, 'api-session/error', [sessionId ?? scope.sessionId, failure.message]),
       });
       this.nativeHost = host;
       try {await nativePlugins(host.ctx)!.restore(host.agent); pluginsReady.resolve();}
@@ -136,16 +145,37 @@ export class SessionDO extends DurableObject<Env> {
     return workspacePath(row ? (JSON.parse(row.header_json) as {cwd?: string}).cwd ?? '/workspace' : '/workspace');
   }
   private async publishNativeSummary(scope: SessionScope): Promise<void> {
+    const {items} = await (await this.nativeSessionSummaries(scope)).json() as import('@deepseek-ai/dsh-api-session-controller/types').SessionListValue;
+    const owner = controlScope(scope.tenantId, scope.environmentId);
+    const control = controlFor(this.env, owner);
+    for (const row of items) {
+      await control.nativeEvent(owner, 'api-session/added', [row]);
+      await control.nativeEvent(owner, 'api-session/status', [row.sessionId, row.running]);
+    }
+  }
+  async nativeSessionSummaries(input: SessionScope): Promise<Response> {
+    const scope = this.assertScope(input);
     const status = await this.nativeStatus(scope);
-    if (!status) return;
+    if (!status) return Response.json({items: []});
     const raw: unknown = await (await this.nativeProjections(scope)).json();
     const projections = sessionRemote.methods['session/projections'].result.create().parse(raw);
     const row = {...status, ...(projections?.kind === 'sequenced' ? {projections: {kind: 'sequenced' as const, asOfSeq: projections.asOfSeq, values: projections.values}} : {})};
-    const checked = sessionRemote.methods['session/list'].result.create().parse({items: [row]});
-    const owner = controlScope(scope.tenantId, scope.environmentId);
-    const control = controlFor(this.env, owner);
-    await control.nativeEvent(owner, 'api-session/added', [checked.items[0]]);
-    await control.nativeEvent(owner, 'api-session/status', [scope.sessionId, status.running]);
+    const reader = await this.getReader();
+    const children = (await nativeSessionList(reader.activeRuntime()?.ctx ?? reader.ctx).list()).filter(item => item.origin === 'subagent');
+    return Response.json(sessionRemote.methods['session/list'].result.create().parse({items: [row, ...children]}));
+  }
+  async nativeWorkspaceActivity(input: SessionScope): Promise<Response> {
+    const scope = this.assertScope(input);
+    const reader = await this.getReader();
+    const ctx = this.nativeHost?.ctx ?? reader.activeRuntime()?.ctx ?? reader.ctx;
+    return Response.json(await ctx.waterfall('workspace/session-activity', {sessionId: SessionId(scope.sessionId)}, () => Promise.resolve([])));
+  }
+  async nativeWorkspaceStop(input: SessionScope): Promise<void> {
+    const scope = this.assertScope(input);
+    const reader = await this.getReader();
+    const ctx = this.nativeHost?.ctx ?? reader.activeRuntime()?.ctx ?? reader.ctx;
+    await ctx.parallel('workspace/session-stop', {sessionId: SessionId(scope.sessionId)});
+    await ctx.sessionPersistence.flush();
   }
 
   constructor(ctx: DurableObjectState, env: Env) {
@@ -328,16 +358,18 @@ export class SessionDO extends DurableObject<Env> {
     return readSessionSnapshot(this.ctx.storage, SessionId(scope.sessionId))?.header;
   }
 
-  async nativeSearchMetadata(input: SessionScope) {
+  async nativeSearchMetadata(input: SessionScope, sessionId = input.sessionId) {
     const scope = this.assertScope(input);
+    await this.assertNativeLogicalOwner(scope, sessionId);
     if (!this.ctx.storage.sql.exec('SELECT id FROM weft_session_config WHERE id=1 AND presentation=1').toArray().length) return undefined;
-    return readSessionMetadata(this.ctx.storage, SessionId(scope.sessionId));
+    return readSessionMetadata(this.ctx.storage, SessionId(sessionId));
   }
 
-  async nativeSearchPage(input: SessionScope, offset: number, end: number): Promise<Response> {
+  async nativeSearchPage(input: SessionScope, offset: number, end: number, sessionId = input.sessionId): Promise<Response> {
     const scope = this.assertScope(input);
+    await this.assertNativeLogicalOwner(scope, sessionId);
     if (!this.ctx.storage.sql.exec('SELECT id FROM weft_session_config WHERE id=1 AND presentation=1').toArray().length) throw new RemoteError('session/not-found', 'Session not found', {sessionId: SessionId(scope.sessionId)});
-    return Response.json({events: readSessionEventPage(this.ctx.storage, SessionId(scope.sessionId), offset, end)});
+    return Response.json({events: readSessionEventPage(this.ctx.storage, SessionId(sessionId), offset, end)});
   }
 
   private async fileHost(input: SessionScope) {
@@ -358,9 +390,10 @@ export class SessionDO extends DurableObject<Env> {
       return response;
     } finally {await host.dispose();}
   }
-  async nativeImageAttachment(input: SessionScope, attachmentId: string): Promise<Response> {
+  async nativeImageAttachment(input: SessionScope, attachmentId: string, sessionId = input.sessionId): Promise<Response> {
     const scope = this.assertScope(input);
-    const snapshot = readSessionSnapshot(this.ctx.storage, SessionId(scope.sessionId));
+    await this.assertNativeLogicalOwner(scope, sessionId);
+    const snapshot = readSessionSnapshot(this.ctx.storage, SessionId(sessionId));
     if (!snapshot) throw new RemoteError('session/not-found', 'Session not found', {sessionId: SessionId(scope.sessionId)});
     const ref = referencedImage(snapshot.events, attachmentId);
     if (!ref) throw new RemoteError('session/attachment-invalid', 'Image is not referenced by this session.', {reason: 'ATTACHMENT_NOT_REFERENCED'});
@@ -399,8 +432,43 @@ export class SessionDO extends DurableObject<Env> {
   async nativePage(input: SessionScope, raw: unknown): Promise<Response> {
     const scope = this.assertScope(input);
     const {request} = sessionRemote.methods['session/page'].input({strict: true}).create().parse({request: raw});
-    if (request.address.kind !== 'session' || request.address.sessionId !== scope.sessionId) throw new Error('Session address mismatch');
+    await this.assertNativeHistoryOwner(scope, request.address);
     return Response.json(await (await this.getReader()).history.page(request, new AbortController().signal));
+  }
+
+  private async assertNativeHistoryOwner(scope: SessionScope, address: {kind: 'session'; sessionId: string} | {kind: 'subagent'; parentSessionId: string; childSessionId: string}): Promise<void> {
+    if (address.kind === 'session') {
+      if (address.sessionId !== scope.sessionId) throw new Error('Session address mismatch');
+    } else {
+      const owner = controlScope(scope.tenantId, scope.environmentId);
+      if (await controlFor(this.env, owner).nativeSessionRoot(owner, address.parentSessionId) !== scope.sessionId) throw new RemoteError('subagent/unauthorized', 'Parent is outside this session owner', {childSessionId: SessionId(address.childSessionId)});
+    }
+  }
+
+  private async invokeSubagent(input: SessionScope, endpoint: SubagentEndpoint, raw: unknown, signal: AbortSignal) {
+    const scope = this.assertScope(input);
+    if (!Object.hasOwn(subagentRemote.methods, endpoint)) throw new RemoteError('gateway/method-unavailable', 'Unknown subagent method', {endpoint});
+    const method = subagentRemote.methods[endpoint];
+    if (endpoint === 'subagents/prompt') {
+      const args = subagentRemote.methods[endpoint].input({strict: true}).create().parse(raw);
+      await this.assertNativeHistoryOwner(scope, {kind: 'subagent', parentSessionId: args.request.parentSessionId, childSessionId: args.request.childSessionId});
+      const host = await this.getNativeHost(scope);
+      const value = await host.ctx.subagents.prompt(args.request, signal);
+      await host.ctx.sessionPersistence.flush();
+      return method.result.create().parse(value);
+    }
+    const args = subagentRemote.methods['subagents/interruptByParent'].input({strict: true}).create().parse(raw);
+    await this.assertNativeHistoryOwner(scope, {kind: 'subagent', parentSessionId: args.parentSessionId, childSessionId: args.childSessionId});
+    // Preserve native interrupt semantics: a cold or settled target is a no-op.
+    const service = this.nativeHost?.ctx.subagents ?? (await this.getReader()).ctx.subagents;
+    const value = service.interruptByParent(args.childSessionId, args.parentSessionId, args.mode);
+    return method.result.create().parse(value);
+  }
+
+  private async assertNativeLogicalOwner(scope: SessionScope, sessionId: string): Promise<void> {
+    if (sessionId === scope.sessionId) return;
+    const owner = controlScope(scope.tenantId, scope.environmentId);
+    if (await controlFor(this.env, owner).nativeSessionRoot(owner, sessionId) !== scope.sessionId) throw new RemoteError('subagent/unauthorized', 'Session is outside this owner', {childSessionId: SessionId(sessionId)});
   }
 
   async nativeRename(input: SessionScope, title: string) {
@@ -453,10 +521,11 @@ export class SessionDO extends DurableObject<Env> {
     return Response.json(sessionRemote.methods['session/selectModel'].result.create().parse(value));
   }
 
-  async nativeProjections(input: SessionScope): Promise<Response> {
+  async nativeProjections(input: SessionScope, sessionId = input.sessionId): Promise<Response> {
     const scope = this.assertScope(input);
-    if (!this.ctx.storage.sql.exec('SELECT id FROM harness_sessions WHERE id=?', scope.sessionId).toArray().length) return Response.json(null);
-    using observation = await (await this.getReader()).ctx.sessionQuery.observeSession(SessionId(scope.sessionId));
+    await this.assertNativeLogicalOwner(scope, sessionId);
+    if (!this.ctx.storage.sql.exec('SELECT id FROM harness_sessions WHERE id=?', sessionId).toArray().length) return Response.json(null);
+    using observation = await (await this.getReader()).ctx.sessionQuery.observeSession(SessionId(sessionId));
     const checked = sessionRemote.methods['session/projections'].result.create().parse({kind: 'sequenced', asOfSeq: observation.cursor, values: observation.projections?.values ?? {}});
     if (checked?.kind !== 'sequenced') throw new Error('Expected current projections');
     return Response.json(checked);
@@ -538,16 +607,25 @@ export class SessionDO extends DurableObject<Env> {
       return response;
     }
     const raw: unknown = await request.json();
+    if (typeof raw === 'object' && raw !== null && 'operation' in raw && raw.operation === 'native-subagent') {
+      const body = z.object({scope: scopeSchema, operation: z.literal('native-subagent'), endpoint: z.enum(['subagents/prompt', 'subagents/interruptByParent']), args: z.unknown()}).strict().parse(raw);
+      this.assertScope(body.scope);
+      try {return Response.json({ok: true, value: await this.invokeSubagent(body.scope, body.endpoint, body.args, request.signal)});}
+      catch (error) {
+        const failure = request.signal.aborted ? {code: 'gateway/cancelled', message: 'Subagent request cancelled', details: {}} : remoteErrorOf(error) ?? {code: 'gateway/internal', message: 'Subagent operation failed', details: {}};
+        return Response.json({ok: false, error: {isDSHRemoteError: true, code: failure.code, message: failure.message, details: failure.details}});
+      }
+    }
     if (typeof raw === 'object' && raw !== null && 'operation' in raw && (raw.operation === 'native-search-metadata' || raw.operation === 'native-search-page')) {
       const envelope = z.discriminatedUnion('operation', [
-        z.object({scope: scopeSchema, operation: z.literal('native-search-metadata')}).strict(),
-        z.object({scope: scopeSchema, operation: z.literal('native-search-page'), offset: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER), end: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER)}).strict(),
+        z.object({scope: scopeSchema, sessionId: id.optional(), operation: z.literal('native-search-metadata')}).strict(),
+        z.object({scope: scopeSchema, sessionId: id.optional(), operation: z.literal('native-search-page'), offset: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER), end: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER)}).strict(),
       ]).parse(raw);
       this.assertScope(envelope.scope);
       request.signal.throwIfAborted();
       return envelope.operation === 'native-search-metadata'
-        ? Response.json({value: await this.nativeSearchMetadata(envelope.scope)})
-        : this.nativeSearchPage(envelope.scope, envelope.offset, envelope.end);
+        ? Response.json({value: await this.nativeSearchMetadata(envelope.scope, envelope.sessionId ?? envelope.scope.sessionId)})
+        : this.nativeSearchPage(envelope.scope, envelope.offset, envelope.end, envelope.sessionId ?? envelope.scope.sessionId);
     }
     if (typeof raw === 'object' && raw !== null && 'operation' in raw && raw.operation === 'native-file-changes') {
       const envelope = z.object({scope: scopeSchema, operation: z.literal('native-file-changes'), observerId: z.uuid(), args: z.unknown()}).strict().parse(raw);
@@ -580,8 +658,9 @@ export class SessionDO extends DurableObject<Env> {
       const envelope = z.object({scope: scopeSchema, operation: z.literal('native-follow'), args: z.unknown()}).strict().parse(raw);
       const scope = this.assertScope(envelope.scope);
       const args = sessionRemote.methods['session/follow'].input({strict: true}).create().parse(envelope.args);
-      if (args.request.address.kind !== 'session' || args.request.address.sessionId !== scope.sessionId) throw new Error('Session address mismatch');
+      await this.assertNativeHistoryOwner(scope, args.request.address);
       const abort = new AbortController();
+      if (request.signal.aborted) abort.abort(request.signal.reason);
       request.signal.addEventListener('abort', () => abort.abort(), {once: true});
       const reader = await this.getReader();
       const codec = sessionRemote.methods['session/follow'].result.create();
@@ -679,7 +758,7 @@ export default {
         });
       }
       if (pathname === '/health' && request.method === 'GET') {
-        return Response.json({ status: 'ok', mode: 'harness', backend: env.MODEL_BACKEND ?? 'unconfigured' });
+        return Response.json({ status: 'ok', mode: 'harness', backend: 'deepseek' });
       }
       const environment = await resolveEnvironmentRequest(request, env, principal);
       if (environment.response) return environment.response;

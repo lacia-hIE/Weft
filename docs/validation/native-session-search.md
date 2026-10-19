@@ -6,7 +6,7 @@
 
 `packages/native-query` 挂载固定上游的真实 `SqliteSessionQueryEngine`。字面量查询处理、FTS5 语义文档、current/shadowed 分类、排序、Unicode 摘要、游标与失效规则均由上游代码负责。Web 搜索仍只选取 current 的 user/assistant 消息，最多返回 20 个不同会话，并如实提供 `hasMore`；不索引模型 reasoning 或用原始 JSON 的字符串匹配替代正文搜索。
 
-EnvironmentDO 保存派生索引，SessionDO 保留唯一权威日志和写入者。`EnvironmentSessionPersistence` 是真实的只读持久化服务：元数据来自源对象，读句柄按固定日志 cut 获取连续、经过原版 schema 校验的事件页，写操作明确拒绝。页通常不超过 512 KiB UTF-8；单个超过该预算的合法事件整条返回，不截断事件。目录和源页取消通过内部 Fetch 传递，元数据扇出最多 4 个。原版引擎在对比前后 revision 后提交索引，源变化处理沿用上游的稳定观察和重试规则。
+EnvironmentDO 保存派生索引，SessionDO 保留唯一权威日志和写入者。`EnvironmentSessionPersistence` 是真实的只读持久化服务：元数据来自源对象，读句柄按固定日志 cut 获取连续、经过原版 schema 校验的事件页，写操作明确拒绝。原生子会话按实际 owner 定位源 DO，保留自身逻辑 ID。页通常不超过 512 KiB UTF-8；单个超过该预算的合法事件整条返回，不截断事件。目录和源页取消通过内部 Fetch 传递，元数据扇出最多 4 个。原版引擎在对比前后 revision 后提交索引，源变化处理沿用上游的稳定观察和重试规则。
 
 跨对象的搜索来源是实际已提交日志；活动历史订阅继续借用 SessionDO 内真实的热 Session。原版只读冷查询可能在派生观察中平衡未结束的 turn，但搜索不持有 writer、不将这些闭合事件写回，也不把它们交给活动历史订阅。Web 搜索的消息类型过滤排除这些恢复结果。流式显示中尚未提交的 assistant 帧不构成已提交正文。
 

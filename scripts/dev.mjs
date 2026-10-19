@@ -1,13 +1,7 @@
 import { loadAndParseConfig } from "@cloudflare/config";
 import { Miniflare, convertV4MiniflareOptions } from "miniflare";
-import { loadEnvFile } from "node:process";
 import { resolve } from "node:path";
 
-try {
-  loadEnvFile(".env");
-} catch (error) {
-  if (error.code !== "ENOENT") throw error;
-}
 const parsed = await loadAndParseConfig(resolve("cloudflare.config.ts"), {
   isPreview: false,
   mode: "development",

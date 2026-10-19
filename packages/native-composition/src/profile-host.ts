@@ -14,6 +14,7 @@ import {profileManifest, profileDescriptor, profileEntries, presetEntryId} from 
 import type {PluginInfo, BundleInfo} from '@deepseek-ai/dsh-plugin-manager/types';
 import pluginRemote from '../../../.generated/official-remotes/packages/boot/plugin-manager/typert.remote-client.js';
 import inventoryRemote from '../../../.generated/official-remotes/packages/host/plugin-inventory/typert.remote-client.js';
+import {mountNativeSubagentProviders} from '../../native-subagents/src/index.ts';
 
 export type CompositionEndpoint = 'agentPresets/list' | 'agentPresets/read' | 'pluginInventory/list' | 'pluginManager/listPlugins' | 'pluginManager/listBundles';
 const methods = {...remote.methods, ...pluginRemote.methods, ...inventoryRemote.methods};
@@ -31,6 +32,7 @@ export async function readNativePresets(profiles: AgentRevision[], defaultId: st
     await ctx.plugin(Tools);
     await ctx.plugin(Agents);
     await mountWorkspace(ctx);
+    await mountNativeSubagentProviders(ctx, {maxDepth: 1, maxActiveSubagents: 8});
     const registry = await mountNativeComposition(ctx, profiles.map(nativePresetDefinition), defaultId, profiles.filter(profile => profile.spec.disabled).map(profile => profile.spec.id));
     let value: unknown;
     if (endpoint === 'agentPresets/list') value = await registry.remoteExportList();

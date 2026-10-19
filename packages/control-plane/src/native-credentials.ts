@@ -11,11 +11,10 @@ function checkedRecord(value: unknown): CredentialRecord {
   return record.kind === 'grant' ? record : {kind: 'api-key', ...(record.key === undefined ? {} : {key: record.key}), ...(record.env === undefined ? {} : {env: record.env})};
 }
 
-/** Native credential seam with environment-local SQLite and an explicit host fallback. */
+/** Native credential seam with environment-local SQLite; credentials have no host fallback. */
 export class DurableCredentials extends CredentialProvider {
   private readonly locks = new Map<string, Promise<void>>();
   constructor(ctx: Context, private readonly storage: DurableObjectStorage,
-    private readonly fallback: (ref: CredentialRef) => ResolvedCredential | undefined,
     private readonly changed: (event: string, subject: string) => void) {
     super(ctx);
     storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_credential_refs (ref TEXT PRIMARY KEY, value TEXT NOT NULL)');
@@ -24,7 +23,7 @@ export class DurableCredentials extends CredentialProvider {
   override async resolve(ref: CredentialRef): Promise<ResolvedCredential | undefined> {
     credentialRef(ref);
     const row = this.storage.sql.exec<{value: string}>('SELECT value FROM weft_credential_refs WHERE ref=?', ref).toArray()[0];
-    return row ? {value: row.value, source: 'environment'} : this.fallback(ref);
+    return row ? {value: row.value, source: 'environment'} : undefined;
   }
   override async describe(ref: CredentialRef) {
     const value = await this.resolve(ref);

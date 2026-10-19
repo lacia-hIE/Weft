@@ -21,6 +21,7 @@ import type {Context} from '@deepseek-ai/cordis';
 import AgentLoop from '@deepseek-ai/dsh-agent-loop';
 import {updateVolatile} from '@deepseek-ai/cosmokit';
 import {mountNativeAttachments} from '../../../packages/native-attachments/src/index.ts';
+import {mountNativeSubagents, type SubagentLimits} from '../../../packages/native-subagents/src/index.ts';
 
 type Reader = Awaited<ReturnType<typeof createSessionReader>>;
 export async function sessionRuntime(env: Env, storage: DurableObjectStorage, scope: SessionScope, profile: AgentRevision | undefined, workspaceId: string | null, persona: string, presentation: boolean, reader?: Reader, hooks: Pick<RuntimeOptions, 'onEvent' | 'onFrame'> = {}, cwd = '/workspace', requireCredential = true) {
@@ -36,6 +37,7 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
   const loop = await (await controlFor(env, owner).nativeLoopConfiguration(owner)).json() as {maxParallelToolCalls: number};
   let activeAgent: Agent | undefined;
   let composition: Context | undefined;
+  let refreshSubagents: ((limits: SubagentLimits) => void) | undefined;
   const options: RuntimeOptions = {
     sessionId: scope.sessionId,
     persona: profile ? `${profile.spec.persona}\n${profile.spec.allowClientPlugins ? presentation ? NATIVE_PLUGIN_GUIDE : CLIENT_PLUGIN_GUIDE : ''}` : persona,
@@ -49,6 +51,7 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
       }
       const next = await (await controlFor(env, owner).nativeLoopConfiguration(owner)).json() as {maxParallelToolCalls: number};
       if (runtimeRoot) updateVolatile(runtimeRoot.agentLoop.config.maxParallelToolCalls, AgentLoop.Config({maxParallelToolCalls: next.maxParallelToolCalls}).maxParallelToolCalls);
+      if (refreshSubagents) refreshSubagents(await (await controlFor(env, owner).nativeSubagentConfiguration(owner)).json() as SubagentLimits);
     },
     ...(presentation ? {meta: {cwd, ...(profile ? {agentPreset: profile.spec.id} : {})}} : {}),
     ...(presentation && profile ? {setupAgent: async (ctx, agent) => {
@@ -60,16 +63,23 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
     onSessionCreated: session => { reader?.created(session); },
     onSessionDisposed: session => { reader?.sessionDisposed(session); },
     onEvent: (event, session) => { reader?.event(session, event); hooks.onEvent?.(event, session); },
-    onFrame: frame => { if (activeAgent) reader?.frame(activeAgent, frame); hooks.onFrame?.(frame); },
+    onFrame: (frame, agent) => { reader?.frame(agent, frame); hooks.onFrame?.(frame, agent); },
     mountPersistence: async ctx => { await ctx.plugin(SqliteSessionPersistence, {storage}); },
     mountTools: async ctx => {
       registerIdentityTool(ctx, scope.tenantId);
+      if (presentation) ctx.on('agent/created', async ({agent}) => {
+        const header = agent.session.header;
+        if (header.origin !== 'subagent') return;
+        if (!header.parentSession) throw new Error('Native child has no parent');
+        await controlFor(env, owner).nativeRegisterChild(owner, scope.sessionId, header.parentSession, agent.id);
+      }, {global: true});
       if (workspaceId !== null) {
         const workspace = {tenantId: scope.tenantId, workspaceId, ...(scope.environmentId ? {environmentId: scope.environmentId} : {})};
         await mountWorkspace(ctx, {scope: workspace, transport: env.WORKSPACES.getByName(workspaceAddress(workspace)), cwd, readImage: presentation && env.IMAGES !== undefined});
         if (presentation) await mountNativeAttachments(ctx, {storage, scope: workspace, sessionId: scope.sessionId, transport: env.WORKSPACES.getByName(workspaceAddress(workspace)), ...(env.IMAGES ? {images: env.IMAGES} : {})});
       }
       if (profile) {
+        if (presentation) refreshSubagents = await mountNativeSubagents(ctx, storage, await (await controlFor(env, owner).nativeSubagentConfiguration(owner)).json() as SubagentLimits);
         if (presentation) {await mountNativeComposition(ctx, [nativePresetDefinition(profile)], profile.spec.id); composition = ctx;}
         else await mountPlugins(ctx, profile.spec.plugins);
         if (profile.spec.allowClientPlugins && !presentation) {
@@ -77,6 +87,9 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
           mountClientPublisher(ctx, input => controlFor(env, controlScope(scope.tenantId, scope.environmentId)).publishClient(controlScope(scope.tenantId, scope.environmentId), input));
         }
       }
+      if (presentation) ctx.on('agent/disposed', ({agent}) => {
+        if (agent.id !== scope.sessionId) reader?.dispose(agent);
+      }, {global: true});
     },
   };
   return {options, turnTimeoutMs: model.turnTimeoutMs};

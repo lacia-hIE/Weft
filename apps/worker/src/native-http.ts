@@ -18,10 +18,13 @@ import {FILE_UPLOAD_PATH} from '@weft/upstream/packages/client/file-upload/src/p
 import type { NativePluginEndpoint } from '../../../packages/native-plugins/src/host.ts';
 import { MODEL_NAMESPACE } from '../../../packages/control-plane/src/native-settings.ts';
 import {mapConcurrent} from '../../../packages/native-query/src/concurrent.ts';
+import {subagentRemote, type SubagentEndpoint} from '../../../packages/native-subagents/src/protocol.ts';
 import { controlFor, controlScope } from '../../../packages/control-plane/src/object.ts';
 import { sessionAddress, scopeSchema, type Principal } from '../../../packages/tenant/src/index.ts';
 import type { Env } from './index.ts';
 import { assertSameOrigin, HttpError, readJson } from './http.ts';
+declare const WEFT_VALIDATION_BUILD: boolean;
+
 import { resolveTenantModel, ModelConfigurationError, readEnvironmentModelConfiguration } from '../../../packages/model-provider/src/index.ts';
 
 const payloadSchema = z.object({args: z.unknown()}).strict();
@@ -82,8 +85,14 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
     return {scope, stub: env.SESSIONS.getByName(sessionAddress(scope))};
   };
   const notFound = (sessionId: string): never => { throw new RemoteError('session/not-found', 'Session not found', {sessionId: SessionId(sessionId)}); };
+  const parentSession = async (parentId: string, childId = parentId) => {
+    session(parentId);
+    const root = await control.nativeSessionRoot(owner, parentId);
+    if (!root) throw new RemoteError('subagent/not-found', 'Subagent parent is not available', {parentSessionId: SessionId(parentId), childSessionId: SessionId(childId)});
+    return session(root);
+  };
   try {
-    const raw = await readJson(request, endpoint === 'session/prompt' ? IMAGE_PROMPT_BODY_BYTES : endpoint === 'fileUploads/upload' ? 8 * 1024 * 1024 : 65_536);
+    const raw = await readJson(request, endpoint === 'session/prompt' || endpoint === 'subagents/prompt' ? IMAGE_PROMPT_BODY_BYTES : endpoint === 'fileUploads/upload' ? 8 * 1024 * 1024 : 65_536);
     if (match[2] === 'streams') {
       if (endpoint === 'workspaceFiles/changes') {
         const observerId = z.uuid().parse(request.headers.get('x-weft-observer-id'));
@@ -108,8 +117,7 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
       if (endpoint !== 'session/follow') throw new RemoteError('gateway/method-unavailable', 'Remote stream is not connected yet', {endpoint});
       const payload = payloadSchema.parse(raw);
       const args = sessionRemote.methods['session/follow'].input({strict: true}).create().parse(payload.args);
-      if (args.request.address.kind !== 'session') throw new RemoteError('gateway/method-unavailable', 'Subagent history is not connected yet', {endpoint});
-      const target = session(args.request.address.sessionId);
+      const target = args.request.address.kind === 'session' ? session(args.request.address.sessionId) : await parentSession(args.request.address.parentSessionId);
       return await target.stub.fetch(new Request('https://session.internal/native-follow', {
         method: 'POST', body: JSON.stringify({scope: target.scope, operation: 'native-follow', args}), signal: request.signal,
       }));
@@ -118,6 +126,22 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
     rpcId = envelope.rpcId;
     if (envelope.method !== endpoint) throw new RemoteError('gateway/bad-request', 'RPC method does not match endpoint', {});
     const payload = payloadSchema.parse(envelope.payload);
+    if (Object.hasOwn(subagentRemote.methods, endpoint)) {
+      const method = subagentRemote.methods[endpoint as SubagentEndpoint];
+      const args = method.input({strict: true}).create().parse(payload.args);
+      const parentId = 'request' in args ? args.request.parentSessionId : args.parentSessionId;
+      const target = await parentSession(parentId);
+      const response = await target.stub.fetch(new Request('https://session.internal/native-subagent', {
+        method: 'POST', body: JSON.stringify({scope: target.scope, operation: 'native-subagent', endpoint, args}), signal: request.signal,
+      }));
+      const result = await response.json() as {ok: boolean; value?: unknown; error?: unknown};
+      if (!result.ok) {
+        const failure = remoteErrorOf(result.error);
+        if (failure) throw new RemoteError(failure.code, failure.message, failure.details);
+        throw new RemoteError('gateway/internal', 'Invalid subagent response', {});
+      }
+      return Response.json({type: 'server-response', rpcId, result: {ok: true, value: method.result.create().parse(result.value)}}, {headers: {'cache-control': 'private, no-store'}});
+    }
     if (endpoint === 'fileUploads/upload') {
       const method = uploadRemote.methods[endpoint];
       const args = method.input({strict: true}).create().parse(payload.args);
@@ -183,12 +207,14 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
       method.input({strict: true}).create().parse(payload.args);
       const value = method.result.create().parse(endpoint === 'llm/listConfigurableProviders'
         ? [{provider: 'deepseek-official', displayName: 'DeepSeek', settingsNs: MODEL_NAMESPACE, settingsPath: []}]
-        : env.MODEL_BACKEND === 'scripted' ? [{id: 'validation', name: 'validation'}] : [{id: 'deepseek-official', name: 'DeepSeek'}]);
+        : WEFT_VALIDATION_BUILD && env.MODEL_BACKEND === 'scripted' ? [{id: 'validation', name: 'validation'}] : [{id: 'deepseek-official', name: 'DeepSeek'}]);
       return Response.json({type: 'server-response', rpcId, result: {ok: true, value}}, {headers: {'cache-control': 'private, no-store'}});
     }
     if (endpoint.startsWith('workspace/') || endpoint.startsWith('directoryPicker/')) {
       const output = await control.nativeWorkspace(owner, endpoint, payload.args);
-      const {value} = await output.json() as {value?: unknown};
+      const {value, error} = await output.json() as {value?: unknown; error?: unknown};
+      const failure = remoteErrorOf(error);
+      if (failure) throw new RemoteError(failure.code, failure.message, failure.details);
       return Response.json({type: 'server-response', rpcId, result: {ok: true, value}}, {headers: {'cache-control': 'private, no-store'}});
     }
     let value: unknown;
@@ -204,7 +230,7 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
       case 'session/modelCatalog': {
         sessionRemote.methods[endpoint].input({strict: true}).create().parse(payload.args);
         const configuration = await readEnvironmentModelConfiguration(await control.nativeModelConfiguration(owner));
-        const selected = resolveTenantModel(env, principal.tenantId, await control.nativeDefaultModel(owner), configuration);
+        const selected = resolveTenantModel(env, principal.tenantId, await control.nativeDefaultModel(owner), configuration, false);
         const provider = selected.adapter.providerInfo(selected.model.provider);
         const models = await selected.adapter.listModels(selected.model.provider);
         value = {default: selected.model, routableProviders: models.length ? [provider.id] : [], groups: models.length ? [{id: provider.id, name: provider.name, models: models.map(model => ({id: model.id, name: model.name, ...(model.description ? {description: model.description} : {}), ...('reasoning' in model && model.reasoning ? {reasoning: model.reasoning} : {})}))}] : [], failures: []};
@@ -215,6 +241,8 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
         const workspace = await control.nativeResolveWorkspace(owner, input.workspaceId, input.cwd);
         let sessionId = input.sessionId ?? SessionId(crypto.randomUUID());
         let target = session(sessionId);
+        const existingOwner = await control.nativeSessionRoot(owner, sessionId);
+        if (existingOwner && existingOwner !== sessionId) {sessionId = SessionId(crypto.randomUUID()); target = session(sessionId);}
         const existing = await target.stub.nativeStatus(target.scope);
         if (existing && (!existing.blank || existing.running)) {
           sessionId = SessionId(crypto.randomUUID());
@@ -235,15 +263,11 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
       case 'session/list': {
         sessionRemote.methods[endpoint].input({strict: true}).create().parse(payload.args);
         const records = await control.sessionIndex(owner);
-        const items = await mapConcurrent(records, async record => {
+        const groups = await mapConcurrent(records, async record => {
           const target = session(record.id);
-          const status = await target.stub.nativeStatus(target.scope);
-          if (!status) return undefined;
-          const raw: unknown = await (await target.stub.nativeProjections(target.scope)).json();
-          const projections = sessionRemote.methods['session/projections'].result.create().parse(raw);
-          return {...status, ...(projections?.kind === 'sequenced' ? {projections: {kind: 'sequenced' as const, asOfSeq: projections.asOfSeq, values: projections.values}} : {})};
+          return sessionRemote.methods[endpoint].result.create().parse(await (await target.stub.nativeSessionSummaries(target.scope)).json()).items;
         }, request.signal);
-        value = {items: items.filter(item => item !== undefined)};
+        value = {items: groups.flat()};
         break;
       }
       case 'session/search': {
@@ -262,21 +286,20 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
       }
       case 'session/page': {
         const {request: input} = sessionRemote.methods[endpoint].input({strict: true}).create().parse(payload.args);
-        if (input.address.kind !== 'session') throw new RemoteError('gateway/method-unavailable', 'Subagent history is not connected yet', {endpoint});
-        const target = session(input.address.sessionId);
+        const target = input.address.kind === 'session' ? session(input.address.sessionId) : await parentSession(input.address.parentSessionId);
         value = await (await target.stub.nativePage(target.scope, input)).json();
         break;
       }
       case 'session/projections': {
         const {request: input} = sessionRemote.methods[endpoint].input({strict: true}).create().parse(payload.args);
-        const target = session(input.sessionId);
-        value = await (await target.stub.nativeProjections(target.scope)).json();
+        const target = session(await control.nativeSessionRoot(owner, input.sessionId) ?? input.sessionId);
+        value = await (await target.stub.nativeProjections(target.scope, input.sessionId)).json();
         break;
       }
       case 'session/attachment': {
         const {request: input} = sessionRemote.methods[endpoint].input({strict: true}).create().parse(payload.args);
-        const target = session(input.sessionId);
-        const response = await target.stub.nativeImageAttachment(target.scope, input.attachmentId);
+        const target = session(await control.nativeSessionRoot(owner, input.sessionId) ?? input.sessionId);
+        const response = await target.stub.nativeImageAttachment(target.scope, input.attachmentId, input.sessionId);
         value = (await response.json() as {value: unknown}).value;
         break;
       }
