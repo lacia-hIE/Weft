@@ -36,7 +36,7 @@ import { nativePluginFsMethods } from '../../../packages/native-plugins/src/prot
 import { turnFailure, ModelConfigurationError, type ModelEnvironment, type TurnFailure } from '../../../packages/model-provider/src/index.ts';
 import type { RuntimeOptions } from '../../../packages/harness-runtime/src/runtime.ts';
 import { RemoteError } from '@deepseek-ai/dsh-typert-protocol';
-import { initializeSessionStorage, SqliteSessionPersistence, readSessionSnapshot } from '../../../packages/session-persistence-do/src/index.ts';
+import { initializeSessionStorage, SqliteSessionPersistence, readSessionSnapshot, readSessionMetadata, readSessionEventPage } from '../../../packages/session-persistence-do/src/index.ts';
 import { authenticateAccess, sessionAddress, scopeSchema, type SessionScope } from '../../../packages/tenant/src/index.ts';
 import {authenticateAccessAssertion, AccessAssertionUnavailable} from '../../../packages/tenant/src/access-assertion.ts';
 
@@ -328,6 +328,18 @@ export class SessionDO extends DurableObject<Env> {
     return readSessionSnapshot(this.ctx.storage, SessionId(scope.sessionId))?.header;
   }
 
+  async nativeSearchMetadata(input: SessionScope) {
+    const scope = this.assertScope(input);
+    if (!this.ctx.storage.sql.exec('SELECT id FROM weft_session_config WHERE id=1 AND presentation=1').toArray().length) return undefined;
+    return readSessionMetadata(this.ctx.storage, SessionId(scope.sessionId));
+  }
+
+  async nativeSearchPage(input: SessionScope, offset: number, end: number): Promise<Response> {
+    const scope = this.assertScope(input);
+    if (!this.ctx.storage.sql.exec('SELECT id FROM weft_session_config WHERE id=1 AND presentation=1').toArray().length) throw new RemoteError('session/not-found', 'Session not found', {sessionId: SessionId(scope.sessionId)});
+    return Response.json({events: readSessionEventPage(this.ctx.storage, SessionId(scope.sessionId), offset, end)});
+  }
+
   private async fileHost(input: SessionScope) {
     const scope = this.assertScope(input);
     const config = this.ctx.storage.sql.exec<{workspace_id: string}>('SELECT workspace_id FROM weft_session_config WHERE id=1 AND presentation=1 AND EXISTS (SELECT 1 FROM harness_sessions WHERE id=?)', scope.sessionId).toArray()[0];
@@ -526,6 +538,17 @@ export class SessionDO extends DurableObject<Env> {
       return response;
     }
     const raw: unknown = await request.json();
+    if (typeof raw === 'object' && raw !== null && 'operation' in raw && (raw.operation === 'native-search-metadata' || raw.operation === 'native-search-page')) {
+      const envelope = z.discriminatedUnion('operation', [
+        z.object({scope: scopeSchema, operation: z.literal('native-search-metadata')}).strict(),
+        z.object({scope: scopeSchema, operation: z.literal('native-search-page'), offset: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER), end: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER)}).strict(),
+      ]).parse(raw);
+      this.assertScope(envelope.scope);
+      request.signal.throwIfAborted();
+      return envelope.operation === 'native-search-metadata'
+        ? Response.json({value: await this.nativeSearchMetadata(envelope.scope)})
+        : this.nativeSearchPage(envelope.scope, envelope.offset, envelope.end);
+    }
     if (typeof raw === 'object' && raw !== null && 'operation' in raw && raw.operation === 'native-file-changes') {
       const envelope = z.object({scope: scopeSchema, operation: z.literal('native-file-changes'), observerId: z.uuid(), args: z.unknown()}).strict().parse(raw);
       this.assertScope(envelope.scope);

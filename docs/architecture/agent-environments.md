@@ -45,6 +45,10 @@ UI 资产由没有公网入口的 Worker 通过 Static Assets binding 读取；�
 
 `$events`、`session/control` 与 `workspace/follow` 提供环境内的真实通知及重新连接基线。通知本身不持久化，重连重新读取 DO 状态；观察者退出不终止 Agent 执行。浏览器切换采用完整导航，并按租户与环境划分原版客户端持久化键，防止同名 Session 缓存串用。
 
+官方侧栏的正文搜索复用原版 `ApiSessionList.search` 与 `SqliteSessionQueryEngine`。EnvironmentDO 的只读 `SessionPersistence` 从所属 SessionDO 读取真实元数据与提交日志，以当前 user/assistant 消息为搜索范围；SQL 查询、排序、摘要、游标、可见性过滤及 20 条结果上限沿用上游。派生索引与源日志分属不同存储职责，读页按 UTF-8 字节限制并携带明确日志 cut，搜索不取得 writer、不创建 Agent，也不把只读恢复闭合事件写回源日志。Source Fetch 链路携带取消信号，内部扇出限制为 4；目录、Workspace header 和控制流基线不再隐藏第 201 条以后的会话。
+
+DO SQLite 不支持临时表与显式 SQL 事务指令，因此只替换原版引擎的数据库开放和事务边界。原版 DDL 生成到独立的 `weft_query_*` 派生表，连接级 live 表在新查询宿主首次打开时清空；原始会话、配置和文件表不参与派生重建。SessionDO 的真实热 Session 仍由原版只读查询服务直接观察，历史订阅不经环境搜索索引。详见 [搜索验证](../validation/native-session-search.md)。
+
 ## 原生动态 Cordis 插件
 
 `packages/native-plugins` 直接挂载固定上游的 `DynamicCordisRunnerService`；define/run/stop、不可变 package、原版审批面板、客户端 runner 和生命周期反馈沿用原实现。`scripts/native-cordis-platform.mjs` 仅在构建时替换注册表所有权、Node VM 沙箱入口和环境全局请求 ID，遇到上游 seam 变化立即构建失败；不修改上游 checkout。
@@ -96,7 +100,7 @@ Boot Graph 由真实客户端工厂产物生成，复用官方 `orderByModuleGra
 以下工作仍未完成，目标保持进行中：
 
 1. 继续补齐预设编辑、权限、文件及更多插件的原生配置和 Host 接口、业务投影；原版 Inbox 和预设选择的页面交互已验收，未连接能力返回明确错误。
-2. 验证实时控制流在并发写入、长任务、断线与 DO 重建后的完整一致性，并解决 Session 目录当前 200 条上限。
+2. 继续验证实时控制流在大规模并发写入、长任务、断线与 DO 重建后的完整一致性；Session 目录的 200 条上限已移除，并完成 205 条目录、搜索及控制基线验证。
 3. 完成剩余业务接口后移除过渡界面；官方 AppWebEntry 已设为默认入口，独立扩展提供 My Agents 导航。
 4. 继续补齐静态插件包的安装、更新、卸载及更多配置生命周期；原版 Plugins 的真实配置包清单、预设条目启停和 Agent loop 表单已接入。扩展动态插件的 workerd 服务桥接和部署验收。
 5. 完成更多 provider/插件的凭据集成和环境管理生命周期，按新布局验收，不做旧数据兼容。

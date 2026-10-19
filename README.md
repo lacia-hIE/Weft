@@ -44,6 +44,8 @@ curl http://localhost:8787/v1/tenants/TENANT_ID/sessions/example/events
 
 官方输入框已接通通用文件上传，回执按 Session 持久化，文件可以随提示词进入原生队列并由真实工具读取，详见 [原版附件验证](docs/validation/native-attachments.md)。图片输入通过 Cloudflare Images 解码并保存到环境的 Computer 卷；原版图片历史、查看器和 DeepSeek Files API 已接通，上传缓存按环境隔离。原生会话的 Agent 还可通过原版 `read_image` 查看工作区已有图片，详见 [原版图片验证](docs/validation/native-images.md)。
 
+官方侧栏已接通会话正文搜索，复用原版搜索控制器、语义文本提取、FTS5 排序和摘要；每个环境独立索引实际已提交的会话日志。目录与控制流基线不再截断到 200 条，搜索不激活冷 Agent，也不取得会话写入权。实现与验证见 [会话搜索](docs/validation/native-session-search.md)。
+
 目录职责：
 
 | 路径 | 职责 |
@@ -64,6 +66,7 @@ curl http://localhost:8787/v1/tenants/TENANT_ID/sessions/example/events
 | `packages/workspace` | Computer WorkspaceDO、原生 Harness 文件系统适配、版本冲突与文件 API |
 | `packages/model-provider` | 按租户解析模型与凭据、复用上游 DeepSeek 适配器、归一化安全错误 |
 | `packages/session-persistence-do` | 实现 upstream `SessionPersistence` 和 `SessionHandle`，管理 SQLite 事件与写入所有权 |
+| `packages/native-query` | 原版 SQLite 搜索引擎的 DO 数据库端口、环境范围的只读会话来源与官方搜索控制器 |
 | `packages/tenant` | Access 用户身份映射、SessionScope 校验和租户限定的对象名称 |
 | `scripts` | 固定上游、生成类型声明、构建及依赖审计 |
 | `tests` | 在本地 workerd 中执行行为、隔离、存储及恢复测试 |

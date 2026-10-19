@@ -64,7 +64,10 @@ test('real DeepSeek authors a native Cordis UI plugin whose approved Host runs i
   await page.locator('[contenteditable=true]').fill('创建一个双端 Cordis 插件，名字 Native live counter。使用 cordis_inspect_list 和 cordis_inspect_query 确认原生 API 后，用 cordis_define 和 cordis_run 定义并请求运行。Host 用 harness.handle("increment",...) 维护从 0 开始的计数，通过注入的 fs 写入 /workspace/native-live-counter.txt，内容 live:1 等；返回 JSON {count}。Client 直接使用闭包提供的 React（不 import、不用 JSX），用 React.useState 和 React.createElement 在 conversation.session.header.utilities 插槽注册一个按钮，初始文字 LIVE_NATIVE_0，点击后 await host.call("increment",null) 并将文字更新为 LIVE_NATIVE_1 等。code.host 和 code.client 都是返回 Cordis plugin 的普通 JavaScript 函数体。不要直接在回答中输出代码；必须通过工具创建，等待我在原版 Cordis 面板批准。');
   await page.getByRole('button', {name: 'Send message', exact: true}).click();
   const approve = page.getByRole('button', {name: 'Allow this version only', exact: true});
-  const counter = page.getByRole('button', {name: 'LIVE_NATIVE_0', exact: true});
+  // Generated plugins may give a counter button its own accessible label.
+  // Assert its visible counter text and real Host/FS effect independently.
+  const counter = page.getByRole('button').filter({hasText: /^\s*LIVE_NATIVE_0\s*$/});
+  const incremented = page.getByRole('button').filter({hasText: /^\s*LIVE_NATIVE_1\s*$/});
   // The real model can repair an activation from its native diagnostic. Each
   // immutable revision still receives its own explicit human approval.
   for (let revision = 0; revision < 3; revision++) {
@@ -73,14 +76,14 @@ test('real DeepSeek authors a native Cordis UI plugin whose approved Host runs i
     await expect.poll(async () => await counter.isVisible() ? 'ready' : await approve.isVisible() ? 'review' : 'waiting', {timeout: 60_000}).not.toBe('waiting');
     if (await counter.isVisible()) {
       await counter.click();
-      await expect.poll(async () => await page.getByRole('button', {name: 'LIVE_NATIVE_1', exact: true}).isVisible() ? 'ready' : await approve.isVisible() ? 'review' : 'waiting', {timeout: 60_000}).not.toBe('waiting');
-      if (await page.getByRole('button', {name: 'LIVE_NATIVE_1', exact: true}).isVisible()) break;
+      await expect.poll(async () => await incremented.isVisible() ? 'ready' : await approve.isVisible() ? 'review' : 'waiting', {timeout: 60_000}).not.toBe('waiting');
+      if (await incremented.isVisible()) break;
     }
   }
-  await expect(page.getByRole('button', {name: 'LIVE_NATIVE_1', exact: true})).toBeVisible({timeout: 30_000});
+  await expect(incremented).toBeVisible({timeout: 30_000});
   const file = await request.get(base+'/workspaces/default/files?path=/workspace/native-live-counter.txt');
   expect(file.status()).toBe(200);
   expect(await file.text()).toContain('live:1');
   await page.reload();
-  await expect(page.getByRole('button', {name: 'LIVE_NATIVE_0', exact: true})).toBeVisible({timeout: 45_000});
+  await expect(counter).toBeVisible({timeout: 45_000});
 });

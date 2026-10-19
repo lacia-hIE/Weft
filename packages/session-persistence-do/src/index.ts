@@ -24,6 +24,40 @@ export interface SessionSnapshot {
   events: readonly SessionEvent[];
 }
 
+export interface SessionReadMetadata {
+  header: SessionHeader;
+  inheritedEventCount: number;
+  eventCount: number;
+  revision: string;
+}
+
+/** Header-only committed observation; no Agent, Session reader or writer opens. */
+export function readSessionMetadata(storage: DurableObjectStorage, id: SessionId): SessionReadMetadata | undefined {
+  const row = storage.sql.exec<HeaderRow>('SELECT * FROM harness_sessions WHERE id=?', id).toArray()[0];
+  if (!row) return undefined;
+  const header = materializeCreateHeader(JSON.parse(row.header_json));
+  assertStoredId(id, header); assertVersion(header);
+  return {header, inheritedEventCount: row.inherited_count, eventCount: row.event_count, revision: `${id}:${row.event_count}`};
+}
+
+/** A byte-bounded committed prefix page. Append-only storage keeps its cut valid. */
+export function readSessionEventPage(storage: DurableObjectStorage, id: SessionId, offset: number, end: number): SessionEvent[] {
+  const metadata = readSessionMetadata(storage, id);
+  if (!metadata) throw new SessionPersistenceNotFoundError(id);
+  if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(end) || end < offset || end > metadata.eventCount) throw new Error('Invalid session read cut');
+  const rows = storage.sql.exec<{event_json: string; bytes: number}>('SELECT event_json, length(CAST(event_json AS BLOB)) AS bytes FROM harness_events WHERE session_id=? AND seq>=? AND seq<? ORDER BY seq LIMIT 128', id, offset, end);
+  const raw: SessionEvent[] = [];
+  let bytes = 0;
+  for (const row of rows) {
+    if (raw.length && bytes + row.bytes > 524288) break;
+    raw.push(JSON.parse(row.event_json)); bytes += row.bytes;
+  }
+  const events = validateStoredEvents(metadata.header, raw);
+  assertContiguous(id, events, offset);
+  if (offset < end && events.length === 0) throw new Error('Committed session prefix has a missing event');
+  return events;
+}
+
 /** Read one coherent committed log cut without waiting behind an active model turn. */
 export function readSessionSnapshot(storage: DurableObjectStorage, id: SessionId): SessionSnapshot | undefined {
   return storage.transactionSync(() => {

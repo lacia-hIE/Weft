@@ -6,6 +6,7 @@ import { nativeCordisPlatform } from './native-cordis-platform.mjs';
 import { nativeCompositionPlatform } from './native-composition-platform.mjs';
 import {prepareConnectionResponse} from './official-connection-response.mjs';
 import {nativeAttachmentsPlatform, prepareAttachmentHelpers} from './native-attachments-platform.mjs';
+import {nativeQueryPlatform, prepareQuerySchema} from './native-query-platform.mjs';
 
 // Bundles have no adjacent package.json at runtime. Preserve upstream attribution
 // while converting this one Node loader operation to a static JSON import.
@@ -49,6 +50,7 @@ mkdirSync('dist', { recursive: true });
 const upstreamDirectory = JSON.parse(readFileSync('.generated/upstream-source.json','utf8')).directory;
 prepareConnectionResponse(upstreamDirectory);
 prepareAttachmentHelpers(upstreamDirectory);
+prepareQuerySchema(upstreamDirectory);
 const browserNodeModule = {
   name: 'official-loader-browser-boundary',
   setup(builder) {
@@ -130,7 +132,7 @@ if (existsSync('.generated/official-web-assets/harness/boot.json')) {
 writeFileSync('.generated/ui-paths.ts', `export const uiPaths: string[] = ${JSON.stringify(paths)};\n`);
 writeFileSync('dist/web-metafile.json', JSON.stringify(web.metafile, null, 2) + '\n');
 const result = await build({
-  entryPoints: { worker: 'apps/worker/src/index.ts', 'assets-worker':'apps/assets/src/index.ts', 'images-worker': 'tests/fixtures/images-worker.ts', 'contracts-worker': 'tests/fixtures/contracts-worker.ts', 'dynamic-worker': 'tests/fixtures/dynamic-worker.ts', 'composition-worker': 'tests/fixtures/composition-worker.ts', 'preset-worker': 'tests/fixtures/preset-worker.ts' },
+  entryPoints: { worker: 'apps/worker/src/index.ts', 'assets-worker':'apps/assets/src/index.ts', 'images-worker': 'tests/fixtures/images-worker.ts', 'native-query-worker': 'tests/fixtures/native-query-worker.ts', 'contracts-worker': 'tests/fixtures/contracts-worker.ts', 'dynamic-worker': 'tests/fixtures/dynamic-worker.ts', 'composition-worker': 'tests/fixtures/composition-worker.ts', 'preset-worker': 'tests/fixtures/preset-worker.ts' },
   outdir: 'dist',
   bundle: true,
   format: 'esm',
@@ -138,7 +140,7 @@ const result = await build({
   target: 'es2024',
   external: ['cloudflare:workers', 'node:*'],
   tsconfig: '.generated/upstream.source.tsconfig.json',
-  plugins: [staticAttribution, providerFetch, nativeCordisPlatform, nativeCompositionPlatform, nativeAttachmentsPlatform],
+  plugins: [staticAttribution, providerFetch, nativeCordisPlatform, nativeCompositionPlatform, nativeAttachmentsPlatform, nativeQueryPlatform],
   sourcemap: true,
   metafile: true,
 });
@@ -157,6 +159,7 @@ if (shippedInputs.some(path => /node_modules\/(sharp|@img)\//.test(path))) {
 if (result.metafile.outputs['dist/worker.js'].imports.some(item => item.path === 'node:vm')) {
   throw new Error('Node VM sandbox leaked into the workerd application bundle');
 }
+if (result.metafile.outputs['dist/worker.js'].imports.some(item => item.path === 'node:sqlite')) throw new Error('Node SQLite leaked into the workerd search backend');
 for (const dependency of forbiddenWorkspaceDependencies) {
   if (shippedInputs.some(path => path.includes(`node_modules/${dependency}/`))) {
     throw new Error(`Unreviewed workspace execution dependency in application bundle: ${dependency}`);

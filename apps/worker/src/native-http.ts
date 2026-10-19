@@ -17,6 +17,7 @@ import uploadRemote from '../../../.generated/official-remotes/packages/client/f
 import {FILE_UPLOAD_PATH} from '@weft/upstream/packages/client/file-upload/src/protocol.ts';
 import type { NativePluginEndpoint } from '../../../packages/native-plugins/src/host.ts';
 import { MODEL_NAMESPACE } from '../../../packages/control-plane/src/native-settings.ts';
+import {mapConcurrent} from '../../../packages/native-query/src/concurrent.ts';
 import { controlFor, controlScope } from '../../../packages/control-plane/src/object.ts';
 import { sessionAddress, scopeSchema, type Principal } from '../../../packages/tenant/src/index.ts';
 import type { Env } from './index.ts';
@@ -234,15 +235,29 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
       case 'session/list': {
         sessionRemote.methods[endpoint].input({strict: true}).create().parse(payload.args);
         const records = await control.sessionIndex(owner);
-        const items = await Promise.all(records.map(async record => {
+        const items = await mapConcurrent(records, async record => {
           const target = session(record.id);
           const status = await target.stub.nativeStatus(target.scope);
           if (!status) return undefined;
           const raw: unknown = await (await target.stub.nativeProjections(target.scope)).json();
           const projections = sessionRemote.methods['session/projections'].result.create().parse(raw);
           return {...status, ...(projections?.kind === 'sequenced' ? {projections: {kind: 'sequenced' as const, asOfSeq: projections.asOfSeq, values: projections.values}} : {})};
-        }));
+        }, request.signal);
         value = {items: items.filter(item => item !== undefined)};
+        break;
+      }
+      case 'session/search': {
+        const {request: input} = sessionRemote.methods[endpoint].input({strict: true}).create().parse(payload.args);
+        const response = await control.fetch(new Request('https://environment.internal/native-search', {
+          method: 'POST', body: JSON.stringify({operation: 'native-session-search', scope: owner, query: input.query}), signal: request.signal,
+        }));
+        const result = await response.json() as {ok: boolean; value?: unknown; error?: unknown};
+        if (!result.ok) {
+          const failure = remoteErrorOf(result.error);
+          if (failure) throw new RemoteError(failure.code, failure.message, failure.details);
+          throw new RemoteError('gateway/internal', 'Invalid session search response', {});
+        }
+        value = sessionRemote.methods[endpoint].result.create().parse(result.value);
         break;
       }
       case 'session/page': {

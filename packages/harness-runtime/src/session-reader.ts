@@ -2,7 +2,7 @@ import { Context } from '@deepseek-ai/cordis';
 import Sessions, { type Session, type SessionEvent, type SessionId } from '@deepseek-ai/dsh-session';
 import Projections from '@deepseek-ai/dsh-session-projection';
 import Title from '@deepseek-ai/dsh-session-title';
-import Query, { SessionQueryError } from '@deepseek-ai/dsh-session-query';
+import {installDurableSessionQuery} from '../../native-query/src/index.ts';
 import type { AssistantStreamFrame, Agent } from '@deepseek-ai/dsh-agent';
 import { installModelSelectionProjection } from './model-selection.ts';
 import { turnBoundaryProjectionDefinition } from '@deepseek-ai/dsh-agent-loop';
@@ -11,7 +11,6 @@ import {agentPresetProjectionDefinition} from '@weft/upstream/packages/preset/ag
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt';
 import Tools from '@deepseek-ai/dsh-tools';
 import * as Todo from '@deepseek-ai/dsh-tool-todo';
-import type { SessionSearchRequest, SessionSearchExecContext, SessionSearchPage, SessionSearchHit, SessionEventSearchRequest, SessionEventSearchPage } from '@deepseek-ai/dsh-session-query';
 import { SessionHistoryController } from '@weft/upstream/packages/api/session-controller/src/history.ts';
 import type {} from '@weft/upstream/packages/subagent/subagent/src/projection.ts';
 import { SqliteSessionPersistence } from '../../session-persistence-do/src/index.ts';
@@ -20,16 +19,6 @@ import {ComputerFileSystem} from '../../workspace/src/provider.ts';
 import type {WorkspaceScope, WorkspaceTransport} from '../../workspace/src/protocol.ts';
 import {ComputerAttachmentStore, type AttachmentTransport} from '../../native-attachments/src/store.ts';
 import {ApiSessionList} from '@weft/upstream/packages/api/session-controller/src/list.ts';
-
-// The official Web profile also leaves full-text indexing disabled by default.
-class DurableSessionQuery extends Query {
-  override async searchSessions(_request: SessionSearchRequest, _exec?: SessionSearchExecContext): Promise<SessionSearchPage<SessionSearchHit>> {
-    throw new SessionQueryError('Full-text indexing is not enabled', 'SESSION_QUERY_SEARCH_DISABLED');
-  }
-  override async searchEvents(_request: SessionEventSearchRequest, _exec?: SessionSearchExecContext): Promise<SessionEventSearchPage> {
-    throw new SessionQueryError('Full-text indexing is not enabled', 'SESSION_QUERY_SEARCH_DISABLED');
-  }
-}
 
 /** Reuse native cold-read, projections, pagination, follow and assistant continuity. */
 export async function createSessionReader(storage: DurableObjectStorage) {
@@ -43,6 +32,11 @@ export async function createSessionReader(storage: DurableObjectStorage) {
   class ReaderSessions extends Sessions {
     override get(id: SessionId): Session | undefined {
       return active?.agent.session.id === id ? active.agent.session : super.get(id);
+    }
+    override list(): Session[] {
+      const sessions = super.list();
+      const live = active?.agent.session;
+      return live && !sessions.some(session => session.id === live.id) ? [...sessions, live] : sessions;
     }
   }
   try {
@@ -59,7 +53,7 @@ export async function createSessionReader(storage: DurableObjectStorage) {
     installModelSelectionProjection(ctx);
     await ctx.plugin(Title, {fallbackMaxWords: 5, fallbackMaxBytes: 40, maxTitleBytes: 80});
     await ctx.plugin(SqliteSessionPersistence, {storage});
-    await ctx.plugin(DurableSessionQuery);
+    await installDurableSessionQuery(ctx, storage);
     const history = new SessionHistoryController(ctx, observation => {
       // SessionDO owns execution. A browser history lease does not create a
       // second in-memory Agent or take the durable writer from the turn queue.

@@ -35,6 +35,11 @@ import { tenantModelHost, ModelConfigurationError, type ModelEnvironment } from 
 import {SqliteModelUploadIndex, type ModelUploadOperation} from '../../model-provider/src/files-protocol.ts';
 import { DATA_LAYOUT_VERSION } from '../../tenant/src/layout.ts';
 import { NativePluginCatalog } from './native-plugins.ts';
+import {NativeSessionSearch} from '../../native-query/src/host.ts';
+import {mapConcurrent} from '../../native-query/src/concurrent.ts';
+import {remoteErrorOf} from '@deepseek-ai/dsh-typert-protocol';
+import type {SessionEvent} from '@deepseek-ai/dsh-session';
+import type {SessionReadMetadata} from '../../session-persistence-do/src/index.ts';
 
 export interface TenantEnvironment extends ModelEnvironment {
   TENANTS: DurableObjectNamespace<TenantDO>;
@@ -47,6 +52,32 @@ export const tenantAddress = (tenantId: string): string =>
 
 /** Environment-local Harness configuration, revisions and discoverable sessions. */
 abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
+  private nativeSearch: NativeSessionSearch | undefined;
+  private sessionSearch(scope: ControlScope): NativeSessionSearch {
+    this.scope(scope);
+    if (this.nativeSearch) return this.nativeSearch;
+    const target = (sessionId: string) => {
+      const address: SessionScope = {...scope, sessionId: id.parse(sessionId)};
+      return {scope: address, stub: this.env.SESSIONS.getByName(sessionAddress(address))};
+    };
+    return this.nativeSearch = new NativeSessionSearch(this.ctx.storage, {
+      ids: async signal => {signal?.throwIfAborted(); return (await this.sessionIndex(scope)).map(record => record.id);},
+      metadata: async (sessionId, signal) => {
+        signal?.throwIfAborted(); const session = target(sessionId);
+        const value = await (await session.stub.fetch(new Request('https://session.internal/native-search-metadata', {
+          method: 'POST', body: JSON.stringify({scope: session.scope, operation: 'native-search-metadata'}), ...(signal ? {signal} : {}),
+        }))).json() as {value?: SessionReadMetadata};
+        signal?.throwIfAborted(); return value.value;
+      },
+      page: async (sessionId, offset, end, signal) => {
+        signal?.throwIfAborted(); const session = target(sessionId);
+        const value = await (await session.stub.fetch(new Request('https://session.internal/native-search-page', {
+          method: 'POST', body: JSON.stringify({scope: session.scope, operation: 'native-search-page', offset, end}), ...(signal ? {signal} : {}),
+        }))).json() as {events: SessionEvent[]};
+        signal?.throwIfAborted(); return value.events;
+      },
+    });
+  }
   private modelUploads: SqliteModelUploadIndex | undefined;
   async nativeModelFiles(scope: ControlScope, operation: ModelUploadOperation): Promise<Response> {
     this.scope(scope);
@@ -146,7 +177,7 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
       header: async id => {const target=session(id); return target.stub.nativeHeader(target.scope);},
       headers: async () => {
         const records = await this.sessionIndex(scope);
-        const values = await Promise.all(records.map(async row => {const target=session(row.id); return target.stub.nativeHeader(target.scope);}));
+        const values = await mapConcurrent(records, async row => {const target=session(row.id); return target.stub.nativeHeader(target.scope);});
         return values.filter(value => value !== undefined);
       },
       running: async id => {const target=session(id); return (await target.stub.nativeStatus(target.scope))?.running ?? false;},
@@ -204,7 +235,19 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
     }
   }
   override async fetch(request: Request): Promise<Response> {
-    const body = z.object({operation: z.enum(['native-events','native-workspaces','native-session-control']), scope: environmentScopeSchema}).strict().parse(await request.json());
+    const raw: unknown = await request.json();
+    if (typeof raw === 'object' && raw !== null && 'operation' in raw && raw.operation === 'native-session-search') {
+      const body = z.object({operation: z.literal('native-session-search'), scope: environmentScopeSchema, query: z.string()}).strict().parse(raw);
+      this.scope(body.scope);
+      try {
+        const value = await this.sessionSearch(body.scope).search(body.query, request.signal);
+        return Response.json({ok: true, value: sessionRemote.methods['session/search'].result.create().parse(value)});
+      } catch (error) {
+        const failure = remoteErrorOf(error) ?? {code: 'gateway/internal', message: 'Session search failed', details: {}};
+        return Response.json({ok: false, error: {isDSHRemoteError: true, code: failure.code, message: failure.message, details: failure.details}});
+      }
+    }
+    const body = z.object({operation: z.enum(['native-events','native-workspaces','native-session-control']), scope: environmentScopeSchema}).strict().parse(raw);
     this.scope(body.scope);
     const abort = new AbortController();
     if (request.signal.aborted) abort.abort();
@@ -214,12 +257,12 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
       const source = this.nativeControl.open(abort.signal, async () => {
         const projections: Record<string, SessionProjectionBaseline> = {};
         const records = await this.sessionIndex(body.scope);
-        await Promise.all(records.map(async row => {
+        await mapConcurrent(records, async row => {
           const scope = {...owner, sessionId: row.id};
           const raw: unknown = await (await this.env.SESSIONS.getByName(sessionAddress(scope)).nativeProjections(scope)).json();
           const value = sessionRemote.methods['session/projections'].result.create().parse(raw);
           if (value?.kind === 'sequenced') projections[row.id] = {asOfSeq: value.asOfSeq, values: value.values};
-        }));
+        }, abort.signal);
         return {type: 'baseline', value: {projections}};
       });
       const codec = sessionRemote.methods['session/control'].result.create();
@@ -281,7 +324,7 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
       .map((row) => JSON.parse(row.document) as AgentRevision);
     const sessions = this.ctx.storage.sql
       .exec<{ document: string }>(
-        "SELECT document FROM sessions ORDER BY json_extract(document,'$.updatedAt') DESC LIMIT 200",
+        "SELECT document FROM sessions ORDER BY json_extract(document,'$.updatedAt') DESC,id",
       )
       .toArray()
       .map((row) => JSON.parse(row.document) as SessionRecord);
@@ -393,7 +436,7 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
   }
   async sessionIndex(scope: ControlScope): Promise<SessionRecord[]> {
     this.scope(scope);
-    return this.ctx.storage.sql.exec<{document: string}>("SELECT document FROM sessions ORDER BY json_extract(document,'$.updatedAt') DESC LIMIT 200").toArray().map(row => JSON.parse(row.document) as SessionRecord);
+    return this.ctx.storage.sql.exec<{document: string}>("SELECT document FROM sessions ORDER BY json_extract(document,'$.updatedAt') DESC,id").toArray().map(row => JSON.parse(row.document) as SessionRecord);
   }
   async publishClient(
     tenantId: ControlScope,
