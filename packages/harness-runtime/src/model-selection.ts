@@ -25,6 +25,11 @@ export function mountModelSelection(ctx: Context, agent: Agent, defaultModel?: (
   agent.ctx.effect(() => installModelSelection(agent.ctx, ref), 'weft.native-model-selection');
 }
 
+/** The route an Agent's next request uses: its Session selection, else the default. */
+export function currentModelSelection(agent: Agent): import('@deepseek-ai/dsh-agent').ModelSelection | undefined {
+  return selections.get(agent)?.ref.current;
+}
+
 export async function selectLiveHarnessModel(ctx: Context, agent: Agent, request: ModelSelection): Promise<{selected: ModelSelection}> {
   const owner = selections.get(agent);
   if (!owner) throw new RemoteError('session/model-unavailable', 'Agent model selection is not mounted', {provider: request.provider, model: request.model});

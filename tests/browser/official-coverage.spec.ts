@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 
 // Capabilities a workerd environment explicitly does not provide; see docs/validation/native-interaction.md.
-const UNAVAILABLE = (endpoint: string) => /^(api|streams):(account|officeToPdf|pluginMarket)\//.test(endpoint);
+const UNAVAILABLE = (endpoint: string) => /^(api|streams):(account|officeToPdf)\//.test(endpoint);
 
 test('the official Harness UI reaches connected native services everywhere except the declared workerd limits', async ({page, request}) => {
   const failures = new Map<string, string>();

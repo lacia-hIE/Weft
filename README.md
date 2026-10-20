@@ -2,7 +2,7 @@
 
 在 Cloudflare Workers / Durable Objects 上运行 deepseek-harness，提供租户隔离、持久 Session 和可维护的运行环境适配。
 
-当前支持独立 Harness 环境目录：每个用户可创建多个 Agent 环境，隔离预设、客户端插件、会话与工作区；采用新的数据布局，不迁移旧数据。已接入真实 DeepSeek Messages 模型与 Web UI：直接运行固定版本的 upstream Agent Loop，支持工具循环、SSE、取消、SQLite、租户隔离及独立 Computer Workspace。Web 可配置原生 Todo、时间上下文、重复调用提醒与 Skills；Agent 可编写客户端 Cordis 插件，由用户审核启用。技术可行性、生态适配和模块边界优先，成本优化后置。
+当前支持独立 Harness 环境目录：每个用户可创建多个 Agent 环境，隔离预设、客户端插件、会话与工作区；采用新的数据布局，不迁移旧数据。模型提供商使用官方 `llm-deepseek` 与 `llm-pi-ai` 条目（DeepSeek 以及 OpenAI、Anthropic、Kimi 等第三方提供商，在官方 Models 页配置），并接入官方 Web UI：直接运行固定版本的 upstream Agent Loop，支持工具循环、SSE、取消、SQLite、租户隔离及独立 Computer Workspace。Web 可配置原生 Todo、时间上下文、重复调用提醒与 Skills；Agent 可编写客户端 Cordis 插件，由用户审核启用。技术可行性、生态适配和模块边界优先，成本优化后置。
 
 需要 Node.js 22.19+ 和 Git。
 
@@ -48,7 +48,7 @@ curl http://localhost:8787/v1/tenants/TENANT_ID/sessions/example/events
 
 `Delegator` 预设接入原版子 Agent 执行、层级导航、历史、消息与中断服务。spawn / fork 在所属 workerd 内运行真实 Agent，子日志由根会话所属 DO 保存，按租户和环境寻址；限额使用官方 Settings 表单与 volatile 配置。详见 [原生子 Agent](docs/validation/native-subagents.md)。
 
-内置预设对齐官方 standard 预设：原版命令（`/compact`、`/plan`、`/goal`、`/feedback`）、上下文压缩、AGENTS.md 指令、Plan 模式、`ask_user_question`、Goal、`present`、`web_search` / `web_fetch`、子 Agent fork 与定时提醒均由原版服务提供。提问与审批通过环境 `$events` 的 waterfall 交给浏览器回答；定时提醒存于 SessionDO，并由 DO Alarm 在对象驱逐后唤醒投递。`@` 文件与会话引用、消息反馈、会话分叉、Skills 目录和模型发现使用原版 Remote 服务。bash、后台作业和官方 Terminal 运行在每个工作区自己的 Dynamic Worker 内的 Computer shell（just-bash）上，允许 curl 访问公网；原版权限预设与审批约束 bash 和文件工具。Office 转 PDF、插件市场与 DeepSeek 平台账号登录在 workerd 中不可用。详见 [原版交互服务](docs/validation/native-interaction.md)。
+内置预设对齐官方 standard 预设：原版命令（`/compact`、`/plan`、`/goal`、`/feedback`）、上下文压缩、AGENTS.md 指令、Plan 模式、`ask_user_question`、Goal、`present`、`web_search` / `web_fetch`、子 Agent fork 与定时提醒均由原版服务提供。提问与审批通过环境 `$events` 的 waterfall 交给浏览器回答；定时提醒存于 SessionDO，并由 DO Alarm 在对象驱逐后唤醒投递。`@` 文件与会话引用、消息反馈、会话分叉、Skills 目录和模型发现使用原版 Remote 服务。bash、后台作业和官方 Terminal 运行在每个工作区自己的 Dynamic Worker 内的 Computer shell（just-bash）上，允许 curl 访问公网；原版权限预设与审批约束 bash 和文件工具。原版插件市场服务读取环境配置的索引源；Office 转 PDF、通用包安装与 DeepSeek 平台账号登录在 workerd 中不可用，外部服务方案见 [外部服务设计](docs/architecture/external-services.md)。详见 [原版交互服务](docs/validation/native-interaction.md)。
 
 目录职责：
 
@@ -68,7 +68,9 @@ curl http://localhost:8787/v1/tenants/TENANT_ID/sessions/example/events
 | `packages/native-plugins` | 原版动态 Cordis Runner 的持久注册表、审批与隔离 Host facet 适配 |
 | `packages/harness-runtime` | 装配 upstream 插件，通过原有 Agent API 创建、恢复和驱动 Session |
 | `packages/workspace` | Computer WorkspaceDO、原生 Harness 文件系统适配、版本冲突与文件 API |
-| `packages/model-provider` | 按租户解析模型与凭据、复用上游 DeepSeek 适配器、归一化安全错误 |
+| `packages/model-provider` | 回合期限、模型配置错误与安全的失败映射 |
+| `packages/native-models` | 以 Loader 条目挂载官方模型提供商、环境级模型目录与发现、失败脱敏 |
+| `packages/native-profile` | 会话与环境世界共用的 `WorkerdLoader` |
 | `packages/session-persistence-do` | 实现 upstream `SessionPersistence` 和 `SessionHandle`，管理 SQLite 事件与写入所有权 |
 | `packages/native-query` | 原版 SQLite 搜索引擎的 DO 数据库端口、环境范围的只读会话来源与官方搜索控制器 |
 | `packages/native-subagents` | 原版子 Agent 管理器、spawn / fork provider 与生成的 Remote 协议接线 |

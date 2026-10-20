@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import yaml from 'js-yaml';
 import { resolve, relative } from 'node:path';
 import ts from 'typescript';
 
@@ -90,3 +91,11 @@ for (const [name, moduleName] of Object.entries(vendorNames)) typePaths[`@deepse
 for (const [name, path] of Object.entries(declarationOnlyPackages)) typePaths[name] = [`./types/${path.replace(/\.ts$/, '.d.ts')}`];
 writeFileSync(resolve(output, 'upstream.tsconfig.json'), JSON.stringify({ compilerOptions: { paths: typePaths } }, null, 2) + '\n');
 console.log(`Pinned Harness ${actual.slice(0, 12)}; generated source aliases.`);
+
+// The official profile's bundle patches in the Loader's entry-list dialect:
+// `!!js` scalars become `{__jsExpr}` nodes, exactly as the include package
+// parses them. Weft's overlay must resolve every one that stays enabled.
+const JsExpr = new yaml.Type('tag:yaml.org,2002:js', {kind: 'scalar', resolve: data => typeof data === 'string', construct: data => ({__jsExpr: data})});
+const entryListSchema = yaml.JSON_SCHEMA.extend(JsExpr);
+const officialBundles = Object.fromEntries(['base', 'web-app'].map(bundle => [bundle, yaml.load(readFileSync(resolve(checkout, 'packages/bundle', bundle, 'cordis.patch.yml'), 'utf8'), {schema: entryListSchema})]));
+writeFileSync(resolve(output, 'official-bundles.json'), JSON.stringify(officialBundles, null, 2) + '\n');

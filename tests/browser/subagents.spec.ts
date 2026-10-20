@@ -66,7 +66,8 @@ test('real DeepSeek delegates through the original tool and opens its actual chi
   const tree = page.getByRole('tree', {name: 'Subagent sessions', exact: true});
   await expect(tree.getByRole('treeitem')).toHaveCount(1);
   await tree.getByRole('treeitem').click();
-  await expect(page.getByText(marker, {exact: true})).toBeVisible({timeout: 120000});
+  // The child's answer, and its first-prompt LLM title when the model names the Session after it.
+  await expect(page.getByText(marker, {exact: true}).first()).toBeVisible({timeout: 120000});
   await page.reload();
-  await expect(page.getByText(marker, {exact: true})).toBeVisible({timeout: 45000});
+  await expect(page.getByText(marker, {exact: true}).first()).toBeVisible({timeout: 45000});
 });

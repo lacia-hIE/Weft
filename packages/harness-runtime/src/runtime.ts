@@ -1,6 +1,7 @@
 import { Context } from '@deepseek-ai/cordis';
 import AgentRegistry, { type Agent, type AssistantStreamFrame, type AgentCancelCause, type AgentSetup } from '@deepseek-ai/dsh-agent';
 import AgentLoop from '@deepseek-ai/dsh-agent-loop';
+import { mountOfficialProfile } from '../../native-profile/src/loader.ts';
 import LlmRuntime, { createUserMessage, type LlmAdapter } from '@deepseek-ai/dsh-llm';
 import SessionStore, { SessionId, SessionLogOffset, type Session, type SessionEvent } from '@deepseek-ai/dsh-session';
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection';
@@ -29,7 +30,10 @@ export interface RuntimeOptions {
   promptContent?: readonly {type: 'text'; text: string}[];
   persona: string;
   model: { provider: string; model: string };
-  adapter: LlmAdapter;
+  /** A single adapter for `model.provider`; used only when `mountModels` is absent. */
+  adapter?: LlmAdapter;
+  /** Mount the model providers as profile entries, in place of a single adapter. */
+  mountModels?: (ctx: Context) => Promise<void>;
   signal?: AbortSignal;
   cancellationCause?: () => AgentCancelCause;
   onEvent?: (event: SessionEvent, session: Session) => void;
@@ -88,7 +92,10 @@ export async function openHarnessSession(options: RuntimeOptions): Promise<Harne
     await ctx.plugin(GoalRoundDriver);
     if (options.mountPersistence) await options.mountPersistence(ctx);
     await ctx.plugin(AgentLoop, { agents: [], ...options.agentLoop });
-    ctx.llm.registerAdapter([options.model.provider], options.adapter);
+    if (options.mountModels) await options.mountModels(ctx);
+    else if (options.adapter) ctx.llm.registerAdapter([options.model.provider], options.adapter);
+    else throw new Error('A Harness runtime needs model providers');
+    await mountOfficialProfile(ctx);
     if (options.mountTools) await options.mountTools(ctx);
     // Install before resume: persisted waking input may start assembling as
     // soon as the native factory releases the restored Agent.

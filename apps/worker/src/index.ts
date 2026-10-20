@@ -65,6 +65,8 @@ export interface Env extends ModelEnvironment {
   WORKSPACES: DurableObjectNamespace<WorkspaceDO>;
   TENANTS: DurableObjectNamespace<TenantDO>;
   ENVIRONMENTS: DurableObjectNamespace<EnvironmentDO>;
+  /** Configuration plane (D1): environment settings and other non-secret configuration. */
+  CONFIG_DB: D1Database;
   ACCESS_AUD?: string;
   ACCESS_TEAM_DOMAIN?: string;
 }
@@ -155,7 +157,11 @@ export class SessionDO extends DurableObject<Env> {
       const owner = controlScope(scope.tenantId, scope.environmentId);
       const pluginsReady = Promise.withResolvers<void>();
       void pluginsReady.promise.catch(() => {});
-      const host = await NativeSessionHost.open({...runtime.options, beforeAssembly: async () => {await pluginsReady.promise; await runtime.options.beforeAssembly?.();}, mountTools: async ctx => {
+      const host = await NativeSessionHost.open({...runtime.options, onEvent: (event, session) => {
+        runtime.options.onEvent?.(event, session);
+        // Titles can commit after the turn (the first-prompt LLM title row); list summaries follow them.
+        if (event.type === 'session/title') this.ctx.waitUntil(this.publishNativeSummary(scope).catch(() => { /* The next turn or rename republishes. */ }));
+      }, beforeAssembly: async () => {await pluginsReady.promise; await runtime.options.beforeAssembly?.();}, mountTools: async ctx => {
         await runtime.options.mountTools?.(ctx);
         await NativePlugins.mount(ctx, {
           state: this.ctx, ...(this.env.LOADER ? {loader: this.env.LOADER} : {}), scope, allowAuthoring: profile.spec.allowClientPlugins,

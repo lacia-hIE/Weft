@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
+import { readdirSync, readFileSync } from "node:fs";
 import {
   Miniflare,
+  Response as MiniflareResponse,
   convertV4MiniflareOptions,
   type V4FetchHandler,
 } from "miniflare";
@@ -32,6 +34,51 @@ export function sessionPath(
   operation: "messages" | "events" | "cancel",
 ): string {
   return `/v1/tenants/${tenantId(user)}/sessions/${sessionId}/${operation}`;
+}
+
+/**
+ * Apply `migrations/*.sql` to the runtime's configuration database the way
+ * `cf d1 migrations apply` does: each file runs once, recorded in
+ * `d1_migrations`, so persisted test directories keep their schema across restarts.
+ */
+export async function applyConfigMigrations(runtime: Miniflare, worker = 'alpha'): Promise<void> {
+  const db = await runtime.getD1Database('CONFIG_DB', worker);
+  await db.prepare('CREATE TABLE IF NOT EXISTS d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL)').run();
+  const applied = new Set((await db.prepare('SELECT name FROM d1_migrations').all<{name: string}>()).results.map(row => row.name));
+  const directory = resolve(import.meta.dirname, '../../migrations');
+  for (const file of readdirSync(directory).filter(name => name.endsWith('.sql')).sort()) {
+    if (applied.has(file)) continue;
+    const statements = readFileSync(resolve(directory, file), 'utf8').replace(/--.*$/gm, '').split(';').map(statement => statement.trim()).filter(Boolean);
+    await db.batch([...statements.map(statement => db.prepare(statement)), db.prepare('INSERT INTO d1_migrations (name) VALUES (?)').bind(file)]);
+  }
+}
+
+/** The official LLM title row's instruction; every new native Session sends one such request. */
+export const TITLE_INSTRUCTION = 'Create a concise title for an AI coding-assistant session';
+export const FIXTURE_TITLE = 'Fixture session title';
+
+/**
+ * Answer the official `session-title-llm` request before a test's own model
+ * fixture sees it, so scripted model responses stay aligned with agent turns.
+ */
+function answerTitleRequests(outbound: V4FetchHandler): V4FetchHandler {
+  return async (request, miniflare) => {
+    if (request.method === 'POST' && new URL(request.url).pathname.endsWith('/v1/messages')) {
+      const body = await request.clone().json().catch(() => undefined) as {system?: unknown} | undefined;
+      if (JSON.stringify(body?.system ?? '').includes(TITLE_INSTRUCTION)) {
+        const event = (type: string, data: object) => `event: ${type}\ndata: ${JSON.stringify({type, ...data})}\n\n`;
+        return new MiniflareResponse(
+          event('message_start', {message: {usage: {input_tokens: 5, output_tokens: 0}}})
+          + event('content_block_start', {index: 0, content_block: {type: 'text', text: ''}})
+          + event('content_block_delta', {index: 0, delta: {type: 'text_delta', text: FIXTURE_TITLE}})
+          + event('content_block_stop', {index: 0})
+          + event('message_delta', {delta: {stop_reason: 'end_turn'}, usage: {output_tokens: 3}}) + event('message_stop', {}),
+          {headers: {'content-type': 'text/event-stream'}},
+        );
+      }
+    }
+    return outbound(request, miniflare);
+  };
 }
 
 export function createRuntime(
@@ -92,6 +139,7 @@ export function createRuntime(
           compatibilityDate: "2026-07-30",
           compatibilityFlags: ["nodejs_compat", "enable_request_signal", "durable_object_io_tasks_prevent_eviction"],
           workerLoaders: {LOADER: {}},
+          d1Databases: {CONFIG_DB: 'weft-config'},
           ...(model.images ? {images: {binding: 'IMAGES'}} : {}),
           durableObjects: {
             SESSIONS: {
@@ -117,7 +165,7 @@ export function createRuntime(
             MODEL_BACKEND: "scripted",
             ...Object.fromEntries(Object.entries(model.bindings ?? {}).filter(([name]) => model.configureModel === false || !['DEEPSEEK_API_KEY', 'DEEPSEEK_MODEL', 'DEEPSEEK_BASE_URL', 'TENANT_MODEL_CONFIG_JSON', 'MODEL_IDLE_TIMEOUT_MS'].includes(name))),
           },
-          ...(model.outbound ? { outboundService: model.outbound } : {}),
+          ...(model.outbound ? { outboundService: answerTitleRequests(model.outbound) } : {}),
           ...(profile.access ? { access: profile.access } : {}),
         })),
       {
@@ -135,6 +183,18 @@ export function createRuntime(
     ...options,
     ...(persist ? { resourcePersistencePath: persist } : {}),
   });
+  // The configuration plane's D1 schema comes from the same migration files a deployment applies.
+  // Only application requests wait: Miniflare's own binding proxies (the D1 handle
+  // the migration uses) travel through dispatchFetch too.
+  const migrated = runtime.ready.then(() => applyConfigMigrations(runtime));
+  // A runtime disposed before its first application request leaves the migration unobserved.
+  migrated.catch(() => { /* Application requests that await it still see the failure. */ });
+  const dispatchMigrated = runtime.dispatchFetch.bind(runtime);
+  runtime.dispatchFetch = (async (input, init) => {
+    const address = new URL(typeof input === 'string' ? input : 'url' in input ? input.url : String(input));
+    if (address.hostname.endsWith('.local')) await migrated;
+    return dispatchMigrated(input, init);
+  }) as typeof runtime.dispatchFetch;
   // Test fixture credentials are entered through the real settings APIs, never
   // read by the application from bindings. Production browser tests use worker.js.
   if (model.configureModel !== false && model.bindings?.MODEL_BACKEND === 'deepseek') {

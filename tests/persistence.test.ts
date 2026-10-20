@@ -4,11 +4,12 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { test } from 'node:test';
 import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
-import { createRuntime, send, type EventRecord, type SessionResponse } from './helpers/miniflare.ts';
+import { applyConfigMigrations, createRuntime, send, type EventRecord, type SessionResponse } from './helpers/miniflare.ts';
 
-function contractsRuntime(persist?: string): Miniflare {
+async function contractsRuntime(persist?: string): Promise<Miniflare> {
   const options = convertV4MiniflareOptions({
-    modules: true, scriptPath: resolve('dist/contracts-worker.js'),
+    name: 'contracts', modules: true, scriptPath: resolve('dist/contracts-worker.js'),
+    d1Databases: {CONFIG_DB: 'weft-config'},
     compatibilityDate: '2026-07-30', compatibilityFlags: ['nodejs_compat', 'enable_request_signal'],
     bindings: {MODEL_BACKEND: 'scripted'},
     durableObjects: {
@@ -20,12 +21,14 @@ function contractsRuntime(persist?: string): Miniflare {
     },
   });
   options.workers[0]!.dev = { ...options.workers[0]!.dev, unsafeRegisterWorker: false };
-  return new Miniflare({...options, ...(persist ? {resourcePersistencePath: persist} : {})});
+  const runtime = new Miniflare({...options, ...(persist ? {resourcePersistencePath: persist} : {})});
+  await applyConfigMigrations(runtime, 'contracts');
+  return runtime;
 }
 
 test('model upload ownership survives restart, competing publication and stale cleanup without crossing environment or credential boundaries', async () => {
   const directory = await mkdtemp(resolve(tmpdir(), 'weft-upload-ownership-'));
-  let runtime = contractsRuntime(directory);
+  let runtime = await contractsRuntime(directory);
   const owner = {tenantId: 'alpha', environmentId: 'one'};
   const scope = 'a'.repeat(64), otherCredential = 'b'.repeat(64);
   const variantId = 'sha256:' + 'c'.repeat(64);
@@ -55,7 +58,7 @@ test('model upload ownership survives restart, competing publication and stale c
       assert.equal(refused.status, 400);
       assert.match(refused.error!, /scope mismatch/);
     }
-    await runtime.dispose(); runtime = contractsRuntime(directory);
+    await runtime.dispose(); runtime = await contractsRuntime(directory);
     assert.deepEqual((await call(get())).value, winner);
     assert.equal((await call(get(otherCredential))).value.fileId, 'credential-two');
     assert.equal((await call(get(), environment)).value.fileId, 'environment-two');
@@ -78,7 +81,7 @@ test('model upload ownership survives restart, competing publication and stale c
 });
 
 test('attachment streaming cleans interruptions, bounds staging and rolls back publication without losing verified bytes', async () => {
-  const runtime = contractsRuntime();
+  const runtime = await contractsRuntime();
   try {
     const response = await runtime.dispatchFetch('http://localhost/attachment-contracts');
     assert.equal(response.status, 200, await response.clone().text());
@@ -105,7 +108,7 @@ test('attachment streaming cleans interruptions, bounds staging and rolls back p
 
 test('native plugin context remains parked in the durable Inbox across workerd restart and is consumed by the next prompt', {timeout: 60_000}, async () => {
   const directory = await mkdtemp(resolve(tmpdir(), 'weft-native-context-'));
-  let runtime = contractsRuntime(directory);
+  let runtime = await contractsRuntime(directory);
   const read = async (stage: string) => {
     const response = await runtime.dispatchFetch('http://localhost/native-context?stage='+stage);
     assert.equal(response.status, 200, await response.clone().text());
@@ -116,7 +119,7 @@ test('native plugin context remains parked in the durable Inbox across workerd r
     assert.equal(first.status.running, false);
     assert.equal(first.projections.values.inbox['next-step'].length, 1);
     assert.equal(first.events.filter(record => record.type === 'turn/start').length, 0);
-    await runtime.dispose(); runtime = contractsRuntime(directory);
+    await runtime.dispose(); runtime = await contractsRuntime(directory);
     const cold = await read('read');
     assert.equal(cold.status.agentAvailable, false);
     assert.equal(cold.projections.values.inbox['next-step'].length, 1);
@@ -130,7 +133,7 @@ test('native plugin context remains parked in the durable Inbox across workerd r
 });
 
 test('the DO refuses an internal RPC addressed with a different tenant scope', async () => {
-  const runtime = contractsRuntime();
+  const runtime = await contractsRuntime();
   try {
     const response = await runtime.dispatchFetch('http://localhost/scope');
     assert.equal(response.status, 200, await response.clone().text());
@@ -141,7 +144,7 @@ test('the DO refuses an internal RPC addressed with a different tenant scope', a
 });
 
 test('SQLite implements writer ownership, atomic append, visibility, close and format refusal', async () => {
-  const runtime = contractsRuntime();
+  const runtime = await contractsRuntime();
   try {
     const response = await runtime.dispatchFetch('http://localhost/storage');
     assert.equal(response.status, 200, await response.clone().text());
@@ -159,7 +162,7 @@ test('SQLite implements writer ownership, atomic append, visibility, close and f
 
 test('upstream resume repairs an interrupted tool call without replaying its execution', async () => {
   const source = createRuntime();
-  const target = contractsRuntime();
+  const target = await contractsRuntime();
   try {
     const response = await send(source, 'alpha', 'source', 'Invoke your tool');
     assert.equal(response.status, 200);
@@ -183,7 +186,7 @@ test('upstream resume repairs an interrupted tool call without replaying its exe
 });
 
 test('Computer scope, symlink confinement, atomic rollback, bytes and workspace format refusal', async () => {
-  const runtime = contractsRuntime();
+  const runtime = await contractsRuntime();
   try {
     const response = await runtime.dispatchFetch('http://localhost/workspace-contracts');
     assert.equal(response.status, 200, await response.clone().text());

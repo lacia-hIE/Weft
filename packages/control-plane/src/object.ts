@@ -21,6 +21,13 @@ import { NativeEventHub, NativeStreamHub, type NativeWaterfallOutcome } from './
 import { sessionReadPorts } from '../../native-query/src/ports.ts';
 import { credentialRef } from '@deepseek-ai/dsh-credentials';
 import { openEnvironmentStream } from '../../native-environment/src/index.ts';
+import { MarketWorld } from '../../native-environment/src/market.ts';
+import { ConfigWriteQueue, D1AgentRevisions, D1SessionIndex, D1SettingsDocuments, D1WorkspaceRegistry } from '../../config-store/src/index.ts';
+import type { HarnessHomeFacts } from '../../native-environment/src/harness-home.ts';
+import { EnvironmentModelWorld } from '../../native-models/src/environment.ts';
+import { ScriptedAdapter } from '../../harness-runtime/src/scripted-adapter.ts';
+import { EnvironmentDeepSeekFiles, EnvironmentUploadIndex } from '../../model-provider/src/files.ts';
+import type { BundleInfo } from '@deepseek-ai/dsh-plugin-manager/types';
 import type { RemoteEventResult } from '@weft/upstream/packages/api/gateway/src/stream-protocol.ts';
 
 /** Official Agent-scoped waterfalls that the environment forwards to its clients. */
@@ -42,7 +49,7 @@ import { sessionAddress, type SessionScope } from '../../tenant/src/index.ts';
 import sessionRemote from '../../../.generated/official-remotes/packages/api/session-controller/typert.remote-client.js';
 import type { SessionControlFrame, SessionProjectionBaseline } from '@deepseek-ai/dsh-api-session-controller/types';
 import { remoteStream } from '../../harness-runtime/src/remote-stream.ts';
-import { NativeSettings, PRESET_NAMESPACE, LOOP_NAMESPACE, SUBAGENT_NAMESPACE, PERMISSION_NAMESPACE } from './native-settings.ts';
+import { NativeSettings, PRESET_NAMESPACE, LOOP_NAMESPACE, SUBAGENT_NAMESPACE, PERMISSION_NAMESPACE, MARKET_NAMESPACE, MODEL_NAMESPACE, PI_AI_NAMESPACE, DEFAULT_MODEL_NAMESPACE } from './native-settings.ts';
 import {readNativePresets, type CompositionEndpoint} from '../../native-composition/src/profile-host.ts';
 import {profileDefinitions} from '../../harness-profile/src/index.ts';
 import {manageNativePlugins} from '../../native-composition/src/manager.ts';
@@ -62,6 +69,8 @@ export interface TenantEnvironment extends ModelEnvironment {
   ENVIRONMENTS: DurableObjectNamespace<EnvironmentDO>;
   WORKSPACES: DurableObjectNamespace<WorkspaceDO>;
   SESSIONS: DurableObjectNamespace<SessionDO>;
+  /** Configuration plane: environment settings and other non-secret configuration. */
+  CONFIG_DB: D1Database;
 }
 export const tenantAddress = (tenantId: string): string =>
   JSON.stringify([DATA_LAYOUT_VERSION, "tenant", id.parse(tenantId)]);
@@ -133,17 +142,27 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
     this.scope(scope);
     this.ensureDefault();
     this.ensureNativePresets();
+    if (!this.settingsDocuments) throw new Error('Environment settings are not loaded');
+    const documents = this.settingsDocuments;
     return this.nativeSettings ??= new NativeSettings(this.ctx.storage, {
-      providerBase: () => ({baseURL: 'https://api.deepseek.com/anthropic', maxTokens: 8192, thinking: 'disabled', reasoningEffort: 'off', streamIdleTimeoutMs: 60_000, retryPolicy: {mode: 'normal', maxRetries: 0}, apiKeyEnv: 'DEEPSEEK_API_KEY'}),
+      // Thinking and output limits keep the original adapter defaults, as the official profile inlines none.
+      providerBase: () => ({baseURL: 'https://api.deepseek.com/anthropic', streamIdleTimeoutMs: 60_000, retryPolicy: {mode: 'normal', maxRetries: 0}, apiKeyEnv: 'DEEPSEEK_API_KEY'}),
       modelBase: () => WEFT_VALIDATION_BUILD && this.env.MODEL_BACKEND === 'scripted'
         ? {provider: 'validation', model: 'scripted'}
         : {provider: 'deepseek-official', model: this.latest('default')?.spec.model?.name ?? 'deepseek-flash'},
       changed: (event, args) => {
         this.nativeEvents.emit(event, args);
         if (event === 'settings/document-updated' && args[0] === PRESET_NAMESPACE) this.nativeEvents.emit('plugin-manager/changed', [{reason: 'plugin'}]);
+        if (event === 'settings/document-updated' && (args[0] === MODEL_NAMESPACE || args[0] === PI_AI_NAMESPACE || args[0] === DEFAULT_MODEL_NAMESPACE)) void this.modelWorld?.refresh().catch(() => { /* A rejected draft keeps the previous entries serving; the next read retries. */ });
+        if (event === 'settings/document-updated' && args[0] === MARKET_NAMESPACE) {
+          const previous = this.market;
+          this.market = undefined;
+          void previous?.dispose();
+          this.nativeEvents.emit('plugin-market/changed', []);
+        }
       },
       validatePreset: id => {const value = this.latest(id); if (!value || value.spec.disabled) throw new Error('Unknown preset');},
-    });
+    }, documents);
   }
   async nativeSettingsRequest(scope: ControlScope, endpoint: string, args: unknown): Promise<Response> {
     return this.settings(scope).invoke(endpoint, args);
@@ -176,6 +195,18 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
     const volume = {...scope, workspaceId: 'default'};
     return readNativePresets(profiles, defaultId, endpoint, args, ctx => mountWorkspace(ctx, {scope: volume, transport: this.env.WORKSPACES.getByName(workspaceAddress(volume)), cwd: '/workspace'}));
   }
+  /** The original market reader over this environment's index settings and bundle listing. */
+  private market: MarketWorld | undefined;
+  async nativePluginMarket(scope: ControlScope, endpoint: string, raw: unknown): Promise<Response> {
+    const settings = this.settings(scope);
+    const indexes = settings.value(MARKET_NAMESPACE).indexes;
+    this.market ??= new MarketWorld({
+      indexes: Array.isArray(indexes) ? indexes.map(String) : [],
+      bundles: async () => ((await (await this.nativePreset(scope, 'pluginManager/listBundles', {})).json()) as {value: BundleInfo[]}).value,
+      save: urls => settings.saveMarketIndexes(urls),
+    });
+    return Response.json({value: await this.market.invoke(endpoint, raw, AbortSignal.timeout(60_000))});
+  }
   async nativeManagePlugins(scope: ControlScope, endpoint: string, raw: unknown): Promise<Response> {
     this.scope(scope); this.ensureDefault(); this.ensureNativePresets();
     return manageNativePlugins({
@@ -185,10 +216,24 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
     }, endpoint, raw);
   }
   /** Private binding only: never dispatch this snapshot as a client Remote. */
-  async nativeModelConfiguration(scope: ControlScope): Promise<Response> {
+  /** Private binding only: the effective model sections for the official model entries. */
+  async nativeModelSections(scope: ControlScope): Promise<Response> {
     this.scope(scope);
-    try { return Response.json(await this.settings(scope).modelConfiguration()); }
-    catch (error) { return Response.json({code: error instanceof ModelConfigurationError ? error.code : 'MODEL_CONFIGURATION_INVALID'}, {status: 503}); }
+    return Response.json(this.settings(scope).modelSections());
+  }
+  private modelWorld: EnvironmentModelWorld | undefined;
+  /** The official model directory, listings, discovery and catalog for this environment. */
+  async nativeModelRemote(scope: ControlScope, endpoint: string, raw: unknown): Promise<Response> {
+    this.scope(scope);
+    const settings = this.settings(scope);
+    const harnessHome = await this.nativeHarnessHome(scope);
+    this.modelWorld ??= new EnvironmentModelWorld({
+      models: () => settings.modelSections(),
+      resolveCredential: ref => this.nativeResolveCredential(scope, ref),
+      harnessHome: () => ({...harnessHome, deepSeekFiles: new EnvironmentDeepSeekFiles(new EnvironmentUploadIndex(operation => this.nativeModelFiles(scope, operation)))}),
+      ...(WEFT_VALIDATION_BUILD && this.env.MODEL_BACKEND === 'scripted' ? {validationAdapter: () => new ScriptedAdapter()} : {}),
+    });
+    return Response.json({value: await this.modelWorld.invoke(endpoint, raw, AbortSignal.timeout(60_000))});
   }
   async nativeSaveDefaultModel(scope: ControlScope, selected: {provider: string; model: string; reasoningEffort?: string}): Promise<void> {
     await this.settings(scope).saveDefault(selected);
@@ -205,7 +250,8 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
       return {scope: address, stub: this.env.SESSIONS.getByName(sessionAddress(address))};
     };
     const volume = {...owner, workspaceId: 'default'};
-    return this.nativeWorkspaces = new NativeWorkspaces(this.ctx.storage, {
+    if (!this.workspaceRegistry) throw new Error('Environment Workspace registry is not loaded');
+    return this.nativeWorkspaces = new NativeWorkspaces(this.workspaceRegistry, {
       files: operation => this.env.WORKSPACES.getByName(workspaceAddress(volume)).call(volume, operation),
       header: async id => {const target=session(id); return target.stub.nativeHeader(target.scope);},
       headers: async () => {
@@ -239,14 +285,19 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
   async nativeAttachWorkspace(scope: ControlScope, workspaceId: string, sessionId: string): Promise<void> {
     await this.workspaces(scope).attach(workspaceId, sessionId);
   }
+  private settingsDocuments: D1SettingsDocuments | undefined;
+  private readonly configWrites = new ConfigWriteQueue();
+  private agentRevisions: D1AgentRevisions<AgentRevision> | undefined;
+  private sessionRecords: D1SessionIndex<SessionRecord> | undefined;
+  private workspaceRegistry: D1WorkspaceRegistry | undefined;
   constructor(ctx: DurableObjectState, env: TenantEnvironment) {
     super(ctx, env);
-    ctx.storage.sql.exec(
-      "CREATE TABLE IF NOT EXISTS agents (id TEXT NOT NULL, revision INTEGER NOT NULL, document TEXT NOT NULL, PRIMARY KEY(id,revision))",
-    );
-    ctx.storage.sql.exec(
-      "CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, document TEXT NOT NULL)",
-    );
+    // The object is addressed by its environment; its settings rows load before any request.
+    const scope = environmentScopeOf(ctx.id.name);
+    void ctx.blockConcurrencyWhile(async () => {
+      [this.settingsDocuments, this.agentRevisions, this.sessionRecords, this.workspaceRegistry] = await Promise.all([D1SettingsDocuments.open(env.CONFIG_DB, scope, this.configWrites), D1AgentRevisions.open<AgentRevision>(env.CONFIG_DB, scope), D1SessionIndex.open<SessionRecord>(env.CONFIG_DB, scope), D1WorkspaceRegistry.open(env.CONFIG_DB, scope, JSON.stringify({initialized: true, workspaceIds: [], archivedSessionIds: [], pinnedSessionIds: []}))]);
+      await this.seedAgents();
+    });
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS native_child_owners (id TEXT PRIMARY KEY, parent_id TEXT NOT NULL, root_id TEXT NOT NULL)');
     ctx.storage.sql.exec(
       "CREATE TABLE IF NOT EXISTS client_plugins (id TEXT PRIMARY KEY, revision TEXT NOT NULL, enabled INTEGER NOT NULL)",
@@ -254,18 +305,25 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
     ctx.storage.sql.exec(
       "CREATE TABLE IF NOT EXISTS client_revisions (revision TEXT PRIMARY KEY, document TEXT NOT NULL, module TEXT NOT NULL)",
     );
+    ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_harness_home (id INTEGER PRIMARY KEY CHECK (id = 1), anonymous_user_id TEXT NOT NULL)');
+  }
+  /** This environment's harness home facts, minting its random anonymous id on first use. */
+  async nativeHarnessHome(scope: ControlScope): Promise<HarnessHomeFacts> {
+    this.scope(scope);
+    this.ctx.storage.sql.exec('INSERT OR IGNORE INTO weft_harness_home VALUES (1, ?)', crypto.randomUUID());
+    return {anonymousUserId: this.ctx.storage.sql.exec<{anonymous_user_id: string}>('SELECT anonymous_user_id FROM weft_harness_home WHERE id = 1').one().anonymous_user_id};
   }
   protected abstract scope(scope: ControlScope): void;
   nativeSessionRoot(scope: ControlScope, sessionId: string): string | undefined {
     this.scope(scope); id.parse(sessionId);
-    if (this.ctx.storage.sql.exec('SELECT id FROM sessions WHERE id=?', sessionId).toArray().length) return sessionId;
+    if (this.sessions().has(sessionId)) return sessionId;
     return this.ctx.storage.sql.exec<{root_id: string}>('SELECT root_id FROM native_child_owners WHERE id=?', sessionId).toArray()[0]?.root_id;
   }
   nativeRegisterChild(scope: ControlScope, rootId: string, parentId: string, childId: string): void {
     this.scope(scope); id.parse(rootId); id.parse(parentId); id.parse(childId);
     if (childId === rootId || this.nativeSessionRoot(scope, parentId) !== rootId) throw new Error('Invalid native child owner');
     this.ctx.storage.transactionSync(() => {
-      if (this.ctx.storage.sql.exec('SELECT id FROM sessions WHERE id=?', childId).toArray().length) throw new Error('Child id belongs to a root session');
+      if (this.sessions().has(childId)) throw new Error('Child id belongs to a root session');
       const known = this.ctx.storage.sql.exec<{parent_id: string; root_id: string}>('SELECT parent_id,root_id FROM native_child_owners WHERE id=?', childId).toArray()[0];
       if (known && (known.parent_id !== parentId || known.root_id !== rootId)) throw new Error('Native child owner cannot change');
       this.ctx.storage.sql.exec('INSERT INTO native_child_owners VALUES (?,?,?) ON CONFLICT(id) DO NOTHING', childId, parentId, rootId);
@@ -337,63 +395,49 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
     return remoteStream(body.operation === 'native-events' ? this.nativeEvents.open(abort.signal) : this.workspaces(body.scope).follow(abort.signal), abort);
   }
   private latest(agentId: string): AgentRevision | undefined {
-    const row = this.ctx.storage.sql
-      .exec<{
-        document: string;
-      }>(
-        "SELECT document FROM agents WHERE id=? ORDER BY revision DESC LIMIT 1",
-        agentId,
-      )
-      .toArray()[0];
-    return row ? (JSON.parse(row.document) as AgentRevision) : undefined;
+    return this.agents().latest(agentId);
   }
-  private ensureDefault(): void {
-    if (this.latest("default")) return;
-    const value: AgentRevision = {
-      revision: 1,
-      publishedAt: new Date().toISOString(),
-      upstream: upstream.commit,
-      spec: {
-        id: "default",
-        name: "DeepSeek Assistant",
-        persona:
-          "You are a helpful assistant. Use the workspace and available plugins to complete the user’s request.",
-        workspaceId: "default",
-        allowClientPlugins: false,
-        plugins: profileDefinitions.find(definition => definition.id === 'default')!.plugins.map(row => ({id: row.id!, config: structuredClone(row.config) as Record<string, unknown>})),
-      },
-    };
-    this.ctx.storage.sql.exec(
-      "INSERT INTO agents VALUES (?,?,?)",
-      "default",
-      1,
-      JSON.stringify(value),
-    );
+  private sessions(): D1SessionIndex<SessionRecord> {
+    if (!this.sessionRecords) throw new Error('Environment Session index is not loaded');
+    return this.sessionRecords;
   }
-  private ensureNativePresets(): void {
-    const original = this.latest('default')!;
+  private agents(): D1AgentRevisions<AgentRevision> {
+    if (!this.agentRevisions) throw new Error('Environment Agents are not loaded');
+    return this.agentRevisions;
+  }
+  /** The default Agent and every bundled preset are published once, when the environment first activates. */
+  private ensureDefault(): void { this.agents(); }
+  private ensureNativePresets(): void { this.agents(); }
+  private async seedAgents(): Promise<void> {
+    const agents = this.agents();
+    if (!agents.latest('default')) {
+      await agents.publish('default', {
+        revision: 1,
+        publishedAt: new Date().toISOString(),
+        upstream: upstream.commit,
+        spec: {
+          id: "default",
+          name: "DeepSeek Assistant",
+          persona:
+            "You are a helpful assistant. Use the workspace and available plugins to complete the user’s request.",
+          workspaceId: "default",
+          allowClientPlugins: false,
+          plugins: profileDefinitions.find(definition => definition.id === 'default')!.plugins.map(row => ({id: row.id!, config: structuredClone(row.config) as Record<string, unknown>})),
+        },
+      });
+    }
+    const original = agents.latest('default')!;
     for (const definition of profileDefinitions.filter(definition => definition.id !== 'default')) {
       const {id, name = id} = definition;
-      if (this.latest(id)) continue;
-      const value: AgentRevision = {...structuredClone(original), revision: 1, publishedAt: new Date().toISOString(), spec: {...structuredClone(original.spec), id, name, allowClientPlugins: id === 'cordis', plugins: definition.plugins.map(row => ({id: row.id!, config: structuredClone(row.config) as Record<string, unknown>}))}};
-      this.ctx.storage.sql.exec('INSERT INTO agents VALUES (?,?,?)', id, 1, JSON.stringify(value));
+      if (agents.latest(id)) continue;
+      await agents.publish(id, {...structuredClone(original), revision: 1, publishedAt: new Date().toISOString(), spec: {...structuredClone(original.spec), id, name, allowClientPlugins: id === 'cordis', plugins: definition.plugins.map(row => ({id: row.id!, config: structuredClone(row.config) as Record<string, unknown>}))}});
     }
   }
   async state(tenantId: ControlScope): Promise<TenantState> {
     this.scope(tenantId);
     this.ensureDefault();
-    const agents = this.ctx.storage.sql
-      .exec<{ document: string }>(
-        "SELECT a.document FROM agents a WHERE revision=(SELECT MAX(revision) FROM agents b WHERE b.id=a.id) ORDER BY id",
-      )
-      .toArray()
-      .map((row) => JSON.parse(row.document) as AgentRevision);
-    const sessions = this.ctx.storage.sql
-      .exec<{ document: string }>(
-        "SELECT document FROM sessions ORDER BY json_extract(document,'$.updatedAt') DESC,id",
-      )
-      .toArray()
-      .map((row) => JSON.parse(row.document) as SessionRecord);
+    const agents = this.agents().current();
+    const sessions = this.sessions().list();
     const clientPlugins = this.ctx.storage.sql
       .exec<{ document: string; enabled: number }>(
         "SELECT r.document,p.enabled FROM client_plugins p JOIN client_revisions r ON r.revision=p.revision ORDER BY p.id",
@@ -426,34 +470,32 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
         { status: 400 },
       );
     }
-    if (parsed.data.disabled && parsed.data.id === this.presetDefault(tenantId)) return Response.json({error: 'Select another new-task default before disabling this preset'}, {status: 409});
-    const current = this.latest(parsed.data.id)?.revision ?? 0;
-    if (expectedRevision !== current)
-      return Response.json(
-        { error: "Agent changed; reload before publishing" },
-        { status: 409 },
-      );
-    if (
-      !current &&
-      this.ctx.storage.sql
-        .exec<{
-          count: number;
-        }>("SELECT COUNT(DISTINCT id) AS count FROM agents")
-        .one().count >= 64
-    )
-      return Response.json({ error: "Agent limit reached" }, { status: 409 });
-    const value: AgentRevision = {
-      spec: parsed.data,
-      revision: current + 1,
-      publishedAt: new Date().toISOString(),
-      upstream: upstream.commit,
-    };
-    this.ctx.storage.sql.exec(
-      "INSERT INTO agents VALUES (?,?,?)",
-      value.spec.id,
-      value.revision,
-      JSON.stringify(value),
-    );
+    // The default-preset check and the publication it guards run on the queue settings writes share.
+    const published = await this.configWrites.run(async (): Promise<Response | AgentRevision> => {
+      if (parsed.data.disabled && parsed.data.id === this.presetDefault(tenantId)) return Response.json({error: 'Select another new-task default before disabling this preset'}, {status: 409});
+      const current = this.latest(parsed.data.id)?.revision ?? 0;
+      if (expectedRevision !== current)
+        return Response.json(
+          { error: "Agent changed; reload before publishing" },
+          { status: 409 },
+        );
+      if (
+        !current &&
+        this.agents().count >= 64
+      )
+        return Response.json({ error: "Agent limit reached" }, { status: 409 });
+      const value: AgentRevision = {
+        spec: parsed.data,
+        revision: current + 1,
+        publishedAt: new Date().toISOString(),
+        upstream: upstream.commit,
+      };
+      if (!await this.agents().publish(value.spec.id, value))
+        return Response.json({ error: "Agent changed; reload before publishing" }, { status: 409 });
+      return value;
+    });
+    if (published instanceof Response) return published;
+    const value = published;
     await this.settings(tenantId).invalidate(PRESET_NAMESPACE);
     return Response.json(value);
   }
@@ -466,16 +508,7 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
     this.ensureDefault();
     id.parse(agentId);
     if (revision === undefined) return this.latest(agentId);
-    const row = this.ctx.storage.sql
-      .exec<{
-        document: string;
-      }>(
-        "SELECT document FROM agents WHERE id=? AND revision=?",
-        agentId,
-        revision,
-      )
-      .toArray()[0];
-    return row ? (JSON.parse(row.document) as AgentRevision) : undefined;
+    return this.agents().revision(agentId, revision);
   }
   async trackSession(
     tenantId: ControlScope,
@@ -484,26 +517,13 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
     this.scope(tenantId);
     id.parse(record.id);
     if (this.ctx.storage.sql.exec('SELECT id FROM native_child_owners WHERE id=?', record.id).toArray().length) throw new Error('Session id belongs to a native child');
-    const previous = this.ctx.storage.sql
-      .exec<{
-        document: string;
-      }>("SELECT document FROM sessions WHERE id=?", record.id)
-      .toArray()[0];
-    if (previous)
-      record = {
-        ...record,
-        title: (JSON.parse(previous.document) as SessionRecord).title || record.title,
-      };
-    this.ctx.storage.sql.exec(
-      "INSERT INTO sessions VALUES (?,?) ON CONFLICT(id) DO UPDATE SET document=excluded.document",
-      record.id,
-      JSON.stringify(record),
-    );
-    await this.ctx.storage.sync();
+    const previous = this.sessions().get(record.id);
+    if (previous) record = {...record, title: previous.title || record.title};
+    await this.sessions().put(record);
   }
   async sessionIndex(scope: ControlScope): Promise<SessionRecord[]> {
     this.scope(scope);
-    return this.ctx.storage.sql.exec<{document: string}>("SELECT document FROM sessions ORDER BY json_extract(document,'$.updatedAt') DESC,id").toArray().map(row => JSON.parse(row.document) as SessionRecord);
+    return this.sessions().list();
   }
   async publishClient(
     tenantId: ControlScope,
@@ -640,6 +660,14 @@ export const environmentAddress = (scope: EnvironmentScope): string => {
   return JSON.stringify([DATA_LAYOUT_VERSION, "environment", value.tenantId, value.environmentId]);
 };
 
+/** The environment an EnvironmentDO serves, read from the name it was addressed by. */
+export function environmentScopeOf(name: string | undefined): ControlScope {
+  if (name === undefined) throw new Error('Environment objects are addressed by name');
+  const [version, kind, tenantId, environmentId] = JSON.parse(name) as unknown[];
+  if (version !== DATA_LAYOUT_VERSION || kind !== 'environment' || typeof tenantId !== 'string' || typeof environmentId !== 'string') throw new Error('Unexpected environment object name');
+  return environmentScopeSchema.parse({tenantId, environmentId}) as ControlScope;
+}
+
 /** All environments, including default, use the same native state owner. */
 export function controlScope(
   tenantId: string,
@@ -659,31 +687,24 @@ export class TenantDO extends DurableObject<TenantEnvironment> {
     )
       throw new Error("Tenant object scope mismatch");
   }
-  private environmentRows(): EnvironmentRecord[] {
-    this.ctx.storage.sql.exec(
-      "CREATE TABLE IF NOT EXISTS environments (id TEXT PRIMARY KEY, document TEXT NOT NULL)",
-    );
+  private tail: Promise<unknown> = Promise.resolve();
+  /** Registry writes run one at a time, so the limit check and insert see one state. */
+  private serialized<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.tail.then(operation);
+    this.tail = result.catch(() => undefined);
+    return result;
+  }
+  private async environmentRows(tenantId: string): Promise<EnvironmentRecord[]> {
+    const db = this.env.CONFIG_DB;
     const now = new Date().toISOString();
-    this.ctx.storage.sql.exec(
-      "INSERT OR IGNORE INTO environments VALUES (?,?)",
-      "default",
-      JSON.stringify({
-        id: "default",
-        name: "我的 Harness",
-        createdAt: now,
-        updatedAt: now,
-      }),
-    );
-    return this.ctx.storage.sql
-      .exec<{ document: string }>(
-        "SELECT document FROM environments ORDER BY id",
-      )
-      .toArray()
-      .map((row) => JSON.parse(row.document) as EnvironmentRecord);
+    const fallback: EnvironmentRecord = {id: "default", name: "我的 Harness", createdAt: now, updatedAt: now};
+    await db.prepare('INSERT INTO environments (tenant_id, environment_id, document) VALUES (?, ?, ?) ON CONFLICT DO NOTHING').bind(tenantId, 'default', JSON.stringify(fallback)).run();
+    const {results} = await db.prepare('SELECT document FROM environments WHERE tenant_id = ? ORDER BY environment_id').bind(tenantId).all<{document: string}>();
+    return results.map(row => JSON.parse(row.document) as EnvironmentRecord);
   }
   async environments(tenantId: string): Promise<EnvironmentRecord[]> {
     this.scope(tenantId);
-    return this.environmentRows();
+    return this.environmentRows(tenantId);
   }
   async environment(
     tenantId: string,
@@ -691,39 +712,27 @@ export class TenantDO extends DurableObject<TenantEnvironment> {
   ): Promise<EnvironmentRecord | undefined> {
     this.scope(tenantId);
     id.parse(environmentId);
-    return this.environmentRows().find((row) => row.id === environmentId);
+    return (await this.environmentRows(tenantId)).find((row) => row.id === environmentId);
   }
   async createEnvironment(tenantId: string, input: unknown): Promise<Response> {
     this.scope(tenantId);
     const parsed = environmentCreateSchema.safeParse(input);
     if (!parsed.success)
       return Response.json({ error: "Invalid environment" }, { status: 400 });
-    const rows = this.environmentRows();
-    const environmentId = parsed.data.id ?? crypto.randomUUID();
-    if (rows.some((row) => row.id === environmentId))
-      return Response.json(
-        { error: "Environment already exists" },
-        { status: 409 },
-      );
-    if (rows.length >= 64)
-      return Response.json(
-        { error: "Environment limit reached" },
-        { status: 409 },
-      );
-    const now = new Date().toISOString();
-    const record: EnvironmentRecord = {
-      id: environmentId,
-      name: parsed.data.name,
-      createdAt: now,
-      updatedAt: now,
-    };
-    this.ctx.storage.sql.exec(
-      "INSERT INTO environments VALUES (?,?)",
-      record.id,
-      JSON.stringify(record),
-    );
-    await this.ctx.storage.sync();
-    return Response.json(record, { status: 201 });
+    return this.serialized(async () => {
+      const rows = await this.environmentRows(tenantId);
+      const environmentId = parsed.data.id ?? crypto.randomUUID();
+      if (rows.some((row) => row.id === environmentId))
+        return Response.json({ error: "Environment already exists" }, { status: 409 });
+      if (rows.length >= 64)
+        return Response.json({ error: "Environment limit reached" }, { status: 409 });
+      const now = new Date().toISOString();
+      const record: EnvironmentRecord = {id: environmentId, name: parsed.data.name, createdAt: now, updatedAt: now};
+      const result = await this.env.CONFIG_DB.prepare('INSERT INTO environments (tenant_id, environment_id, document) VALUES (?, ?, ?) ON CONFLICT DO NOTHING')
+        .bind(tenantId, record.id, JSON.stringify(record)).run();
+      if (result.meta.changes !== 1) return Response.json({ error: "Environment already exists" }, { status: 409 });
+      return Response.json(record, { status: 201 });
+    });
   }
 }
 

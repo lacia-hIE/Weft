@@ -1,4 +1,3 @@
-import {resolveImageAttachmentAccess} from '@deepseek-ai/dsh-llm';
 import {EnvironmentUploadIndex, EnvironmentDeepSeekFiles} from '../../../packages/model-provider/src/files.ts';
 import type { Agent } from '@deepseek-ai/dsh-agent';
 import type { Env } from './index.ts';
@@ -6,7 +5,17 @@ import type { SessionScope } from '../../../packages/tenant/src/index.ts';
 import type { AgentRevision } from '../../../packages/control-plane/src/contracts.ts';
 import type { RuntimeOptions } from '../../../packages/harness-runtime/src/runtime.ts';
 import type { createSessionReader } from '../../../packages/harness-runtime/src/session-reader.ts';
-import { resolveTenantModel, readEnvironmentModelConfiguration } from '../../../packages/model-provider/src/index.ts';
+import { ModelConfigurationError, turnTimeoutFor } from '../../../packages/model-provider/src/index.ts';
+import { credentialRefFor, defaultSelectionOf, mountNativeModels, readModelSections, type EnvironmentModels } from '../../../packages/native-models/src/index.ts';
+import { EnvironmentCredentialReader } from '../../../packages/native-environment/src/index.ts';
+import { ScriptedAdapter } from '../../../packages/harness-runtime/src/scripted-adapter.ts';
+import { currentModelSelection } from '../../../packages/harness-runtime/src/model-selection.ts';
+import { credentialRef } from '@deepseek-ai/dsh-credentials';
+import { ReasoningEffortId } from '@deepseek-ai/dsh-llm';
+import type { ModelSelection } from '@deepseek-ai/dsh-agent';
+
+// Replaced with a literal by the build. Production cannot enable validation adapters.
+declare const WEFT_VALIDATION_BUILD: boolean;
 import { SqliteSessionPersistence } from '../../../packages/session-persistence-do/src/index.ts';
 import { mountWorkspace } from '../../../packages/workspace/src/provider.ts';
 import { workspaceAddress } from '../../../packages/workspace/src/protocol.ts';
@@ -26,18 +35,27 @@ import SessionFileReferences from '@weft/upstream/packages/api/session-controlle
 import {ComputerFileReferences} from '../../../packages/native-files/src/references.ts';
 import {mountWorkspaceShell} from '../../../packages/workspace/src/subprocess.ts';
 import {forwardNativeNotifications, mountNativeInteraction} from './native-interaction.ts';
+import {HarnessHome} from '../../../packages/native-environment/src/harness-home.ts';
 
 type Reader = Awaited<ReturnType<typeof createSessionReader>>;
 export async function sessionRuntime(env: Env, storage: DurableObjectStorage, scope: SessionScope, profile: AgentRevision | undefined, workspaceId: string | null, persona: string, presentation: boolean, reader?: Reader, hooks: Pick<RuntimeOptions, 'onEvent' | 'onFrame'> = {}, cwd = '/workspace', requireCredential = true) {
   const owner = controlScope(scope.tenantId, scope.environmentId);
-  const configuration = await readEnvironmentModelConfiguration(await controlFor(env, owner).nativeModelConfiguration(owner));
+  const control = controlFor(env, owner);
   let runtimeRoot: Context | undefined;
-  const files = new EnvironmentDeepSeekFiles(new EnvironmentUploadIndex(operation => controlFor(env, owner).nativeModelFiles(owner, operation)));
-  const model = resolveTenantModel(env, scope.tenantId, profile?.spec.model, configuration, requireCredential, {
-    resolveAttachments: () => runtimeRoot?.get('attachments'),
-    resolveImageAccess: (attachments, ref) => resolveImageAttachmentAccess(attachments, path => runtimeRoot?.get('fs')?.processPathFromHostPath(path), ref),
-    resolveFiles: () => files,
-  });
+  const files = new EnvironmentDeepSeekFiles(new EnvironmentUploadIndex(operation => control.nativeModelFiles(owner, operation)));
+  const scripted = WEFT_VALIDATION_BUILD && env.MODEL_BACKEND === 'scripted';
+  let models: EnvironmentModels | undefined = scripted ? undefined : await readModelSections(await control.nativeModelSections(owner));
+  const selection = (): ModelSelection => {
+    if (!models) return {provider: 'validation', model: 'scripted'};
+    const {reasoningEffort, ...route} = defaultSelectionOf(models, profile?.spec.model?.name);
+    return {...route, ...(reasoningEffort === undefined ? {} : {reasoningEffort: ReasoningEffortId(reasoningEffort)})};
+  };
+  if (models && requireCredential) {
+    const ref = credentialRefFor(models, selection().provider);
+    if (ref !== undefined && !await control.nativeResolveCredential(owner, credentialRef(ref))) throw new ModelConfigurationError('MODEL_NOT_CONFIGURED');
+  }
+  const harnessHome = {...await control.nativeHarnessHome(owner), deepSeekFiles: files};
+  let commitModels: ((next: EnvironmentModels) => Promise<void>) | undefined;
   const loop = await (await controlFor(env, owner).nativeLoopConfiguration(owner)).json() as {maxParallelToolCalls: number};
   let activeAgent: Agent | undefined;
   let composition: Context | undefined;
@@ -45,13 +63,23 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
   const options: RuntimeOptions = {
     sessionId: scope.sessionId,
     persona: profile ? `${profile.spec.persona}\n${profile.spec.allowClientPlugins ? presentation ? NATIVE_PLUGIN_GUIDE : CLIENT_PLUGIN_GUIDE : ''}` : persona,
-    model: model.model, adapter: model.adapter, presentation,
+    model: selection(), presentation,
+    mountModels: async ctx => {
+      await ctx.plugin(HarnessHome, harnessHome);
+      await ctx.plugin(EnvironmentCredentialReader, (ref: string) => control.nativeResolveCredential(owner, credentialRef(ref)));
+      if (models) commitModels = await mountNativeModels(ctx, models);
+      else if (WEFT_VALIDATION_BUILD) ctx.llm.registerAdapter(['validation'], new ScriptedAdapter());
+      else throw new Error('Environment model settings are unavailable');
+    },
     agentLoop: {maxParallelToolCalls: loop.maxParallelToolCalls},
-    ...(model.currentSelection ? {defaultModel: model.currentSelection} : {}),
+    defaultModel: selection,
     beforeAssembly: async () => {
-      if (model.refresh) {
-        const next = await readEnvironmentModelConfiguration(await controlFor(env, owner).nativeModelConfiguration(owner));
-        model.refresh(next);
+      if (models) {
+        models = await readModelSections(await control.nativeModelSections(owner));
+        await commitModels?.(models);
+        // Admission fails fast, before the turn queues, when the next route names a credential that is not set.
+        const ref = credentialRefFor(models, (activeAgent && currentModelSelection(activeAgent) || selection()).provider);
+        if (ref !== undefined && !await control.nativeResolveCredential(owner, credentialRef(ref))) throw new ModelConfigurationError('MODEL_NOT_CONFIGURED');
       }
       const next = await (await controlFor(env, owner).nativeLoopConfiguration(owner)).json() as {maxParallelToolCalls: number};
       if (runtimeRoot) updateVolatile(runtimeRoot.agentLoop.config.maxParallelToolCalls, AgentLoop.Config({maxParallelToolCalls: next.maxParallelToolCalls}).maxParallelToolCalls);
@@ -103,5 +131,5 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
       }, {global: true});
     },
   };
-  return {options, turnTimeoutMs: model.turnTimeoutMs};
+  return {options, turnTimeoutMs: turnTimeoutFor(env)};
 }

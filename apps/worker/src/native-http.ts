@@ -17,6 +17,7 @@ import uploadRemote from '../../../.generated/official-remotes/packages/client/f
 import {agentRemoteFor} from './agent-remotes.ts';
 import scheduleRemote from '../../../.generated/official-remotes/packages/schedule/schedule/typert.remote-client.js';
 import {environmentRemoteFor} from '../../../packages/native-environment/src/index.ts';
+import {isMarketEndpoint} from '../../../packages/native-environment/src/market.ts';
 import {openPermissionWorld} from '../../../packages/native-environment/src/permissions.ts';
 import permissionRemote from '../../../.generated/official-remotes/packages/interaction/permission-presets/typert.remote-client.js';
 import {remoteAgentId} from '../../../packages/harness-runtime/src/remote-dispatch.ts';
@@ -32,7 +33,8 @@ import type { Env } from './index.ts';
 import { assertSameOrigin, HttpError, readJson } from './http.ts';
 declare const WEFT_VALIDATION_BUILD: boolean;
 
-import { resolveTenantModel, ModelConfigurationError, readEnvironmentModelConfiguration } from '../../../packages/model-provider/src/index.ts';
+import { ModelConfigurationError } from '../../../packages/model-provider/src/index.ts';
+import { isEnvironmentModelEndpoint } from '../../../packages/native-models/src/environment.ts';
 
 const payloadSchema = z.object({args: z.unknown()}).strict();
 type Endpoint = keyof typeof sessionRemote.methods;
@@ -235,6 +237,10 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
       const {value} = await (await control.nativePreset(owner, endpoint, args)).json() as {value: unknown};
       return Response.json({type: 'server-response', rpcId, result: {ok: true, value: method.result.create().parse(value)}}, {headers: {'cache-control': 'private, no-store'}});
     }
+    if (isMarketEndpoint(endpoint)) {
+      const {value} = await (await control.nativePluginMarket(owner, endpoint, payload.args)).json() as {value: unknown};
+      return Response.json({type: 'server-response', rpcId, result: {ok: true, value}}, {headers: {'cache-control': 'private, no-store'}});
+    }
     if (endpoint.startsWith('pluginManager/')) {
       const {value} = await (await control.nativeManagePlugins(owner, endpoint, payload.args)).json() as {value: unknown};
       return Response.json({type: 'server-response', rpcId, result: {ok: true, value}}, {headers: {'cache-control': 'private, no-store'}});
@@ -273,25 +279,8 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
       const {value} = await (await control.nativeSettingsRequest(owner, endpoint, payload.args)).json() as {value?: unknown};
       return Response.json({type: 'server-response', rpcId, result: {ok: true, value}}, {headers: {'cache-control': 'private, no-store'}});
     }
-    if (endpoint === 'llm/discoverModels') {
-      const method = llmRemote.methods[endpoint];
-      const args = method.input({strict: true}).create().parse(payload.args);
-      // Like a route whose adapter knows its models, the environment's DeepSeek route answers from the adapter's registry.
-      if (args.settingsNs !== MODEL_NAMESPACE || args.request.provider !== 'deepseek-official') {
-        throw new RemoteError('llm/model-discovery-rejected', 'This environment discovers models only for its configured DeepSeek route', {settingsNs: args.settingsNs, ...(args.request.baseURL === undefined ? {} : {baseURL: args.request.baseURL})});
-      }
-      const configuration = await readEnvironmentModelConfiguration(await control.nativeModelConfiguration(owner));
-      const selected = resolveTenantModel(env, principal.tenantId, await control.nativeDefaultModel(owner), configuration, false);
-      const models = await selected.adapter.listModels(selected.model.provider);
-      const value = method.result.create().parse(models.map(model => ({id: model.id, name: model.name, ...(model.inputModalities ? {inputModalities: [...model.inputModalities]} : {})})));
-      return Response.json({type: 'server-response', rpcId, result: {ok: true, value}}, {headers: {'cache-control': 'private, no-store'}});
-    }
-    if (endpoint === 'llm/listProviders' || endpoint === 'llm/listConfigurableProviders') {
-      const method = llmRemote.methods[endpoint];
-      method.input({strict: true}).create().parse(payload.args);
-      const value = method.result.create().parse(endpoint === 'llm/listConfigurableProviders'
-        ? [{provider: 'deepseek-official', displayName: 'DeepSeek', settingsNs: MODEL_NAMESPACE, settingsPath: []}]
-        : WEFT_VALIDATION_BUILD && env.MODEL_BACKEND === 'scripted' ? [{id: 'validation', name: 'validation'}] : [{id: 'deepseek-official', name: 'DeepSeek'}]);
+    if (isEnvironmentModelEndpoint(endpoint)) {
+      const {value} = await (await control.nativeModelRemote(owner, endpoint, payload.args)).json() as {value: unknown};
       return Response.json({type: 'server-response', rpcId, result: {ok: true, value}}, {headers: {'cache-control': 'private, no-store'}});
     }
     if (endpoint.startsWith('workspace/') || endpoint.startsWith('directoryPicker/')) {
@@ -310,15 +299,6 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
       case 'session/workspacePathApplications': {
         sessionRemote.methods[endpoint].input({strict: true}).create().parse(payload.args);
         value = []; break;
-      }
-      case 'session/modelCatalog': {
-        sessionRemote.methods[endpoint].input({strict: true}).create().parse(payload.args);
-        const configuration = await readEnvironmentModelConfiguration(await control.nativeModelConfiguration(owner));
-        const selected = resolveTenantModel(env, principal.tenantId, await control.nativeDefaultModel(owner), configuration, false);
-        const provider = selected.adapter.providerInfo(selected.model.provider);
-        const models = await selected.adapter.listModels(selected.model.provider);
-        value = {default: selected.model, routableProviders: models.length ? [provider.id] : [], groups: models.length ? [{id: provider.id, name: provider.name, models: models.map(model => ({id: model.id, name: model.name, ...(model.description ? {description: model.description} : {}), ...('reasoning' in model && model.reasoning ? {reasoning: model.reasoning} : {})}))}] : [], failures: []};
-        break;
       }
       case 'session/create': {
         const {request: input} = sessionRemote.methods[endpoint].input({strict: true}).create().parse(payload.args);

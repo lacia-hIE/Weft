@@ -138,7 +138,7 @@ test('native Remote rejects invalid contracts and unavailable capabilities witho
     assert.equal((await api.raw('session/create', {request: {}}, 'session/list')).result.error?.code, 'gateway/bad-request');
     assert.equal((await api.raw('session/create', {request: {cwd: '/etc'}})).result.error?.code, 'workspace/invalid-path');
     assert.equal((await api.raw('session/fork', {})).result.error?.code, 'gateway/bad-request');
-    assert.equal((await api.raw('pluginMarket/listIndexes', {})).result.error?.code, 'gateway/method-unavailable');
+    assert.equal((await api.raw('officeToPdf/generation', {})).result.error?.code, 'gateway/method-unavailable');
     await api.call('session/create', {request: {sessionId: 'same'}});
     const error = await api.raw('session/page', {request: {address: {kind: 'session', sessionId: 'same'}, throughSeq: 999}});
     assert.equal(error.result.error?.code, 'gateway/bad-request');
@@ -196,7 +196,9 @@ test('a native follow reconnect sees the actual active Session and assistant sna
     const opening = await second.next();
     assert.equal(opening.type, 'snapshot');
     if (opening.type !== 'snapshot') throw new Error('Missing live reconnect snapshot');
-    assert.equal(opening.cursor, cursor, 'an active read must not synthesize interrupted-turn closers');
+    // The title row's request and its request-log delivery commit beside the running turn; nothing else may appear, least of all synthesized closers.
+    const later = opening.records.filter(record => record.event.seq > cursor).map(record => record.event.type);
+    assert.ok(later.every(type => type.startsWith('session/title') || type.startsWith('session-log-deepseek/')), `an active read must not synthesize interrupted-turn closers: ${later.join(', ')}`);
     assert.ok(!opening.records.some(record => record.event.type === 'turn/end'));
     assert.match(JSON.stringify(opening.assistantStream?.activeAttempt), /still running/);
     const renamed = await api.call<{title: string; seq: number}>('session/rename', {request: {sessionId: 'live', title: 'renamed while running'}});

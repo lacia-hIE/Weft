@@ -10,10 +10,8 @@ import JobController from '@deepseek-ai/dsh-api-job-controller';
 import TerminalController from '@deepseek-ai/dsh-api-terminal-controller';
 import * as WebSearchDeepSeek from '@deepseek-ai/dsh-web-search-deepseek';
 import * as WebFetchHttp from '@deepseek-ai/dsh-web-fetch-http';
-import { credentialRef } from '@deepseek-ai/dsh-credentials';
-import { EnvironmentCredentialReader } from '../../../packages/native-environment/src/index.ts';
 import { mountPermissions } from '../../../packages/native-environment/src/permissions.ts';
-import { readEnvironmentModelConfiguration } from '../../../packages/model-provider/src/index.ts';
+import { readModelSections } from '../../../packages/native-models/src/index.ts';
 import type { Env } from './index.ts';
 import { controlFor, NATIVE_FORWARDED_EVENTS, NATIVE_WATERFALLS } from '../../../packages/control-plane/src/object.ts';
 import type { ControlScope } from '../../../packages/control-plane/src/contracts.ts';
@@ -49,12 +47,12 @@ export async function mountNativeInteraction(ctx: Context, env: Env, storage: Du
   if (ctx.get('subprocess')) await ctx.plugin(TerminalController, TerminalController.Config({} as never));
   // Permission presets bundle the shell's sandbox mode with the approval policy; approvals reach the client as waterfalls.
   if (ctx.get('shell')) await mountPermissions(ctx, await controlFor(env, owner).nativePermissionDefault(owner));
-  await ctx.plugin(EnvironmentCredentialReader, (ref: string) => controlFor(env, owner).nativeResolveCredential(owner, credentialRef(ref)));
   // The base bundle's web rows: DeepSeek search on the environment's configured DeepSeek endpoint
   // and model key (the official default is that endpoint's `/v1`), and HTTP fetch over workerd.
-  const model = await readEnvironmentModelConfiguration(await controlFor(env, owner).nativeModelConfiguration(owner)).catch(() => undefined);
+  const {deepseek} = await readModelSections(await controlFor(env, owner).nativeModelSections(owner));
+  const baseURL = typeof deepseek.baseURL === 'string' ? deepseek.baseURL : undefined;
   await ctx.plugin(WebRuntime, {searchProvider: 'deepseek-official', fetchProvider: 'http'});
-  await ctx.plugin(WebSearchDeepSeek, model?.providerOptions.baseURL ? {baseURL: `${model.providerOptions.baseURL.replace(/\/+$/, '')}/v1`} : {});
+  await ctx.plugin(WebSearchDeepSeek, baseURL ? {baseURL: `${baseURL.replace(/\/+$/, '')}/v1`} : {});
   await ctx.plugin(WebFetchHttp, {});
   await mountSessionReferences(ctx, env, storage, scope, owner);
   await mountNativeSchedule(ctx, storage, {set: async at => {

@@ -11,10 +11,13 @@ import { credentialRef, type CredentialRef } from '@deepseek-ai/dsh-credentials'
 import { RemoteError } from '@deepseek-ai/dsh-typert-protocol';
 import settingsRemote from '../../../.generated/official-remotes/packages/api/settings-controller/typert.remote-client.js';
 import { DurableCredentials } from './native-credentials.ts';
+import type { D1SettingsDocuments } from '../../config-store/src/index.ts';
 import AgentPresets from '@deepseek-ai/dsh-agent-preset-registry';
 import AgentLoop from '@deepseek-ai/dsh-agent-loop';
 import Subagents from '@deepseek-ai/dsh-subagent';
 import PermissionPresets from '@deepseek-ai/dsh-permission-presets';
+import PluginMarket from '@deepseek-ai/dsh-plugin-market';
+import { Config as PiAiConfig } from '@deepseek-ai/dsh-llm-pi-ai';
 
 // The official composition's entry id differs from its provider package name.
 // The curated Models editor addresses this entry id.
@@ -24,10 +27,14 @@ export const PRESET_NAMESPACE = 'agent-preset-registry';
 export const LOOP_NAMESPACE = 'agent-loop';
 export const SUBAGENT_NAMESPACE = 'subagent';
 export const PERMISSION_NAMESPACE = 'permission';
+export const MARKET_NAMESPACE = 'plugin-market';
+export const PI_AI_NAMESPACE = 'llm-pi-ai';
 type Section = Record<string, unknown>;
 interface Namespace {
   id: string; schema: Schema; base(): Section; autoGenerate: boolean;
   validate(value: Section): void;
+  /** Held for a service the official profile does not mount, so Settings does not list it. */
+  hidden?: true;
 }
 export interface NativeSettingsHost {
   providerBase(): Section;
@@ -68,8 +75,7 @@ function editPath(value: unknown, path: readonly string[], op: SettingsPathOpVie
 export class NativeSettings {
   readonly credentials: DurableCredentials;
   private readonly namespaces: Namespace[];
-  constructor(private readonly storage: DurableObjectStorage, private readonly host: NativeSettingsHost) {
-    storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_settings (ns TEXT PRIMARY KEY, revision INTEGER NOT NULL, document TEXT NOT NULL)');
+  constructor(storage: DurableObjectStorage, private readonly host: NativeSettingsHost, private readonly documents: D1SettingsDocuments) {
     this.credentials = new DurableCredentials(new Context(), storage, (event, ref) => host.changed(event, [ref]));
     this.namespaces = [
       {id: MODEL_NAMESPACE, schema: DeepSeekConfig, base: () => host.providerBase(), autoGenerate: false, validate: value => {
@@ -84,6 +90,12 @@ export class NativeSettings {
         const presets = PermissionPresets.Config(value as never).presets as Record<string, unknown>;
         if (value.defaultPreset !== undefined && !Object.hasOwn(presets, String(value.defaultPreset))) throw new Error('Unknown permission preset');
       }},
+      {id: PI_AI_NAMESPACE, schema: PiAiConfig, base: () => ({}), autoGenerate: false, validate: value => {
+        for (const profile of Object.values(object(value.providers) ? value.providers : {})) {
+          if (object(profile) && profile.baseURL !== undefined && new URL(String(profile.baseURL)).protocol !== 'https:') throw new Error('Provider endpoint must use HTTPS');
+        }
+      }},
+      {id: MARKET_NAMESPACE, schema: PluginMarket.Config, base: () => ({}), autoGenerate: false, validate: () => {}, hidden: true},
       {id: 'ui-settings', schema: DeveloperToolsConfig, base: () => ({}), autoGenerate: false, validate: () => {}},
       {id: 'ui-settings-general', schema: WelcomeConfig, base: () => ({}), autoGenerate: false, validate: () => {}},
     ];
@@ -93,9 +105,8 @@ export class NativeSettings {
     if (!ns) throw new RemoteError('settings/rejected', 'No configurable plugin entry', {ns: id});
     return ns;
   }
-  private row(ns: string) {
-    const row = this.storage.sql.exec<{revision: number; document: string}>('SELECT revision,document FROM weft_settings WHERE ns=?', ns).toArray()[0];
-    return {revision: row?.revision ?? 0, user: row ? JSON.parse(row.document) as Section : {}};
+  private row(ns: string): {revision: number; user: Section} {
+    return this.documents.get(ns);
   }
   value(id: string): Section {
     const ns = this.namespace(id);
@@ -111,47 +122,40 @@ export class NativeSettings {
     return settingsRemote.methods['settings/update'].result.create().parse({ns: id, revision, autoGenerate: ns.autoGenerate, schema: form.toJSON(), value: value.value, base: redactSecrets(redaction, projectForm(form, base)).value, user: redactSecrets(redaction, projectForm(form, user)).value, secrets: value.secrets, applies: 'live'});
   }
   describe(): SettingsDescribeValue {
-    return {writable: true, hasDocument: false, namespaces: this.namespaces.map(ns => this.view(ns.id))};
+    return {writable: true, hasDocument: false, namespaces: this.namespaces.filter(ns => !ns.hidden).map(ns => this.view(ns.id))};
   }
   /** Preset declarations are dependencies of the roster/default settings view. */
   async invalidate(id: string): Promise<void> {
     this.namespace(id);
-    let revision = 0;
-    this.storage.transactionSync(() => {
-      const current = this.row(id);
-      revision = current.revision + 1;
-      this.storage.sql.exec('INSERT INTO weft_settings VALUES (?,?,?) ON CONFLICT(ns) DO UPDATE SET revision=excluded.revision,document=excluded.document', id, revision, JSON.stringify(current.user));
-    });
-    await this.storage.sync();
+    const {revision} = await this.documents.update(id, current => ({revision: current.revision + 1, user: current.user}));
     this.host.changed('settings/document-updated', [id, revision]);
   }
   private async write(id: string, expected: number | undefined, change: (user: Section, schema: Schema) => Section): Promise<SettingsNamespaceView> {
     const ns = this.namespace(id);
-    let revision = 0;
-    this.storage.transactionSync(() => {
-      const current = this.row(id);
+    const {revision} = await this.documents.update(id, current => {
       if (expected !== undefined && expected !== current.revision) throw new RemoteError('settings/conflict', 'Configuration changed since it was read', {ns: id, expected, actual: current.revision});
       const next = change(current.user, ns.schema);
       for (const key of Object.keys(next)) if (!Object.hasOwn(ns.schema.dict ?? {}, key) || !isVolatilePath(ns.schema, [key])) throw new Error('Config field is not editable');
       const effective = merge(ns.base(), next);
       ns.schema(effective);
       ns.validate(effective);
-      revision = current.revision + Number(JSON.stringify(current.user) !== JSON.stringify(next));
-      this.storage.sql.exec('INSERT INTO weft_settings VALUES (?,?,?) ON CONFLICT(ns) DO UPDATE SET revision=excluded.revision,document=excluded.document', id, revision, JSON.stringify(next));
+      return {revision: current.revision + Number(JSON.stringify(current.user) !== JSON.stringify(next)), user: next};
     });
-    await this.storage.sync();
     this.host.changed('settings/document-updated', [id, revision]);
     return this.view(id);
+  }
+  async saveMarketIndexes(indexes: string[]): Promise<void> {
+    await this.write(MARKET_NAMESPACE, undefined, user => ({...user, indexes}));
   }
   async saveDefault(selected: {provider: string; model: string; reasoningEffort?: string}): Promise<void> {
     await this.write(DEFAULT_MODEL_NAMESPACE, undefined, () => ({...selected}));
   }
-  async modelConfiguration() {
-    const provider = this.value(MODEL_NAMESPACE);
-    const key = await this.credentials.resolve(credentialRef(String(provider.apiKeyEnv)));
+  /** The effective sections the official model entries run with, and the environment's explicit default selection. */
+  modelSections(): {deepseek: Section; piAi: Section; baseModel: {provider: string; model: string; reasoningEffort?: string}; defaultModel?: {provider: string; model: string; reasoningEffort?: string}} {
     const defaults = this.value(DEFAULT_MODEL_NAMESPACE);
+    const selection = {provider: String(defaults.provider), model: String(defaults.model), ...(defaults.reasoningEffort === undefined ? {} : {reasoningEffort: String(defaults.reasoningEffort)})};
     const explicit = Object.keys(this.row(DEFAULT_MODEL_NAMESPACE).user).length > 0;
-    return {providerOptions: provider as DeepSeekOptions, ...(key ? {apiKey: key.value} : {}), ...(explicit ? {defaultModel: {provider: String(defaults.provider), model: String(defaults.model), ...(defaults.reasoningEffort === undefined ? {} : {reasoningEffort: String(defaults.reasoningEffort)})}} : {})};
+    return {deepseek: this.value(MODEL_NAMESPACE), piAi: this.value(PI_AI_NAMESPACE), baseModel: selection, ...(explicit ? {defaultModel: selection} : {})};
   }
   async invoke(endpoint: string, raw: unknown): Promise<Response> {
     type Method = keyof typeof settingsRemote.methods;

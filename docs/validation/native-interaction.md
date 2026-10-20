@@ -52,7 +52,8 @@ Agent 级的直接调用方法（commands、userQuestions、goals、skills、fil
 - 主机名经平台在边缘解析，Worker 无法预先检查域名解析到的地址；IP 字面量按原版规则检查。
 - DeepSeek 平台账号登录依赖 loopback 回调的 OAuth，`account/*` 明确拒绝；模型凭据使用环境 API key。
 - Office 转 PDF 依赖 LibreOffice（原生库或数十 MB 的 WASM），超出 Worker 的体积与内存上限，`officeToPdf/*` 明确拒绝。
-- 插件市场与通用包安装需要在宿主 isolate 中加载任意 npm 代码，`pluginMarket/*` 与安装类方法明确拒绝；语音、思维链翻译等实验模块不在官方 Web profile 中。
+- 插件市场的原版 `pluginMarket` 服务已在 EnvironmentDO 中运行：索引 URL 保存在环境设置 `plugin-market` 命名空间，`listIndexes`、`setIndexes`、`search` 使用原版解析、搜索与兼容性检查（运行时版本固定为构建所用 app-boot 版本），设置变更广播 `plugin-market/changed`。上游官方 Web profile 不挂载市场，Discover 页属于默认关闭的实验 bundle，因此本部署同样不显示它。通用包安装需要在宿主 isolate 中加载任意 npm 代码，`pluginManager/installBundle` 明确拒绝。语音、思维链翻译等实验模块不在官方 Web profile 中。
+- 上述三项的外部服务方案见 [外部服务设计](../architecture/external-services.md)。
 - 受控模型不会产生真实网络 I/O；goal 连续轮次在测试中需要设置轮次上限。
 
 ## 验证
@@ -69,7 +70,8 @@ Agent 级的直接调用方法（commands、userQuestions、goals、skills、fil
 - `tests/native-terminal.test.ts`：shell 发现、终端创建与列表、`attach` 经 uplink 输入、工作目录保留、Ctrl-C。
 - `tests/native-permissions.test.ts`：权限目录与默认值、`/permission read-only` 拒绝写入、升级请求经 `$events` 批准后以完全访问运行。
 - `tests/browser/terminal.spec.ts`：官方 Terminal 侧栏中输入命令并看到输出。
+- `tests/native-market.test.ts`：保存索引源并收到 `plugin-market/changed`，搜索、默认版本、安装参数、`engines.dsh` 不兼容、索引标题缓存、未知索引与重定向拒绝，安装仍被拒绝。
 - `tests/native-web.test.ts`：`web_fetch` 转换公网页面、拒绝非公网 IP 字面量；`web_search` 携带环境密钥并返回原版结果。
 - `tests/browser/interaction-live.spec.ts`（`WEFT_BROWSER_LIVE=1`）：真实 DeepSeek 调用 `ask_user_question`，官方问题卡片在页面中作答后，模型按所选答案继续。
-- `tests/browser/official-coverage.spec.ts`：官方入口、命令与引用弹层、Automation tasks、右侧栏标签页、反馈与账号菜单等交互中，失败的原生调用只能是 `account/watch` 与 `permissionPresets/catalog`，且返回 `gateway/method-unavailable`，页面无运行时错误。
+- `tests/browser/official-coverage.spec.ts`：官方入口、命令与引用弹层、Automation tasks、右侧栏标签页、反馈与账号菜单等交互中，失败的原生调用只能属于 `account/*` 与 `officeToPdf/*`，且返回 `gateway/method-unavailable`，页面无运行时错误。
 - 浏览器审计：官方入口、命令与引用弹层、Automation tasks、右侧栏、反馈与账号菜单等交互中，只剩上述已知限制对应的调用返回明确拒绝，页面无运行时错误。

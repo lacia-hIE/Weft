@@ -4,7 +4,7 @@
 
 ## 实现边界
 
-`WorkspaceDO` 独立于 `SessionDO`，使用 `[tenantId, workspaceId]` 寻址；每次内部 RPC 重新核对 scope 与实际 DO ID。它持有 Computer `Workspace`，文件由 Computer SQLite VFS 保存。没有配置 Container、Worker Shell、动态 JavaScript 或 Git 后端，也没有公开不带 scope 的原始 Computer stub。
+`WorkspaceDO` 独立于 `SessionDO`，使用 `[tenantId, workspaceId]` 寻址；每次内部 RPC 重新核对 scope 与实际 DO ID。它持有 Computer `Workspace`，文件由 Computer SQLite VFS 保存。执行后端只有 Computer Worker Shell（见 [原版交互服务](native-interaction.md)），没有 Container、动态 JavaScript 或 Git 后端，也没有公开不带 scope 的原始 Computer stub。
 
 `ComputerFileSystem` 实现 Harness 的 `ctx.fs` 服务。`read`、`write`、`edit` 工具、working-directory 服务和 fs-observation-policy 均直接来自固定的上游源码，保留上游参数、读取窗口、输出格式、Diff 与先观察后修改的规则。额外的 `workspace_search` 是 Weft 注册的有界字面文本搜索工具。
 

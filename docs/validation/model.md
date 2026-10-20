@@ -1,17 +1,20 @@
-# DeepSeek 模型、流式输出与取消验证
+# 模型、流式输出与取消验证
 
-验证日期：2026-10-16。运行环境仍为纯 workerd，模型 HTTP 请求由固定版本 Harness 的 `DeepSeekAdapter` 发起；没有单独的 Node 服务或容器。
+验证日期：2026-10-20。运行环境为纯 workerd。模型提供商是官方 profile 的两个条目：`llm-deepseek`（`@deepseek-ai/dsh-llm-deepseek-api-key`）与 `llm-pi-ai`（`@deepseek-ai/dsh-llm-pi-ai`，OpenAI、Anthropic、Kimi 等第三方提供商与自建网关），由每个世界的 `WorkerdLoader` 加载；条目 id 即设置命名空间。
 
 ## 当前能力
 
-- 通过官方 Messages API 调用 `deepseek-flash`，上游适配器负责协议序列化、SSE 解析、工具调用和历史回放。
-- 每次运行由宿主解析当前环境在官方 Models 中保存的模型与凭据，再注入 Harness；普通 prompt 不能覆盖这些设置。
+- 原版适配器负责协议序列化、SSE 解析、工具调用和历史回放。会话世界与 EnvironmentDO 的环境级模型世界各自挂载两个条目：前者运行回合，后者提供提供商目录（`llm/listConfigurableProviders`）、提供商与模型列表、端点发现（`llm/discoverModels`，原版只有 `llm-pi-ai` 注册）与浏览器模型目录（原版 `buildModelCatalog`）。
+- 环境设置变更后，条目经 `loader.update` 按原版 Volatile 语义更新，无需重建会话；普通 prompt 不能覆盖这些设置。
+- API key 经环境凭据库解析（`credentials` 服务），每条路由使用自己的 `apiKeyEnv` 引用；第三方端点与 DeepSeek 端点一样必须使用 HTTPS。
+- 原版在 harness home 中保存的状态按环境保存在 EnvironmentDO：随机生成的匿名用户 id（请求头 `x-deepseek-harness-user-id`，不由租户或用户身份推导）与 DeepSeek 上传索引。构建期替换让原版代码从上下文的 `weftHarnessHome` 服务读取它们，而不是读写 isolate 共享的文件系统。
 - 模型配置只来自环境自己的设置与凭据库。部署变量和 `.env` 均不提供模型配置，删除环境密钥不会回退到平台密钥。
 - JSON 完整响应与 SSE 增量响应共用执行路径、租户授权、持久化和取消逻辑。
 - 显式取消可绕过 Session 执行队列，只作用于指定请求；取消排队请求不会将其输入写入历史。
+- 思考等级与输出上限沿用原版适配器默认值（思考开启、默认 `high`、`max_tokens` 256000），与官方 profile 一致；会话在模型选择器中切换 `off` / `low` / `high` / `max`，请求随之携带 `thinking` 与 `output_config.effort`。Models 设置中的 `thinking: disabled` 会把所有请求限制为 `off`。
 - 模型流空闲期限默认 60 秒，整个活动回合期限默认 180 秒；排队等待不计入回合期限。
-- 关闭自动模型重试，拒绝重复的活动请求 ID，同一 Session 最多接纳 32 个活动或排队请求。
-- 模型错误按稳定 code 返回；供应商错误原文和 cause 在进入 Harness 日志之前替换为安全描述，避免错误响应回显服务端凭据。
+- 关闭自动模型重试，拒绝重复的活动请求 ID，同一 Session 最多接纳 32 个活动或排队请求。所选路由缺少已命名的凭据时，提示在入队前以 `session/provider-credentials-unavailable` 拒绝。
+- 模型错误按稳定 code 返回；`llm/stream` 监听器把所有路由的失败原文替换为安全描述（终止块与抛出的错误都覆盖），保留 code、状态与重试延迟，避免回显凭据进入会话日志。
 
 ## HTTP 协议
 

@@ -84,6 +84,8 @@ test('official Models settings save real scoped credentials and configuration wi
     return body.result.value;
   };
   const openSettings = async () => {
+    // The official app opens its blank Session after boot and closes open dialogs when it navigates there.
+    await expect(page.getByRole('treeitem', {name: /New Session/}).first()).toBeVisible({timeout: 45_000});
     await page.getByRole('button', {name: 'Account menu', exact: true}).click({timeout: 45_000});
     await page.getByRole('menuitem', {name: 'Settings', exact: true}).click();
     await page.getByRole('button', {name: 'Models', exact: true}).click();

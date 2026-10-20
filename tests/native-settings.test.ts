@@ -72,7 +72,7 @@ test('native settings and write-only credentials persist by environment and cont
     await send(b, 'b', 'other-environment');
     assert.equal(calls.at(-1)!.body.model, 'deepseek-flash');
     assert.equal(calls.at(-1)!.key, 'only-environment-b-fixture');
-    assert.equal(calls.at(-1)!.body.max_tokens, 8192);
+    assert.equal(calls.at(-1)!.body.max_tokens, 256_000);
     assert.doesNotMatch(JSON.stringify(await describe()), /only-environment-a-fixture|platform-settings-fixture/);
     await a.call('credentials/unset', {ref: 'PROJECT_KEY'});
     assert.deepEqual(await a.call('credentials/describe', {refs: ['PROJECT_KEY']}), {PROJECT_KEY: {configured: false, writable: true}});
@@ -139,6 +139,6 @@ test('a live native turn adopts configuration and credential changes at its next
     release();
     assert.equal((await runtime.dispatchFetch(url('alpha', `/v1/tenants/${tenantId('alpha')}/environments/default/sessions/live/events`))).status, 200);
     assert.equal(calls.length, 2);
-    assert.deepEqual(calls.map(call => [new URL(call.url).hostname, call.key, call.maxTokens]), [['before.test', 'before-fixture', 8192], ['after.test', 'after-fixture', 41]]);
+    assert.deepEqual(calls.map(call => [new URL(call.url).hostname, call.key, call.maxTokens]), [['before.test', 'before-fixture', 256_000], ['after.test', 'after-fixture', 41]]);
   } finally {release(); await runtime.dispose();}
 });

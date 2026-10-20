@@ -1,3 +1,5 @@
+import * as SessionStats from '@deepseek-ai/dsh-session-stats';
+import * as SessionTurnOutline from '@deepseek-ai/dsh-session-turn-outline';
 import { Context } from '@deepseek-ai/cordis';
 import Sessions, { type Session, type SessionEvent, type SessionId } from '@deepseek-ai/dsh-session';
 import Projections from '@deepseek-ai/dsh-session-projection';
@@ -64,6 +66,9 @@ export async function createSessionReader(storage: DurableObjectStorage, promote
     ctx.sessionProjections.register(contextPressureProjectionDefinition);
     ctx.sessionProjections.register(contextBreakdownProjectionDefinition);
     installModelSelectionProjection(ctx);
+    // Profile rows that only register read folds; the native root loads them from the official profile.
+    await ctx.plugin(SessionStats);
+    await ctx.plugin(SessionTurnOutline);
     await ctx.plugin(Title, {fallbackMaxWords: 5, fallbackMaxBytes: 40, maxTitleBytes: 80});
     await ctx.plugin(SqliteSessionPersistence, {storage});
     await installDurableSessionQuery(ctx, storage);

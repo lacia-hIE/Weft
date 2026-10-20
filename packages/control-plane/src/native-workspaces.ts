@@ -1,3 +1,4 @@
+import type { D1WorkspaceRegistry, WorkspaceTransaction } from '../../config-store/src/index.ts';
 import { posix } from 'node:path';
 import { RemoteError } from '@deepseek-ai/dsh-typert-protocol';
 import { brandString } from '@deepseek-ai/dsh-brand';
@@ -23,23 +24,20 @@ const wid = (id: string) => brandString<WorkspaceId>(id);
 export class NativeWorkspaces {
   private readonly feed = new NativeStreamHub<WorkspaceFollowFrame>();
   private tail = Promise.resolve();
-  constructor(private readonly storage: DurableObjectStorage, private readonly host: NativeWorkspaceHost) {
-    storage.transactionSync(() => {
-      storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_native_workspace_state (id INTEGER PRIMARY KEY CHECK(id=1), version INTEGER NOT NULL, document TEXT NOT NULL)');
-      storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_native_workspaces (id TEXT PRIMARY KEY, path TEXT UNIQUE NOT NULL, document TEXT NOT NULL)');
-      storage.sql.exec('INSERT OR IGNORE INTO weft_native_workspace_state VALUES (1,1,?)', JSON.stringify({initialized: true, workspaceIds: [], archivedSessionIds: [], pinnedSessionIds: []}));
-    });
-    if (storage.sql.exec<{version: number}>('SELECT version FROM weft_native_workspace_state WHERE id=1').one().version !== 1) throw new Error('Unsupported native Workspace registry version');
+  /** The open registry transaction; reads and writes inside `commit` go to its private copy. */
+  private tx: WorkspaceTransaction | undefined;
+  constructor(private readonly registry: D1WorkspaceRegistry, private readonly host: NativeWorkspaceHost) {
     this.snapshot();
   }
   private state(): WorkspaceDomainState {
-    return workspaceDomainState.parse(JSON.parse(this.storage.sql.exec<{document: string}>('SELECT document FROM weft_native_workspace_state WHERE id=1').one().document));
+    return workspaceDomainState.parse(JSON.parse((this.tx ?? this.registry).state()));
   }
   private storeState(state: WorkspaceDomainState): void {
-    this.storage.sql.exec('UPDATE weft_native_workspace_state SET document=? WHERE id=1', JSON.stringify(workspaceDomainState.parse(state)));
+    if (!this.tx) throw new Error('Workspace registry writes require a commit');
+    this.tx.storeState(JSON.stringify(workspaceDomainState.parse(state)));
   }
   get(id: string): WorkspaceView | undefined {
-    const row = this.storage.sql.exec<{document: string}>('SELECT document FROM weft_native_workspaces WHERE id=?', id).toArray()[0];
+    const row = (this.tx ?? this.registry).get(id);
     return row ? {workspaceId: wid(id), ...workspaceRecord.parse(JSON.parse(row.document))} : undefined;
   }
   private require(id: string): WorkspaceView {
@@ -50,12 +48,13 @@ export class NativeWorkspaces {
   private save(view: WorkspaceView): void {
     const {workspaceId, ...record} = view;
     const checked = workspaceRecord.parse(record);
-    this.storage.sql.exec('INSERT INTO weft_native_workspaces VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET path=excluded.path,document=excluded.document', workspaceId, checked.path, JSON.stringify(checked));
+    if (!this.tx) throw new Error('Workspace registry writes require a commit');
+    this.tx.save({id: workspaceId, path: checked.path, document: JSON.stringify(checked)});
   }
   snapshot(): WorkspaceBaseline {
     const state = this.state();
     const items = state.workspaceIds.map(id => this.require(id));
-    const count = this.storage.sql.exec<{count: number}>('SELECT COUNT(*) AS count FROM weft_native_workspaces').one().count;
+    const count = this.tx ? this.tx.count() : this.registry.count;
     if (new Set(state.workspaceIds).size !== count || items.length !== count) throw new Error('Native Workspace registry order is corrupt');
     return {items, archivedSessionIds: state.archivedSessionIds, pinnedSessionIds: state.pinnedSessionIds};
   }
@@ -68,8 +67,10 @@ export class NativeWorkspaces {
     return pending;
   }
   private async commit<T>(operation: () => T): Promise<T> {
-    const result = this.storage.transactionSync(operation);
-    await this.storage.sync();
+    const result = await this.registry.transaction(tx => {
+      this.tx = tx;
+      try { return operation(); } finally { this.tx = undefined; }
+    });
     this.feed.emit({type: 'replace', value: this.snapshot()});
     return result;
   }
@@ -149,7 +150,7 @@ export class NativeWorkspaces {
           const {request} = remote.methods[endpoint].input({strict: true}).create().parse(args);
           this.require(request.workspaceId);
           value = await this.commit(() => {
-            this.storage.sql.exec('DELETE FROM weft_native_workspaces WHERE id=?', request.workspaceId);
+            this.tx!.delete(request.workspaceId);
             const state = this.state(); this.storeState({...state, workspaceIds: state.workspaceIds.filter(id => id !== request.workspaceId)});
             return {deleted: true};
           }); break;

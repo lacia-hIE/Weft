@@ -11,10 +11,10 @@ import { nativeClient } from './helpers/native.ts';
 
 test('native model selection drives actual requests, persists intent and rejects unavailable routes without changing it', {timeout: 90_000}, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'weft-native-model-'));
-  const routes: {model: string}[] = [];
+  const routes: {model: string; thinking?: {type: string}; output_config?: {effort: string}}[] = [];
   const bindings = {MODEL_BACKEND: 'deepseek', DEEPSEEK_API_KEY: 'model-selection-fixture', DEEPSEEK_BASE_URL: 'https://model.test/anthropic'};
   const outbound: V4FetchHandler = async (request) => {
-    routes.push(await request.json() as {model: string});
+    routes.push(await request.json() as typeof routes[number]);
     const event = (type: string, data: object) => `event: ${type}\ndata: ${JSON.stringify({type, ...data})}\n\n`;
     return new Response(event('message_start', {message: {usage: {input_tokens: 10, output_tokens: 0}}}) + event('content_block_start', {index: 0, content_block: {type: 'text', text: ''}}) + event('content_block_delta', {index: 0, delta: {type: 'text_delta', text: 'selected route response'}}) + event('content_block_stop', {index: 0}) + event('message_delta', {delta: {stop_reason: 'end_turn'}, usage: {output_tokens: 3}}) + event('message_stop', {}), {headers: {'content-type': 'text/event-stream'}});
   };
@@ -52,6 +52,13 @@ test('native model selection drives actual requests, persists intent and rejects
     await api.call('session/selectModel', {request: {sessionId: 'choice', provider: 'deepseek-official', model: 'deepseek-flash'}});
     await send();
     assert.equal(routes.at(-1)!.model, 'deepseek-flash');
+    assert.deepEqual([routes.at(-1)!.thinking, routes.at(-1)!.output_config], [{type: 'enabled'}, {effort: 'high'}], 'the original adapter thinks at its default effort');
+    await api.call('session/selectModel', {request: {sessionId: 'choice', provider: 'deepseek-official', model: 'deepseek-flash', reasoningEffort: 'low'}});
+    await send();
+    assert.deepEqual([routes.at(-1)!.thinking, routes.at(-1)!.output_config], [{type: 'enabled'}, {effort: 'low'}], 'the Session thinking level reaches the request');
+    await api.call('session/selectModel', {request: {sessionId: 'choice', provider: 'deepseek-official', model: 'deepseek-flash', reasoningEffort: 'off'}});
+    await send();
+    assert.deepEqual([routes.at(-1)!.thinking, routes.at(-1)!.output_config], [{type: 'disabled'}, undefined]);
     const current = await projections();
     if (current?.kind !== 'sequenced') throw new Error('Missing final cursor');
     const page = await api.call('session/page', {request: {address: {kind: 'session', sessionId: 'choice'}, throughSeq: current.asOfSeq}});

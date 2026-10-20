@@ -15,6 +15,17 @@ npm run deploy
 
 也可以先运行 `npm run build`，再执行 `npm run deploy:workers`。该命令使用 `cf deploy --prebuilt` 顺序发布两个 Worker；先运行 `npm run deploy:check` 可检查两份产物。构建产物生成后才能发布。
 
+## 配置数据库（D1）
+
+环境设置等非密钥配置保存在 D1 数据库 `weft-config`，主 Worker 以 `CONFIG_DB` 绑定（见 `cloudflare.config.ts`）；凭据仍保存在各环境的 EnvironmentDO。表结构由 `migrations/` 下的迁移文件定义，部署新版本前先应用迁移：
+
+```bash
+cf d1 create weft-config          # 首次部署：创建数据库，记下返回的 database id
+cf d1 migrations apply <database-id> --dir migrations
+```
+
+`cf d1 migrations apply` 记录已应用的迁移，只执行新增文件。本地测试由 miniflare 提供同名数据库，测试辅助代码在启动时应用同一组迁移文件。
+
 ## Access 用户登录
 
 直接打开 https://weft.luxuncang.com/ ，通过 Cloudflare Access 的邮箱验证码登录。登录后 `/` 进入 Web UI，`/v1/me` 返回当前用户及个人 `tenantId`；Session API 使用浏览器登录会话，无需手工配置 Bearer Token。`/health` 也需要登录。
@@ -72,7 +83,7 @@ Worker 不再读取 `DEEPSEEK_API_KEY`、`DEEPSEEK_MODEL`、`DEEPSEEK_BASE_URL`�
 
 ## Workspace 部署
 
-新增 `WORKSPACES` 绑定与 `WorkspaceDO` SQLite export；`cf deploy` 管理对应生命周期声明。现有 SessionDO 命名和存储保留。工作区使用 `@cloudflare/computer@0.5.1`，无 Container 或执行后端；无需平台模型 Secret。文件 API、Session 绑定及验证细节见 [Workspace 记录](validation/workspace.md)。
+新增 `WORKSPACES` 绑定与 `WorkspaceDO` SQLite export；`cf deploy` 管理对应生命周期声明。现有 SessionDO 命名和存储保留。工作区使用 `@cloudflare/computer@0.5.1`；bash 与 Terminal 使用 Computer Worker Shell，经 `LOADER` 绑定在 Dynamic Worker 中执行，无 Container；无需平台模型 Secret。文件 API、Session 绑定及验证细节见 [Workspace 记录](validation/workspace.md)。
 
 2026-10-16 Workspace 版本发布成功：`d621df0e-aeda-4add-91f7-0cefa9fa25c8`。已复核 WorkspaceDO 为 SQLite namespace `340c996ea191459484a0ce6059072943`，SessionDO namespace 保留。模型 Secret、指定 Access 策略及 GitHub 原生仓库关联保留，自动构建与预览构建均关闭。云端文件入口的未登录及伪造身份请求会跳转 Access 登录。
 

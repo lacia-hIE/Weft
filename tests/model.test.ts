@@ -44,10 +44,13 @@ async function readEvents(runtime: ReturnType<typeof createRuntime>, session: st
 
 test('upstream DeepSeek adapter parses fragmented SSE and drives a real tool round trip', async () => {
   const calls: Record<string, unknown>[] = [];
+  const userIds = new Set<string | null>();
   const runtime = createRuntime(undefined, { bindings, outbound: async request => {
     assert.equal(request.url, 'https://model.test/anthropic/v1/messages');
     assert.equal(request.headers.get('x-api-key'), bindings.DEEPSEEK_API_KEY);
-    assert.equal(request.headers.get('x-deepseek-harness-user-id'), tenantId('alpha'));
+    // The environment's random harness-home id, never derived from tenant or user identity.
+    assert.match(request.headers.get('x-deepseek-harness-user-id') ?? '', /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    userIds.add(request.headers.get('x-deepseek-harness-user-id'));
     assert.equal(request.headers.get('x-deepseek-harness-session-id'), 'provider');
     assert.ok(!JSON.stringify([...request.headers]).includes('alpha@example.com'));
     const body = await request.json() as Record<string, unknown>;
@@ -72,6 +75,7 @@ test('upstream DeepSeek adapter parses fragmented SSE and drives a real tool rou
     assert.deepEqual((await readEvents(runtime, 'provider')).events, result.events);
     assert.equal((await send(runtime, 'alpha', 'provider', '继续')).status, 200);
     assert.match(JSON.stringify(calls[2]), /你好，来自真实协议适配器/);
+    assert.equal(userIds.size, 1, 'one environment sends one anonymous id');
   } finally { await runtime.dispose(); }
 });
 

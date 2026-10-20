@@ -1,5 +1,5 @@
 import { Context } from '@deepseek-ai/cordis';
-import Loader from '@deepseek-ai/cordis-plugin-loader';
+import {workerdLoader} from '../../native-profile/src/loader.ts';
 import Group from '@deepseek-ai/cordis-plugin-group';
 import AgentPresets, {type PresetDefinition} from '@deepseek-ai/dsh-agent-preset-registry';
 import AgentPreset from '@deepseek-ai/dsh-agent-preset';
@@ -16,19 +16,9 @@ export async function replaceNativePreset(ctx: Context, definition: PresetDefini
   await ctx.loader.resolve(id).fiber?.await();
 }
 
-/** Real Loader tree over modules included in this Worker, without disk imports. */
-class WorkerdLoader extends Loader {
-  override write(): void { /* The environment owns immutable profile snapshots. */ }
-  override import(name: string): unknown {
-    if (!name.startsWith('cordis:') || !Object.hasOwn(this.builtins, name.slice(7))) throw new Error('Plugin is not in the prebuilt workerd catalog: '+name);
-    return this.builtins[name.slice(7)];
-  }
-}
-
 /** Native preset generations and scope binding; no replacement Agent runtime. */
 export async function mountNativeComposition(ctx: Context, definitions: readonly PresetDefinition[], defaultId: string, disabled: readonly string[] = []): Promise<AgentPresets> {
-  await ctx.plugin(WorkerdLoader, {baseUrl: 'https://weft.invalid/prebuilt/'});
-  Object.assign(ctx.loader.builtins, {group: Group, 'agent-preset': AgentPreset, ...prebuiltPluginModules});
+  await workerdLoader(ctx, {group: Group, 'agent-preset': AgentPreset, ...prebuiltPluginModules});
   await ctx.plugin(AgentPresets, {default: defaultId});
   compositions.add(ctx);
   for (const definition of definitions) {
