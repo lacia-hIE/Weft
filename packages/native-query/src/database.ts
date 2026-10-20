@@ -15,8 +15,8 @@ export class DurableSearchDatabase {
   private opened = false;
   private closed = false;
   private readonly prefix: string;
-  constructor(private readonly storage: DurableObjectStorage, role: 'query' | 'runtime' = 'query') {
-    this.prefix = role === 'runtime' ? 'weft_runtime_query_' : 'weft_query_';
+  constructor(private readonly storage: DurableObjectStorage, role: 'query' | 'runtime' | 'reference' = 'query') {
+    this.prefix = role === 'query' ? 'weft_query_' : `weft_${role}_query_`;
   }
 
   open(): this {

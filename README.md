@@ -48,6 +48,8 @@ curl http://localhost:8787/v1/tenants/TENANT_ID/sessions/example/events
 
 `Delegator` 预设接入原版子 Agent 执行、层级导航、历史、消息与中断服务。spawn / fork 在所属 workerd 内运行真实 Agent，子日志由根会话所属 DO 保存，按租户和环境寻址；限额使用官方 Settings 表单与 volatile 配置。详见 [原生子 Agent](docs/validation/native-subagents.md)。
 
+内置预设对齐官方 standard 预设：原版命令（`/compact`、`/plan`、`/goal`、`/feedback`）、上下文压缩、AGENTS.md 指令、Plan 模式、`ask_user_question`、Goal、`present`、`web_search` / `web_fetch`、子 Agent fork 与定时提醒均由原版服务提供。提问与审批通过环境 `$events` 的 waterfall 交给浏览器回答；定时提醒存于 SessionDO，并由 DO Alarm 在对象驱逐后唤醒投递。`@` 文件与会话引用、消息反馈、会话分叉、Skills 目录和模型发现使用原版 Remote 服务。bash、后台作业和官方 Terminal 运行在每个工作区自己的 Dynamic Worker 内的 Computer shell（just-bash）上，允许 curl 访问公网；原版权限预设与审批约束 bash 和文件工具。Office 转 PDF、插件市场与 DeepSeek 平台账号登录在 workerd 中不可用。详见 [原版交互服务](docs/validation/native-interaction.md)。
+
 目录职责：
 
 | 路径 | 职责 |
@@ -70,6 +72,9 @@ curl http://localhost:8787/v1/tenants/TENANT_ID/sessions/example/events
 | `packages/session-persistence-do` | 实现 upstream `SessionPersistence` 和 `SessionHandle`，管理 SQLite 事件与写入所有权 |
 | `packages/native-query` | 原版 SQLite 搜索引擎的 DO 数据库端口、环境范围的只读会话来源与官方搜索控制器 |
 | `packages/native-subagents` | 原版子 Agent 管理器、spawn / fork provider 与生成的 Remote 协议接线 |
+| `packages/native-storage` | 原版 storage / storage-domain 在 DO SQLite 上的 KV 后端 |
+| `packages/native-schedule` | 原版 Schedule 服务、所属会话的 Agent 解析与 DO Alarm 同步 |
+| `packages/native-environment` | 环境级原版服务：Remote Access 基线与无进程运行器的作业注册表 |
 | `packages/tenant` | Access 用户身份映射、SessionScope 校验和租户限定的对象名称 |
 | `scripts` | 固定上游、生成类型声明、构建及依赖审计 |
 | `tests` | 在本地 workerd 中执行行为、隔离、存储及恢复测试 |
@@ -88,6 +93,6 @@ npm run deploy:check
 
 云端入口：[Weft](https://weft.luxuncang.com/)，登录后进入 Web UI；用户与租户信息在 `/v1/me`，健康检查同样受 Access 保护。源码保存在 GitHub，Cloudflare 连接 GitHub 仓库；推送代码到 `main` 会触发 Cloudflare 原生 Git 自动构建和部署，无需 GitHub Actions；也可通过 `cf` 手动部署。部署及鉴权说明见 [部署记录](docs/deployment.md)。
 
-完整官方 UI 接入仍在进行中。`/agents/:environmentId` 默认运行原版 AppWebEntry 与 Web 模块树，会话、模型选择、工作区、设置、环境凭据和全局通知连接真实 DO。SessionDO 热实例保留原生 Agent 上下文，支持持久 Inbox 的排队、编辑、删除和 steer；原生动态 Cordis 插件已接通定义、精确版本审批、Host/Client 调用、停止、移除和重建恢复；服务端 Host 在隔离 Dynamic Worker facet 中执行。原版预设列表、声明查看、默认模式和首轮前选择已接通，并保留原生作用域与版本冻结。Creator（原版 ID `cordis`）开启插件编写；原版 Plugins 页面已接通真实配置包清单、预设条目启停和 Agent loop 并行调用表单；通用包安装、预设编辑、权限及部分业务接口仍待接入。`?ui=transition` 仅保留过渡界面的显式验证入口。本轮使用全新的 `harness-v1` 数据布局，不迁移旧数据。标准 `npm run build` 包含官方 Remote ABI、原始模块构建和 Boot Graph 生成。范围和验收状态见 [多环境与官方 UI](docs/architecture/agent-environments.md)。
+`/agents/:environmentId` 只运行原版 AppWebEntry 与 Web 模块树，会话、模型选择、工作区、设置、环境凭据和全局通知连接真实 DO。SessionDO 热实例保留原生 Agent 上下文，支持持久 Inbox 的排队、编辑、删除和 steer；原生动态 Cordis 插件已接通定义、精确版本审批、Host/Client 调用、停止、移除和重建恢复；服务端 Host 在隔离 Dynamic Worker facet 中执行。原版预设列表、声明查看、默认模式和首轮前选择已接通，并保留原生作用域与版本冻结。Creator（原版 ID `cordis`）开启插件编写；原版 Plugins 页面已接通真实配置包清单、预设条目启停和 Agent loop 并行调用表单；通用包安装与插件市场在 workerd 中不可用。本轮使用全新的 `harness-v1` 数据布局，不迁移旧数据。标准 `npm run build` 包含官方 Remote ABI、原始模块构建和 Boot Graph 生成。范围和验收状态见 [多环境与官方 UI](docs/architecture/agent-environments.md)。
 
 模型配置由用户在各环境的官方 **Settings → Models** 中保存，包括 API Key、模型与 HTTPS endpoint。开发和生产均不读取模型环境变量，也不提供平台共享密钥回退。

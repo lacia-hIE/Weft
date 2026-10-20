@@ -63,8 +63,11 @@ test('file lookups enforce session ownership, environment volumes, project direc
       assert.equal((await client.call<WorkspaceFileText>('workspaceFiles/read', {workspaceFileScopeId: 'same', path: 'note.txt', range: {}})).text, text);
     }
     assert.equal((await nativeClient(() => runtime, 'default', 'beta').raw('workspaceFiles/stat', {workspaceFileScopeId: 'same', path: 'note.txt'})).result.error?.code, 'session/not-found');
+    // The environment volume is the whole filesystem: paths above it do not exist,
+    // and the original WorkspaceFiles inspects existence before containment.
     for (const path of ['/etc/passwd', '/workspace/../../secret', '../secret']) {
-      assert.equal((await api.raw('workspaceFiles/stat', {workspaceFileScopeId: 'same', path})).result.error?.code, 'workspace-file/outside-workspace');
+      assert.equal((await api.raw('workspaceFiles/stat', {workspaceFileScopeId: 'same', path})).result.error?.code, 'workspace-file/not-found');
+      assert.equal((await api.raw('workspaceFiles/read', {workspaceFileScopeId: 'same', path, range: {}})).result.error?.code, 'workspace-file/not-found');
     }
     assert.equal((await api.raw('workspaceFiles/read', {workspaceFileScopeId: 'same', path: '.', range: {}})).result.error?.code, 'workspace-file/not-regular-file');
     assert.equal((await api.raw('workspaceFiles/stat', {workspaceFileScopeId: 'same', path: 'missing'})).result.error?.code, 'workspace-file/not-found');

@@ -90,7 +90,7 @@ test('official Models settings save real scoped credentials and configuration wi
     // The original editor automatically expands an unconfigured provider.
     const key = page.getByRole('textbox', {name: 'API key', exact: true});
     const edit = page.getByRole('button', {name: 'Edit DeepSeek (deepseek-official)', exact: true});
-    await expect(key.or(edit)).toBeVisible();
+    await expect(key.or(edit)).toBeVisible({timeout: 30_000});
     if (await edit.isVisible()) await edit.click();
   };
   await page.goto(`/agents/${id}`);

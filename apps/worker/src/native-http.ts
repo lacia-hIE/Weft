@@ -14,6 +14,13 @@ import fileRemote from '../../../.generated/official-remotes/packages/api/worksp
 import type {NativeFileEndpoint} from '../../../packages/native-files/src/index.ts';
 import {IMAGE_PROMPT_BODY_BYTES} from '../../../packages/native-attachments/src/image-policy.ts';
 import uploadRemote from '../../../.generated/official-remotes/packages/client/file-upload/typert.remote-client.js';
+import {agentRemoteFor} from './agent-remotes.ts';
+import scheduleRemote from '../../../.generated/official-remotes/packages/schedule/schedule/typert.remote-client.js';
+import {environmentRemoteFor} from '../../../packages/native-environment/src/index.ts';
+import {openPermissionWorld} from '../../../packages/native-environment/src/permissions.ts';
+import permissionRemote from '../../../.generated/official-remotes/packages/interaction/permission-presets/typert.remote-client.js';
+import {remoteAgentId} from '../../../packages/harness-runtime/src/remote-dispatch.ts';
+import questionRemote from '../../../.generated/official-remotes/packages/interaction/user-questions/typert.remote-client.js';
 import {FILE_UPLOAD_PATH} from '@weft/upstream/packages/client/file-upload/src/protocol.ts';
 import type { NativePluginEndpoint } from '../../../packages/native-plugins/src/host.ts';
 import { MODEL_NAMESPACE } from '../../../packages/control-plane/src/native-settings.ts';
@@ -110,6 +117,27 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
         workspaceRemote.methods[endpoint].input({strict: true}).create().parse(payloadSchema.parse(raw).args);
         return await control.fetch(new Request('https://environment.internal/native-workspaces', {method: 'POST', body: JSON.stringify({operation: 'native-workspaces', scope: owner}), signal: request.signal}));
       }
+      if (environmentRemoteFor(endpoint)) {
+        return await control.fetch(new Request('https://environment.internal/native-environment-stream', {
+          method: 'POST', body: JSON.stringify({operation: 'native-environment-stream', scope: owner, endpoint, args: payloadSchema.parse(raw).args}), signal: request.signal,
+        }));
+      }
+      const streamRemote = agentRemoteFor(endpoint);
+      if (streamRemote && endpoint !== 'userQuestions/attachWait') {
+        const args = payloadSchema.parse(raw).args;
+        const target = session(await control.nativeSessionRoot(owner, remoteAgentId(streamRemote, endpoint, args)) ?? remoteAgentId(streamRemote, endpoint, args));
+        const streamId = request.headers.get('x-weft-stream-id') ?? undefined;
+        return await target.stub.fetch(new Request('https://session.internal/native-agent-stream', {
+          method: 'POST', body: JSON.stringify({scope: target.scope, operation: 'native-agent-stream', endpoint, args, ...(streamId ? {streamId: z.uuid().parse(streamId)} : {})}), signal: request.signal,
+        }));
+      }
+      if (endpoint === 'userQuestions/attachWait') {
+        const args = questionRemote.methods[endpoint].input({strict: true}).create().parse(payloadSchema.parse(raw).args);
+        const target = session(await control.nativeSessionRoot(owner, args.agentId) ?? args.agentId);
+        return await target.stub.fetch(new Request('https://session.internal/native-question-wait', {
+          method: 'POST', body: JSON.stringify({scope: target.scope, operation: 'native-question-wait', args}), signal: request.signal,
+        }));
+      }
       if (endpoint === 'session/control') {
         sessionRemote.methods[endpoint].input({strict: true}).create().parse(payloadSchema.parse(raw).args);
         return await control.fetch(new Request('https://environment.internal/native-control', {method: 'POST', body: JSON.stringify({operation: 'native-session-control', scope: owner}), signal: request.signal}));
@@ -141,6 +169,49 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
         throw new RemoteError('gateway/internal', 'Invalid subagent response', {});
       }
       return Response.json({type: 'server-response', rpcId, result: {ok: true, value: method.result.create().parse(result.value)}}, {headers: {'cache-control': 'private, no-store'}});
+    }
+    if (endpoint === 'permissionPresets/catalog') {
+      const method = permissionRemote.methods[endpoint];
+      method.input({strict: true}).create().parse(payload.args);
+      const world = await openPermissionWorld(await control.nativePermissionDefault(owner));
+      try {
+        return Response.json({type: 'server-response', rpcId, result: {ok: true, value: method.result.create().parse(world.catalog())}}, {headers: {'cache-control': 'private, no-store'}});
+      } finally { await world.ctx.fiber.dispose(); }
+    }
+    if (endpoint === '$stream/input') {
+      // Ordered client uplink for one open bidirectional stream, delivered to the object that opened it.
+      const input = z.object({streamId: z.uuid(), endpoint: z.string().max(200), args: z.unknown(), items: z.array(z.unknown()).max(64), end: z.boolean()}).strict().parse(payload.args);
+      const remote = agentRemoteFor(input.endpoint);
+      if (!remote) throw new RemoteError('gateway/method-unavailable', 'Remote stream is not connected yet', {endpoint: input.endpoint});
+      const agentId = remoteAgentId(remote, input.endpoint, input.args);
+      const target = session(await control.nativeSessionRoot(owner, agentId) ?? agentId);
+      await target.stub.nativeStreamInput(target.scope, input.streamId, input.items, input.end);
+      return Response.json({type: 'server-response', rpcId, result: {ok: true}}, {headers: {'cache-control': 'private, no-store'}});
+    }
+    if (endpoint === '$events/result') {
+      await control.nativeEventResult(owner, payload.args);
+      return Response.json({type: 'server-response', rpcId, result: {ok: true}}, {headers: {'cache-control': 'private, no-store'}});
+    }
+    if (endpoint === 'schedule/catalog') {
+      const method = scheduleRemote.methods[endpoint];
+      method.input({strict: true}).create().parse(payload.args);
+      const records = await control.sessionIndex(owner);
+      const groups = await mapConcurrent(records, async record => {const target = session(record.id); return target.stub.nativeScheduleCatalog(target.scope);}, request.signal);
+      const value = method.result.create().parse(groups.flat().sort((a, b) => {
+        const left = a as {scheduledAt: string; id: string}, right = b as {scheduledAt: string; id: string};
+        return left.scheduledAt.localeCompare(right.scheduledAt) || left.id.localeCompare(right.id);
+      }));
+      return Response.json({type: 'server-response', rpcId, result: {ok: true, value}}, {headers: {'cache-control': 'private, no-store'}});
+    }
+    const agentRemote = agentRemoteFor(endpoint);
+    if (agentRemote) {
+      const target = session(await control.nativeSessionRoot(owner, remoteAgentId(agentRemote, endpoint, payload.args)) ?? remoteAgentId(agentRemote, endpoint, payload.args));
+      const result = await (await target.stub.nativeAgentRemote(target.scope, endpoint, payload.args)).json() as {ok: boolean; value?: unknown; error?: unknown};
+      if (!result.ok) {
+        const failure = remoteErrorOf(result.error);
+        throw failure ? new RemoteError(failure.code, failure.message, failure.details) : new RemoteError('gateway/internal', 'Invalid Agent Remote response', {});
+      }
+      return Response.json({type: 'server-response', rpcId, result: {ok: true, ...('value' in result ? {value: result.value} : {})}}, {headers: {'cache-control': 'private, no-store'}});
     }
     if (endpoint === 'fileUploads/upload') {
       const method = uploadRemote.methods[endpoint];
@@ -202,6 +273,19 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
       const {value} = await (await control.nativeSettingsRequest(owner, endpoint, payload.args)).json() as {value?: unknown};
       return Response.json({type: 'server-response', rpcId, result: {ok: true, value}}, {headers: {'cache-control': 'private, no-store'}});
     }
+    if (endpoint === 'llm/discoverModels') {
+      const method = llmRemote.methods[endpoint];
+      const args = method.input({strict: true}).create().parse(payload.args);
+      // Like a route whose adapter knows its models, the environment's DeepSeek route answers from the adapter's registry.
+      if (args.settingsNs !== MODEL_NAMESPACE || args.request.provider !== 'deepseek-official') {
+        throw new RemoteError('llm/model-discovery-rejected', 'This environment discovers models only for its configured DeepSeek route', {settingsNs: args.settingsNs, ...(args.request.baseURL === undefined ? {} : {baseURL: args.request.baseURL})});
+      }
+      const configuration = await readEnvironmentModelConfiguration(await control.nativeModelConfiguration(owner));
+      const selected = resolveTenantModel(env, principal.tenantId, await control.nativeDefaultModel(owner), configuration, false);
+      const models = await selected.adapter.listModels(selected.model.provider);
+      const value = method.result.create().parse(models.map(model => ({id: model.id, name: model.name, ...(model.inputModalities ? {inputModalities: [...model.inputModalities]} : {})})));
+      return Response.json({type: 'server-response', rpcId, result: {ok: true, value}}, {headers: {'cache-control': 'private, no-store'}});
+    }
     if (endpoint === 'llm/listProviders' || endpoint === 'llm/listConfigurableProviders') {
       const method = llmRemote.methods[endpoint];
       method.input({strict: true}).create().parse(payload.args);
@@ -258,6 +342,22 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
         const projections = sessionRemote.methods['session/projections'].result.create().parse(await (await target.stub.nativeProjections(target.scope)).json());
         const selected = projections?.kind === 'sequenced' ? projections.values.agentPreset : undefined;
         value = {sessionId, ...(typeof selected === 'string' ? {agentPreset: selected} : {})};
+        break;
+      }
+      case 'session/fork': {
+        const {request: input} = sessionRemote.methods[endpoint].input({strict: true}).create().parse(payload.args);
+        const source = session(await control.nativeSessionRoot(owner, input.sessionId) ?? notFound(input.sessionId));
+        const sessionId = SessionId(crypto.randomUUID());
+        const target = session(sessionId);
+        const seeded = await (await source.stub.nativeForkSeed(source.scope, input.sessionId, input.atSeq)).json() as {ok: boolean; value?: Parameters<typeof target.stub.nativeCreateFork>[1]; error?: unknown};
+        if (!seeded.ok || !seeded.value) {
+          const failure = remoteErrorOf(seeded.error);
+          throw failure ? new RemoteError(failure.code, failure.message, failure.details) : new RemoteError('gateway/internal', 'Invalid fork seed response', {});
+        }
+        await target.stub.nativeCreateFork(target.scope, {...seeded.value, parentSession: input.sessionId});
+        const workspace = await control.nativeWorkspaceOf(owner, await control.nativeSessionRoot(owner, input.sessionId) ?? input.sessionId);
+        if (workspace) await control.nativeAttachWorkspace(owner, workspace, sessionId);
+        value = {sessionId};
         break;
       }
       case 'session/list': {

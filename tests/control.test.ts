@@ -93,7 +93,8 @@ test("tenant control plane publishes native plugin plans, freezes sessions and p
         fields: unknown[];
       }[];
     };
-    assert.equal(catalog.plugins.length, 6);
+    for (const id of ['tool-todo', 'time-context', 'repeat-tool-reminder', 'tool-skill', 'tool-subagent', 'tool-subagent-control', 'compaction-basic', 'command-compact', 'tool-result-pruner'])
+      assert.ok(catalog.plugins.some(plugin => plugin.id === id), id);
     assert.ok(
       catalog.plugins.every(
         (plugin) => plugin.schema.refs && Array.isArray(plugin.fields),

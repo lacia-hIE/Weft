@@ -2,19 +2,27 @@ import { Context } from '@deepseek-ai/cordis';
 import AgentRegistry, { type Agent, type AssistantStreamFrame, type AgentCancelCause, type AgentSetup } from '@deepseek-ai/dsh-agent';
 import AgentLoop from '@deepseek-ai/dsh-agent-loop';
 import LlmRuntime, { createUserMessage, type LlmAdapter } from '@deepseek-ai/dsh-llm';
-import SessionStore, { SessionId, type Session, type SessionEvent } from '@deepseek-ai/dsh-session';
+import SessionStore, { SessionId, SessionLogOffset, type Session, type SessionEvent } from '@deepseek-ai/dsh-session';
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection';
 import SessionTitle, {SessionTitleInvalidError, normalizeSessionTitle} from '@deepseek-ai/dsh-session-title';
 import { RemoteError } from '@deepseek-ai/dsh-typert-protocol';
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt';
 import ToolRuntime from '@deepseek-ai/dsh-tools';
+import TokenMeter from '@deepseek-ai/dsh-token-meter';
+import CommandRuntime from '@deepseek-ai/dsh-commands';
+import UserQuestions from '@deepseek-ai/dsh-user-questions';
+import Goals from '@deepseek-ai/dsh-goal';
+import * as GoalRoundDriver from '@deepseek-ai/dsh-goal-round-driver';
+import SubagentModelSelection from '@deepseek-ai/dsh-tool-subagent/model-selection-settings';
 import { installModelSelectionProjection, mountModelSelection, selectLiveHarnessModel } from './model-selection.ts';
 import type { ModelSelection } from '@deepseek-ai/dsh-api-session-controller/types';
 
 /** Trusted dependencies supplied by the platform; a Context belongs to one session. */
 export interface RuntimeOptions {
   sessionId: string;
-  meta?: { cwd?: string; agentPreset?: string };
+  meta?: { cwd?: string; agentPreset?: string; parentSession?: string; isSeeded?: boolean };
+  /** A fork's exact inherited prefix (the original `buildForkSeed` output) and its length. */
+  seed?: { events: readonly SessionEvent[]; inherited: number };
   presentation?: boolean;
   requestId?: import('@deepseek-ai/dsh-api-session-controller/types').SessionRequestId;
   clientTimeZone?: string;
@@ -66,11 +74,18 @@ export async function openHarnessSession(options: RuntimeOptions): Promise<Harne
     await ctx.plugin(LlmRuntime);
     await ctx.plugin(SessionStore);
     await ctx.plugin(SessionProjectionRegistry);
+    // Root services of the official base bundle; preset compaction and command rows inject them.
+    await ctx.plugin(TokenMeter);
+    await ctx.plugin(CommandRuntime);
+    await ctx.plugin(UserQuestions);
+    await ctx.plugin(SubagentModelSelection);
     if (options.presentation) installModelSelectionProjection(ctx);
     if (options.presentation) await ctx.plugin(SessionTitle, { fallbackMaxWords: 5, fallbackMaxBytes: 40, maxTitleBytes: 80 });
     await ctx.plugin(SystemPrompt, { personaPrefix: options.persona });
     await ctx.plugin(ToolRuntime);
     await ctx.plugin(AgentRegistry);
+    await ctx.plugin(Goals);
+    await ctx.plugin(GoalRoundDriver);
     if (options.mountPersistence) await options.mountPersistence(ctx);
     await ctx.plugin(AgentLoop, { agents: [], ...options.agentLoop });
     ctx.llm.registerAdapter([options.model.provider], options.adapter);
@@ -86,7 +101,9 @@ export async function openHarnessSession(options: RuntimeOptions): Promise<Harne
     const stored = await ctx.get('sessionPersistence')?.stat(sessionId);
     const handle = stored
       ? await ctx.agents.resume({ resumeSessionId: sessionId, agentOptions, ...(options.setupAgent ? {setup: options.setupAgent} : {}) })
-      : await ctx.agents.create({ sessionId, agentOptions, ...(options.setupAgent ? {setup: options.setupAgent} : {}), ...(options.meta ? { meta: options.meta } : {}) });
+      : await ctx.agents.create({ sessionId, agentOptions, ...(options.setupAgent ? {setup: options.setupAgent} : {}),
+        ...(options.meta ? { meta: (({parentSession, ...meta}) => ({...meta, ...(parentSession ? {parentSession: SessionId(parentSession)} : {})}))(options.meta) } : {}),
+        ...(options.seed ? {seed: options.seed.events, inheritedEventCount: SessionLogOffset(options.seed.inherited)} : {}) });
     owned = handle.agent;
     if (options.presentation) mountModelSelection(ctx, handle.agent, options.defaultModel, options.beforeAssembly);
     options.signal?.throwIfAborted();

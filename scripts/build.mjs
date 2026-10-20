@@ -7,6 +7,8 @@ import { nativeCompositionPlatform } from './native-composition-platform.mjs';
 import {prepareConnectionResponse} from './official-connection-response.mjs';
 import {nativeAttachmentsPlatform, prepareAttachmentHelpers} from './native-attachments-platform.mjs';
 import {nativeQueryPlatform, prepareQuerySchema} from './native-query-platform.mjs';
+import {nativeWebPlatform} from './native-web-platform.mjs';
+import {nativeShellPlatform} from './native-shell-platform.mjs';
 
 // Bundles have no adjacent package.json at runtime. Preserve upstream attribution
 // while converting this one Node loader operation to a static JSON import.
@@ -140,14 +142,14 @@ const result = await build({
   target: 'es2024',
   external: ['cloudflare:workers', 'node:*'],
   tsconfig: '.generated/upstream.source.tsconfig.json',
-  plugins: [staticAttribution, providerFetch, nativeCordisPlatform, nativeCompositionPlatform, nativeAttachmentsPlatform, nativeQueryPlatform],
+  plugins: [staticAttribution, providerFetch, nativeCordisPlatform, nativeCompositionPlatform, nativeAttachmentsPlatform, nativeQueryPlatform, nativeWebPlatform, nativeShellPlatform],
   define: {WEFT_VALIDATION_BUILD: 'false'},
   minifySyntax: true,
   sourcemap: true,
   metafile: true,
 });
 // Validation-only bundle: scripted adapters and short deadlines cannot be enabled in production.
-await build({entryPoints: {'test-worker': 'apps/worker/src/index.ts', 'images-worker': 'tests/fixtures/images-worker.ts', 'native-query-worker': 'tests/fixtures/native-query-worker.ts', 'contracts-worker': 'tests/fixtures/contracts-worker.ts', 'dynamic-worker': 'tests/fixtures/dynamic-worker.ts', 'composition-worker': 'tests/fixtures/composition-worker.ts', 'preset-worker': 'tests/fixtures/preset-worker.ts'}, outdir: 'dist', bundle: true, format: 'esm', platform: 'browser', target: 'es2024', external: ['cloudflare:workers', 'node:*'], tsconfig: '.generated/upstream.source.tsconfig.json', plugins: [staticAttribution, providerFetch, nativeCordisPlatform, nativeCompositionPlatform, nativeAttachmentsPlatform, nativeQueryPlatform], define: {WEFT_VALIDATION_BUILD: 'true'}});
+await build({entryPoints: {'test-worker': 'apps/worker/src/index.ts', 'images-worker': 'tests/fixtures/images-worker.ts', 'native-query-worker': 'tests/fixtures/native-query-worker.ts', 'contracts-worker': 'tests/fixtures/contracts-worker.ts', 'dynamic-worker': 'tests/fixtures/dynamic-worker.ts', 'composition-worker': 'tests/fixtures/composition-worker.ts', 'preset-worker': 'tests/fixtures/preset-worker.ts'}, outdir: 'dist', bundle: true, format: 'esm', platform: 'browser', target: 'es2024', external: ['cloudflare:workers', 'node:*'], tsconfig: '.generated/upstream.source.tsconfig.json', plugins: [staticAttribution, providerFetch, nativeCordisPlatform, nativeCompositionPlatform, nativeAttachmentsPlatform, nativeQueryPlatform, nativeWebPlatform, nativeShellPlatform], define: {WEFT_VALIDATION_BUILD: 'true'}});
 if (Object.entries(result.metafile.outputs['dist/worker.js'].inputs).some(([path, input]) => input.bytesInOutput > 0 && path.endsWith('/scripted-adapter.ts'))) throw new Error('Validation model adapter leaked into production');
 const forbiddenWorkspaceDependencies = ['just-bash', 'guarded-fetch', 'sprintf-js'];
 const shippedInputs = Object.entries(result.metafile.outputs['dist/worker.js'].inputs)
@@ -177,7 +179,7 @@ writeFileSync('dist/runtime-audit.json', JSON.stringify({
   upstream: JSON.parse(readFileSync('upstream.lock.json', 'utf8')).commit,
   adaptations: ['Static LLM package version import', 'Messages adapter fetch rejects redirects manually in workerd', 'Native Cordis Runner registry ownership, WorkerLoader sandbox and environment-wide inspect identities', 'Native Loader uses a prebuilt catalog without Node module jobs or executable configuration expressions', 'Original Connection JSON/multipart encoder extracted without its Node RPC host', 'Native FileUploads keeps original admission and receipt behavior with durable cache ownership and a scoped Fetch registry; pure reference, image and prompt helpers are extracted from the pinned source', 'Cloudflare Images normalizes native image attachments into immutable Computer files with durable request variants', 'Native DeepSeek Files transport uses an environment-owned SQLite index and confines cleanup to its recorded remote IDs'],
   dynamicPlugins: {runtime: 'Durable Object facet with native Cordis and ToolRuntime', services: ['tools', 'timer', 'scoped asynchronous fs'], directNetwork: false, operationDeadlineMs: 15000},
-  computer: { version: JSON.parse(readFileSync('node_modules/@cloudflare/computer/package.json', 'utf8')).version, executionBackends: [] },
+  computer: { version: JSON.parse(readFileSync('node_modules/@cloudflare/computer/package.json', 'utf8')).version, executionBackends: ['worker-shell'], shellEgress: 'direct', shellCommandGroups: ['core', 'curl'] },
   excludedExecutionDependencies: forbiddenWorkspaceDependencies,
   browser: {
     protocol: 1,

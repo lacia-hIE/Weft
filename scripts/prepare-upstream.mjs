@@ -51,6 +51,9 @@ const declarationOnlyPackages = {
   '@deepseek-ai/dsh-subagent': 'packages/subagent/subagent/src/index.ts',
   '@deepseek-ai/dsh-subagent/internal': 'packages/subagent/subagent/src/internal.ts',
   '@deepseek-ai/dsh-agent-preset-registry': 'packages/preset/agent-preset-registry/src/index.ts',
+  // Schedule's public types reach the full session controller and typert registry
+  // sources; consume its declarations while the runtime bundles the original.
+  '@deepseek-ai/dsh-schedule': 'packages/schedule/schedule/src/index.ts',
   '@deepseek-ai/dsh-app-boot': 'packages/boot/app-boot/src/index.ts',
   '@deepseek-ai/dsh-cmdline': 'packages/boot/cmdline/src/index.ts',
   '@deepseek-ai/dsh-hmr': 'packages/boot/hmr/src/index.ts',

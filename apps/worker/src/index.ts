@@ -18,14 +18,23 @@ import {createNativeFileHost, type NativeFileEndpoint} from '../../../packages/n
 import {referencedImage} from '../../../.generated/official-image-helpers.ts';
 import {AttachmentError} from '@deepseek-ai/dsh-attachment';
 import uploadRemote from '../../../.generated/official-remotes/packages/client/file-upload/typert.remote-client.js';
+import {agentRemoteFor} from './agent-remotes.ts';
+import {invokeAgentRemote, openRemoteStream} from '../../../packages/harness-runtime/src/remote-dispatch.ts';
+import {UplinkQueue} from '../../../packages/harness-runtime/src/uplink.ts';
+import {openPermissionWorld} from '../../../packages/native-environment/src/permissions.ts';
+import {readScheduleCatalog, drainDueReminders} from '../../../packages/native-schedule/src/index.ts';
+import questionRemote from '../../../.generated/official-remotes/packages/interaction/user-questions/typert.remote-client.js';
 import {FILE_UPLOAD_PATH} from '@weft/upstream/packages/client/file-upload/src/protocol.ts';
 import { workspaceIdSchema, workspaceAddress, workspacePath } from '../../../packages/workspace/src/protocol.ts';
 export { WorkspaceDO, TenantDO, EnvironmentDO };
+// The shell Dynamic Worker reaches its own WorkspaceDO through this entrypoint (ctx.exports).
+export { WorkspaceServiceProxy } from '@cloudflare/computer';
 import { z } from 'zod';
 import { Context } from '@deepseek-ai/cordis';
 import { createUserMessage } from '@deepseek-ai/dsh-llm';
 import type {} from '@deepseek-ai/dsh-cordis-host-runner';
-import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session';
+import { SessionId, SessionSeq, type SessionEvent } from '@deepseek-ai/dsh-session';
+import { buildForkSeed } from '@deepseek-ai/dsh-session/fork';
 import { runHarnessTurn, initializeHarnessSession, renameHarnessSession, renameLiveHarnessSession, selectHarnessModel } from '../../../packages/harness-runtime/src/runtime.ts';
 import { selectLiveHarnessModel } from '../../../packages/harness-runtime/src/model-selection.ts';
 import { NativeSessionHost, NativeHostReplacedError } from './native-session-host.ts';
@@ -41,6 +50,12 @@ import { authenticateAccess, sessionAddress, scopeSchema, type SessionScope } fr
 import {authenticateAccessAssertion, AccessAssertionUnavailable} from '../../../packages/tenant/src/access-assertion.ts';
 import {subagentRemote, type SubagentEndpoint} from '../../../packages/native-subagents/src/protocol.ts';
 import {nativeSessionList} from '../../../packages/harness-runtime/src/session-list.ts';
+import process from 'node:process';
+
+// Every environment volume is rooted at /workspace (the Remote Events host home),
+// so the Harness and shared agent homes resolve inside the environment's own filesystem.
+process.env.DSH_HOME ??= '/workspace/.dsh';
+process.env.DSH_AGENTS_HOME ??= '/workspace/.agents';
 
 export interface Env extends ModelEnvironment {
   LOADER?: WorkerLoader;
@@ -76,13 +91,39 @@ export class PluginCapabilities extends WorkerEntrypoint<Env, {scope: SessionSco
 }
 
 /** One tenant-qualified session. RPC methods are reachable only through trusted bindings. */
+/**
+ * The original fork default (`session-controller/src/commands.ts`, module-private):
+ * the latest completed-turn prefix, including standalone events before the next turn.
+ */
+function latestCompletedPrefixBoundary(events: readonly SessionEvent[]): number | undefined {
+  const lastTurnEnd = events.findLast(event => event.type === 'turn/end');
+  if (lastTurnEnd === undefined) return undefined;
+  let boundary: number = lastTurnEnd.seq;
+  for (const next of events.slice(boundary + 1)) {
+    if (next.type === 'turn/start' || (next.type === 'user/message' && next.surfaceOp === 'append') || next.type === 'agent/inbox/spliced') break;
+    boundary = next.seq;
+  }
+  return boundary;
+}
+
 export class SessionDO extends DurableObject<Env> {
   private readerPromise: Promise<Awaited<ReturnType<typeof createSessionReader>>> | undefined;
   private ownerScope: SessionScope | undefined;
   private readonly fileObservers = new Map<string, () => Promise<void>>();
   private readonly cancelledFileObservers = new Map<string, number>();
+  /** The read world plus the permission projection fold of a private, Session-free permission service. */
+  private async createReader(promote: (sessionId: SessionId) => void) {
+    const reader = await createSessionReader(this.ctx.storage, promote);
+    const scope = this.ownerScope;
+    if (scope) {
+      const owner = controlScope(scope.tenantId, scope.environmentId);
+      const world = await openPermissionWorld(await controlFor(this.env, owner).nativePermissionDefault(owner));
+      reader.registerProjections(world.definitions);
+    }
+    return reader;
+  }
   private async getReader() {
-    const reader = await (this.readerPromise ??= createSessionReader(this.ctx.storage, sessionId => {
+    const reader = await (this.readerPromise ??= this.createReader(sessionId => {
       const scope = this.ownerScope;
       if (!scope || scope.sessionId !== sessionId) throw new Error('Root promotion address mismatch');
       this.ctx.waitUntil(this.getNativeHost(scope).then(() => {}).catch(async error => {
@@ -209,7 +250,8 @@ export class SessionDO extends DurableObject<Env> {
     const scope = this.assertScope(input);
     id.parse(preset);
     const host = await this.getNativeHost(scope);
-    const value = await this.exclusive(() => host.reconfigureBlank(preset, async () => {
+    // Take the host's queue on arrival, so a prompt sent after this selection cannot start the turn first.
+    const value = await host.reconfigureBlank(preset, () => this.exclusive(async () => {
       const owner = controlScope(scope.tenantId, scope.environmentId);
       const control = controlFor(this.env, owner);
       const {value: profile} = await (await control.nativeProfile(owner, preset, revision)).json() as {value?: AgentRevision};
@@ -350,6 +392,46 @@ export class SessionDO extends DurableObject<Env> {
       return true;
     });
     return result === 'race' ? this.nativeCreate(scope, binding, workspaceId, cwd) : result;
+  }
+
+  /** The original fork seed for a Session this object owns; the default boundary is the latest completed turn. */
+  async nativeForkSeed(input: SessionScope, sessionId: string, atSeq?: number): Promise<Response> {
+    const scope = this.assertScope(input);
+    try {
+      await this.assertNativeLogicalOwner(scope, sessionId);
+      await this.nativeHost?.ctx.sessionPersistence.flush();
+      const stored = this.ctx.storage.sql.exec<{workspace_id: string; agent_document: string}>('SELECT workspace_id,agent_document FROM weft_session_config WHERE id=1 AND presentation=1').toArray()[0];
+      const snapshot = readSessionSnapshot(this.ctx.storage, SessionId(sessionId));
+      if (!stored || !snapshot) throw new RemoteError('session/not-found', `session "${sessionId}" not found`, {sessionId: SessionId(sessionId)});
+      const boundary = atSeq ?? latestCompletedPrefixBoundary(snapshot.events);
+      if (boundary === undefined || snapshot.events[boundary]?.seq !== boundary) {
+        throw new RemoteError('session/fork-unavailable', atSeq === undefined
+          ? `session "${sessionId}" has no completed turn to fork from`
+          : `event ${String(atSeq)} does not exist in session "${sessionId}" (last seq: ${String(snapshot.events.at(-1)?.seq ?? 'none')})`, {sessionId: SessionId(sessionId)});
+      }
+      return Response.json({ok: true, value: {events: buildForkSeed(snapshot.events, SessionSeq(boundary)), inherited: boundary + 1, cwd: snapshot.header.cwd ?? '/workspace', workspaceId: stored.workspace_id, profile: JSON.parse(stored.agent_document) as AgentRevision}});
+    } catch (error) {
+      const failure = remoteErrorOf(error);
+      if (!failure) throw error;
+      return Response.json({ok: false, error: failure});
+    }
+  }
+
+  /** Create this object's Session from a fork seed, as the original controller's `agents.create({seed})`. */
+  async nativeCreateFork(input: SessionScope, fork: {events: SessionEvent[]; inherited: number; parentSession: string; cwd: string; workspaceId: string; profile: AgentRevision}): Promise<void> {
+    const scope = this.assertScope(input);
+    await this.exclusive(async () => {
+      if (this.ctx.storage.sql.exec('SELECT id FROM weft_session_config WHERE id=1').toArray().length || readSessionSnapshot(this.ctx.storage, SessionId(scope.sessionId))) throw new RemoteError('gateway/internal', 'Fork Session identity was already used', {});
+      if (fork.profile.upstream !== upstream.commit) throw new Error('Agent runtime revision unavailable');
+      workspaceIdSchema.parse(fork.workspaceId);
+      const directory = workspacePath(fork.cwd);
+      const runtime = await sessionRuntime(this.env, this.ctx.storage, scope, fork.profile, fork.workspaceId, fork.profile.spec.persona, true, await this.getReader(), {}, directory, false);
+      await initializeHarnessSession({...runtime.options, seed: {events: fork.events, inherited: fork.inherited}, meta: {...runtime.options.meta, parentSession: fork.parentSession, isSeeded: true}});
+      this.ctx.storage.sql.exec('INSERT INTO weft_session_config (id,workspace_id,agent_document,presentation) VALUES (1,?,?,1)', fork.workspaceId, JSON.stringify(fork.profile));
+      const owner = controlScope(scope.tenantId, scope.environmentId);
+      await controlFor(this.env, owner).trackSession(owner, {id: scope.sessionId, title: '', agentId: fork.profile.spec.id, revision: fork.profile.revision, workspaceId: fork.workspaceId, updatedAt: new Date().toISOString()});
+      await this.publishNativeSummary(scope);
+    });
   }
 
   async nativeHeader(input: SessionScope) {
@@ -579,6 +661,57 @@ export class SessionDO extends DurableObject<Env> {
     const host = await this.getNativeHost(scope);
     return nativePlugins(host.ctx)!.invoke(endpoint, raw, host.agent);
   }
+  /** Schedule reminders wake the native root; the original runtime delivers what is due. */
+  override async alarm(): Promise<void> {
+    const row = this.ctx.storage.sql.exec<{name: string}>("SELECT name FROM sqlite_master WHERE type='table' AND name='weft_alarm_scope'").toArray().length
+      ? this.ctx.storage.sql.exec<{scope: string}>('SELECT scope FROM weft_alarm_scope WHERE id=1').toArray()[0] : undefined;
+    if (!row) return;
+    const scope = this.assertScope(JSON.parse(row.scope) as SessionScope);
+    const host = await this.getNativeHost(scope);
+    await drainDueReminders(host.ctx);
+  }
+
+  async nativeScheduleCatalog(input: SessionScope): Promise<unknown[]> {
+    this.assertScope(input);
+    const live = this.nativeHost?.ctx.get('schedule');
+    return live ? live.catalog() : readScheduleCatalog(this.ctx.storage);
+  }
+
+  private readonly uplinks = new Map<string, UplinkQueue>();
+  private uplink(streamId: string): UplinkQueue {
+    let queue = this.uplinks.get(streamId);
+    if (!queue) {
+      if (this.uplinks.size >= 64) throw new RemoteError('gateway/bad-request', 'Too many open stream uplinks', {});
+      queue = new UplinkQueue(() => { this.uplinks.delete(streamId); });
+      this.uplinks.set(streamId, queue);
+    }
+    return queue;
+  }
+  /** Ordered client messages for one open bidirectional Remote stream on this object. */
+  async nativeStreamInput(input: SessionScope, streamId: string, items: unknown[], end: boolean): Promise<void> {
+    this.assertScope(input);
+    z.uuid().parse(streamId);
+    this.uplink(streamId).push(z.array(z.unknown()).max(64).parse(items), z.boolean().parse(end));
+  }
+
+  /** Official Agent-scoped Remote methods run on this DO's native root with the gateway's direct binding. */
+  async nativeAgentRemote(input: SessionScope, endpoint: string, raw: unknown): Promise<Response> {
+    const scope = this.assertScope(input);
+    try {
+      const info = agentRemoteFor(endpoint);
+      if (!info) throw new RemoteError('gateway/method-unavailable', 'Remote method is not connected yet', {endpoint});
+      if (!readSessionSnapshot(this.ctx.storage, SessionId(scope.sessionId))) throw new RemoteError('session/not-found', 'Session not found', {sessionId: SessionId(scope.sessionId)});
+      const host = await this.getNativeHost(scope);
+      const value = await invokeAgentRemote(host.ctx, info, endpoint, raw, new AbortController().signal);
+      await host.ctx.sessionPersistence.flush();
+      await this.ctx.storage.sync();
+      return Response.json({ok: true, ...(value === undefined ? {} : {value})});
+    } catch (error) {
+      const failure = remoteErrorOf(error);
+      if (!failure) throw error;
+      return Response.json({ok: false, error: failure});
+    }
+  }
   async nativePluginManifest(input: SessionScope, providers: unknown): Promise<void> {
     this.assertScope(input);
     const args = nativePluginRemote.methods['dynamicCordisRunner/syncInspectManifest'].input({strict: true}).create().parse({providers});
@@ -653,6 +786,35 @@ export class SessionDO extends DurableObject<Env> {
       const host = await pending.catch(error => {clearTimeout(lease); this.fileObservers.delete(envelope.observerId); throw error;});
       try { return await host.changes(envelope.args, abort, stop); }
       catch (error) {await stop(); throw error;}
+    }
+    if (typeof raw === 'object' && raw !== null && 'operation' in raw && raw.operation === 'native-agent-stream') {
+      const envelope = z.object({scope: scopeSchema, operation: z.literal('native-agent-stream'), endpoint: z.string(), args: z.unknown(), streamId: z.uuid().optional()}).strict().parse(raw);
+      const scope = this.assertScope(envelope.scope);
+      const info = agentRemoteFor(envelope.endpoint);
+      if (!info) throw new RemoteError('gateway/method-unavailable', 'Remote stream is not connected yet', {endpoint: envelope.endpoint});
+      const abort = new AbortController();
+      if (request.signal.aborted) abort.abort(request.signal.reason);
+      request.signal.addEventListener('abort', () => abort.abort(), {once: true});
+      const host = await this.getNativeHost(scope);
+      const uplink = envelope.streamId ? this.uplink(envelope.streamId) : undefined;
+      uplink?.claim();
+      abort.signal.addEventListener('abort', () => { if (envelope.streamId) {uplink?.end(); this.uplinks.delete(envelope.streamId);} }, {once: true});
+      const stream = openRemoteStream(host.ctx, info, envelope.endpoint, envelope.args, abort.signal, uplink);
+      return remoteStream(stream.items, abort, stream.parse, () => { if (envelope.streamId) {uplink?.end(); this.uplinks.delete(envelope.streamId);} });
+    }
+    if (typeof raw === 'object' && raw !== null && 'operation' in raw && raw.operation === 'native-question-wait') {
+      const envelope = z.object({scope: scopeSchema, operation: z.literal('native-question-wait'), args: z.unknown()}).strict().parse(raw);
+      const scope = this.assertScope(envelope.scope);
+      const method = questionRemote.methods['userQuestions/attachWait'];
+      const args = method.input({strict: true}).create().parse(envelope.args);
+      const abort = new AbortController();
+      if (request.signal.aborted) abort.abort(request.signal.reason);
+      request.signal.addEventListener('abort', () => abort.abort(), {once: true});
+      const host = await this.getNativeHost(scope);
+      const agent = host.ctx.agents.get(SessionId(args.agentId));
+      if (!agent) throw new RemoteError('session/not-found', 'Session not found', {sessionId: SessionId(args.agentId)});
+      const codec = method.result.create();
+      return remoteStream(host.ctx.userQuestions.attachWait(agent, args.callId, abort.signal), abort, value => codec.parse(value));
     }
     if (typeof raw === 'object' && raw !== null && 'operation' in raw && raw.operation === 'native-follow') {
       const envelope = z.object({scope: scopeSchema, operation: z.literal('native-follow'), args: z.unknown()}).strict().parse(raw);

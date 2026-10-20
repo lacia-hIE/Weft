@@ -137,7 +137,8 @@ test('native Remote rejects invalid contracts and unavailable capabilities witho
     assert.equal((await api.raw('session/create', {request: {sessionId: '../escape'}})).result.error?.code, 'gateway/bad-request');
     assert.equal((await api.raw('session/create', {request: {}}, 'session/list')).result.error?.code, 'gateway/bad-request');
     assert.equal((await api.raw('session/create', {request: {cwd: '/etc'}})).result.error?.code, 'workspace/invalid-path');
-    assert.equal((await api.raw('session/fork', {})).result.error?.code, 'gateway/method-unavailable');
+    assert.equal((await api.raw('session/fork', {})).result.error?.code, 'gateway/bad-request');
+    assert.equal((await api.raw('pluginMarket/listIndexes', {})).result.error?.code, 'gateway/method-unavailable');
     await api.call('session/create', {request: {sessionId: 'same'}});
     const error = await api.raw('session/page', {request: {address: {kind: 'session', sessionId: 'same'}, throughSeq: 999}});
     assert.equal(error.result.error?.code, 'gateway/bad-request');

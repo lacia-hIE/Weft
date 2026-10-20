@@ -14,12 +14,33 @@ function wireError(value: unknown): Error {
   return Object.assign(new Error(error.message), error, {isDSHRemoteError: true as const});
 }
 
+const ordered = z.object({payload: z.object({args: z.object({agentId: z.string().optional(), request: z.object({sessionId: z.string()}).partial().optional()}).loose()}).loose()}).loose();
+/** The Session that an ordered call targets, read from its JSON-RPC body. */
+function orderedSession(init: RequestInit | undefined): string | undefined {
+  if (typeof init?.body !== 'string') return undefined;
+  const {args} = ordered.parse(JSON.parse(init.body)).payload;
+  return args.agentId ?? args.request?.sessionId;
+}
+
 function transport(base: string): ClientTransportHooks {
+  // The original Host reads one ordered socket, so a preset selection sent
+  // before a prompt commits first; separate HTTP requests keep that order here.
+  const selecting = new Map<string, Promise<unknown>>();
   return {
-    fetch: (input, init) => {
+    fetch: async (input, init) => {
       const path = String(input);
       if (!path.startsWith('api/')) throw new Error(`Unsupported Harness RPC channel ${path}`);
-      return fetch(`${base}/${path}`, init);
+      const session = path === 'api/agentPresets/select' || path === 'api/session/prompt' ? orderedSession(init) : undefined;
+      if (session === undefined) return fetch(`${base}/${path}`, init);
+      if (path === 'api/session/prompt') {
+        await selecting.get(session);
+        return fetch(`${base}/${path}`, init);
+      }
+      const response = fetch(`${base}/${path}`, init);
+      const settled = response.then(() => undefined, () => undefined);
+      selecting.set(session, settled);
+      void settled.then(() => {if (selecting.get(session) === settled) selecting.delete(session);});
+      return response;
     },
     async *openStream(endpoint, payload, signal, uplink) {
       const observer = endpoint === 'workspaceFiles/changes' ? {
@@ -29,16 +50,25 @@ function transport(base: string): ClientTransportHooks {
       const abort = new AbortController();
       const combined = AbortSignal.any([signal, abort.signal]);
       const input = uplink?.[Symbol.asyncIterator]();
+      const streamId = input ? crypto.randomUUID() : undefined;
       let inputFailure: Error | undefined;
+      // Client messages of a bidirectional stream travel as ordered RPCs addressed to the stream's owner.
+      const send = async (items: unknown[], end: boolean) => {
+        const args = z.object({args: z.unknown()}).parse(payload).args;
+        const response = await fetch(`${base}/api/$stream/input`, {method: 'POST', headers: {'content-type': 'application/json'}, signal: combined,
+          body: JSON.stringify({type: 'client-request', rpcId: crypto.randomUUID(), method: '$stream/input', payload: {args: {streamId, endpoint, args, items, end}}})});
+        const envelope = z.object({result: z.union([z.object({ok: z.literal(true)}).passthrough(), z.object({ok: z.literal(false), error: failure})])}).parse(await response.json());
+        if (!envelope.result.ok) throw wireError((envelope.result as {error: unknown}).error);
+      };
       const sending = input ? (async () => {
         for (;;) {
           const item = await input.next();
-          if (item.done) return;
-          throw new Error('Bidirectional Harness stream messages are not connected yet');
+          if (item.done) {await send([], true); return;}
+          await send([item.value], false);
         }
-      })().catch(error => { inputFailure = error; abort.abort(error); }) : Promise.resolve();
+      })().catch(error => { if (!combined.aborted) {inputFailure = error; abort.abort(error);} }) : Promise.resolve();
       try {
-      const response = await fetch(`${base}/streams/${endpoint}`, {method: 'POST', headers: {'content-type': 'application/json', ...(observer ? {'x-weft-observer-id': observer.observerId} : {})}, body: JSON.stringify(payload), signal: combined});
+      const response = await fetch(`${base}/streams/${endpoint}`, {method: 'POST', headers: {'content-type': 'application/json', ...(observer ? {'x-weft-observer-id': observer.observerId} : {}), ...(streamId ? {'x-weft-stream-id': streamId} : {})}, body: JSON.stringify(payload), signal: combined});
       if (!response.ok) throw new Error(`Harness stream HTTP ${response.status}`);
       if (!response.headers.get('content-type')?.startsWith('text/event-stream')) {
         const body: unknown = await response.json();

@@ -20,7 +20,7 @@ test('the original Files sidebar previews text and byte images and refreshes ext
   expect(await page.evaluate(() => (performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming).nextHopProtocol)).toBe('h2');
   await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
   await page.locator('[contenteditable=true]').fill('Open this environment workspace');
-  await page.getByRole('button', {name: 'Send message', exact: true}).click();
+  await page.getByRole('button', {name: 'Send message', exact: true}).click({timeout: 45_000});
   await expect(page.getByText('Tenant: '+me.tenantId, {exact: true})).toBeVisible({timeout: 30_000});
   await page.locator('[data-sidebar-right-expand]').click();
   await page.locator('[data-sidebar-right-guide-entry="files"]').click();

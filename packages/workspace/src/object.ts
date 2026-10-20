@@ -1,21 +1,80 @@
 import {createHash} from 'node:crypto';
 import { DurableObject } from 'cloudflare:workers';
 import { FsError } from '@deepseek-ai/dsh-fs';
+import { WorkerShellBackend } from '@cloudflare/computer/backends/worker-shell';
+import curlCommands from '@cloudflare/computer/shell/curl';
 import { WorkspaceStore } from './store.ts';
+import { shellPolicy, type ShellSandbox } from './shell.ts';
 import { fsStatus, workspaceAddress, workspaceScopeSchema, workspaceOperationSchema, workspacePath, type WorkspaceScope, type WorkspaceOperation } from './protocol.ts';
 import {AttachmentError, type FileAttachmentRef} from '@deepseek-ai/dsh-attachment';
 import {attachmentOperationSchema, ATTACHMENT_ROOT, UPLOAD_CHUNK_BYTES} from '../../native-attachments/src/storage.ts';
 import type {ImageVariantRecord} from '../../native-attachments/src/image-variants.ts';
 import {storedFilePath} from '../../../.generated/official-file-reference.ts';
 
-interface Env { WORKSPACES: DurableObjectNamespace<WorkspaceDO> }
+interface Env { WORKSPACES: DurableObjectNamespace<WorkspaceDO>; LOADER?: WorkerLoader }
 /** No unscoped Computer stub is exposed to clients or model tools. */
 export class WorkspaceDO extends DurableObject<Env> {
   private readonly files: WorkspaceStore;
   private readonly watchers = new Map<string, {path: string; invalidate(): void; close(endStream?: boolean): void}>();
+  /** The sandbox of every running shell execution, by execution id. */
+  private readonly sandboxes = new Map<string, ShellSandbox>();
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    this.files = new WorkspaceStore(ctx.storage);
+    // Shell commands run in just-bash inside a Dynamic Worker whose filesystem calls come back
+    // here through `WorkspaceServiceProxy`; public egress serves its curl command.
+    const shell = env.LOADER ? new WorkerShellBackend({
+      loader: env.LOADER, ctx, workspace: {binding: 'WORKSPACES', id: ctx.id.toString()},
+      commands: [curlCommands], egress: {mode: 'direct'},
+    }) : undefined;
+    this.files = new WorkspaceStore(ctx.storage, shell ? {backends: [shell], observer: shellPolicy(changes => {
+      this.files.externalChanges(changes);
+      for (const change of changes) this.invalidate(change.path);
+    }, () => [...this.sandboxes.values()])} : undefined);
+  }
+  /** The Workspace RPC surface for this object's own shell Dynamic Worker (via `WorkspaceServiceProxy`). */
+  __getWorkspaceStub() { return this.files.stub(); }
+
+  /** Run one shell command; the response streams NDJSON `stdout`/`stderr` chunks and the final `exit`. */
+  async exec(input: WorkspaceScope, request: {id: string; command: string; cwd: string; timeoutMs?: number; env?: Record<string, string>; stdin?: string; sandbox?: ShellSandbox}): Promise<Response> {
+    const scope = workspaceScopeSchema.safeParse(input);
+    if (!scope.success || !this.ctx.id.equals(this.env.WORKSPACES.idFromName(workspaceAddress(scope.data)))) {
+      return Response.json({error: 'Workspace scope mismatch', code: 'FS_SANDBOX_DENIED'}, {status: 403});
+    }
+    if (!this.env.LOADER) return Response.json({error: 'This deployment has no Worker Loader for shell execution', code: 'EXEC_UNAVAILABLE'}, {status: 501});
+    let cwd: string;
+    try { cwd = workspacePath(request.cwd); }
+    catch (error) { return Response.json({error: error instanceof Error ? error.message : 'Invalid working directory', code: 'FS_SANDBOX_DENIED'}, {status: 403}); }
+    let sandbox: ShellSandbox;
+    try {
+      const mode = request.sandbox?.mode ?? 'workspace-write';
+      if (!['read-only', 'workspace-write', 'danger-full-access'].includes(mode)) throw new Error('Unknown sandbox mode');
+      sandbox = {mode, root: workspacePath(request.sandbox?.root ?? '/workspace')};
+    } catch (error) { return Response.json({error: error instanceof Error ? error.message : 'Invalid sandbox', code: 'FS_SANDBOX_DENIED'}, {status: 400}); }
+    this.sandboxes.set(request.id, sandbox);
+    const release = () => { this.sandboxes.delete(request.id); };
+    let run: import('@cloudflare/computer').WorkspaceRuntimeExecHandle<'utf8'>;
+    try { run = await this.files.runtime.exec(request.command, {
+      id: request.id, cwd, encoding: 'utf8',
+      ...(request.timeoutMs !== undefined ? {timeoutMs: request.timeoutMs} : {}),
+      ...(request.env ? {env: request.env} : {}),
+      ...(request.stdin !== undefined ? {stdin: request.stdin} : {}),
+    }); } catch (error) { release(); throw error; }
+    const encoder = new TextEncoder();
+    const body = run.pipeThrough(new TransformStream<{name: string; value?: unknown; code?: unknown}, Uint8Array>({
+      transform(event, controller) {
+        const frame = event.name === 'exit' ? {type: 'exit', code: event.code ?? event.value} : {type: event.name, data: event.value};
+        controller.enqueue(encoder.encode(JSON.stringify(frame) + '\n'));
+        if (event.name === 'exit') release();
+      },
+      flush: release,
+    }));
+    return new Response(body, {headers: {'content-type': 'application/x-ndjson', 'cache-control': 'private, no-store'}});
+  }
+
+  async killExec(input: WorkspaceScope, id: string): Promise<void> {
+    const scope = workspaceScopeSchema.parse(input);
+    if (!this.ctx.id.equals(this.env.WORKSPACES.idFromName(workspaceAddress(scope)))) throw new Error('Workspace scope mismatch');
+    await this.files.runtime.killExec(id, {signal: 'SIGKILL'}).catch(() => { /* The execution already settled. */ });
   }
   private invalidate(changed: string): void {
     for (const watcher of this.watchers.values()) {

@@ -8,6 +8,11 @@ import { installModelSelectionProjection } from './model-selection.ts';
 import { turnBoundaryProjectionDefinition } from '@deepseek-ai/dsh-agent-loop';
 import { inboxProjectionDefinition } from '@weft/upstream/packages/core/agent-loop/src/inbox.ts';
 import {agentPresetProjectionDefinition} from '@weft/upstream/packages/preset/agent-preset-registry/src/session.ts';
+import {userQuestionProjectionDefinition} from '@weft/upstream/packages/interaction/user-questions/src/projection.ts';
+import {goalProjectionDefinition} from '@deepseek-ai/dsh-goal';
+import {planProjectionDefinition} from '@deepseek-ai/dsh-plan-mode';
+import {tokenUsageProjectionDefinition, contextPressureProjectionDefinition} from '@weft/upstream/packages/llm/token-meter/src/usage-projection.ts';
+import {contextBreakdownProjectionDefinition} from '@weft/upstream/packages/llm/token-meter/src/breakdown-projection.ts';
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt';
 import Tools from '@deepseek-ai/dsh-tools';
 import * as Todo from '@deepseek-ai/dsh-tool-todo';
@@ -51,6 +56,13 @@ export async function createSessionReader(storage: DurableObjectStorage, promote
     ctx.sessionProjections.register(turnBoundaryProjectionDefinition);
     ctx.sessionProjections.register(inboxProjectionDefinition);
     ctx.sessionProjections.register(agentPresetProjectionDefinition);
+    // Projections the native root's official services and preset plugins fold; the client reads them here.
+    ctx.sessionProjections.register(userQuestionProjectionDefinition);
+    ctx.sessionProjections.register(goalProjectionDefinition);
+    ctx.sessionProjections.register(planProjectionDefinition);
+    ctx.sessionProjections.register(tokenUsageProjectionDefinition);
+    ctx.sessionProjections.register(contextPressureProjectionDefinition);
+    ctx.sessionProjections.register(contextBreakdownProjectionDefinition);
     installModelSelectionProjection(ctx);
     await ctx.plugin(Title, {fallbackMaxWords: 5, fallbackMaxBytes: 40, maxTitleBytes: 80});
     await ctx.plugin(SqliteSessionPersistence, {storage});
@@ -64,6 +76,8 @@ export async function createSessionReader(storage: DurableObjectStorage, promote
     });
     return {
       ctx, history,
+      /** Projection folds owned by services this read world must not compose (they would write Sessions). */
+      registerProjections(definitions: readonly Parameters<typeof ctx.sessionProjections.register>[0][]): void { for (const definition of definitions) ctx.sessionProjections.register(definition); },
       configureWorkspace(config: {scope: WorkspaceScope; transport: WorkspaceTransport; cwd: string; sessionId: string; attachmentTransport: AttachmentTransport; images?: ImagesBinding}): Promise<void> {
         return workspace ??= (async () => {
           await ctx.plugin(ComputerFileSystem, config);

@@ -9,12 +9,8 @@ import "@weft/upstream/packages/client/ui-theme/src/styles/scrollbar.css";
 
 async function boot(): Promise<void> {
   if (environmentId) {
-    if (new URL(location.href).searchParams.get('ui') !== 'transition') {
-      const {startOfficialHarness} = await import('./official/entry.ts');
-      await startOfficialHarness(environmentId);
-      return;
-    }
-    await import("./harness-shell.tsx");
+    const {startOfficialHarness} = await import('./official/entry.ts');
+    await startOfficialHarness(environmentId);
     return;
   }
   const response = await fetch("/v1/me");

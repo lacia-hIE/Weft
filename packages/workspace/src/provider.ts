@@ -5,6 +5,8 @@ import WorkingDirectory from '@deepseek-ai/dsh-working-directory';
 import * as FileTools from '@deepseek-ai/dsh-tool-fs';
 import * as ObservationPolicy from '@deepseek-ai/dsh-fs-observation-policy';
 import { defineTool } from '@deepseek-ai/dsh-tools';
+import type { SandboxExecutionPolicy } from '@deepseek-ai/dsh-sandbox';
+import type {} from '@deepseek-ai/dsh-sandbox-policy';
 import { workspaceAddress, workspacePath, ROOT, MAX_BYTE_RANGE_BYTES, MAX_BINARY_FILE_BYTES, type WorkspaceScope, type WorkspaceTransport, type WorkspaceOperation, type FileInfo, type FileRead, type WriteResult, type SearchResult } from './protocol.ts';
 
 interface ProviderConfig { scope: WorkspaceScope; transport: WorkspaceTransport; cwd?: string; listLimit?: number; readImage?: boolean }
@@ -27,9 +29,13 @@ export class ComputerFileSystem extends FileSystem {
   }
   override async resolve(path: string, opts?: { cwd?: string; signal?: AbortSignal }): Promise<FsTarget> {
     opts?.signal?.throwIfAborted();
-    const canonical = workspacePath(path, opts?.cwd ?? this.config.cwd);
+    if (!path || path.length > 2048 || /[\\\0\r\n]/.test(path)) throw new FsError('Invalid workspace path', 'FS_SANDBOX_DENIED');
+    // Paths above the volume resolve so read-only probes (project-root markers)
+    // observe them as absent; every content operation still rejects them.
+    const canonical = posix.resolve(workspacePath('.', opts?.cwd ?? this.config.cwd), path);
     return { targetKey: FsTargetKey(this.key(canonical)), displayPath: canonical };
   }
+  private inside(target: FsTarget): boolean { return target.displayPath === ROOT || target.displayPath.startsWith(ROOT + '/'); }
   override processPath(target: FsTarget): string { return this.path(target); }
   override processPathFromHostPath(hostPath: string): string | undefined {
     try {return workspacePath(hostPath);} catch {return undefined;}
@@ -40,6 +46,10 @@ export class ComputerFileSystem extends FileSystem {
     return root === path || path.startsWith(root + '/');
   }
   override async stat(target: FsTarget, signal?: AbortSignal): Promise<FsInfo | undefined> {
+    if (!this.inside(target)) {
+      if (target.targetKey !== this.key(target.displayPath)) throw new FsError('Target belongs to another workspace', 'FS_SANDBOX_DENIED');
+      return undefined;
+    }
     const info = await this.call<FileInfo | null>({ type: 'stat', path: this.path(target) }, signal);
     for (const backlog of this.watchBacklogs.get(target.targetKey) ?? []) backlog.pending = 0;
     return info ? { version: FsVersion(info.version), type: info.type, size: info.size } : undefined;
@@ -89,11 +99,21 @@ export class ComputerFileSystem extends FileSystem {
     const entries = await this.call<FileInfo[]>({ type: 'list', path: this.path(target), ...(this.config.listLimit ? {limit: this.config.listLimit} : {}) }, signal);
     return entries.map(info => ({ name: posix.basename(info.path), type: info.type, target: { displayPath: info.path, targetKey: FsTargetKey(this.key(info.path)) }, size: info.size, version: FsVersion(info.version) }));
   }
-  override async writeText(target: FsTarget, content: string, expected?: FsWriteIntent, signal?: AbortSignal): Promise<FsWriteOutcome> {
+  /** Confines like the shell: the composed sandbox policy decides each write's mode. */
+  override get sandboxMode() { return this.ctx.get('sandboxPolicy')?.defaultMode; }
+  private confine(path: string, policy?: SandboxExecutionPolicy): void {
+    if (!policy || policy.mode === 'danger-full-access') return;
+    if (policy.mode === 'read-only') throw new FsError(`${path}: blocked by the read-only sandbox`, 'FS_SANDBOX_DENIED');
+    const root = workspacePath(policy.workspaceRoot);
+    if (path !== root && !path.startsWith(root + '/')) throw new FsError(`${path}: blocked by the workspace-write sandbox (writable: ${root})`, 'FS_SANDBOX_DENIED');
+  }
+  override async writeText(target: FsTarget, content: string, expected?: FsWriteIntent, signal?: AbortSignal, sandboxPolicy?: SandboxExecutionPolicy): Promise<FsWriteOutcome> {
+    this.confine(this.path(target), sandboxPolicy);
     const result = await this.call<WriteResult>({ type: 'write', path: this.path(target), content, ...(expected ? { expected } : {}) }, signal);
     return { operation: result.operation, version: FsVersion(result.version), before: result.before, after: result.after };
   }
-  override async editText(target: FsTarget, edit: FsEditRequest, expected?: { version: FsVersion }, signal?: AbortSignal): Promise<FsEditOutcome> {
+  override async editText(target: FsTarget, edit: FsEditRequest, expected?: { version: FsVersion }, signal?: AbortSignal, sandboxPolicy?: SandboxExecutionPolicy): Promise<FsEditOutcome> {
+    this.confine(this.path(target), sandboxPolicy);
     const result = await this.call<WriteResult>({ type: 'edit', path: this.path(target), ...edit, ...(expected ? { expectedVersion: expected.version } : {}) }, signal);
     return { version: FsVersion(result.version), before: result.before!, after: result.after };
   }

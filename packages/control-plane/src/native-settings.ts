@@ -14,6 +14,7 @@ import { DurableCredentials } from './native-credentials.ts';
 import AgentPresets from '@deepseek-ai/dsh-agent-preset-registry';
 import AgentLoop from '@deepseek-ai/dsh-agent-loop';
 import Subagents from '@deepseek-ai/dsh-subagent';
+import PermissionPresets from '@deepseek-ai/dsh-permission-presets';
 
 // The official composition's entry id differs from its provider package name.
 // The curated Models editor addresses this entry id.
@@ -22,6 +23,7 @@ export const DEFAULT_MODEL_NAMESPACE = 'agent-default-model';
 export const PRESET_NAMESPACE = 'agent-preset-registry';
 export const LOOP_NAMESPACE = 'agent-loop';
 export const SUBAGENT_NAMESPACE = 'subagent';
+export const PERMISSION_NAMESPACE = 'permission';
 type Section = Record<string, unknown>;
 interface Namespace {
   id: string; schema: Schema; base(): Section; autoGenerate: boolean;
@@ -78,6 +80,10 @@ export class NativeSettings {
       {id: PRESET_NAMESPACE, schema: AgentPresets.Config, base: () => ({default: 'default'}), autoGenerate: false, validate: value => {host.validatePreset?.(String(value.selectedDefault ?? value.default));}},
       {id: LOOP_NAMESPACE, schema: AgentLoop.Config, base: () => ({agents: []}), autoGenerate: false, validate: () => {}},
       {id: SUBAGENT_NAMESPACE, schema: Subagents.Config, base: () => ({}), autoGenerate: false, validate: () => {}},
+      {id: PERMISSION_NAMESPACE, schema: PermissionPresets.Config, base: () => ({}), autoGenerate: false, validate: value => {
+        const presets = PermissionPresets.Config(value as never).presets as Record<string, unknown>;
+        if (value.defaultPreset !== undefined && !Object.hasOwn(presets, String(value.defaultPreset))) throw new Error('Unknown permission preset');
+      }},
       {id: 'ui-settings', schema: DeveloperToolsConfig, base: () => ({}), autoGenerate: false, validate: () => {}},
       {id: 'ui-settings-general', schema: WelcomeConfig, base: () => ({}), autoGenerate: false, validate: () => {}},
     ];

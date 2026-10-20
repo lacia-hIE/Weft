@@ -6,7 +6,7 @@ export function serveUi(
 ): Promise<Response> | undefined {
   const url = new URL(request.url);
   const environmentDocument = /^\/agents\/[a-zA-Z0-9_-]{1,80}\/?$/.test(url.pathname);
-  const officialDocument = environmentDocument && url.searchParams.get('ui') !== 'transition';
+  const officialDocument = environmentDocument;
   if (url.pathname === '/harness/' && url.search.startsWith('??')) {
     const match = /^\?\?(@[a-zA-Z0-9_-]+\/[a-zA-Z0-9_-]+)\/client\.js&rev=[a-f0-9]+$/.exec(url.search);
     if (!match) return undefined;

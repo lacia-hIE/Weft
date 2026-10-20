@@ -1,6 +1,6 @@
 # 原版入口与预设验证
 
-环境入口 `/agents/:environmentId` 默认调用固定上游的 AppWebEntry。Weft 首页只管理环境；环境内的会话、设置、预设选择和动态插件审批使用原版页面。`?ui=transition` 是过渡实现的显式回归入口，不计作官方 UI 验收。
+环境入口 `/agents/:environmentId` 默认调用固定上游的 AppWebEntry。Weft 首页只管理环境；环境内的会话、设置、预设选择和动态插件审批使用原版页面。过渡界面已移除。
 
 ## 实际组合
 

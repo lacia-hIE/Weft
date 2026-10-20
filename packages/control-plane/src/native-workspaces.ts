@@ -113,6 +113,8 @@ export class NativeWorkspaces {
     if (!value) throw new RemoteError('workspace/not-found', 'Default Workspace was deleted; select a Workspace', {workspaceId: wid('default')});
     return value;
   }
+  /** The registry Workspace listing a Session, if any. */
+  owning(sessionId: string): string | undefined {return this.snapshot().items.find(row => row.sessionIds.includes(SessionId(sessionId)))?.workspaceId;}
   async attach(id: string, sessionId: string): Promise<void> {
     await this.queue(async () => {
       const workspace = this.require(id);

@@ -22,6 +22,10 @@ import AgentLoop from '@deepseek-ai/dsh-agent-loop';
 import {updateVolatile} from '@deepseek-ai/cosmokit';
 import {mountNativeAttachments} from '../../../packages/native-attachments/src/index.ts';
 import {mountNativeSubagents, type SubagentLimits} from '../../../packages/native-subagents/src/index.ts';
+import SessionFileReferences from '@weft/upstream/packages/api/session-controller/src/file-references.ts';
+import {ComputerFileReferences} from '../../../packages/native-files/src/references.ts';
+import {mountWorkspaceShell} from '../../../packages/workspace/src/subprocess.ts';
+import {forwardNativeNotifications, mountNativeInteraction} from './native-interaction.ts';
 
 type Reader = Awaited<ReturnType<typeof createSessionReader>>;
 export async function sessionRuntime(env: Env, storage: DurableObjectStorage, scope: SessionScope, profile: AgentRevision | undefined, workspaceId: string | null, persona: string, presentation: boolean, reader?: Reader, hooks: Pick<RuntimeOptions, 'onEvent' | 'onFrame'> = {}, cwd = '/workspace', requireCredential = true) {
@@ -67,6 +71,7 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
     mountPersistence: async ctx => { await ctx.plugin(SqliteSessionPersistence, {storage}); },
     mountTools: async ctx => {
       registerIdentityTool(ctx, scope.tenantId);
+      if (presentation) forwardNativeNotifications(ctx, env, owner, () => activeAgent !== undefined);
       if (presentation) ctx.on('agent/created', async ({agent}) => {
         const header = agent.session.header;
         if (header.origin !== 'subagent') return;
@@ -76,10 +81,16 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
       if (workspaceId !== null) {
         const workspace = {tenantId: scope.tenantId, workspaceId, ...(scope.environmentId ? {environmentId: scope.environmentId} : {})};
         await mountWorkspace(ctx, {scope: workspace, transport: env.WORKSPACES.getByName(workspaceAddress(workspace)), cwd, readImage: presentation && env.IMAGES !== undefined});
+        if (presentation) {await ctx.plugin(ComputerFileReferences); await ctx.plugin(SessionFileReferences);}
+        if (presentation) {
+          const stub = env.WORKSPACES.getByName(workspaceAddress(workspace));
+          await mountWorkspaceShell(ctx, {exec: request => stub.exec(workspace, request), kill: id => stub.killExec(workspace, id)}, cwd);
+        }
         if (presentation) await mountNativeAttachments(ctx, {storage, scope: workspace, sessionId: scope.sessionId, transport: env.WORKSPACES.getByName(workspaceAddress(workspace)), ...(env.IMAGES ? {images: env.IMAGES} : {})});
       }
       if (profile) {
         if (presentation) refreshSubagents = await mountNativeSubagents(ctx, storage, await (await controlFor(env, owner).nativeSubagentConfiguration(owner)).json() as SubagentLimits);
+        if (presentation) await mountNativeInteraction(ctx, env, storage, scope, owner);
         if (presentation) {await mountNativeComposition(ctx, [nativePresetDefinition(profile)], profile.spec.id); composition = ctx;}
         else await mountPlugins(ctx, profile.spec.plugins);
         if (profile.spec.allowClientPlugins && !presentation) {

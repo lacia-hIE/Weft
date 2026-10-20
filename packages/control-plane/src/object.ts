@@ -17,7 +17,23 @@ import { validatePlugins } from "../../plugin-runtime/src/catalog.ts";
 import { compileClientPlugin } from "../../client-plugins/src/compiler.ts";
 import upstream from "../../../upstream.lock.json";
 import { z } from 'zod';
-import { NativeEventHub, NativeStreamHub } from './native-events.ts';
+import { NativeEventHub, NativeStreamHub, type NativeWaterfallOutcome } from './native-events.ts';
+import { sessionReadPorts } from '../../native-query/src/ports.ts';
+import { credentialRef } from '@deepseek-ai/dsh-credentials';
+import { openEnvironmentStream } from '../../native-environment/src/index.ts';
+import type { RemoteEventResult } from '@weft/upstream/packages/api/gateway/src/stream-protocol.ts';
+
+/** Official Agent-scoped waterfalls that the environment forwards to its clients. */
+const remoteEventResultSchema = z.object({
+  clientId: z.string().min(1), eventId: z.string().min(1),
+  outcome: z.discriminatedUnion('kind', [
+    z.object({kind: z.literal('next')}).strict(),
+    z.object({kind: z.literal('result'), value: z.json().optional()}).strict(),
+    z.object({kind: z.literal('rejected'), error: z.object({name: z.string(), message: z.string(), code: z.string().optional(), details: z.json().optional()}).strict()}).strict(),
+  ]),
+}).strict();
+export const NATIVE_FORWARDED_EVENTS = ['goal/activation-changed', 'commands/change', 'schedule/changed'] as const;
+export const NATIVE_WATERFALLS = ['user-questions/request', 'approval/request'] as const;
 import { NativeWorkspaces } from './native-workspaces.ts';
 import type { WorkspaceDO } from '../../workspace/src/object.ts';
 import type { SessionDO } from '../../../apps/worker/src/index.ts';
@@ -26,7 +42,7 @@ import { sessionAddress, type SessionScope } from '../../tenant/src/index.ts';
 import sessionRemote from '../../../.generated/official-remotes/packages/api/session-controller/typert.remote-client.js';
 import type { SessionControlFrame, SessionProjectionBaseline } from '@deepseek-ai/dsh-api-session-controller/types';
 import { remoteStream } from '../../harness-runtime/src/remote-stream.ts';
-import { NativeSettings, PRESET_NAMESPACE, LOOP_NAMESPACE, SUBAGENT_NAMESPACE } from './native-settings.ts';
+import { NativeSettings, PRESET_NAMESPACE, LOOP_NAMESPACE, SUBAGENT_NAMESPACE, PERMISSION_NAMESPACE } from './native-settings.ts';
 import {readNativePresets, type CompositionEndpoint} from '../../native-composition/src/profile-host.ts';
 import {profileDefinitions} from '../../harness-profile/src/index.ts';
 import {manageNativePlugins} from '../../native-composition/src/manager.ts';
@@ -38,8 +54,6 @@ import { NativePluginCatalog } from './native-plugins.ts';
 import {NativeSessionSearch} from '../../native-query/src/host.ts';
 import {mapConcurrent} from '../../native-query/src/concurrent.ts';
 import {remoteErrorOf} from '@deepseek-ai/dsh-typert-protocol';
-import type {SessionEvent} from '@deepseek-ai/dsh-session';
-import type {SessionReadMetadata} from '../../session-persistence-do/src/index.ts';
 
 declare const WEFT_VALIDATION_BUILD: boolean;
 
@@ -62,26 +76,17 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
       const address: SessionScope = {...scope, sessionId: id.parse(this.nativeSessionRoot(scope, sessionId) ?? sessionId)};
       return {scope: address, stub: this.env.SESSIONS.getByName(sessionAddress(address))};
     };
-    return this.nativeSearch = new NativeSessionSearch(this.ctx.storage, {
-      ids: async signal => {
-        signal?.throwIfAborted();
-        return [...(await this.sessionIndex(scope)).map(record => record.id), ...this.ctx.storage.sql.exec<{id: string}>('SELECT id FROM native_child_owners ORDER BY id').toArray().map(row => row.id)];
-      },
-      metadata: async (sessionId, signal) => {
-        signal?.throwIfAborted(); const session = target(sessionId);
-        const value = await (await session.stub.fetch(new Request('https://session.internal/native-search-metadata', {
-          method: 'POST', body: JSON.stringify({scope: session.scope, sessionId, operation: 'native-search-metadata'}), ...(signal ? {signal} : {}),
-        }))).json() as {value?: SessionReadMetadata};
-        signal?.throwIfAborted(); return value.value;
-      },
-      page: async (sessionId, offset, end, signal) => {
-        signal?.throwIfAborted(); const session = target(sessionId);
-        const value = await (await session.stub.fetch(new Request('https://session.internal/native-search-page', {
-          method: 'POST', body: JSON.stringify({scope: session.scope, sessionId, operation: 'native-search-page', offset, end}), ...(signal ? {signal} : {}),
-        }))).json() as {events: SessionEvent[]};
-        signal?.throwIfAborted(); return value.events;
-      },
-    });
+    return this.nativeSearch = new NativeSessionSearch(this.ctx.storage, sessionReadPorts(async signal => {
+      signal?.throwIfAborted();
+      return this.nativeSessionIds(scope);
+    }, target));
+  }
+  /** Every root Session in the index plus the children their roots host. */
+  async nativeSessionIds(scope: ControlScope): Promise<string[]> {return (await this.nativeSessionOwners(scope)).map(owner => owner.id);}
+  /** The same Sessions with the root whose SessionDO owns each one. */
+  async nativeSessionOwners(scope: ControlScope): Promise<{id: string; root: string}[]> {
+    return [...(await this.sessionIndex(scope)).map(record => ({id: record.id, root: record.id})),
+      ...this.ctx.storage.sql.exec<{id: string; root_id: string}>('SELECT id, root_id FROM native_child_owners ORDER BY id').toArray().map(row => ({id: row.id, root: row.root_id}))];
   }
   private modelUploads: SqliteModelUploadIndex | undefined;
   async nativeModelFiles(scope: ControlScope, operation: ModelUploadOperation): Promise<Response> {
@@ -103,6 +108,26 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
     await catalog.event(sessionId, name, args);
     this.nativeEvents.emit(name, args);
   }
+  /** Forwarded Agent-scoped waterfalls (`user-questions/request`, `approval/request`) wait for an environment client. */
+  async nativeEventWaterfall(scope: ControlScope, eventId: string, event: string, agentId: string, request: Record<string, unknown>): Promise<NativeWaterfallOutcome> {
+    this.scope(scope);
+    z.uuid().parse(eventId);
+    id.parse(agentId);
+    if (!(NATIVE_WATERFALLS as readonly string[]).includes(event)) throw new Error('Unknown native waterfall');
+    return this.nativeEvents.waterfall(eventId, event, agentId, request);
+  }
+  /** Root Agent notifications the official client subscribes to through Remote Events. */
+  async nativeForwardEvent(scope: ControlScope, event: string, args: readonly unknown[]): Promise<void> {
+    this.scope(scope);
+    if (!(NATIVE_FORWARDED_EVENTS as readonly string[]).includes(event)) throw new Error('Unknown native event');
+    this.nativeEvents.emit(event, args);
+  }
+  /** Resolve one credential reference for a Session's trusted native root; values never reach clients. */
+  async nativeResolveCredential(scope: ControlScope, ref: string): Promise<{value: string; source: string} | undefined> {
+    return this.settings(scope).credentials.resolve(credentialRef(ref));
+  }
+  async nativeEventWaterfallCancel(scope: ControlScope, eventId: string): Promise<void> {this.scope(scope); this.nativeEvents.cancel(z.uuid().parse(eventId));}
+  async nativeEventResult(scope: ControlScope, raw: unknown): Promise<void> {this.scope(scope); this.nativeEvents.result(remoteEventResultSchema.parse(raw) as RemoteEventResult);}
   private nativeSettings: NativeSettings | undefined;
   private settings(scope: ControlScope): NativeSettings {
     this.scope(scope);
@@ -130,6 +155,11 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
   async nativePresetDefault(scope: ControlScope): Promise<string> {return this.presetDefault(scope);}
   async nativeLoopConfiguration(scope: ControlScope): Promise<Response> {
     return Response.json(this.settings(scope).value(LOOP_NAMESPACE));
+  }
+  /** The environment's default permission preset for new Sessions, when the user chose one. */
+  async nativePermissionDefault(scope: ControlScope): Promise<string | undefined> {
+    const value = this.settings(scope).value(PERMISSION_NAMESPACE).defaultPreset;
+    return typeof value === 'string' ? value : undefined;
   }
   async nativeSubagentConfiguration(scope: ControlScope): Promise<Response> {
     return Response.json(this.settings(scope).value(SUBAGENT_NAMESPACE));
@@ -205,6 +235,7 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
   async nativeResolveWorkspace(scope: ControlScope, workspaceId?: string, cwd?: string) {
     return this.workspaces(scope).resolve(workspaceId, cwd);
   }
+  async nativeWorkspaceOf(scope: ControlScope, sessionId: string): Promise<string | undefined> {return this.workspaces(scope).owning(id.parse(sessionId));}
   async nativeAttachWorkspace(scope: ControlScope, workspaceId: string, sessionId: string): Promise<void> {
     await this.workspaces(scope).attach(workspaceId, sessionId);
   }
@@ -271,6 +302,16 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
         const failure = remoteErrorOf(error) ?? {code: 'gateway/internal', message: 'Session search failed', details: {}};
         return Response.json({ok: false, error: {isDSHRemoteError: true, code: failure.code, message: failure.message, details: failure.details}});
       }
+    }
+    if (typeof raw === 'object' && raw !== null && 'operation' in raw && raw.operation === 'native-environment-stream') {
+      const body = z.object({operation: z.literal('native-environment-stream'), scope: environmentScopeSchema, endpoint: z.string(), args: z.unknown()}).strict().parse(raw);
+      this.scope(body.scope);
+      // Long-lived environment streams live here: a stateless entry request that only awaits
+      // non-I/O promises is cancelled by the runtime as hung.
+      const abort = new AbortController();
+      if (request.signal.aborted) abort.abort();
+      else request.signal.addEventListener('abort', () => abort.abort(), {once: true});
+      return openEnvironmentStream(body.endpoint, body.args, abort);
     }
     const body = z.object({operation: z.enum(['native-events','native-workspaces','native-session-control']), scope: environmentScopeSchema}).strict().parse(raw);
     this.scope(body.scope);

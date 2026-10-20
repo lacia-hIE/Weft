@@ -87,6 +87,10 @@ Plugins 页面已接通原版 `pluginInventory/list`、`pluginManager/listPlugin
 
 当前配置包管理不等于通用 npm 安装器已经完成。安装、检查或移除未接通的包返回明确拒绝，不生成假的下载日志、安装成功或包库存。验证范围见 [Plugins 管理与 Loop 配置](../validation/native-plugin-management.md)。
 
+## 原版交互服务
+
+命令、压缩、提问、计划、目标、定时提醒、反馈、引用与分叉均挂载原版服务和插件，见 [原版交互服务](../validation/native-interaction.md)。Agent 级 Remote 方法按生成的描述以官方 direct 绑定分发到所属 SessionDO；`user-questions/request` 与 `approval/request` 按官方 waterfall 语义经 EnvironmentDO 的 `$events` 投递给浏览器。定时提醒的存储域使用 DO SQLite 后端，最早的提醒同步为 DO Alarm。环境卷就是整个文件系统，卷外路径对只读探测表现为不存在，Harness home 位于卷内。
+
 ## 验收状态
 
 已实现并验证环境目录创建、配置/文件/插件/同名会话的环境隔离及重启恢复。浏览器验证覆盖目录进入、环境切换卸载及既有工作台回归。旧数据兼容与迁移不再是验收目标。
@@ -95,15 +99,14 @@ Plugins 页面已接通原版 `pluginInventory/list`、`pluginManager/listPlugin
 
 官方 Remote 的 30 个包与官方 Web 目录的 69 个客户端模块已使用上游生成器、各包自身的构建配置成功生成。标准 `npm run build` 已包含这条完整构建链，确保全新的 Cloudflare Git 构建也会生成官方产物；构建报告位于 `.generated/official-ui/build-report.json`。
 
-Boot Graph 由真实客户端工厂产物生成，复用官方 `orderByModuleGraph` 和 `parseBootManifest` 排序与校验。当前 Web profile 激活 67 个官方模块，加上独立的 `@weft/harness-environment` 扩展，共 68 个模块；按上游条件排除仅 Desktop 启用的 product-analytics 与 sidebar-browser。`/agents/:environmentId` 默认运行这条官方启动链，Agent 卡片直接进入官方页面。`?ui=transition` 保留过渡实现的显式验证入口，不作为产品默认路径。默认环境文档采用原版 Loader 所需 CSP，管理入口维持独立策略。
+Boot Graph 由真实客户端工厂产物生成，复用官方 `orderByModuleGraph` 和 `parseBootManifest` 排序与校验。当前 Web profile 激活 67 个官方模块，加上独立的 `@weft/harness-environment` 扩展，共 68 个模块；按上游条件排除仅 Desktop 启用的 product-analytics 与 sidebar-browser。`/agents/:environmentId` 只运行这条官方启动链，Agent 卡片直接进入官方页面。默认环境文档采用原版 Loader 所需 CSP，管理入口维持独立策略。
 
 以下工作仍未完成，目标保持进行中：
 
-1. 继续补齐预设编辑、权限、文件及更多插件的原生配置和 Host 接口、业务投影；原版 Inbox 和预设选择的页面交互已验收，未连接能力返回明确错误。
+1. 官方 Web 的预设页面只提供查看、选择与启停，均已接通；设置文档在本机编辑器中打开是桌面能力，`settings/describe` 报告 `hasDocument: false`。命令、压缩、提问、计划、目标、定时提醒、反馈、引用、分叉与模型发现已接通。bash、后台作业、Terminal 与权限预设运行在 Computer worker shell 上；DeepSeek 平台账号、officeToPdf 与插件市场在 workerd 中不可用，返回明确错误。
 2. 继续验证实时控制流在大规模并发写入、长任务、断线与 DO 重建后的完整一致性；Session 目录的 200 条上限已移除，并完成 205 条目录、搜索及控制基线验证。
-3. 完成剩余业务接口后移除过渡界面；官方 AppWebEntry 已设为默认入口，独立扩展提供 My Agents 导航。
+3. 过渡界面已移除；环境入口只运行官方 AppWebEntry，独立扩展提供 My Agents 导航。旧版客户端插件的后端接口仍保留给过渡 HTTP API。
 4. 继续补齐静态插件包的安装、更新、卸载及更多配置生命周期；原版 Plugins 的真实配置包清单、预设条目启停和 Agent loop 表单已接入。扩展动态插件的 workerd 服务桥接和部署验收。
 5. 完成更多 provider/插件的凭据集成和环境管理生命周期，按新布局验收，不做旧数据兼容。
 6. 在真实模型、多环境、重连、重启和 Cloudflare 部署中验收完整官方 UI。
 
-`harness-shell.tsx` 仅通过显式参数保留为回归入口，不能将这些回归计为原版界面的功能验收。默认入口切换也不等于全部 Host 接口已经完成。

@@ -1,5 +1,5 @@
 import { posix } from 'node:path';
-import { Workspace } from '@cloudflare/computer';
+import { Workspace, type WorkspaceObserver, type WorkspaceRegisteredBackend } from '@cloudflare/computer';
 import { FsError } from '@deepseek-ai/dsh-fs';
 import { ROOT, MAX_FILE_BYTES, workspacePath, type FileInfo, type FileRead, type WriteResult, type SearchResult, type WorkspaceOperation } from './protocol.ts';
 import {ComputerImageVariants} from '../../native-attachments/src/image-variants.ts';
@@ -10,7 +10,7 @@ export class WorkspaceStore {
   private readonly computer: Workspace;
   readonly attachments: ComputerAttachmentFiles;
   readonly imageVariants: ComputerImageVariants;
-  constructor(private readonly storage: DurableObjectStorage) {
+  constructor(private readonly storage: DurableObjectStorage, execution?: {backends: WorkspaceRegisteredBackend[]; observer: WorkspaceObserver}) {
     storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_workspace_schema (version INTEGER NOT NULL)');
     const versions = storage.sql.exec<{ version: number }>('SELECT version FROM weft_workspace_schema').toArray();
     if (versions.length > 1 || (versions[0] && versions[0].version !== 1)) throw new Error('Unsupported Weft workspace format');
@@ -20,10 +20,31 @@ export class WorkspaceStore {
       storage.sql.exec('INSERT OR IGNORE INTO weft_workspace_state VALUES (1, 0)');
       storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_file_versions (path TEXT PRIMARY KEY, version INTEGER NOT NULL)');
     });
-    this.computer = new Workspace({ storage, output: false });
+    this.computer = new Workspace({ storage, output: false, ...(execution ? {backends: execution.backends, observer: execution.observer} : {}) });
     this.computer.provider().mkdirSync(ROOT, { recursive: true });
+    // Shell scratch space; the execution policy allows writes there besides the workspace volume.
+    if (execution) this.computer.provider().mkdirSync('/tmp', { recursive: true });
     this.attachments = new ComputerAttachmentFiles(storage, this.computer.provider(), path => {this.version(path);});
     this.imageVariants = new ComputerImageVariants(storage, file => {this.attachments.execute({type: 'read', ref: file, offset: 0});});
+  }
+
+  /** The Computer runtime that executes shell commands against these same files. */
+  get runtime() { return this.computer.runtime; }
+  /** The Workspace RPC surface a Dynamic Worker backend reaches through `WorkspaceServiceProxy`. */
+  async stub() { await this.computer.ready(); return this.computer.stub(); }
+
+  /**
+   * Record mutations made outside Weft's own operations (a shell execution):
+   * changed paths get a new version, and removed subtrees drop theirs so
+   * stale reads can never pass a version check.
+   */
+  externalChanges(changes: readonly {path: string; removed: boolean}[]): void {
+    this.storage.transactionSync(() => {
+      for (const change of changes) {
+        if (change.removed) this.storage.sql.exec("DELETE FROM weft_file_versions WHERE path=? OR path LIKE ? ESCAPE '\\'", change.path, change.path.replace(/[\\%_]/g, '\\$&') + '/%');
+        this.version(change.path);
+      }
+    });
   }
 
   private revision(): number { return this.storage.sql.exec<{ revision: number }>('SELECT revision FROM weft_workspace_state WHERE id=1').one().revision; }

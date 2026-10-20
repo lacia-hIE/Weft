@@ -81,7 +81,7 @@ npm run test:live:workspace
 
 ## 依赖记录
 
-Computer 的传递依赖目前带有未启用 Worker Shell 链路的 npm audit 告警。构建检查禁止 just-bash、guarded-fetch、sprintf-js 的代码进入生产应用 bundle，并在 runtime-audit.json 记录未启用执行后端；当前文件工具不会执行这些包。开启 Shell 或升级依赖前需处理对应告警并单独验证。本轮没有通过降级 Computer 或强制跨主版本替换传递依赖规避审计。
+Worker Shell 已经评审后启用，见 [原版交互服务](native-interaction.md#shell终端与权限)。just-bash 以 Computer 预打包的模块文本在每个工作区自己的 Dynamic Worker 中运行；父 isolate 构建把 worker-shell 模块对 just-bash 的静态引入替换为会失败的桩，构建检查继续禁止 just-bash、guarded-fetch、sprintf-js 进入生产应用 bundle，runtime-audit.json 记录执行后端与出口策略。npm audit 告警评审：undici 与 guarded-fetch 不在 shell 模块中（undici 被 Computer 替换为桩，curl 使用 isolate 全局 fetch），因此不可达；sprintf-js 的中危 DoS 位于 shell 核心模块内，影响限于该工作区自己的 Dynamic Worker。本轮没有降级 Computer 或强制替换传递依赖。
 
 参考：[Cloudflare Computer 官方说明](https://github.com/cloudflare/computer/blob/main/packages/computer/README.md)。
 

@@ -38,6 +38,21 @@ export async function mountNativeComposition(ctx: Context, definitions: readonly
   return ctx.agentPresets;
 }
 
+/** Official preset groups whose services the registry requires in private realms. */
+const presetGroups = [
+  {id: 'planning', members: ['plan-mode'], isolate: {planMode: true}},
+  {id: 'compaction', members: ['compaction-basic', 'command-compact', 'tool-result-pruner'], isolate: {compaction: true, toolResultPruner: true}},
+] as const;
+
 export function nativePresetDefinition(profile: {spec: {id: string; name: string; plugins: PluginSelection[]; allowClientPlugins?: boolean}}): PresetDefinition {
-  return {id: profile.spec.id, name: profile.spec.name, description: profile.spec.allowClientPlugins ? 'Create UI and tool plugins through conversation.' : 'Work with files and configured tools.', plugins: profile.spec.plugins.map(plugin => ({id: plugin.id, name: 'cordis:'+plugin.id, config: plugin.config, ...(plugin.id === 'tool-skill' ? {isolate: {skills: true}} : {})}))};
+  const row = (plugin: PluginSelection) => ({id: plugin.id, name: 'cordis:'+plugin.id, config: plugin.config, ...(plugin.id === 'tool-skill' ? {isolate: {skills: true as const}} : {})});
+  const plugins: Array<PresetDefinition['plugins'][number]> = [];
+  for (const plugin of profile.spec.plugins) {
+    const group = presetGroups.find(item => (item.members as readonly string[]).includes(plugin.id));
+    if (!group) {plugins.push(row(plugin)); continue;}
+    if (plugins.some(entry => entry.id === group.id)) continue;
+    const members = profile.spec.plugins.filter(item => (group.members as readonly string[]).includes(item.id));
+    plugins.push({id: group.id, name: 'cordis:group', group: true, isolate: {...group.isolate}, config: members.map(row)});
+  }
+  return {id: profile.spec.id, name: profile.spec.name, description: profile.spec.allowClientPlugins ? 'Create UI and tool plugins through conversation.' : 'Work with files and configured tools.', plugins};
 }

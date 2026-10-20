@@ -7,6 +7,20 @@ import * as SkillFiles from "@deepseek-ai/dsh-skill-filesystem";
 import * as SkillTool from "@deepseek-ai/dsh-tool-skill";
 import * as Subagent from '@deepseek-ai/dsh-tool-subagent';
 import * as SubagentControl from '@deepseek-ai/dsh-tool-subagent-control';
+import * as ListAgents from '@deepseek-ai/dsh-tool-subagent-control/list-agents';
+import BasicCompaction from '@deepseek-ai/dsh-compaction-basic';
+import * as CommandCompact from '@deepseek-ai/dsh-command-compact';
+import ToolResultPruner from '@deepseek-ai/dsh-compaction-tool-result-pruner';
+import * as AskUser from '@deepseek-ai/dsh-tool-ask-user';
+import PlanMode, {resolveConfig as resolvePlanMode} from '@deepseek-ai/dsh-plan-mode';
+import * as AgentInstructions from '@deepseek-ai/dsh-agent-instructions';
+import * as Present from '@deepseek-ai/dsh-tool-present';
+import * as CommandGoal from '@deepseek-ai/dsh-command-goal';
+import * as ToolGoal from '@deepseek-ai/dsh-tool-goal';
+import * as ToolSchedule from '@deepseek-ai/dsh-tool-schedule';
+import * as ToolWeb from '@deepseek-ai/dsh-tool-web';
+import * as ToolBash from '@deepseek-ai/dsh-tool-bash';
+import * as ToolJobs from '@deepseek-ai/dsh-tool-jobs';
 import z from '@deepseek-ai/schemastery';
 
 export interface PluginSelection {
@@ -15,6 +29,7 @@ export interface PluginSelection {
 }
 interface Entry {
   id: string;
+  package?: string;
   module: Plugin;
   title: string;
   description: string;
@@ -39,10 +54,106 @@ async function mountSkills(ctx: Context, config: Record<string, unknown>): Promi
 /** The original modules are compiled into the Worker, never fetched at runtime. */
 const SkillBundle = {name: 'workerd-skill-bundle', Config: SkillTool.Config, inject: ['workingDirectory'], apply: mountSkills};
 const SubagentControlBundle = {...SubagentControl, Config: z.object({})};
+const CommandCompactBundle = {...CommandCompact, Config: z.object({})};
+const ListAgentsBundle = {...ListAgents, Config: z.object({})};
+const PlanModeConfig = z.object({section: z.string().required()});
+const CommandGoalBundle = {...CommandGoal, Config: z.object({})};
+const ToolScheduleBundle = {...ToolSchedule, Config: z.object({})};
 
 // Only the platform adapter lives here. Schemas, tools, projections and lifecycle
 // come from the same pinned upstream tree as the AgentLoop and browser renderer.
 const entries: Entry[] = [
+  {
+    id: 'agent-instructions', module: AgentInstructions, title: '项目指令',
+    description: '官方 AGENTS.md / CLAUDE.md 发现与上下文注入；读取所属环境的工作区。',
+    workspace: true, schema: AgentInstructions.Config, defaults: {maxBytes: 65536},
+    validate: config => {AgentInstructions.Config(config as unknown as AgentInstructions.Config);},
+    mount: async (ctx, config) => {await ctx.plugin(AgentInstructions, AgentInstructions.Config(config as unknown as AgentInstructions.Config));},
+  },
+  {
+    id: 'plan-mode', module: PlanMode, title: 'Plan 模式',
+    description: '官方 /plan 与 exit_plan_mode；计划经官方审阅卡片批准。',
+    workspace: false, schema: PlanModeConfig, defaults: {},
+    validate: config => {resolvePlanMode(PlanModeConfig(config));},
+    mount: async (ctx, config) => {await ctx.plugin(PlanMode, resolvePlanMode(PlanModeConfig(config)));},
+  },
+  {
+    id: 'present', package: '@deepseek-ai/dsh-tool-present', module: Present, title: '交付文件',
+    description: '官方 present 工具；在会话中展示工作区文件。',
+    workspace: true, schema: Present.Config, defaults: {maxFiles: 8},
+    validate: config => {Present.Config(config as unknown as Present.Config);},
+    mount: async (ctx, config) => {await ctx.plugin(Present, Present.Config(config as unknown as Present.Config));},
+  },
+  {
+    id: 'command-goal', module: CommandGoalBundle, title: '/goal 命令',
+    description: '官方 /goal 命令；设置、暂停、恢复和清除会话目标。',
+    workspace: false, schema: CommandGoalBundle.Config, defaults: {},
+    validate: config => {CommandGoalBundle.Config(config);},
+    mount: async ctx => {await ctx.plugin(CommandGoal);},
+  },
+  {
+    id: 'tool-goal', module: ToolGoal, title: '目标工具',
+    description: '官方 goal 工具与目标上下文；Agent 可读取并完成会话目标。',
+    workspace: false, schema: ToolGoal.Config, defaults: {},
+    validate: config => {ToolGoal.Config(config as unknown as ToolGoal.Config);},
+    mount: async (ctx, config) => {await ctx.plugin(ToolGoal, ToolGoal.Config(config as unknown as ToolGoal.Config));},
+  },
+  {
+    id: 'tool-schedule', module: ToolScheduleBundle, title: '定时提醒',
+    description: '官方 schedule 工具；提醒由所属会话对象的 Durable Object Alarm 唤醒投递。',
+    workspace: false, schema: ToolScheduleBundle.Config, defaults: {},
+    validate: config => {ToolScheduleBundle.Config(config);},
+    mount: async ctx => {await ctx.plugin(ToolSchedule);},
+  },
+  {
+    id: 'tool-bash', module: ToolBash, title: 'Bash',
+    description: '官方 bash 工具；命令在所属环境的 Computer shell（Dynamic Worker 内的 just-bash）中运行，可后台执行。',
+    workspace: true, schema: ToolBash.Config, defaults: {},
+    validate: config => {ToolBash.Config(config);},
+    mount: async (ctx, config) => {await ctx.plugin(ToolBash, ToolBash.Config(config));},
+  },
+  {
+    id: 'tool-jobs', module: ToolJobs, title: '后台作业',
+    description: '官方作业工具；查看、等待和停止后台 bash 命令。',
+    workspace: true, schema: ToolJobs.Config, defaults: {},
+    validate: config => {ToolJobs.Config(config);},
+    mount: async (ctx, config) => {await ctx.plugin(ToolJobs, ToolJobs.Config(config));},
+  },
+  {
+    id: 'tool-web', module: ToolWeb, title: '网页搜索与抓取',
+    description: '官方 web_search 与 web_fetch；搜索使用环境的 DeepSeek 密钥，抓取经 workerd 访问公网。',
+    workspace: false, schema: ToolWeb.Config, defaults: {fetch: true, searchTimeoutMs: 60000},
+    validate: config => {ToolWeb.Config(config);},
+    mount: async (ctx, config) => {await ctx.plugin(ToolWeb, ToolWeb.Config(config));},
+  },
+  {
+    id: 'tool-ask-user', module: AskUser, title: '向用户提问',
+    description: '官方 ask_user_question 工具；问题卡片由官方客户端回答。',
+    workspace: false, schema: AskUser.Config, defaults: {},
+    validate: config => {AskUser.Config(config);},
+    mount: async (ctx, config) => {await ctx.plugin(AskUser, AskUser.Config(config));},
+  },
+  {
+    id: 'compaction-basic', module: BasicCompaction, title: '上下文压缩',
+    description: '官方自动上下文压缩；按 token 压力摘要较早的历史。',
+    workspace: false, schema: BasicCompaction.Config, defaults: {},
+    validate: config => {BasicCompaction.Config(config);},
+    mount: async (ctx, config) => {await ctx.plugin(BasicCompaction, BasicCompaction.Config(config));},
+  },
+  {
+    id: 'command-compact', module: CommandCompactBundle, title: '/compact 命令',
+    description: '官方手动压缩命令，使用当前预设的压缩服务。',
+    workspace: false, schema: CommandCompactBundle.Config, defaults: {},
+    validate: config => {CommandCompactBundle.Config(config);},
+    mount: async ctx => {await ctx.plugin(CommandCompact);},
+  },
+  {
+    id: 'tool-result-pruner', package: '@deepseek-ai/dsh-compaction-tool-result-pruner', module: ToolResultPruner, title: '工具结果裁剪',
+    description: '官方超长工具结果裁剪，保留首尾内容。',
+    workspace: false, schema: ToolResultPruner.Config, defaults: {thresholdChars: 8192, headChars: 4096, tailChars: 1024},
+    validate: config => {ToolResultPruner.Config(config);},
+    mount: async (ctx, config) => {await ctx.plugin(ToolResultPruner, ToolResultPruner.Config(config));},
+  },
   {
     id: 'tool-subagent', module: Subagent, title: '子 Agent',
     description: '官方委派工具；spawn 创建独立上下文，fork 继承已完成的父会话。',
@@ -52,6 +163,23 @@ const entries: Entry[] = [
       if (!['spawn', 'fork'].includes(value.provider)) throw new Error('Unsupported subagent provider');
     },
     mount: async (ctx, config) => {await ctx.plugin(Subagent, Subagent.Config(config as unknown as Subagent.Config));},
+  },
+  {
+    id: 'tool-subagent-fork', package: '@deepseek-ai/dsh-tool-subagent', module: Subagent, title: '子 Agent 分叉',
+    description: '官方 subagent_fork 工具；子 Agent 继承已完成的父会话上下文。',
+    workspace: true, schema: Subagent.Config, defaults: {provider: 'fork', toolName: 'subagent_fork'},
+    validate: config => {
+      const value = Subagent.Config(config as unknown as Subagent.Config);
+      if (value.provider !== 'fork') throw new Error('Unsupported subagent provider');
+    },
+    mount: async (ctx, config) => {await ctx.plugin(Subagent, Subagent.Config(config as unknown as Subagent.Config));},
+  },
+  {
+    id: 'tool-subagent-list-agents', package: '@deepseek-ai/dsh-tool-subagent-control', module: ListAgentsBundle, title: '子 Agent 列表',
+    description: '官方 list_agents 工具；列出当前会话的子 Agent。',
+    workspace: true, schema: ListAgentsBundle.Config, defaults: {},
+    validate: config => {ListAgentsBundle.Config(config);},
+    mount: async ctx => {await ctx.plugin(ListAgents);},
   },
   {
     id: 'tool-subagent-control', module: SubagentControlBundle, title: '子 Agent 控制',
@@ -153,9 +281,9 @@ const entries: Entry[] = [
 export const prebuiltPluginModules = Object.fromEntries(entries.map(entry => [entry.id, entry.module]));
 
 export const pluginCatalog = entries.map(
-  ({ id, title, description, workspace, schema, defaults }) => ({
+  ({ id, package: name, title, description, workspace, schema, defaults }) => ({
     id,
-    package: `@deepseek-ai/dsh-${id}`,
+    package: name ?? `@deepseek-ai/dsh-${id}`,
     title,
     description,
     workspace,
