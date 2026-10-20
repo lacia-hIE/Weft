@@ -27,7 +27,7 @@ export default defineConfig({
       WORKSPACES: bindings.durableObject({ worker: 'weft-kernel-validation', exportName: 'WorkspaceDO' }),
       ENVIRONMENTS: bindings.durableObject({ worker: 'weft-kernel-validation', exportName: 'EnvironmentDO' }),
       TENANTS: bindings.durableObject({ worker: 'weft-kernel-validation', exportName: 'TenantDO' }),
-      CONFIG_DB: bindings.d1({ name: 'weft-config' }),
+      CONFIG_DB: bindings.d1({ name: 'weft-config', id: 'e0b7a68b-1af9-467e-986e-c2171c8f2dac' }),
       ACCESS_AUD: bindings.text(accessAudience),
       ACCESS_TEAM_DOMAIN: bindings.text('aigraph.cloudflareaccess.com'),
     },

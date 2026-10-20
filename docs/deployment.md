@@ -24,7 +24,7 @@ cf d1 create weft-config          # 首次部署：创建数据库，记下返�
 cf d1 migrations apply <database-id> --dir migrations
 ```
 
-`cf d1 migrations apply` 记录已应用的迁移，只执行新增文件。本地测试由 miniflare 提供同名数据库，测试辅助代码在启动时应用同一组迁移文件。
+生产数据库 `weft-config` 已创建（id `e0b7a68b-1af9-467e-986e-c2171c8f2dac`，写入 `cloudflare.config.ts`），2026-10-20 应用了 `0001` 至 `0005` 迁移。`cf d1 migrations apply` 记录已应用的迁移，只执行新增文件；新增迁移需在推送前应用。本地测试由 miniflare 提供同名数据库，测试辅助代码在启动时应用同一组迁移文件。
 
 ## Access 用户登录
 
