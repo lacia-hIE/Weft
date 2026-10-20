@@ -189,11 +189,29 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
     return Response.json({value: value?.spec.disabled ? undefined : value});
   }
   async nativePresetIds(scope: ControlScope): Promise<string[]> {return (await this.state(scope)).agents.filter(row => !row.spec.disabled).map(row => row.spec.id);}
+  /**
+   * Preset inspections composed for the current preset revisions and default.
+   * Composing an inspection world is the heaviest read the browser makes at
+   * boot, and its result changes only when a preset or the default does.
+   */
+  private presetReads = new Map<string, Promise<string>>();
+  private presetReadsVersion = '';
   async nativePreset(scope: ControlScope, endpoint: CompositionEndpoint, args: unknown): Promise<Response> {
     const defaultId = await this.nativePresetDefault(scope);
     const profiles = (await this.state(scope)).agents;
-    const volume = {...scope, workspaceId: 'default'};
-    return readNativePresets(profiles, defaultId, endpoint, args, ctx => mountWorkspace(ctx, {scope: volume, transport: this.env.WORKSPACES.getByName(workspaceAddress(volume)), cwd: '/workspace'}));
+    const version = JSON.stringify([defaultId, profiles.map(profile => [profile.spec.id, profile.revision])]);
+    if (version !== this.presetReadsVersion) {this.presetReads = new Map(); this.presetReadsVersion = version;}
+    const key = JSON.stringify([endpoint, args]);
+    let read = this.presetReads.get(key);
+    if (!read) {
+      const volume = {...scope, workspaceId: 'default'};
+      read = readNativePresets(profiles, defaultId, endpoint, args, ctx => mountWorkspace(ctx, {scope: volume, transport: this.env.WORKSPACES.getByName(workspaceAddress(volume)), cwd: '/workspace'})).then(response => response.text());
+      const reads = this.presetReads;
+      reads.set(key, read);
+      // A failed composition is not remembered; the next read composes again.
+      read.catch(() => { if (reads.get(key) === read) reads.delete(key); });
+    }
+    return new Response(await read, {headers: {'content-type': 'application/json'}});
   }
   /** The original market reader over this environment's index settings and bundle listing. */
   private market: MarketWorld | undefined;

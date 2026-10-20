@@ -7,7 +7,8 @@ export default {
     if (url.pathname === "/") url.pathname = "/index.html";
     const asset = await env.ASSETS.fetch(new Request(url, request));
     const headers = new Headers(asset.headers);
-    headers.set("cache-control", "private, no-store");
+    // Only the public Worker marks a response immutable, after matching its content revision.
+    headers.set("cache-control", asset.ok && request.headers.get("x-weft-immutable") === "1" ? "private, max-age=31536000, immutable" : "private, no-store");
     headers.set("x-content-type-options", "nosniff");
     const official = url.pathname === '/index.html' && request.headers.get('x-weft-harness-document') === 'official';
     // Official Cordis Loader expressions and the client runner use Function.

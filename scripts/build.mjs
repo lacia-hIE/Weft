@@ -124,6 +124,7 @@ for (const [path, asset] of Object.entries(assets)) {
   writeFileSync(target, asset.body);
 }
 const paths = Object.keys(assets);
+const revisions = {};
 if (existsSync('.generated/official-web-assets/harness/boot.json')) {
   const graph = JSON.parse(readFileSync('.generated/official-web-assets/harness/boot.json', 'utf8'));
   if (graph.release?.commit !== JSON.parse(readFileSync('upstream.lock.json', 'utf8')).commit) throw new Error('Official Web assets are stale');
@@ -135,8 +136,14 @@ if (existsSync('.generated/official-web-assets/harness/boot.json')) {
     }
   }
   collectOfficial('dist/public/harness', '/harness');
+  // The boot graph names every client bundle by content revision. The official module
+  // system loads them as classic scripts level by level; preloading all of them with the
+  // document lets the browser fetch in parallel, and each later <script src> reuses its preload.
+  for (const entry of graph.entries) revisions[`/harness/${entry.id}/client.js`] = entry.rev;
+  const preloads = graph.entries.map(entry => `<link rel="preload" as="script" href="${entry.url.replace(/&/g, '&amp;')}">`).join('');
+  writeFileSync('dist/public/index.html', assets['/'].body.replace('</head>', preloads + '</head>'));
 }
-writeFileSync('.generated/ui-paths.ts', `export const uiPaths: string[] = ${JSON.stringify(paths)};\n`);
+writeFileSync('.generated/ui-paths.ts', `export const uiPaths: string[] = ${JSON.stringify(paths)};\n/** Content revision of each boot graph module; a request naming it may be cached as immutable. */\nexport const uiRevisions: Record<string, string> = ${JSON.stringify(revisions)};\n`);
 writeFileSync('dist/web-metafile.json', JSON.stringify(web.metafile, null, 2) + '\n');
 const result = await build({
   entryPoints: {worker: 'apps/worker/src/index.ts', 'assets-worker': 'apps/assets/src/index.ts'},
