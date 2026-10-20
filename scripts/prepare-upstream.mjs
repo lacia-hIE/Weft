@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import yaml from 'js-yaml';
 import { resolve, relative } from 'node:path';
 import ts from 'typescript';
@@ -99,3 +99,45 @@ const JsExpr = new yaml.Type('tag:yaml.org,2002:js', {kind: 'scalar', resolve: d
 const entryListSchema = yaml.JSON_SCHEMA.extend(JsExpr);
 const officialBundles = Object.fromEntries(['base', 'web-app'].map(bundle => [bundle, yaml.load(readFileSync(resolve(checkout, 'packages/bundle', bundle, 'cordis.patch.yml'), 'utf8'), {schema: entryListSchema})]));
 writeFileSync(resolve(output, 'official-bundles.json'), JSON.stringify(officialBundles, null, 2) + '\n');
+
+// Display metadata of every upstream plugin package (`locale/<lang>.json` → `meta`), and the
+// package each official profile or preset row names. workerd reads no package directories, so
+// the plugin inventory's `pluginPackages` lookup is served from this table.
+const pluginMeta = {packages: {}, rows: {}};
+for (const group of readdirSync(resolve(checkout, 'packages'), {withFileTypes: true})) {
+  if (!group.isDirectory()) continue;
+  for (const entry of readdirSync(resolve(checkout, 'packages', group.name), {withFileTypes: true})) {
+    const directory = resolve(checkout, 'packages', group.name, entry.name);
+    if (!entry.isDirectory() || !existsSync(resolve(directory, 'package.json'))) continue;
+    const manifest = JSON.parse(readFileSync(resolve(directory, 'package.json'), 'utf8'));
+    const name = manifest.name;
+    const meta = {};
+    for (const language of ['en', 'zh']) {
+      const file = resolve(directory, 'locale', `${language}.json`);
+      if (!existsSync(file)) continue;
+      const value = JSON.parse(readFileSync(file, 'utf8')).meta ?? {};
+      for (const field of ['title', 'description']) if (typeof value[field] === 'string') (meta[field] ??= {})[language] = value[field];
+    }
+    // Localized text always carries English: as in the original manifest reader, a missing English
+    // title falls back to the package name and a missing English description to package.json's.
+    if (meta.title && meta.title.en === undefined) meta.title.en = name.replace(/^@deepseek-ai\/dsh-/, '');
+    if (meta.description && meta.description.en === undefined) {
+      if (typeof manifest.description === 'string') meta.description.en = manifest.description;
+      else delete meta.description;
+    }
+    if (Object.keys(meta).length) pluginMeta.packages[name] = meta;
+  }
+}
+const presetPatches = readdirSync(resolve(checkout, 'packages/bundle/web-app/presets')).filter(file => file.endsWith('.yml'))
+  .map(file => yaml.load(readFileSync(resolve(checkout, 'packages/bundle/web-app/presets', file), 'utf8'), {schema: entryListSchema}));
+const collectRows = value => {
+  if (Array.isArray(value)) { value.forEach(collectRows); return; }
+  if (value === null || typeof value !== 'object') return;
+  if (typeof value.id === 'string' && typeof value.name === 'string' && value.name.startsWith('@deepseek-ai/')) pluginMeta.rows[value.id] ??= value.name;
+  Object.values(value).forEach(collectRows);
+};
+collectRows([officialBundles, presetPatches]);
+// The official Web presets (standard, ptc, minimal, cordis), as the Agent preset rows their patches insert.
+const officialPresets = presetPatches.flatMap(patch => patch.flatMap(operation => operation.insert ?? [])).filter(row => row.name === '@deepseek-ai/dsh-agent-preset').map(row => row.config).sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+writeFileSync(resolve(output, 'official-presets.json'), JSON.stringify(officialPresets, null, 2) + '\n');
+writeFileSync(resolve(output, 'plugin-meta.json'), JSON.stringify(pluginMeta) + '\n');

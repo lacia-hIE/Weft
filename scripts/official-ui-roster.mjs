@@ -35,6 +35,18 @@ export function officialPlatformModules(upstreamDirectory) {
 }
 
 /** Read the official browser roster; activation additionally honors the Web profile. */
+/**
+ * Official Web clients a Weft deployment does not activate, with the reason.
+ * Each serves a host capability that is unavailable in workerd; activating it
+ * would only show controls that fail.
+ */
+export const WEB_UNAVAILABLE_CLIENTS = {
+  // Its account menu replaces the Settings launcher with More → Settings · Feedback · Sign in, and its
+  // Models sign-in needs DeepSeek platform OAuth (a loopback callback). Without it the sidebar keeps the
+  // official single Settings button.
+  '@deepseek-ai/dsh-client-ui-settings-account': 'DeepSeek platform account sign-in',
+};
+
 export function officialUiRoster(upstreamDirectory, {profile = 'all'} = {}) {
   if (!['all', 'web'].includes(profile)) throw new Error('Unsupported client profile');
   const baseline = new Set(officialPlatformModules(upstreamDirectory));
@@ -64,7 +76,7 @@ export function officialUiRoster(upstreamDirectory, {profile = 'all'} = {}) {
     },
   );
   const names = new Set();
-  const disabled = new Set();
+  const disabled = new Set(profile === 'web' ? Object.keys(WEB_UNAVAILABLE_CLIENTS) : []);
   const collect = (rows) => {
     for (const row of rows) {
       if (row.insert) collect(row.insert);
@@ -78,7 +90,7 @@ export function officialUiRoster(upstreamDirectory, {profile = 'all'} = {}) {
           if (row.disabled !== true && row.disabled !== "ctx.get('profileContext')?.name !== 'desktop'")
             throw new Error(`Unsupported Web activation condition for ${row.name}`);
           disabled.add(row.name);
-        } else names.add(row.name);
+        } else if (!disabled.has(row.name)) names.add(row.name);
       }
     }
   };

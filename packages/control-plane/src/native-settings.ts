@@ -83,7 +83,7 @@ export class NativeSettings {
         if (new URL(options.baseURL).protocol !== 'https:') throw new Error('Provider endpoint must use HTTPS');
       }},
       {id: DEFAULT_MODEL_NAMESPACE, schema: AgentDefaultModelConfig.Config, base: () => host.modelBase(), autoGenerate: false, validate: () => {}},
-      {id: PRESET_NAMESPACE, schema: AgentPresets.Config, base: () => ({default: 'default'}), autoGenerate: false, validate: value => {host.validatePreset?.(String(value.selectedDefault ?? value.default));}},
+      {id: PRESET_NAMESPACE, schema: AgentPresets.Config, base: () => ({default: 'standard'}), autoGenerate: false, validate: value => {host.validatePreset?.(String(value.selectedDefault ?? value.default));}},
       {id: LOOP_NAMESPACE, schema: AgentLoop.Config, base: () => ({agents: []}), autoGenerate: false, validate: () => {}},
       {id: SUBAGENT_NAMESPACE, schema: Subagents.Config, base: () => ({}), autoGenerate: false, validate: () => {}},
       {id: PERMISSION_NAMESPACE, schema: PermissionPresets.Config, base: () => ({}), autoGenerate: false, validate: value => {

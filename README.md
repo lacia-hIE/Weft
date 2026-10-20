@@ -48,7 +48,7 @@ curl http://localhost:8787/v1/tenants/TENANT_ID/sessions/example/events
 
 `Delegator` 预设接入原版子 Agent 执行、层级导航、历史、消息与中断服务。spawn / fork 在所属 workerd 内运行真实 Agent，子日志由根会话所属 DO 保存，按租户和环境寻址；限额使用官方 Settings 表单与 volatile 配置。详见 [原生子 Agent](docs/validation/native-subagents.md)。
 
-内置预设对齐官方 standard 预设：原版命令（`/compact`、`/plan`、`/goal`、`/feedback`）、上下文压缩、AGENTS.md 指令、Plan 模式、`ask_user_question`、Goal、`present`、`web_search` / `web_fetch`、子 Agent fork 与定时提醒均由原版服务提供。提问与审批通过环境 `$events` 的 waterfall 交给浏览器回答；定时提醒存于 SessionDO，并由 DO Alarm 在对象驱逐后唤醒投递。`@` 文件与会话引用、消息反馈、会话分叉、Skills 目录和模型发现使用原版 Remote 服务。bash、后台作业和官方 Terminal 运行在每个工作区自己的 Dynamic Worker 内的 Computer shell（just-bash）上，允许 curl 访问公网；原版权限预设与审批约束 bash 和文件工具。原版插件市场服务读取环境配置的索引源；Office 转 PDF、通用包安装与 DeepSeek 平台账号登录在 workerd 中不可用，外部服务方案见 [外部服务设计](docs/architecture/external-services.md)。详见 [原版交互服务](docs/validation/native-interaction.md)。
+预设就是官方 Web 的标准、PTC、极简与创造四个模式（PTC 与极简模式等待 Computer 执行后端，暂标为不可用），组成与配置读取自官方预设 patch。标准模式：原版命令（`/compact`、`/plan`、`/goal`、`/feedback`）、上下文压缩、AGENTS.md 指令、Plan 模式、`ask_user_question`、Goal、`present`、`web_search` / `web_fetch`、子 Agent fork 与定时提醒均由原版服务提供。提问与审批通过环境 `$events` 的 waterfall 交给浏览器回答；定时提醒存于 SessionDO，并由 DO Alarm 在对象驱逐后唤醒投递。`@` 文件与会话引用、消息反馈、会话分叉、Skills 目录和模型发现使用原版 Remote 服务。bash、后台作业和官方 Terminal 运行在每个工作区自己的 Dynamic Worker 内的 Computer shell（just-bash）上，允许 curl 访问公网；原版权限预设与审批约束 bash 和文件工具。原版插件市场服务读取环境配置的索引源；Office 转 PDF、通用包安装与 DeepSeek 平台账号登录在 workerd 中不可用，外部服务方案见 [外部服务设计](docs/architecture/external-services.md)。详见 [原版交互服务](docs/validation/native-interaction.md)。
 
 目录职责：
 

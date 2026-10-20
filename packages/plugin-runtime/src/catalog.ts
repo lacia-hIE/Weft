@@ -1,6 +1,7 @@
 import type { Context, Plugin } from "@deepseek-ai/cordis";
 import * as Todo from "@deepseek-ai/dsh-tool-todo";
 import * as Time from "@deepseek-ai/dsh-time-context";
+import * as Persona from "@deepseek-ai/dsh-persona";
 import * as Repeat from "@deepseek-ai/dsh-repeat-tool-reminder";
 import Skills from "@deepseek-ai/dsh-skill";
 import * as SkillFiles from "@deepseek-ai/dsh-skill-filesystem";
@@ -22,6 +23,13 @@ import * as ToolWeb from '@deepseek-ai/dsh-tool-web';
 import * as ToolBash from '@deepseek-ai/dsh-tool-bash';
 import * as ToolJobs from '@deepseek-ai/dsh-tool-jobs';
 import z from '@deepseek-ai/schemastery';
+
+/** The official persona schema over a stored selection; `prefix` is required. */
+function personaConfig(config: Record<string, unknown>): Persona.Config {
+  const {prefix, ...rest} = config;
+  if (typeof prefix !== "string") throw new Error("Persona prefix must be text");
+  return Persona.Config({...rest, prefix});
+}
 
 export interface PluginSelection {
   id: string;
@@ -227,6 +235,19 @@ const entries: Entry[] = [
     },
   },
   {
+    id: "persona",
+    module: Persona,
+    title: "人设",
+    description: "把预设的人设写入系统提示，可选择完全替换默认提示或省略运行时上下文。",
+    workspace: false,
+    schema: Persona.Config,
+    defaults: { prefix: "You are a coding agent powered by the {{model}} model." },
+    validate: (config) => { personaConfig(config); },
+    mount: async (ctx, config) => {
+      await ctx.plugin(Persona, personaConfig(config));
+    },
+  },
+  {
     id: "repeat-tool-reminder",
     module: Repeat,
     title: "重复调用提醒",
@@ -279,6 +300,8 @@ const entries: Entry[] = [
   },
 ];
 export const prebuiltPluginModules = Object.fromEntries(entries.map(entry => [entry.id, entry.module]));
+/** The upstream package of each prebuilt row whose package name is not its row id's official package. */
+export const prebuiltPluginPackages: Record<string, string> = Object.fromEntries(entries.flatMap(entry => entry.package === undefined ? [] : [[entry.id, entry.package]]));
 
 export const pluginCatalog = entries.map(
   ({ id, package: name, title, description, workspace, schema, defaults }) => ({

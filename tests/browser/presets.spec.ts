@@ -11,8 +11,7 @@ test('official preset settings view real compositions, persist defaults and keep
     return response.result.value;
   };
   const settings = async () => {
-    await page.getByRole('button', {name: 'Account menu', exact: true}).click({timeout: 45_000});
-    await page.getByRole('menuitem', {name: 'Settings', exact: true}).click();
+    await page.getByRole('button', {name: 'Settings', exact: true}).click({timeout: 45_000});
     await page.getByRole('button', {name: 'Agent presets', exact: true}).click();
   };
   await page.goto(`/agents/${id}`);
@@ -20,14 +19,14 @@ test('official preset settings view real compositions, persist defaults and keep
   await settings();
   const creator = page.locator('[data-agent-preset-id="cordis"]');
   await expect(creator).toContainText('Creator');
-  await page.getByRole('button', {name: 'View configuration: Creator', exact: true}).click();
-  const viewer = page.getByRole('dialog', {name: 'View configuration · Creator', exact: true});
+  await page.getByRole('button', {name: 'View configuration: Creator mode', exact: true}).click();
+  const viewer = page.getByRole('dialog', {name: 'View configuration · Creator mode', exact: true});
   await expect(viewer).toContainText('cordis:tool-skill');
   await viewer.getByRole('button', {name: 'Close', exact: true}).last().click();
-  await page.getByRole('button', {name: 'Set as new task default: Creator', exact: true}).click();
-  await expect(creator.getByRole('button', {name: 'New task default: Creator', exact: true})).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('button', {name: 'Set as new task default: Creator mode', exact: true}).click();
+  await expect(creator.getByRole('button', {name: 'New task default: Creator mode', exact: true})).toHaveAttribute('aria-pressed', 'true');
   await page.reload();
-  await expect(page.getByRole('button', {name: 'Creator', exact: true})).toBeVisible({timeout: 45_000});
+  await expect(page.getByRole('button', {name: 'Creator mode', exact: true})).toBeVisible({timeout: 45_000});
   await page.locator('[contenteditable=true]').fill('Preset UI flow');
   await page.getByRole('button', {name: 'Send message', exact: true}).click();
   await expect(page.getByText(/^Tenant: /).last()).toBeVisible({timeout: 30_000});
@@ -36,13 +35,13 @@ test('official preset settings view real compositions, persist defaults and keep
   const sessionId = sessions.items[0].sessionId;
   expect((await rpc('session/projections', {request: {sessionId}})).values.agentPreset).toBe('cordis');
   await settings();
-  await page.getByRole('button', {name: 'Set as new task default: Standard', exact: true}).click();
-  await expect(page.locator('[data-agent-preset-id="standard"]').getByRole('button', {name: 'New task default: Standard', exact: true})).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('button', {name: 'Set as new task default: Standard mode', exact: true}).click();
+  await expect(page.locator('[data-agent-preset-id="standard"]').getByRole('button', {name: 'New task default: Standard mode', exact: true})).toHaveAttribute('aria-pressed', 'true');
   expect((await rpc('session/projections', {request: {sessionId}})).values.agentPreset).toBe('cordis');
   expect((await rpc('agentPresets/list', {})).presets.find((row: {isDefault: boolean}) => row.isDefault).id).toBe('standard');
   await page.reload();
   await page.getByRole('button', {name: 'New session', exact: true}).first().click({timeout: 45_000});
-  await page.getByRole('button', {name: 'Standard', exact: true}).click();
+  await page.getByRole('button', {name: 'Standard mode', exact: true}).click();
   await page.locator('[role^="menuitem"]').filter({hasText: 'Creator'}).click();
   await page.locator('[contenteditable=true]').fill('Staged Creator choice');
   await page.getByRole('button', {name: 'Send message', exact: true}).click();

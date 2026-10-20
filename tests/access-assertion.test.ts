@@ -40,7 +40,8 @@ test('signed Access users load concurrent modules and retain the same tenant wit
     for (const [index, response] of responses.entries()) {
       assert.equal(response.status, 200, paths[index] + ': ' + await response.clone().text());
       assert.match(response.headers.get('content-type')!, /javascript/);
-      assert.equal(response.headers.get('cache-control'), 'private, no-store');
+      // Hashed chunks are content-addressed; the entry module follows each deployment.
+      assert.equal(response.headers.get('cache-control'), /\/(?:chunk|entry)-[A-Z0-9]{8}\.js$/.test(paths[index]!) ? 'private, max-age=31536000, immutable' : 'private, no-store', paths[index]);
     }
     for (const requestHeaders of [headers, {cookie: `other=x; CF_Authorization=${token}`}]) {
       const response = await runtime.dispatchFetch(url('anonymous', '/v1/me'), {headers: requestHeaders});

@@ -17,7 +17,7 @@ test('native delegation owns real child logs, live history, browser continuation
   let parent: Awaited<ReturnType<typeof api.follow>> | undefined;
   let child: Awaited<ReturnType<typeof api.stream<SessionFollowFrame>>> | undefined;
   try {
-    await api.call('session/create', {request: {sessionId: 'parent', agentPreset: 'delegator'}});
+    await api.call('session/create', {request: {sessionId: 'parent', agentPreset: 'standard'}});
     parent = await api.follow('parent'); await parent.next();
     await api.call('session/prompt', {request: {sessionId: 'parent', requestId: 'delegate-request', mode: 'queue', content: [{type: 'text', text: 'PARENT_TASK: delegate a native task'}]}});
     let childId: string | undefined;
@@ -74,10 +74,10 @@ test('native fork seeds completed parent history and native interrupt cancels th
   try {
     await api.call('agentPresets/list', {});
     const base = `/v1/tenants/${tenantId('alpha')}/environments/default`;
-    const profile = await (await runtime.dispatchFetch(url('alpha', base+'/agents/delegator'))).json() as {revision: number; spec: {plugins: {id: string; config: object}[]}};
+    const profile = await (await runtime.dispatchFetch(url('alpha', base+'/agents/standard'))).json() as {revision: number; spec: {plugins: {id: string; config: object}[]}};
     const spec = {...profile.spec, plugins: profile.spec.plugins.map(plugin => plugin.id === 'tool-subagent' ? {...plugin, config: {provider: 'fork'}} : plugin)};
     assert.equal((await runtime.dispatchFetch(url('alpha', base+'/agents'), {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({spec, expectedRevision: profile.revision})})).status, 200);
-    await api.call('session/create', {request: {sessionId: 'parent', agentPreset: 'delegator'}});
+    await api.call('session/create', {request: {sessionId: 'parent', agentPreset: 'standard'}});
     follow = await api.follow('parent'); await follow.next();
     const prompt = async (requestId: string, text: string) => api.call('session/prompt', {request: {sessionId: 'parent', requestId, mode: 'queue', content: [{type: 'text', text}]}});
     await prompt('prelude', 'COMPLETED_PARENT_PRELUDE');
@@ -106,7 +106,7 @@ test('the official delegation limits apply to an already live parent before its 
   const api = nativeClient(() => runtime);
   let follow: Awaited<ReturnType<typeof api.follow>> | undefined;
   try {
-    await api.call('session/create', {request: {sessionId: 'parent', agentPreset: 'delegator'}});
+    await api.call('session/create', {request: {sessionId: 'parent', agentPreset: 'standard'}});
     follow = await api.follow('parent'); await follow.next();
     const prompt = (text: string) => api.call('session/prompt', {request: {sessionId: 'parent', requestId: crypto.randomUUID(), mode: 'queue', content: [{type: 'text', text}]}});
     await prompt('Initialize a live parent');
@@ -133,7 +133,7 @@ test('archive reports native child activity while the parent is idle and explici
   let follow: Awaited<ReturnType<typeof api.follow>> | undefined;
   let child: Awaited<ReturnType<typeof api.stream<SessionFollowFrame>>> | undefined;
   try {
-    await api.call('session/create', {request: {sessionId: 'parent', agentPreset: 'delegator'}});
+    await api.call('session/create', {request: {sessionId: 'parent', agentPreset: 'standard'}});
     follow = await api.follow('parent'); await follow.next();
     await api.call('session/prompt', {request: {sessionId: 'parent', requestId: 'archive-test', mode: 'queue', content: [{type: 'text', text: 'PARENT_TASK: start a long child task'}]}});
     let childId: string | undefined;

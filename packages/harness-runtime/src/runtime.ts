@@ -1,20 +1,12 @@
 import { Context } from '@deepseek-ai/cordis';
-import AgentRegistry, { type Agent, type AssistantStreamFrame, type AgentCancelCause, type AgentSetup } from '@deepseek-ai/dsh-agent';
+import { type Agent, type AssistantStreamFrame, type AgentCancelCause, type AgentSetup } from '@deepseek-ai/dsh-agent';
 import AgentLoop from '@deepseek-ai/dsh-agent-loop';
 import { mountOfficialProfile } from '../../native-profile/src/loader.ts';
-import LlmRuntime, { createUserMessage, type LlmAdapter } from '@deepseek-ai/dsh-llm';
-import SessionStore, { SessionId, SessionLogOffset, type Session, type SessionEvent } from '@deepseek-ai/dsh-session';
-import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection';
+import { createUserMessage, type LlmAdapter } from '@deepseek-ai/dsh-llm';
+import { SessionId, SessionLogOffset, type Session, type SessionEvent } from '@deepseek-ai/dsh-session';
 import SessionTitle, {SessionTitleInvalidError, normalizeSessionTitle} from '@deepseek-ai/dsh-session-title';
 import { RemoteError } from '@deepseek-ai/dsh-typert-protocol';
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt';
-import ToolRuntime from '@deepseek-ai/dsh-tools';
-import TokenMeter from '@deepseek-ai/dsh-token-meter';
-import CommandRuntime from '@deepseek-ai/dsh-commands';
-import UserQuestions from '@deepseek-ai/dsh-user-questions';
-import Goals from '@deepseek-ai/dsh-goal';
-import * as GoalRoundDriver from '@deepseek-ai/dsh-goal-round-driver';
-import SubagentModelSelection from '@deepseek-ai/dsh-tool-subagent/model-selection-settings';
 import { installModelSelectionProjection, mountModelSelection, selectLiveHarnessModel } from './model-selection.ts';
 import type { ModelSelection } from '@deepseek-ai/dsh-api-session-controller/types';
 
@@ -75,27 +67,19 @@ export async function openHarnessSession(options: RuntimeOptions): Promise<Harne
     if (options.onEvent) ctx.on('session/event', (session, event) => { options.onEvent!(structuredClone(event), session); }, {global: true});
     if (options.onFrame) ctx.on('agent/assistant-stream', ({ frame, agent }) => { options.onFrame!(structuredClone(frame), agent); }, {global: true});
     if (options.onSessionCreated) ctx.on('session/created', session => { options.onSessionCreated!(session); }, {global: true});
-    await ctx.plugin(LlmRuntime);
-    await ctx.plugin(SessionStore);
-    await ctx.plugin(SessionProjectionRegistry);
-    // Root services of the official base bundle; preset compaction and command rows inject them.
-    await ctx.plugin(TokenMeter);
-    await ctx.plugin(CommandRuntime);
-    await ctx.plugin(UserQuestions);
-    await ctx.plugin(SubagentModelSelection);
+    // Root services of the official profile (llm, sessions, projections, token meter, commands,
+    // questions, subagent model selection), loaded from its rows; tools, agents and goals follow the system prompt.
+    await mountOfficialProfile(ctx, 'core');
     if (options.presentation) installModelSelectionProjection(ctx);
     if (options.presentation) await ctx.plugin(SessionTitle, { fallbackMaxWords: 5, fallbackMaxBytes: 40, maxTitleBytes: 80 });
     await ctx.plugin(SystemPrompt, { personaPrefix: options.persona });
-    await ctx.plugin(ToolRuntime);
-    await ctx.plugin(AgentRegistry);
-    await ctx.plugin(Goals);
-    await ctx.plugin(GoalRoundDriver);
+    await mountOfficialProfile(ctx, 'agents');
     if (options.mountPersistence) await options.mountPersistence(ctx);
     await ctx.plugin(AgentLoop, { agents: [], ...options.agentLoop });
     if (options.mountModels) await options.mountModels(ctx);
     else if (options.adapter) ctx.llm.registerAdapter([options.model.provider], options.adapter);
     else throw new Error('A Harness runtime needs model providers');
-    await mountOfficialProfile(ctx);
+    await mountOfficialProfile(ctx, 'late');
     if (options.mountTools) await options.mountTools(ctx);
     // Install before resume: persisted waking input may start assembling as
     // soon as the native factory releases the restored Agent.

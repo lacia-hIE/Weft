@@ -13,10 +13,11 @@ import WebRuntime from '@deepseek-ai/dsh-web';
 import {mountWorkspaceShell} from '../../workspace/src/subprocess.ts';
 import SubagentModelSelection from '@deepseek-ai/dsh-tool-subagent/model-selection-settings';
 import remote from '../../../.generated/official-remotes/packages/preset/agent-preset-registry/typert.remote-client.js';
-import {mountNativeComposition, nativePresetDefinition} from './index.ts';
+import {mountNativeComposition, nativePresetDefinition, presetTitle} from './index.ts';
 import type {AgentRevision} from '../../control-plane/src/contracts.ts';
 import {RemoteError} from '@deepseek-ai/dsh-typert-protocol';
 import {readPluginInventory} from '@deepseek-ai/dsh-host-plugin-inventory';
+import {WorkerdPluginPackages} from './plugin-packages.ts';
 import {profileManifest, profileDescriptor, profileEntries, presetEntryId} from '../../harness-profile/src/index.ts';
 import type {PluginInfo, BundleInfo} from '@deepseek-ai/dsh-plugin-manager/types';
 import pluginRemote from '../../../.generated/official-remotes/packages/boot/plugin-manager/typert.remote-client.js';
@@ -33,6 +34,7 @@ export async function readNativePresets(profiles: AgentRevision[], defaultId: st
   const ctx = new Context();
   try {
     await ctx.plugin(Llm);
+    await ctx.plugin(WorkerdPluginPackages);
     await ctx.plugin(Sessions);
     await ctx.plugin(Projections);
     await ctx.plugin(TokenMeter);
@@ -57,7 +59,7 @@ export async function readNativePresets(profiles: AgentRevision[], defaultId: st
       const inventory = await readPluginInventory(ctx);
       const entries = inventory.entries.map(entry => {
         const owner = profiles.find(profile => presetEntryId(profile.spec.id) === entry.entryId);
-        return {...entry, ...(owner ? {meta: {title: owner.spec.name}} : {})};
+        return {...entry, ...(owner ? {meta: {title: presetTitle(owner.spec.id, owner.spec.name)}} : {})};
       });
       if (endpoint === 'pluginInventory/list') value = {...inventory, entries, managementAvailable: true};
       else if (endpoint === 'pluginManager/listPlugins') value = entries.map(entry => entry.entryId === presetEntryId(defaultId)

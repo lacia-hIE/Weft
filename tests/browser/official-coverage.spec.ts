@@ -32,12 +32,11 @@ test('the official Harness UI reaches connected native services everywhere excep
     await page.waitForTimeout(800);
     await page.keyboard.press('Escape');
   };
-  for (const name of ['Good response', 'Automation tasks', 'Open right sidebar', 'Account menu', 'More actions', 'View options', 'Add files or run commands', 'Plugins']) await visit(name);
+  for (const name of ['Good response', 'Automation tasks', 'Open right sidebar', 'My Agents', 'More actions', 'View options', 'Add files or run commands', 'Plugins']) await visit(name);
   await page.getByRole('button', {name: 'Open right sidebar', exact: true}).first().click({timeout: 3_000}).catch(() => {});
   for (const tab of await page.getByRole('tab').all()) { await tab.click({timeout: 2_000}).catch(() => {}); await page.waitForTimeout(500); }
   // Every settings section of the official dialog.
-  await page.getByRole('button', {name: 'Account menu', exact: true}).click();
-  await page.getByRole('menuitem', {name: 'Settings', exact: true}).click();
+  await page.getByRole('button', {name: 'Settings', exact: true}).click();
   for (const section of ['General', 'Models', 'Built-in plugins', 'Agent presets']) {
     await page.getByRole('button', {name: section, exact: true}).click();
     await page.waitForTimeout(700);

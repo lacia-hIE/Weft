@@ -21,7 +21,7 @@ test('model-authored native packages persist, require exact approval, run scoped
   const idle = async () => {const r = await runtime.dispatchFetch(url('alpha', base+'/sessions/plugin-suite/events')); assert.equal(r.status, 200); return r.json() as Promise<{events: {type: string; data: unknown}[]}>;};
   const inventory = () => api.call<{pluginId: string; agentId: string; packages: {packageId: string}[]; nextPackageId?: string; activeRun?: {pluginRunId: string}; latestRun: {status: string; packageId: string; approvalRequestId?: string}}[]>('dynamicCordisRunner/inventory', {});
   try {
-    const original = await (await runtime.dispatchFetch(url('alpha', base+'/agents/default'))).json() as AgentRevision;
+    const original = await (await runtime.dispatchFetch(url('alpha', base+'/agents/standard'))).json() as AgentRevision;
     const published = await runtime.dispatchFetch(url('alpha', base+'/agents'), {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({spec: {...original.spec, allowClientPlugins: true}, expectedRevision: original.revision})});
     assert.equal(published.status, 200, await published.clone().text());
     await api.call('session/create', {request: {sessionId: 'plugin-suite'}});
@@ -92,7 +92,7 @@ test('published authoring examples execute through the native approval and files
   const api = nativeClient(() => runtime);
   const base = `/v1/tenants/${tenantId('alpha')}/environments/default`;
   try {
-    const original = await (await runtime.dispatchFetch(url('alpha', base+'/agents/default'))).json() as AgentRevision;
+    const original = await (await runtime.dispatchFetch(url('alpha', base+'/agents/standard'))).json() as AgentRevision;
     assert.equal((await runtime.dispatchFetch(url('alpha', base+'/agents'), {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({spec: {...original.spec, allowClientPlugins: true}, expectedRevision: original.revision})})).status, 200);
     await api.call('session/create', {request: {sessionId: 'authoring-example'}});
     await api.call('session/prompt', {request: {sessionId: 'authoring-example', requestId: randomUUID(), mode: 'queue', content: [{type: 'text', text: 'Use the documented plugin example'}]}});

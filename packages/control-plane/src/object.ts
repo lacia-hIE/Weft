@@ -72,6 +72,8 @@ export interface TenantEnvironment extends ModelEnvironment {
   /** Configuration plane: environment settings and other non-secret configuration. */
   CONFIG_DB: D1Database;
 }
+/** The preset new tasks use until the user selects another: the official default. */
+export const DEFAULT_PRESET = 'standard';
 export const tenantAddress = (tenantId: string): string =>
   JSON.stringify([DATA_LAYOUT_VERSION, "tenant", id.parse(tenantId)]);
 
@@ -149,7 +151,7 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
       providerBase: () => ({baseURL: 'https://api.deepseek.com/anthropic', streamIdleTimeoutMs: 60_000, retryPolicy: {mode: 'normal', maxRetries: 0}, apiKeyEnv: 'DEEPSEEK_API_KEY'}),
       modelBase: () => WEFT_VALIDATION_BUILD && this.env.MODEL_BACKEND === 'scripted'
         ? {provider: 'validation', model: 'scripted'}
-        : {provider: 'deepseek-official', model: this.latest('default')?.spec.model?.name ?? 'deepseek-flash'},
+        : {provider: 'deepseek-official', model: this.latest(DEFAULT_PRESET)?.spec.model?.name ?? 'deepseek-flash'},
       changed: (event, args) => {
         this.nativeEvents.emit(event, args);
         if (event === 'settings/document-updated' && args[0] === PRESET_NAMESPACE) this.nativeEvents.emit('plugin-manager/changed', [{reason: 'plugin'}]);
@@ -350,7 +352,7 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
   nativeDefaultModel(scope: ControlScope) {
     this.scope(scope);
     this.ensureDefault();
-    return this.latest('default')?.spec.model;
+    return this.latest(DEFAULT_PRESET)?.spec.model;
   }
   nativeEvent(scope: ControlScope, event: string, args: readonly unknown[]): void {
     this.scope(scope);
@@ -423,32 +425,28 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
     if (!this.agentRevisions) throw new Error('Environment Agents are not loaded');
     return this.agentRevisions;
   }
-  /** The default Agent and every bundled preset are published once, when the environment first activates. */
+  /** Every bundled official preset is published once, when the environment first activates. */
   private ensureDefault(): void { this.agents(); }
   private ensureNativePresets(): void { this.agents(); }
   private async seedAgents(): Promise<void> {
     const agents = this.agents();
-    if (!agents.latest('default')) {
-      await agents.publish('default', {
+    for (const definition of profileDefinitions) {
+      if (agents.latest(definition.id)) continue;
+      await agents.publish(definition.id, {
         revision: 1,
         publishedAt: new Date().toISOString(),
         upstream: upstream.commit,
         spec: {
-          id: "default",
-          name: "DeepSeek Assistant",
-          persona:
-            "You are a helpful assistant. Use the workspace and available plugins to complete the user’s request.",
+          id: definition.id,
+          // Official presets keep their id as name; the client shows its localized official name.
+          name: definition.id,
+          // The preset's own persona row supplies the system prompt persona.
+          persona: '',
           workspaceId: "default",
-          allowClientPlugins: false,
-          plugins: profileDefinitions.find(definition => definition.id === 'default')!.plugins.map(row => ({id: row.id!, config: structuredClone(row.config) as Record<string, unknown>})),
+          allowClientPlugins: definition.id === 'cordis',
+          plugins: definition.plugins.map(row => ({id: row.id!, config: structuredClone(row.config ?? {}) as Record<string, unknown>})),
         },
       });
-    }
-    const original = agents.latest('default')!;
-    for (const definition of profileDefinitions.filter(definition => definition.id !== 'default')) {
-      const {id, name = id} = definition;
-      if (agents.latest(id)) continue;
-      await agents.publish(id, {...structuredClone(original), revision: 1, publishedAt: new Date().toISOString(), spec: {...structuredClone(original.spec), id, name, allowClientPlugins: id === 'cordis', plugins: definition.plugins.map(row => ({id: row.id!, config: structuredClone(row.config) as Record<string, unknown>}))}});
     }
   }
   async state(tenantId: ControlScope): Promise<TenantState> {

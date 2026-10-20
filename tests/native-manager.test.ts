@@ -23,14 +23,15 @@ test('the original plugin inventory reads real Loader entries and durable manage
   try {
     const inventory = await api.call<PluginInventorySnapshot>('pluginInventory/list', {});
     assert.equal(inventory.managementAvailable, true);
-    assert.deepEqual(inventory.entries.map(row => row.entryId).sort(), ['preset-cordis', 'preset-default', 'preset-delegator', 'preset-standard']);
-    assert.ok(inventory.entries.every(row => row.moduleName === 'cordis:agent-preset' && row.enabled && row.fiberPhase === 'active'));
+    assert.deepEqual(inventory.entries.map(row => row.entryId).sort(), ['preset-cordis', 'preset-minimal', 'preset-ptc', 'preset-standard']);
+    assert.ok(inventory.entries.every(row => row.moduleName === 'cordis:agent-preset' && row.enabled));
+    assert.ok(inventory.entries.filter(row => row.entryId === 'preset-standard' || row.entryId === 'preset-cordis').every(row => row.fiberPhase === 'active'));
     assert.equal(inventory.agentPresets?.find(row => row.id === 'cordis')?.rows.find(row => row.entryId === 'tool-todo')?.fiberPhase, 'active');
     const bundles = await api.call<BundleInfo[]>('pluginManager/listBundles', {});
     assert.deepEqual(bundles.map(bundle => bundle.name), ['@weft/harness-profile']);
     assert.equal(bundles[0]?.rows.length, 4);
     const plugins = await api.call<PluginInfo[]>('pluginManager/listPlugins', {});
-    assert.equal(plugins.find(row => row.entryId === 'preset-default')?.readOnlyReason, 'management-required');
+    assert.equal(plugins.find(row => row.entryId === 'preset-standard')?.readOnlyReason, 'management-required');
     await api.call('session/create', {request: {sessionId: 'retained', agentPreset: 'cordis'}});
     const changes = await api.events();
     assert.equal((await changes.next()).type, 'ready');
@@ -47,7 +48,7 @@ test('the original plugin inventory reads real Loader entries and durable manage
     assert.equal((await api.raw('session/create', {request: {agentPreset: 'cordis'}})).result.error?.code, 'agent-preset/not-found');
     await runtime.dispose(); runtime = createRuntime(directory, options);
     const restored = await api.call<PluginInventorySnapshot>('pluginInventory/list', {});
-    assert.deepEqual(restored.entries.find(row => row.entryId === 'preset-cordis'), {entryId: 'preset-cordis', moduleName: 'cordis:agent-preset', enabled: false, fiberPhase: null, meta: {title: 'Creator'}});
+    assert.deepEqual(restored.entries.find(row => row.entryId === 'preset-cordis'), {entryId: 'preset-cordis', moduleName: 'cordis:agent-preset', enabled: false, fiberPhase: null, meta: {title: {en: 'Creator mode', zh: '创造模式'}}});
     assert.ok(!restored.agentPresets?.some(row => row.id === 'cordis'));
     await api.call('session/prompt', {request: {sessionId: 'retained', requestId: crypto.randomUUID(), mode: 'queue', content: [{type: 'text', text: 'Create the native counter plugin'}]}});
     await (await runtime.dispatchFetch(url('alpha', base+'/sessions/retained/events'))).json();
@@ -65,12 +66,12 @@ test('management guards protect the selected default, preserve environment bound
   const other = nativeClient(() => runtime, 'other');
   try {
     assert.equal((await runtime.dispatchFetch(url('alpha', `/v1/tenants/${tenantId('alpha')}/environments`), {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({id: 'other', name: 'Other'})})).status, 201);
-    assert.equal((await api.call<ChangeResult>('pluginManager/setPluginEnabled', {id: 'preset-default', enabled: false})).error?.code, 'management-required');
-    await api.call('settings/update', {ns: 'agent-preset-registry', patch: {selectedDefault: 'standard'}, expectedRevision: 0});
-    assert.equal((await api.call<ChangeResult>('pluginManager/setPluginEnabled', {id: 'preset-default', enabled: false})).application, 'applied');
-    assert.equal((await api.call<{agentPreset: string}>('session/create', {request: {}})).agentPreset, 'standard');
-    assert.equal((await other.call<PluginInventorySnapshot>('pluginInventory/list', {})).entries.find(row => row.entryId === 'preset-default')?.enabled, true);
-    assert.equal((await api.raw('settings/update', {ns: 'agent-preset-registry', patch: {selectedDefault: 'default'}})).result.error?.code, 'settings/rejected');
+    assert.equal((await api.call<ChangeResult>('pluginManager/setPluginEnabled', {id: 'preset-standard', enabled: false})).error?.code, 'management-required');
+    await api.call('settings/update', {ns: 'agent-preset-registry', patch: {selectedDefault: 'cordis'}, expectedRevision: 0});
+    assert.equal((await api.call<ChangeResult>('pluginManager/setPluginEnabled', {id: 'preset-standard', enabled: false})).application, 'applied');
+    assert.equal((await api.call<{agentPreset: string}>('session/create', {request: {}})).agentPreset, 'cordis');
+    assert.equal((await other.call<PluginInventorySnapshot>('pluginInventory/list', {})).entries.find(row => row.entryId === 'preset-standard')?.enabled, true);
+    assert.equal((await api.raw('settings/update', {ns: 'agent-preset-registry', patch: {selectedDefault: 'standard'}})).result.error?.code, 'settings/rejected');
     assert.equal((await api.call<ChangeResult>('pluginManager/setPluginEnabled', {id: 'preset-unknown', enabled: true})).error?.code, 'unknown-plugin');
     assert.equal((await api.call<ChangeResult>('pluginManager/removeBundle', {name: '@weft/harness-profile'})).error?.code, 'management-required');
     assert.equal((await api.call<{status: string}>('pluginManager/inspect', {spec: '@some/unsupported-bundle'})).status, 'refused');

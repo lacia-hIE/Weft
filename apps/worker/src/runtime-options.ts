@@ -38,6 +38,12 @@ import {forwardNativeNotifications, mountNativeInteraction} from './native-inter
 import {HarnessHome} from '../../../packages/native-environment/src/harness-home.ts';
 
 type Reader = Awaited<ReturnType<typeof createSessionReader>>;
+/** The root persona prefix of a Session composed without preset realms: its persona row's text, else the Agent persona. */
+function rootPersona(profile: AgentRevision): string {
+  const prefix = profile.spec.plugins.find(plugin => plugin.id === 'persona')?.config.prefix;
+  return typeof prefix === 'string' ? prefix : profile.spec.persona;
+}
+
 export async function sessionRuntime(env: Env, storage: DurableObjectStorage, scope: SessionScope, profile: AgentRevision | undefined, workspaceId: string | null, persona: string, presentation: boolean, reader?: Reader, hooks: Pick<RuntimeOptions, 'onEvent' | 'onFrame'> = {}, cwd = '/workspace', requireCredential = true) {
   const owner = controlScope(scope.tenantId, scope.environmentId);
   const control = controlFor(env, owner);
@@ -62,7 +68,7 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
   let refreshSubagents: ((limits: SubagentLimits) => void) | undefined;
   const options: RuntimeOptions = {
     sessionId: scope.sessionId,
-    persona: profile ? `${profile.spec.persona}\n${profile.spec.allowClientPlugins ? presentation ? NATIVE_PLUGIN_GUIDE : CLIENT_PLUGIN_GUIDE : ''}` : persona,
+    persona: profile ? `${presentation ? profile.spec.persona : rootPersona(profile)}\n${profile.spec.allowClientPlugins ? presentation ? NATIVE_PLUGIN_GUIDE : CLIENT_PLUGIN_GUIDE : ''}` : persona,
     model: selection(), presentation,
     mountModels: async ctx => {
       await ctx.plugin(HarnessHome, harnessHome);
@@ -120,7 +126,8 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
         if (presentation) refreshSubagents = await mountNativeSubagents(ctx, storage, await (await controlFor(env, owner).nativeSubagentConfiguration(owner)).json() as SubagentLimits);
         if (presentation) await mountNativeInteraction(ctx, env, storage, scope, owner);
         if (presentation) {await mountNativeComposition(ctx, [nativePresetDefinition(profile)], profile.spec.id); composition = ctx;}
-        else await mountPlugins(ctx, profile.spec.plugins);
+        // Without preset realms the persona row's text is the root prefix; the root owns that prompt section.
+        else await mountPlugins(ctx, profile.spec.plugins.filter(plugin => plugin.id !== 'persona'));
         if (profile.spec.allowClientPlugins && !presentation) {
           await mountClientInspection(ctx);
           mountClientPublisher(ctx, input => controlFor(env, controlScope(scope.tenantId, scope.environmentId)).publishClient(controlScope(scope.tenantId, scope.environmentId), input));

@@ -8,6 +8,8 @@
 
 环境持久化 Standard 和 Creator（原版 ID `cordis`），并通过原版设置 schema 保存新任务默认值。列表与声明查看在真实组合上下文和环境文件系统上运行，不启动 Agent、不取得会话写入权。声明查看得到原版 registry 生成的 YAML。
 
+预设清单就是官方 Web 的四个预设：标准模式（`standard`，默认）、PTC 模式（`ptc`）、极简模式（`minimal`）、创造模式（`cordis`），按官方 `order` 排列。`packages/harness-profile/src/presets.ts` 在模块加载时读取官方预设 patch，每个官方条目以同 id 的预构建插件（`cordis:<id>`）和官方配置运行；名称不写入，由客户端按界面语言显示官方名称与描述。不能直接运行的条目分两张表：`PRESET_PROVIDED`（文件工具、Skills 加载、插件编写由 Weft 的工作区与原生插件提供）和 `PRESET_PENDING`（ripgrep 文件搜索、PTC 运行时、持久 shell 等待 Computer 执行后端）。待提供的条目在标准与创造模式中是可选工具，暂不挂载；PTC 与极简模式离不开它们，因此注册表把这两个预设标为不可用，并写明缺少的能力。人设由预设内的官方 `persona` 条目提供（`{{model}}` 由系统提示渲染）。
+
 Session 在原版 Agent setup 阶段绑定预设作用域，首轮前选择通过 registry 写入原生事件。创建 header 不重写，当前选择以 projection 为准。预设版本、persona 和插件编写能力冻结在 Session 快照，环境发布新版本不改变已经开始的会话。
 
 ## 自动验证范围
@@ -20,7 +22,7 @@ Session 在原版 Agent setup 阶段绑定预设作用域，首轮前选择通�
 4. 注入持久化中断窗口：只有准备边界之后真实提交了选择事件的快照才会提升。注入只存在于测试 Worker，不修改或伪造选择事件。
 5. 原版 Loader 的作用域、两种 Todo 策略、空预设、无效模块及表达式诊断、声明查看、首轮锁定和重启恢复；工具不泄漏到宿主根作用域。
 
-`tests/browser/presets.spec.ts` 从默认环境入口操作原版 Settings → Agent presets，查看实际声明、切换默认并刷新，验证已开始会话保留 Creator。新任务在 Hero 中暂选 Creator 后发送，不改变环境的 Standard 默认值。
+`tests/browser/presets.spec.ts` 从默认环境入口操作原版 Settings → Agent presets，查看实际声明、切换默认并刷新，验证已开始会话保留 Creator。新任务在 Hero 中暂选创造模式后发送，不改变环境的标准模式默认值。
 
 原生动态插件浏览器用例也通过该原版页面选择 Creator，再由真实 Runner 提出精确版本审批，不依靠过渡配置接口开启编写能力。环境列表用例直接点击 Agent 卡片进入原版页面，并验证 My Agents 往返与会话隔离。
 

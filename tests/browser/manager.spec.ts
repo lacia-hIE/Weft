@@ -21,12 +21,12 @@ test('the official Plugins page renders actual profile entries, persists preset 
   const creator = page.locator('[data-plugin-row="preset-cordis"]');
   await expect(creator).toContainText('Creator');
   await expect(creator.getByRole('switch')).toBeChecked();
-  await expect(page.locator('[data-plugin-row="preset-default"]').getByRole('switch')).toBeDisabled();
+  await expect(page.locator('[data-plugin-row="preset-standard"]').getByRole('switch')).toBeDisabled();
   await creator.getByRole('switch').click();
   await expect(creator.getByRole('switch')).not.toBeChecked();
   expect((await rpc('pluginInventory/list', {})).entries.find((row: {entryId: string}) => row.entryId === 'preset-cordis')).toMatchObject({enabled: false, fiberPhase: null});
   await page.getByRole('button', {name: 'New session', exact: true}).first().click();
-  await page.getByRole('button', {name: 'DeepSeek Assistant', exact: true}).click();
+  await page.getByRole('button', {name: 'Standard mode', exact: true}).click();
   await expect(page.locator('[role^="menuitem"]').filter({hasText: 'Standard'})).toBeVisible();
   await expect(page.locator('[role^="menuitem"]').filter({hasText: 'Creator'})).toHaveCount(0);
   await page.keyboard.press('Escape');
@@ -39,7 +39,7 @@ test('the official Plugins page renders actual profile entries, persists preset 
   const description = await rpc('settings/describe', {});
   await rpc('settings/update', {ns: 'agent-preset-registry', patch: {selectedDefault: 'cordis'}, expectedRevision: description.namespaces.find((row: {ns: string}) => row.ns === 'agent-preset-registry').revision});
   await expect(creator.getByRole('switch')).toBeDisabled();
-  await expect(page.locator('[data-plugin-row="preset-default"]').getByRole('switch')).toBeEnabled();
+  await expect(page.locator('[data-plugin-row="preset-standard"]').getByRole('switch')).toBeEnabled();
   await page.reload();
   await plugins();
   await page.getByRole('button', {name: 'View Agent loop', exact: true}).click();

@@ -8,13 +8,12 @@ async function openEnvironment(page: Page, request: APIRequestContext) {
   expect((await request.post(`/v1/tenants/${me.tenantId}/environments`, {data: {id: environment, name: environment}})).status()).toBe(201);
   await page.goto(`/agents/${environment}`);
   await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
-  await page.getByRole('button', {name: 'Account menu', exact: true}).click({timeout: 45_000});
-  await page.getByRole('menuitem', {name: 'Settings', exact: true}).click();
+  await page.getByRole('button', {name: 'Settings', exact: true}).click({timeout: 45_000});
   await page.getByRole('button', {name: 'Agent presets', exact: true}).click();
-  await page.getByRole('button', {name: 'Set as new task default: Creator', exact: true}).click();
-  await expect(page.getByRole('button', {name: 'New task default: Creator', exact: true})).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('button', {name: 'Set as new task default: Creator mode', exact: true}).click();
+  await expect(page.getByRole('button', {name: 'New task default: Creator mode', exact: true})).toHaveAttribute('aria-pressed', 'true');
   await page.reload();
-  await expect(page.getByRole('button', {name: 'Creator', exact: true})).toBeVisible({timeout: 45_000});
+  await expect(page.getByRole('button', {name: 'Creator mode', exact: true})).toBeVisible({timeout: 45_000});
   return {base};
 }
 
@@ -53,7 +52,8 @@ test('official Cordis approval and plugin UI use real native packages and scoped
   await expect(page.getByRole('button', {name: 'Cordis plugins', exact: true})).toHaveCount(0);
   await expect(page.getByRole('button', {name: /^Native count /})).toHaveCount(0);
   expect(errors).toEqual([]);
-  await page.getByRole('link', {name: 'My Agents', exact: true}).click();
+  await page.getByRole('button', {name: 'My Agents', exact: true}).click();
+  await page.getByRole('link', {name: 'Manage Agents', exact: true}).click();
   await expect(page).toHaveURL('/');
 });
 

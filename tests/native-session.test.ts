@@ -24,7 +24,7 @@ test('official Session codecs expose real blank creation, live history, prompt c
   };
   try {
     const created = await api.call<SessionCreateValue>('session/create', {request: {sessionId: 'native'}});
-    assert.deepEqual(created, {sessionId: 'native', agentPreset: 'default'});
+    assert.deepEqual(created, {sessionId: 'native', agentPreset: 'standard'});
     assert.deepEqual(await api.call('session/create', {request: {sessionId: 'native'}}), created, 'a blank Session is reusable');
     const listed = await api.call<SessionListValue>('session/list', {_request: {}});
     assert.equal(listed.items.length, 1);
@@ -34,7 +34,7 @@ test('official Session codecs expose real blank creation, live history, prompt c
     const opening = await stream.next();
     assert.equal(opening.type, 'snapshot');
     if (opening.type !== 'snapshot') throw new Error('Missing opening snapshot');
-    assert.equal(opening.header.agentPreset, 'default');
+    assert.equal(opening.header.agentPreset, 'standard');
     assert.equal(opening.header.cwd, '/workspace');
     const events = opening.records.map(record => record.event);
     const requestId = randomUUID();

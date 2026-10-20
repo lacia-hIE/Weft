@@ -17,27 +17,44 @@ import type { PatchOptions } from '@deepseek-ai/cordis-plugin-include';
  * Browser rows (`client-*` packages) are served by the Boot Graph, not the host Loader.
  */
 
-/** Rows loaded from the profile, with the world that loads them. */
-export const LOADED: Record<string, {world: 'session'}> = {
-  'timer': {world: 'session'},
-  'llm-retry': {world: 'session'},
-  'deepseek-llm-api-extensions': {world: 'session'},
-  'session-log-deepseek': {world: 'session'},
-  'session-title-llm': {world: 'session'},
-  'timeout-policy': {world: 'session'},
-  'session-checkpoint-policy': {world: 'session'},
-  'image-offload': {world: 'session'},
-  'session-stats': {world: 'session'},
-  'session-turn-outline': {world: 'session'},
+/** When a Session world creates a loaded row. */
+export type ProfilePhase = 'core' | 'agents' | 'late';
+
+/**
+ * Rows loaded from the profile. `core` and `agents` rows are created in this
+ * order, each awaited before the next, because the rest of the Session world
+ * builds on their services; `agents` rows follow the Weft-mounted system prompt
+ * they inject. `late` rows are created after the world and activate once the
+ * services they inject exist.
+ */
+export const LOADED: Record<string, {world: 'session'; phase: ProfilePhase}> = {
+  'llm': {world: 'session', phase: 'core'},
+  'session': {world: 'session', phase: 'core'},
+  'session-projection': {world: 'session', phase: 'core'},
+  'token-meter': {world: 'session', phase: 'core'},
+  'commands': {world: 'session', phase: 'core'},
+  'user-questions': {world: 'session', phase: 'core'},
+  'subagent-model-selection-settings': {world: 'session', phase: 'core'},
+  'tools': {world: 'session', phase: 'agents'},
+  'agent': {world: 'session', phase: 'agents'},
+  'goal': {world: 'session', phase: 'agents'},
+  'goal-round-driver': {world: 'session', phase: 'agents'},
+  'timer': {world: 'session', phase: 'late'},
+  'llm-retry': {world: 'session', phase: 'late'},
+  'deepseek-llm-api-extensions': {world: 'session', phase: 'late'},
+  'session-log-deepseek': {world: 'session', phase: 'late'},
+  'session-title-llm': {world: 'session', phase: 'late'},
+  'timeout-policy': {world: 'session', phase: 'late'},
+  'session-checkpoint-policy': {world: 'session', phase: 'late'},
+  'image-offload': {world: 'session', phase: 'late'},
+  'session-stats': {world: 'session', phase: 'late'},
+  'session-turn-outline': {world: 'session', phase: 'late'},
 };
 
 /** Original packages that Weft's world setup mounts today. */
 export const MOUNTED_BY_WEFT: Record<string, string> = {
-  'llm': 'harness-runtime root', 'session': 'harness-runtime root', 'session-projection': 'harness-runtime root',
-  'token-meter': 'harness-runtime root', 'commands': 'harness-runtime root', 'user-questions': 'harness-runtime root',
-  'subagent-model-selection-settings': 'harness-runtime root', 'session-title': 'harness-runtime root',
-  'system-prompt': 'harness-runtime root', 'tools': 'harness-runtime root', 'agent': 'harness-runtime root',
-  'goal': 'harness-runtime root', 'goal-round-driver': 'harness-runtime root', 'agent-loop': 'harness-runtime root',
+  'session-title': 'harness-runtime root (presentation Sessions only)',
+  'system-prompt': 'harness-runtime root (per-Agent persona prefix)', 'agent-loop': 'harness-runtime root (environment loop settings)',
   'agent-preset-registry': 'native-composition', 'llm-deepseek': 'native-models', 'llm-pi-ai': 'native-models',
   'agent-default-model': 'environment settings', 'jobs': 'workspace shell', 'shell-env': 'workspace shell',
   'sandbox-policy': 'workspace shell', 'approval': 'native permissions', 'permission': 'native permissions',
@@ -104,7 +121,17 @@ export const PRESET_ROWS = new Set([
   'tool-subagent', 'tool-subagent-fork', 'workflow-ptc', 'tool-workflow', 'tool-result-pruner', 'tool-todo', 'tool-goal', 'tool-web',
 ]);
 
-/** The overlay patches: every row not loaded is disabled, so the Loader composes only `LOADED` rows. */
+/**
+ * Deployment facts for `!!js` expressions on loaded rows: workerd evaluates no
+ * dynamic code, so each expression is replaced by the value it has in a Weft
+ * deployment, with that reason.
+ */
+export const RESOLVED_CONFIG: Record<string, {config: Record<string, unknown>; reason: string}> = {
+  'tools': {config: {}, reason: 'DSH_TOOLS_MODE is not set in Workers, so the tool mode keeps its default'},
+};
+
+/** The overlay patches: loaded rows take their resolved configuration; every other row is disabled. */
 export function overlayPatches(rows: readonly {id: string; name: string}[]): PatchOptions[] {
-  return rows.filter(row => !Object.hasOwn(LOADED, row.id)).map(row => ({id: row.id, disabled: true}));
+  return rows.flatMap((row): PatchOptions[] => !Object.hasOwn(LOADED, row.id) ? [{id: row.id, disabled: true}]
+    : Object.hasOwn(RESOLVED_CONFIG, row.id) ? [{id: row.id, config: structuredClone(RESOLVED_CONFIG[row.id]!.config)}] : []);
 }

@@ -6,13 +6,8 @@ async function openDelegator(page: Page, request: APIRequestContext) {
   expect((await request.post(`/v1/tenants/${tenantId}/environments`, {data: {id: environment, name: environment}})).status()).toBe(201);
   await page.goto('/agents/'+environment);
   await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45000});
-  await page.getByRole('button', {name: 'Account menu', exact: true}).click({timeout: 45000});
-  await page.getByRole('menuitem', {name: 'Settings', exact: true}).click();
-  await page.getByRole('button', {name: 'Agent presets', exact: true}).click();
-  await page.getByRole('button', {name: 'Set as new task default: Delegator', exact: true}).click();
-  await expect(page.getByRole('button', {name: 'New task default: Delegator', exact: true})).toHaveAttribute('aria-pressed', 'true');
-  await page.reload();
-  await expect(page.getByRole('button', {name: 'Delegator', exact: true})).toBeVisible({timeout: 45000});
+  // The official standard preset, the default, carries the delegation rows.
+  await expect(page.getByRole('button', {name: 'Standard mode', exact: true})).toBeVisible({timeout: 45000});
   return {environment, tenantId};
 }
 

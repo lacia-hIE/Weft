@@ -2,6 +2,11 @@ import type { Context } from '@deepseek-ai/cordis';
 import Loader, { type EntryOptions } from '@deepseek-ai/cordis-plugin-loader';
 import officialModules from 'weft:official-modules';
 import { enabledEntries } from '../../harness-profile/src/official.ts';
+import { LOADED, type ProfilePhase } from '../../harness-profile/src/overlay.ts';
+import { PRESET_PENDING } from '../../harness-profile/src/presets.ts';
+
+/** The base URL of prebuilt rows; nothing is fetched from it. */
+const PREBUILT_BASE = 'https://weft.invalid/prebuilt/';
 
 /** Real Loader tree over modules included in this Worker, without disk imports. */
 export class WorkerdLoader extends Loader {
@@ -9,6 +14,8 @@ export class WorkerdLoader extends Loader {
   override import(name: string): unknown {
     if (name.startsWith('cordis:') && Object.hasOwn(this.builtins, name.slice(7))) return this.builtins[name.slice(7)];
     if (Object.hasOwn(officialModules, name)) return officialModules[name];
+    const pending = name.startsWith('cordis:') ? PRESET_PENDING[name.slice(7)] : undefined;
+    if (pending) throw new Error(`Needs ${pending}, which this deployment does not provide yet`);
     throw new Error('Plugin is not in the prebuilt workerd catalog: '+name);
   }
 }
@@ -19,7 +26,11 @@ export class WorkerdLoader extends Loader {
  * @returns the Loader with the given prebuilt modules registered.
  */
 export async function workerdLoader(ctx: Context, modules: Record<string, unknown> = {}): Promise<Loader> {
-  if (!ctx.get('loader')) await ctx.plugin(WorkerdLoader, {baseUrl: 'https://weft.invalid/prebuilt/'});
+  if (!ctx.get('loader')) {
+    await ctx.plugin(WorkerdLoader, {baseUrl: PREBUILT_BASE});
+    // The Loader sets the base on its own context; root readers (the plugin inventory) look it up on the root.
+    ctx.baseUrl ??= PREBUILT_BASE;
+  }
   const loader = ctx.loader;
   for (const [id, module] of Object.entries(modules)) {
     if (Object.hasOwn(loader.builtins, id) && loader.builtins[id] !== module) throw new Error('Prebuilt module id is registered twice: '+id);
@@ -35,13 +46,21 @@ export async function createEntry(loader: Loader, entry: EntryOptions): Promise<
 }
 
 /**
- * Create the official profile's enabled rows in this world's Loader. Rows the
- * overlay disables are served by Weft providers under the same ids, so they are
- * not created here. Each row activates once the services it injects are
- * present, as in the original Host; rows whose services this world never
- * provides stay pending.
+ * Create the official profile's enabled rows of one phase in this world's
+ * Loader. `core` and `agents` rows are created in the overlay's order and awaited, so the
+ * world can build on their services; `late` rows activate once the services
+ * they inject exist, as in the original Host, and rows whose services this
+ * world never provides stay pending. Rows the overlay disables are served by
+ * Weft providers under the same ids, so they are not created here.
  */
-export async function mountOfficialProfile(ctx: Context): Promise<void> {
+export async function mountOfficialProfile(ctx: Context, phase: ProfilePhase): Promise<void> {
   const loader = await workerdLoader(ctx);
-  for (const entry of enabledEntries()) await loader.create(structuredClone(entry));
+  const rows = new Map(enabledEntries().map(entry => [entry.id, entry]));
+  for (const [id, row] of Object.entries(LOADED)) {
+    if (row.phase !== phase) continue;
+    const entry = rows.get(id);
+    if (!entry) throw new Error(`Official profile row ${id} is not enabled`);
+    if (phase !== 'late') await createEntry(loader, structuredClone(entry));
+    else await loader.create(structuredClone(entry));
+  }
 }

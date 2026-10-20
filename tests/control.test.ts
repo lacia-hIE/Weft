@@ -83,7 +83,7 @@ test("tenant control plane publishes native plugin plans, freezes sessions and p
     );
   try {
     const state = (await (await request("/state")).json()) as TenantState;
-    const initial = state.agents.find(profile => profile.spec.id === 'default')!;
+    const initial = state.agents.find(profile => profile.spec.id === 'standard')!;
     assert.equal(initial.revision, 1);
     assert.equal(initial.spec.allowClientPlugins, false);
     const catalog = (await (await request("/plugins")).json()) as {
@@ -137,7 +137,7 @@ test("tenant control plane publishes native plugin plans, freezes sessions and p
     assert.equal(write.status, 200, await write.clone().text());
     const first = await request("/sessions/native/messages", {
       text: "use todo and greeting skill",
-      agent: { id: "default", revision: 1 },
+      agent: { id: "standard", revision: 1 },
     });
     assert.equal(first.status, 200, await first.clone().text());
     const body = await first.text();
@@ -192,7 +192,7 @@ test("tenant control plane publishes native plugin plans, freezes sessions and p
       (
         await request("/sessions/native/messages", {
           text: "invalid switch",
-          agent: { id: "default", revision: 2 },
+          agent: { id: "standard", revision: 2 },
         })
       ).status,
       409,
@@ -201,7 +201,7 @@ test("tenant control plane publishes native plugin plans, freezes sessions and p
       (
         await request("/sessions/new-native/messages", {
           text: "new version",
-          agent: { id: "default", revision: 2 },
+          agent: { id: "standard", revision: 2 },
         })
       ).status,
       200,
@@ -219,7 +219,7 @@ test("tenant control plane publishes native plugin plans, freezes sessions and p
       ((await (await request("/state")).json()) as TenantState).sessions.length,
       2,
     );
-    assert.equal((await request("/agents/default?revision=1")).status, 200);
+    assert.equal((await request("/agents/standard?revision=1")).status, 200);
     assert.equal(
       (await runtime.dispatchFetch(url("beta", base + "/state"))).status,
       403,
@@ -236,7 +236,7 @@ test("tenant control plane publishes native plugin plans, freezes sessions and p
     await runtime.dispose();
     runtime = createRuntime(directory, model);
     const recovered = (await (await request("/state")).json()) as TenantState;
-    assert.equal(recovered.agents.find(profile => profile.spec.id === 'default')!.revision, 2);
+    assert.equal(recovered.agents.find(profile => profile.spec.id === 'standard')!.revision, 2);
     assert.equal(recovered.sessions.length, 2);
     assert.equal(
       (

@@ -15,9 +15,11 @@ test('official preset roster and declaration views reflect real environment prof
   const api = nativeClient(() => runtime);
   try {
     const roster = await api.call<{presets: {id: string; isDefault: boolean; broken?: string}[]}>('agentPresets/list', {});
-    assert.deepEqual(roster.presets.map(row => row.id).sort(), ['cordis','default','delegator','standard']);
-    assert.ok(roster.presets.every(row => row.broken === undefined), JSON.stringify(roster));
-    assert.equal(roster.presets.find(row => row.isDefault)?.id, 'default');
+    assert.deepEqual(roster.presets.map(row => row.id), ['standard', 'ptc', 'minimal', 'cordis'], 'the official presets in their official order');
+    // Every official row of standard and cordis runs; ptc and minimal wait for their execution backends.
+    assert.deepEqual(roster.presets.filter(row => row.broken !== undefined).map(row => row.id), ['ptc', 'minimal'], JSON.stringify(roster));
+    assert.ok(roster.presets.filter(row => row.broken !== undefined).every(row => /^Needs .* does not provide yet$/.test(row.broken!)));
+    assert.equal(roster.presets.find(row => row.isDefault)?.id, 'standard');
     const document = await api.call<{agentPreset: string; content: string}>('agentPresets/read', {agentPreset: 'cordis'});
     assert.equal(document.agentPreset, 'cordis');
     assert.match(document.content, /cordis:tool-skill/);
@@ -54,7 +56,7 @@ test('native preset selection keeps creation headers, records exact choices, fre
     await stream.close();
     assert.equal(opening.type, 'snapshot');
     if (opening.type !== 'snapshot') throw new Error('Missing native opening snapshot');
-    assert.equal(opening.header.agentPreset, 'default');
+    assert.equal(opening.header.agentPreset, 'standard');
     assert.equal(opening.projections.values.agentPreset, 'cordis');
     const original = await (await runtime.dispatchFetch(url('alpha', base+'/agents/cordis'))).json() as AgentRevision;
     assert.equal((await runtime.dispatchFetch(url('alpha', base+'/agents'), {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({spec: {...original.spec, allowClientPlugins: false}, expectedRevision: original.revision})})).status, 200);
@@ -96,7 +98,7 @@ test('preset recovery promotes only a snapshot whose native selection event comm
   const base = `/v1/tenants/${tenantId('alpha')}/environments/default`;
   try {
     await api.call('agentPresets/list', {});
-    const before = await (await runtime.dispatchFetch(url('alpha', base+'/agents/default'))).text();
+    const before = await (await runtime.dispatchFetch(url('alpha', base+'/agents/standard'))).text();
     const after = await (await runtime.dispatchFetch(url('alpha', base+'/agents/cordis'))).text();
     for (const sessionId of ['committed', 'uncommitted']) await api.call('session/create', {request: {sessionId}});
     const cut = await api.call<{asOfSeq: number}>('session/projections', {request: {sessionId: 'committed'}});
@@ -110,9 +112,9 @@ test('preset recovery promotes only a snapshot whose native selection event comm
     }
     await runtime.dispose(); runtime = createRuntime(directory, options);
     assert.equal(await api.call('agentPresets/select', {agentId: 'committed', agentPreset: 'cordis'}), 'cordis');
-    assert.equal(await api.call('agentPresets/select', {agentId: 'uncommitted', agentPreset: 'default'}), 'default');
+    assert.equal(await api.call('agentPresets/select', {agentId: 'uncommitted', agentPreset: 'standard'}), 'standard');
     assert.equal((await api.call<{values: {agentPreset: string}}>('session/projections', {request: {sessionId: 'committed'}})).values.agentPreset, 'cordis');
-    assert.equal((await api.call<{values: {agentPreset: string}}>('session/projections', {request: {sessionId: 'uncommitted'}})).values.agentPreset, 'default');
+    assert.equal((await api.call<{values: {agentPreset: string}}>('session/projections', {request: {sessionId: 'uncommitted'}})).values.agentPreset, 'standard');
   } finally {await runtime.dispose(); await rm(directory, {recursive: true, force: true});}
 });
 

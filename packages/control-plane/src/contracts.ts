@@ -8,7 +8,8 @@ export const agentSchema = z
     workspaceId: id,
     plugins: z
       .array(z.object({ id, config: z.record(z.string(), z.json()) }).strict())
-      .max(20),
+      // The official standard preset composes 21 rows.
+      .max(32),
     allowClientPlugins: z.boolean(),
     disabled: z.boolean().optional(),
     model: z

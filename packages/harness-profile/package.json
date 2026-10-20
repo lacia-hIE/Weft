@@ -2,7 +2,7 @@
   "name": "@weft/harness-profile",
   "version": "0.1.0",
   "private": true,
-  "description": "Harness agent presets for an isolated Weft environment.",
+  "description": "The official Web Agent presets (standard, ptc, minimal, cordis) as a Weft environment composes them; see src/presets.ts.",
   "type": "module",
-  "dsh": {"bundle": {"patch": "./cordis.patch.json"}}
+  "dsh": {"bundle": {}}
 }

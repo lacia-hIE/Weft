@@ -99,14 +99,14 @@ test("Harness environments isolate presets, modules, files and same-name session
       ).status,
       403,
     );
-    const initial = (await state("coding")).agents.find(profile => profile.spec.id === 'default')!;
+    const initial = (await state("coding")).agents.find(profile => profile.spec.id === 'standard')!;
     const published = await request("/environments/coding/agents", "POST", {
       spec: { ...initial.spec, name: "Coding preset" },
       expectedRevision: 1,
     });
     assert.equal(published.status, 200, await published.clone().text());
-    assert.equal((await state("research")).agents.find(profile => profile.spec.id === 'default')!.revision, 1);
-    assert.equal((await state("default")).agents.find(profile => profile.spec.id === 'default')!.revision, 1);
+    assert.equal((await state("research")).agents.find(profile => profile.spec.id === 'standard')!.revision, 1);
+    assert.equal((await state("default")).agents.find(profile => profile.spec.id === 'standard')!.revision, 1);
     const file = "/workspace/shared-name.txt";
     assert.equal(
       (
@@ -144,7 +144,7 @@ test("Harness environments isolate presets, modules, files and same-name session
         "POST",
         {
           text: `${environment} private message`,
-          agent: { id: "default", revision: environment === "coding" ? 2 : 1 },
+          agent: { id: "standard", revision: environment === "coding" ? 2 : 1 },
         },
       );
       assert.equal(response.status, 200, await response.clone().text());
@@ -281,7 +281,7 @@ test("environment model choices use the published session revision and server-ow
         (
           await request(`/environments/${environment}/agents`, {
             spec: {
-              ...state.agents.find(profile => profile.spec.id === 'default')!.spec,
+              ...state.agents.find(profile => profile.spec.id === 'standard')!.spec,
               model: {
                 provider: "deepseek",
                 name:
@@ -295,7 +295,7 @@ test("environment model choices use the published session revision and server-ow
       );
       const response = await request(
         `/environments/${environment}/sessions/same/messages`,
-        { text: "hello", agent: { id: "default", revision: 2 } },
+        { text: "hello", agent: { id: "standard", revision: 2 } },
       );
       assert.equal(response.status, 200, await response.clone().text());
     }
@@ -306,7 +306,7 @@ test("environment model choices use the published session revision and server-ow
       (
         await request("/environments/coding/agents", {
           spec: {
-            ...coding.agents.find(profile => profile.spec.id === 'default')!.spec,
+            ...coding.agents.find(profile => profile.spec.id === 'standard')!.spec,
             model: { provider: "deepseek", name: "deepseek-flash" },
           },
           expectedRevision: 2,
@@ -326,7 +326,7 @@ test("environment model choices use the published session revision and server-ow
       (
         await request("/environments/coding/sessions/new/messages", {
           text: "Use the new revision",
-          agent: { id: "default", revision: 3 },
+          agent: { id: "standard", revision: 3 },
         })
       ).status,
       200,
