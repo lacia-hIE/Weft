@@ -120,41 +120,6 @@ export class D1AgentRevisions<T extends {revision: number}> {
   }
 }
 
-/** The discoverable root Sessions of one environment, kept in D1 and read from a cache. */
-export class D1SessionIndex<T extends {id: string; updatedAt: string}> {
-  private readonly records = new Map<string, T>();
-  private constructor(private readonly db: D1Database, private readonly scope: ConfigScope) {}
-
-  static async open<T extends {id: string; updatedAt: string}>(db: D1Database, scope: ConfigScope): Promise<D1SessionIndex<T>> {
-    const store = new D1SessionIndex<T>(db, scope);
-    const {results} = await db.prepare('SELECT document FROM session_index WHERE tenant_id = ? AND environment_id = ?')
-      .bind(scope.tenantId, scope.environmentId).all<{document: string}>();
-    for (const row of results) {
-      const record = JSON.parse(row.document) as T;
-      store.records.set(record.id, record);
-    }
-    return store;
-  }
-
-  has(sessionId: string): boolean { return this.records.has(sessionId); }
-
-  get(sessionId: string): T | undefined {
-    const record = this.records.get(sessionId);
-    return record === undefined ? undefined : structuredClone(record);
-  }
-
-  /** Records ordered by most recent activity, then id. */
-  list(): T[] {
-    return [...this.records.values()].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || left.id.localeCompare(right.id)).map(record => structuredClone(record));
-  }
-
-  async put(record: T): Promise<void> {
-    await this.db.prepare('INSERT INTO session_index (tenant_id, environment_id, session_id, updated_at, document) VALUES (?, ?, ?, ?, ?) ON CONFLICT (tenant_id, environment_id, session_id) DO UPDATE SET updated_at = excluded.updated_at, document = excluded.document')
-      .bind(this.scope.tenantId, this.scope.environmentId, record.id, record.updatedAt, JSON.stringify(record)).run();
-    this.records.set(record.id, structuredClone(record));
-  }
-}
-
 /** One Workspace row: its id, canonical path and JSON document. */
 export interface WorkspaceRow { id: string; path: string; document: string }
 

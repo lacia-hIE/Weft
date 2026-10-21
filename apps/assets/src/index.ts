@@ -13,7 +13,8 @@ export default {
     const official = url.pathname === '/index.html' && request.headers.get('x-weft-harness-document') === 'official';
     // Official Cordis Loader expressions and the client runner use Function.
     // The public Worker supplies this marker only for the native environment document.
-    headers.set("content-security-policy", `default-src 'self'; script-src 'self'${official ? " 'unsafe-eval'" : ''}; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self' data:; worker-src 'self' blob:; object-src 'none'; base-uri ${official ? "'self'" : "'none'"}; frame-ancestors 'none'; form-action 'self'`);
+    // Cloudflare Web Analytics injects its beacon into zone pages; it loads from and reports to Cloudflare Insights.
+    headers.set("content-security-policy", `default-src 'self'; script-src 'self'${official ? " 'unsafe-eval'" : ''} https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https://cloudflareinsights.com; font-src 'self' data:; worker-src 'self' blob:; object-src 'none'; base-uri ${official ? "'self'" : "'none'"}; frame-ancestors 'none'; form-action 'self'`);
     headers.set("referrer-policy", "same-origin");
     return new Response(asset.body, {status: asset.status, headers});
   },

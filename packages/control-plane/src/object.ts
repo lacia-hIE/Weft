@@ -22,7 +22,8 @@ import { sessionReadPorts } from '../../native-query/src/ports.ts';
 import { credentialRef } from '@deepseek-ai/dsh-credentials';
 import { openEnvironmentStream } from '../../native-environment/src/index.ts';
 import { MarketWorld } from '../../native-environment/src/market.ts';
-import { ConfigWriteQueue, D1AgentRevisions, D1SessionIndex, D1SettingsDocuments, D1WorkspaceRegistry } from '../../config-store/src/index.ts';
+import { ConfigWriteQueue, D1AgentRevisions, D1SettingsDocuments, D1WorkspaceRegistry } from '../../config-store/src/index.ts';
+import { DurableSessionIndex } from './session-index.ts';
 import type { HarnessHomeFacts } from '../../native-environment/src/harness-home.ts';
 import { EnvironmentModelWorld } from '../../native-models/src/environment.ts';
 import { ScriptedAdapter } from '../../harness-runtime/src/scripted-adapter.ts';
@@ -308,14 +309,16 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
   private settingsDocuments: D1SettingsDocuments | undefined;
   private readonly configWrites = new ConfigWriteQueue();
   private agentRevisions: D1AgentRevisions<AgentRevision> | undefined;
-  private sessionRecords: D1SessionIndex<SessionRecord> | undefined;
+  private sessionRecords: DurableSessionIndex<SessionRecord> | undefined;
   private workspaceRegistry: D1WorkspaceRegistry | undefined;
   constructor(ctx: DurableObjectState, env: TenantEnvironment) {
     super(ctx, env);
     // The object is addressed by its environment; its settings rows load before any request.
     const scope = environmentScopeOf(ctx.id.name);
     void ctx.blockConcurrencyWhile(async () => {
-      [this.settingsDocuments, this.agentRevisions, this.sessionRecords, this.workspaceRegistry] = await Promise.all([D1SettingsDocuments.open(env.CONFIG_DB, scope, this.configWrites), D1AgentRevisions.open<AgentRevision>(env.CONFIG_DB, scope), D1SessionIndex.open<SessionRecord>(env.CONFIG_DB, scope), D1WorkspaceRegistry.open(env.CONFIG_DB, scope, JSON.stringify({initialized: true, workspaceIds: [], archivedSessionIds: [], pinnedSessionIds: []}))]);
+      // Sessions belong to this environment alone: their index lives in the object's own storage.
+      this.sessionRecords = new DurableSessionIndex<SessionRecord>(ctx.storage.sql);
+      [this.settingsDocuments, this.agentRevisions, this.workspaceRegistry] = await Promise.all([D1SettingsDocuments.open(env.CONFIG_DB, scope, this.configWrites), D1AgentRevisions.open<AgentRevision>(env.CONFIG_DB, scope), D1WorkspaceRegistry.open(env.CONFIG_DB, scope, JSON.stringify({initialized: true, workspaceIds: [], archivedSessionIds: [], pinnedSessionIds: []}))]);
       await this.seedAgents();
     });
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS native_child_owners (id TEXT PRIMARY KEY, parent_id TEXT NOT NULL, root_id TEXT NOT NULL)');
@@ -417,7 +420,7 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
   private latest(agentId: string): AgentRevision | undefined {
     return this.agents().latest(agentId);
   }
-  private sessions(): D1SessionIndex<SessionRecord> {
+  private sessions(): DurableSessionIndex<SessionRecord> {
     if (!this.sessionRecords) throw new Error('Environment Session index is not loaded');
     return this.sessionRecords;
   }
@@ -535,7 +538,7 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
     if (this.ctx.storage.sql.exec('SELECT id FROM native_child_owners WHERE id=?', record.id).toArray().length) throw new Error('Session id belongs to a native child');
     const previous = this.sessions().get(record.id);
     if (previous) record = {...record, title: previous.title || record.title};
-    await this.sessions().put(record);
+    this.sessions().put(record);
   }
   async sessionIndex(scope: ControlScope): Promise<SessionRecord[]> {
     this.scope(scope);

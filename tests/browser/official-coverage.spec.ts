@@ -32,7 +32,8 @@ test('the official Harness UI reaches connected native services everywhere excep
     await page.waitForTimeout(800);
     await page.keyboard.press('Escape');
   };
-  for (const name of ['Good response', 'Automation tasks', 'Open right sidebar', 'My Agents', 'More actions', 'View options', 'Add files or run commands', 'Plugins']) await visit(name);
+  // My Agents leaves the workbench for the site home page.
+  for (const name of ['Good response', 'Automation tasks', 'Open right sidebar', 'More actions', 'View options', 'Add files or run commands', 'Plugins']) await visit(name);
   await page.getByRole('button', {name: 'Open right sidebar', exact: true}).first().click({timeout: 3_000}).catch(() => {});
   for (const tab of await page.getByRole('tab').all()) { await tab.click({timeout: 2_000}).catch(() => {}); await page.waitForTimeout(500); }
   // Every settings section of the official dialog.

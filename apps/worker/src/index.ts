@@ -932,7 +932,11 @@ export default {
       if (environment.response) return environment.response;
       request = environment.request;
       pathname = new URL(request.url).pathname;
+      const nativeStarted = Date.now();
       const nativeResponse = await handleNativeRequest(request, env, principal, environment.environmentId);
+      // Slow native calls name their method, so a latency report maps to the server step behind it.
+      const nativeMs = Date.now() - nativeStarted;
+      if (nativeMs >= 1000 && pathname.includes('/native/api/')) console.info('weft.native.slow', {method: pathname.replace(/^.*\/native\/api\//, ''), ms: nativeMs});
       if (nativeResponse) return nativeResponse;
       const workspaceResponse = await handleWorkspaceRequest(request, env, principal, environment.environmentId);
       if (workspaceResponse) return workspaceResponse;

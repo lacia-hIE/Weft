@@ -69,17 +69,17 @@ export async function openHarnessSession(options: RuntimeOptions): Promise<Harne
     if (options.onSessionCreated) ctx.on('session/created', session => { options.onSessionCreated!(session); }, {global: true});
     // Root services of the official profile (llm, sessions, projections, token meter, commands,
     // questions, subagent model selection), loaded from its rows; tools, agents and goals follow the system prompt.
-    await mountOfficialProfile(ctx, 'core');
+    await mountOfficialProfile(ctx, 'core', options.presentation === true);
     if (options.presentation) installModelSelectionProjection(ctx);
     if (options.presentation) await ctx.plugin(SessionTitle, { fallbackMaxWords: 5, fallbackMaxBytes: 40, maxTitleBytes: 80 });
     await ctx.plugin(SystemPrompt, { personaPrefix: options.persona });
-    await mountOfficialProfile(ctx, 'agents');
+    await mountOfficialProfile(ctx, 'agents', options.presentation === true);
     if (options.mountPersistence) await options.mountPersistence(ctx);
     await ctx.plugin(AgentLoop, { agents: [], ...options.agentLoop });
     if (options.mountModels) await options.mountModels(ctx);
     else if (options.adapter) ctx.llm.registerAdapter([options.model.provider], options.adapter);
     else throw new Error('A Harness runtime needs model providers');
-    await mountOfficialProfile(ctx, 'late');
+    await mountOfficialProfile(ctx, 'late', options.presentation === true);
     if (options.mountTools) await options.mountTools(ctx);
     // Install before resume: persisted waking input may start assembling as
     // soon as the native factory releases the restored Agent.

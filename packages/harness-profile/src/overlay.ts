@@ -25,9 +25,10 @@ export type ProfilePhase = 'core' | 'agents' | 'late';
  * order, each awaited before the next, because the rest of the Session world
  * builds on their services; `agents` rows follow the Weft-mounted system prompt
  * they inject. `late` rows are created after the world and activate once the
- * services they inject exist.
+ * services they inject exist. `native` rows serve the official client and load
+ * only in native Sessions, not in the v1 kernel API's Sessions.
  */
-export const LOADED: Record<string, {world: 'session'; phase: ProfilePhase}> = {
+export const LOADED: Record<string, {world: 'session'; phase: ProfilePhase; native?: true}> = {
   'llm': {world: 'session', phase: 'core'},
   'session': {world: 'session', phase: 'core'},
   'session-projection': {world: 'session', phase: 'core'},
@@ -49,6 +50,10 @@ export const LOADED: Record<string, {world: 'session'; phase: ProfilePhase}> = {
   'image-offload': {world: 'session', phase: 'late'},
   'session-stats': {world: 'session', phase: 'late'},
   'session-turn-outline': {world: 'session', phase: 'late'},
+  'message-feedback': {world: 'session', phase: 'late', native: true},
+  'command-feedback': {world: 'session', phase: 'late', native: true},
+  'web': {world: 'session', phase: 'late', native: true},
+  'web-fetch-http': {world: 'session', phase: 'late', native: true},
 };
 
 /** Original packages that Weft's world setup mounts today. */
@@ -59,13 +64,14 @@ export const MOUNTED_BY_WEFT: Record<string, string> = {
   'agent-default-model': 'environment settings', 'jobs': 'workspace shell', 'shell-env': 'workspace shell',
   'sandbox-policy': 'workspace shell', 'approval': 'native permissions', 'permission': 'native permissions',
   'subagent': 'native-subagents', 'subagent-spawn-in-process': 'native-subagents', 'subagent-fork-in-process': 'native-subagents',
-  'command-feedback': 'native interaction', 'message-feedback': 'native interaction', 'web': 'native interaction',
-  'web-search-deepseek': 'native interaction', 'web-fetch-http': 'native interaction', 'schedule': 'native-schedule',
+  'web-search-deepseek': 'native interaction (base URL from the environment model settings)', 'schedule': 'native-schedule',
   'session-reference': 'native interaction', 'file-reference-local': 'native-files', 'working-directory': 'workspace provider',
   'workspace': 'native workspaces', 'fs-observation-policy': 'workspace provider', 'attachment-local': 'native-attachments',
   'session-query-sqlite': 'native-query', 'storage': 'native-storage', 'storage-domain': 'native-storage',
-  'typert': 'Remote dispatch', 'remote-access': 'native-environment', 'job-controller': 'native interaction',
-  'terminal-controller': 'native interaction', 'workspace-files': 'native-files', 'session-controller': 'Weft session host',
+  'typert': 'Remote dispatch', 'remote-access': 'native-environment',
+  // Mounted once the workspace shell exists: created as Loader rows they activate later and republish blank Session summaries.
+  'job-controller': 'native interaction', 'terminal-controller': 'native interaction',
+  'workspace-files': 'native-files', 'session-controller': 'Weft session host',
   'cordis-host-runner': 'native-plugins', 'cordis-inspect-providers': 'native-plugins', 'plugin-inventory': 'native-composition',
   'skill': 'native interaction', 'settings-controller': 'environment settings', 'workspace-controller': 'native workspaces',
   'session-log-download': 'session reader', 'tool-working-directory': 'workspace provider', 'repeat-tool-reminder': 'preset catalog',

@@ -53,11 +53,11 @@ export async function createEntry(loader: Loader, entry: EntryOptions): Promise<
  * world never provides stay pending. Rows the overlay disables are served by
  * Weft providers under the same ids, so they are not created here.
  */
-export async function mountOfficialProfile(ctx: Context, phase: ProfilePhase): Promise<void> {
+export async function mountOfficialProfile(ctx: Context, phase: ProfilePhase, native: boolean): Promise<void> {
   const loader = await workerdLoader(ctx);
   const rows = new Map(enabledEntries().map(entry => [entry.id, entry]));
   for (const [id, row] of Object.entries(LOADED)) {
-    if (row.phase !== phase) continue;
+    if (row.phase !== phase || (row.native && !native)) continue;
     const entry = rows.get(id);
     if (!entry) throw new Error(`Official profile row ${id} is not enabled`);
     if (phase !== 'late') await createEntry(loader, structuredClone(entry));

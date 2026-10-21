@@ -16,6 +16,8 @@ export default defineConfig({
       enabled: true,
       redactQueryString: true,
       logs: { enabled: true, headSamplingRate: 1, invocationLogs: false },
+      // Automatic spans for Durable Object RPC, D1 and subrequests show where a slow request spends its time.
+      traces: { enabled: true, headSamplingRate: 1 },
     },
     // Local-only identity simulation; Cloudflare Access supplies production identity.
     access: { dev: { aud: accessAudience, identity: { user_uuid: 'local-developer', email: 'dev@example.com' } } },

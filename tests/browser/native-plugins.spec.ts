@@ -53,7 +53,6 @@ test('official Cordis approval and plugin UI use real native packages and scoped
   await expect(page.getByRole('button', {name: /^Native count /})).toHaveCount(0);
   expect(errors).toEqual([]);
   await page.getByRole('button', {name: 'My Agents', exact: true}).click();
-  await page.getByRole('link', {name: 'Manage Agents', exact: true}).click();
   await expect(page).toHaveURL('/');
 });
 

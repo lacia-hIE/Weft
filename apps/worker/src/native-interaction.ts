@@ -1,15 +1,11 @@
 import type { Context } from '@deepseek-ai/cordis';
 import Sessions, { SessionId } from '@deepseek-ai/dsh-session';
 import SessionReferenceResolver from '@deepseek-ai/dsh-session-reference';
-import MessageFeedback from '@deepseek-ai/dsh-message-feedback';
-import * as CommandFeedback from '@deepseek-ai/dsh-command-feedback';
 import SessionSkillCatalog from '@weft/upstream/packages/api/session-controller/src/skill-catalog.ts';
 import Typert from '../../../.generated/official-typert-registry.js';
-import WebRuntime from '@deepseek-ai/dsh-web';
 import JobController from '@deepseek-ai/dsh-api-job-controller';
 import TerminalController from '@deepseek-ai/dsh-api-terminal-controller';
 import * as WebSearchDeepSeek from '@deepseek-ai/dsh-web-search-deepseek';
-import * as WebFetchHttp from '@deepseek-ai/dsh-web-fetch-http';
 import { mountPermissions } from '../../../packages/native-environment/src/permissions.ts';
 import { readModelSections } from '../../../packages/native-models/src/index.ts';
 import type { Env } from './index.ts';
@@ -41,19 +37,15 @@ export function forwardNativeNotifications(ctx: Context, env: Env, owner: Contro
 export async function mountNativeInteraction(ctx: Context, env: Env, storage: DurableObjectStorage, scope: SessionScope, owner: ControlScope): Promise<void> {
   await ctx.plugin(Typert);
   await ctx.plugin(SessionSkillCatalog);
-  await ctx.plugin(MessageFeedback, {maxNoteBytes: 8192});
-  await ctx.plugin(CommandFeedback);
   if (ctx.get('jobs')) await ctx.plugin(JobController, {});
   if (ctx.get('subprocess')) await ctx.plugin(TerminalController, TerminalController.Config({} as never));
   // Permission presets bundle the shell's sandbox mode with the approval policy; approvals reach the client as waterfalls.
   if (ctx.get('shell')) await mountPermissions(ctx, await controlFor(env, owner).nativePermissionDefault(owner));
-  // The base bundle's web rows: DeepSeek search on the environment's configured DeepSeek endpoint
-  // and model key (the official default is that endpoint's `/v1`), and HTTP fetch over workerd.
+  // The profile loads the web runtime and HTTP fetch; DeepSeek search uses the environment's configured
+  // DeepSeek endpoint and model key (the official default is that endpoint's `/v1`).
   const {deepseek} = await readModelSections(await controlFor(env, owner).nativeModelSections(owner));
   const baseURL = typeof deepseek.baseURL === 'string' ? deepseek.baseURL : undefined;
-  await ctx.plugin(WebRuntime, {searchProvider: 'deepseek-official', fetchProvider: 'http'});
   await ctx.plugin(WebSearchDeepSeek, baseURL ? {baseURL: `${baseURL.replace(/\/+$/, '')}/v1`} : {});
-  await ctx.plugin(WebFetchHttp, {});
   await mountSessionReferences(ctx, env, storage, scope, owner);
   await mountNativeSchedule(ctx, storage, {set: async at => {
     if (at === undefined) {await storage.deleteAlarm(); return;}
