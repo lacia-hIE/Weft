@@ -195,10 +195,11 @@ export class SessionDO extends DurableObject<Env> {
     const {items} = await (await this.nativeSessionSummaries(scope)).json() as import('@deepseek-ai/dsh-api-session-controller/types').SessionListValue;
     const owner = controlScope(scope.tenantId, scope.environmentId);
     const control = controlFor(this.env, owner);
-    for (const row of items) {
-      await control.nativeEvent(owner, 'api-session/added', [row]);
-      await control.nativeEvent(owner, 'api-session/status', [row.sessionId, row.running]);
-    }
+    // Calls on one stub arrive in the order they are made, so the events need no round trip each.
+    await Promise.all(items.flatMap(row => [
+      control.nativeEvent(owner, 'api-session/added', [row]),
+      control.nativeEvent(owner, 'api-session/status', [row.sessionId, row.running]),
+    ]));
   }
   async nativeSessionSummaries(input: SessionScope): Promise<Response> {
     const scope = this.assertScope(input);
@@ -382,9 +383,9 @@ export class SessionDO extends DurableObject<Env> {
       if (readSessionSnapshot(this.ctx.storage, SessionId(scope.sessionId))) return false;
       const owner = controlScope(scope.tenantId, scope.environmentId);
       const control = controlFor(this.env, owner);
-      const requested = binding?.id ?? (await control.nativePresetDefault(owner));
-      const {value: profile} = await (await control.nativeProfile(owner, requested, binding?.revision)).json() as {value?: AgentRevision};
-      if (!profile) throw new RemoteError('agent-preset/not-found', 'Unknown preset', {agentPreset: requested, available: await control.nativePresetIds(owner)});
+      // Without a binding the environment resolves its default preset in the same call.
+      const {value: profile} = await (await control.nativeProfile(owner, binding?.id, binding?.revision)).json() as {value?: AgentRevision};
+      if (!profile) throw new RemoteError('agent-preset/not-found', 'Unknown preset', {agentPreset: binding?.id ?? await control.nativePresetDefault(owner), available: await control.nativePresetIds(owner)});
       if (profile.upstream !== upstream.commit) throw new Error('Agent runtime revision unavailable');
       const attachedWorkspace = workspaceId ?? profile.spec.workspaceId;
       workspaceIdSchema.parse(attachedWorkspace);
@@ -393,8 +394,10 @@ export class SessionDO extends DurableObject<Env> {
       const runtime = await sessionRuntime(this.env, this.ctx.storage, scope, profile, attachedWorkspace, profile.spec.persona, true, reader, {}, directory, false);
       await initializeHarnessSession(runtime.options);
       this.ctx.storage.sql.exec('INSERT INTO weft_session_config (id,workspace_id,agent_document,presentation) VALUES (1,?,?,1) ON CONFLICT(id) DO UPDATE SET workspace_id=excluded.workspace_id,agent_document=excluded.agent_document,presentation=1', attachedWorkspace, JSON.stringify(profile));
-      await control.trackSession(owner, {id: scope.sessionId, title: '', agentId: profile.spec.id, revision: profile.revision, workspaceId: attachedWorkspace, updatedAt: new Date().toISOString()});
-      await this.publishNativeSummary(scope);
+      await Promise.all([
+        control.trackSession(owner, {id: scope.sessionId, title: '', agentId: profile.spec.id, revision: profile.revision, workspaceId: attachedWorkspace, updatedAt: new Date().toISOString()}),
+        this.publishNativeSummary(scope),
+      ]);
       return true;
     });
     return result === 'race' ? this.nativeCreate(scope, binding, workspaceId, cwd) : result;

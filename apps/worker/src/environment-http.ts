@@ -1,8 +1,29 @@
-import type { TenantEnvironment } from "../../../packages/control-plane/src/object.ts";
+import type { TenantDO, TenantEnvironment } from "../../../packages/control-plane/src/object.ts";
+import type { EnvironmentRecord } from "../../../packages/control-plane/src/contracts.ts";
 import { tenantAddress } from "../../../packages/control-plane/src/object.ts";
 import { id } from "../../../packages/control-plane/src/contracts.ts";
 import type { Principal } from "../../../packages/tenant/src/index.ts";
 import { assertSameOrigin, HttpError, readJson } from "./http.ts";
+
+/**
+ * Environments are never removed, so an environment the registry confirmed
+ * stays valid; this isolate reuses the confirmation briefly instead of asking
+ * the tenant object on every request. Keys carry the tenant, and only found
+ * environments are kept.
+ */
+const confirmed = new Map<string, {record: EnvironmentRecord; at: number}>();
+const CONFIRMATION_MS = 60_000;
+async function knownEnvironment(tenant: DurableObjectStub<TenantDO>, tenantId: string, environmentId: string): Promise<EnvironmentRecord | undefined> {
+  const key = JSON.stringify([tenantId, environmentId]);
+  const cached = confirmed.get(key);
+  if (cached && Date.now() - cached.at < CONFIRMATION_MS) return structuredClone(cached.record);
+  const record = await tenant.environment(tenantId, environmentId);
+  if (record) {
+    if (confirmed.size >= 1024) confirmed.clear();
+    confirmed.set(key, {record: structuredClone(record), at: Date.now()});
+  }
+  return record;
+}
 
 /** Resolve the authenticated environment before any resource is addressed. */
 export async function resolveEnvironmentRequest(
@@ -42,7 +63,7 @@ export async function resolveEnvironmentRequest(
   }
   if (!id.safeParse(match[2]).success)
     throw new HttpError(400, "Invalid environment identity");
-  const record = await tenant.environment(principal.tenantId, match[2]);
+  const record = await knownEnvironment(tenant, principal.tenantId, match[2]);
   if (!record) throw new HttpError(404, "Environment not found");
   if (!match[3] && request.method === "GET")
     return { request, response: Response.json(record) };

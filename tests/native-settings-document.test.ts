@@ -18,6 +18,7 @@ test('the configuration document opens in the workspace and replaces the configu
     assert.equal(response.status, 200, await response.clone().text());
   };
   const loop = async () => (await api.call<SettingsDescribeValue>('settings/describe', {})).namespaces.find(ns => ns.ns === 'agent-loop')!;
+  const parallel = async () => ((await loop()).value as {maxParallelToolCalls?: number}).maxParallelToolCalls;
   try {
     assert.equal((await api.call<SettingsDescribeValue>('settings/describe', {})).hasDocument, true);
     await api.call<SettingsNamespaceView>('settings/update', {ns: 'agent-loop', patch: {maxParallelToolCalls: 3}, expectedRevision: (await loop()).revision});
@@ -26,16 +27,16 @@ test('the configuration document opens in the workspace and replaces the configu
     assert.match(opened.content, /id: agent-loop[\s\S]*maxParallelToolCalls: 3/, opened.content);
 
     await save('- id: agent-loop\n  config:\n    maxParallelToolCalls: 5\n', opened.version);
-    assert.equal((await loop()).value.maxParallelToolCalls, 5, 'a saved document replaces the configuration');
+    assert.equal((await parallel()), 5, 'a saved document replaces the configuration');
 
     const edited = await read('/workspace/.dsh/profile.yml');
     await save('- id: agent-loop\n  config:\n    maxParallelToolCalls: many\n- id: no-such-entry\n', edited.version);
-    assert.equal((await loop()).value.maxParallelToolCalls, 5, 'a rejected document leaves the configuration unchanged');
+    assert.equal((await parallel()), 5, 'a rejected document leaves the configuration unchanged');
     assert.match((await read('/workspace/.dsh/profile.error.txt')).content, /agent-loop/);
 
     const rejected = await read('/workspace/.dsh/profile.yml');
     await save('[]\n', rejected.version);
-    assert.notEqual((await loop()).value.maxParallelToolCalls, 5, 'an entry the document leaves out returns to its profile configuration');
+    assert.notEqual((await parallel()), 5, 'an entry the document leaves out returns to its profile configuration');
     await api.call<SettingsNamespaceView>('settings/update', {ns: 'agent-loop', patch: {maxParallelToolCalls: 2}, expectedRevision: (await loop()).revision});
     assert.match((await read('/workspace/.dsh/profile.yml')).content, /maxParallelToolCalls: 2/, 'a form edit rewrites the open document');
   } finally {

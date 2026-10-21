@@ -7,7 +7,7 @@ import JobController from '@deepseek-ai/dsh-api-job-controller';
 import TerminalController from '@deepseek-ai/dsh-api-terminal-controller';
 import * as WebSearchDeepSeek from '@deepseek-ai/dsh-web-search-deepseek';
 import { mountPermissions } from '../../../packages/native-environment/src/permissions.ts';
-import { readModelSections } from '../../../packages/native-models/src/index.ts';
+import type { EnvironmentModels } from '../../../packages/native-models/src/index.ts';
 import type { Env } from './index.ts';
 import { controlFor, NATIVE_FORWARDED_EVENTS, NATIVE_WATERFALLS } from '../../../packages/control-plane/src/object.ts';
 import type { ControlScope } from '../../../packages/control-plane/src/contracts.ts';
@@ -34,16 +34,16 @@ export function forwardNativeNotifications(ctx: Context, env: Env, owner: Contro
 }
 
 /** The original Session-scoped Remote services, `@` Session references and Schedule on a native root. */
-export async function mountNativeInteraction(ctx: Context, env: Env, storage: DurableObjectStorage, scope: SessionScope, owner: ControlScope): Promise<void> {
+export async function mountNativeInteraction(ctx: Context, env: Env, storage: DurableObjectStorage, scope: SessionScope, owner: ControlScope, settings: {models: EnvironmentModels; permissionDefault?: string}): Promise<void> {
   await ctx.plugin(Typert);
   await ctx.plugin(SessionSkillCatalog);
   if (ctx.get('jobs')) await ctx.plugin(JobController, {});
   if (ctx.get('subprocess')) await ctx.plugin(TerminalController, TerminalController.Config({} as never));
   // Permission presets bundle the shell's sandbox mode with the approval policy; approvals reach the client as waterfalls.
-  if (ctx.get('shell')) await mountPermissions(ctx, await controlFor(env, owner).nativePermissionDefault(owner));
+  if (ctx.get('shell')) await mountPermissions(ctx, settings.permissionDefault);
   // The profile loads the web runtime and HTTP fetch; DeepSeek search uses the environment's configured
   // DeepSeek endpoint and model key (the official default is that endpoint's `/v1`).
-  const {deepseek} = await readModelSections(await controlFor(env, owner).nativeModelSections(owner));
+  const {deepseek} = settings.models;
   const baseURL = typeof deepseek.baseURL === 'string' ? deepseek.baseURL : undefined;
   await ctx.plugin(WebSearchDeepSeek, baseURL ? {baseURL: `${baseURL.replace(/\/+$/, '')}/v1`} : {});
   await mountSessionReferences(ctx, env, storage, scope, owner);

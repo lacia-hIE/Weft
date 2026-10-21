@@ -302,10 +302,9 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
       }
       case 'session/create': {
         const {request: input} = sessionRemote.methods[endpoint].input({strict: true}).create().parse(payload.args);
-        const workspace = await control.nativeResolveWorkspace(owner, input.workspaceId, input.cwd);
         let sessionId = input.sessionId ?? SessionId(crypto.randomUUID());
         let target = session(sessionId);
-        const existingOwner = await control.nativeSessionRoot(owner, sessionId);
+        const [workspace, existingOwner] = await Promise.all([control.nativeResolveWorkspace(owner, input.workspaceId, input.cwd), control.nativeSessionRoot(owner, sessionId)]);
         if (existingOwner && existingOwner !== sessionId) {sessionId = SessionId(crypto.randomUUID()); target = session(sessionId);}
         const existing = await target.stub.nativeStatus(target.scope);
         if (existing && (!existing.blank || existing.running)) {
@@ -318,8 +317,8 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
           target = session(sessionId);
           if (!await target.stub.nativeCreate(target.scope, binding, 'default', workspace.path)) throw new RemoteError('gateway/internal', 'New Session identity was already used', {});
         }
-        await control.nativeAttachWorkspace(owner, workspace.workspaceId, sessionId);
-        const projections = sessionRemote.methods['session/projections'].result.create().parse(await (await target.stub.nativeProjections(target.scope)).json());
+        const [, raw] = await Promise.all([control.nativeAttachWorkspace(owner, workspace.workspaceId, sessionId), target.stub.nativeProjections(target.scope).then(response => response.json())]);
+        const projections = sessionRemote.methods['session/projections'].result.create().parse(raw);
         const selected = projections?.kind === 'sequenced' ? projections.values.agentPreset : undefined;
         value = {sessionId, ...(typeof selected === 'string' ? {agentPreset: selected} : {})};
         break;

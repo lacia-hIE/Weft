@@ -24,7 +24,7 @@ import { registerIdentityTool } from '../../../packages/harness-runtime/src/vali
 import { CLIENT_PLUGIN_GUIDE, mountClientPublisher } from '../../../packages/client-plugins/src/tool.ts';
 import { mountClientInspection } from '../../../packages/client-plugins/src/inspect.ts';
 import { NATIVE_PLUGIN_GUIDE } from '../../../packages/native-plugins/src/guide.ts';
-import { controlFor, controlScope } from '../../../packages/control-plane/src/object.ts';
+import { controlFor, controlScope, type NativeSessionContext } from '../../../packages/control-plane/src/object.ts';
 import {mountNativeComposition, nativePresetDefinition} from '../../../packages/native-composition/src/index.ts';
 import type {Context} from '@deepseek-ai/cordis';
 import AgentLoop from '@deepseek-ai/dsh-agent-loop';
@@ -52,7 +52,11 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
   let runtimeRoot: Context | undefined;
   const files = new EnvironmentDeepSeekFiles(new EnvironmentUploadIndex(operation => control.nativeModelFiles(owner, operation)));
   const scripted = WEFT_VALIDATION_BUILD && env.MODEL_BACKEND === 'scripted';
-  let models: EnvironmentModels | undefined = scripted ? undefined : await readModelSections(await control.nativeModelSections(owner));
+  // One round trip for the environment's settings; each further turn refreshes it the same way.
+  let context = await (await control.nativeSessionContext(owner)).json() as NativeSessionContext;
+  let models: EnvironmentModels | undefined = scripted ? undefined : context.models as EnvironmentModels;
+  /** Whether the credential a route names has a value; a reference the context did not report is resolved directly. */
+  const credentialSet = async (ref: string) => context.credentials[ref] ?? await control.nativeResolveCredential(owner, credentialRef(ref)) !== undefined;
   const selection = (): ModelSelection => {
     if (!models) return {provider: 'validation', model: 'scripted'};
     const {reasoningEffort, ...route} = defaultSelectionOf(models, profile?.spec.model?.name);
@@ -60,12 +64,12 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
   };
   if (models && requireCredential) {
     const ref = credentialRefFor(models, selection().provider);
-    if (ref !== undefined && !await control.nativeResolveCredential(owner, credentialRef(ref))) throw new ModelConfigurationError('MODEL_NOT_CONFIGURED');
+    if (ref !== undefined && !await credentialSet(ref)) throw new ModelConfigurationError('MODEL_NOT_CONFIGURED');
   }
-  const harnessHome = {...await control.nativeHarnessHome(owner), deepSeekFiles: files};
+  const harnessHome = {...context.harnessHome, deepSeekFiles: files};
   let commitModels: ((next: EnvironmentModels) => Promise<void>) | undefined;
-  const loop = await (await controlFor(env, owner).nativeLoopConfiguration(owner)).json() as {maxParallelToolCalls: number};
-  let profileOverrides = presentation ? await control.nativeProfileOverrides(owner) : {};
+  const loop = context.loop;
+  let profileOverrides = presentation ? context.profileOverrides : {};
   let world: Context | undefined;
   let activeAgent: Agent | undefined;
   let composition: Context | undefined;
@@ -86,18 +90,19 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
     profileOverrides,
     defaultModel: selection,
     beforeAssembly: async () => {
+      context = await (await control.nativeSessionContext(owner)).json() as NativeSessionContext;
       if (models) {
-        models = await readModelSections(await control.nativeModelSections(owner));
+        models = context.models as EnvironmentModels;
         await commitModels?.(models);
         // Admission fails fast, before the turn queues, when the next route names a credential that is not set.
         const ref = credentialRefFor(models, (activeAgent && currentModelSelection(activeAgent) || selection()).provider);
-        if (ref !== undefined && !await control.nativeResolveCredential(owner, credentialRef(ref))) throw new ModelConfigurationError('MODEL_NOT_CONFIGURED');
+        if (ref !== undefined && !await credentialSet(ref)) throw new ModelConfigurationError('MODEL_NOT_CONFIGURED');
       }
-      const next = await (await controlFor(env, owner).nativeLoopConfiguration(owner)).json() as {maxParallelToolCalls: number};
+      const next = context.loop;
       if (runtimeRoot) updateVolatile(runtimeRoot.agentLoop.config.maxParallelToolCalls, AgentLoop.Config({maxParallelToolCalls: next.maxParallelToolCalls}).maxParallelToolCalls);
-      if (refreshSubagents) refreshSubagents(await (await controlFor(env, owner).nativeSubagentConfiguration(owner)).json() as SubagentLimits);
+      if (refreshSubagents) refreshSubagents(context.subagents as unknown as SubagentLimits);
       // Settings edits to official profile rows reach a live Session before its next turn.
-      if (presentation && world) profileOverrides = await reconcileProfileOverrides(world, profileOverrides, await control.nativeProfileOverrides(owner));
+      if (presentation && world) profileOverrides = await reconcileProfileOverrides(world, profileOverrides, context.profileOverrides);
     },
     ...(presentation ? {meta: {cwd, ...(profile ? {agentPreset: profile.spec.id} : {})}} : {}),
     ...(presentation && profile ? {setupAgent: async (ctx, agent) => {
@@ -133,8 +138,8 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
         if (presentation) await mountNativeAttachments(ctx, {storage, scope: workspace, sessionId: scope.sessionId, transport: env.WORKSPACES.getByName(workspaceAddress(workspace)), ...(env.IMAGES ? {images: env.IMAGES} : {})});
       }
       if (profile) {
-        if (presentation) refreshSubagents = await mountNativeSubagents(ctx, storage, await (await controlFor(env, owner).nativeSubagentConfiguration(owner)).json() as SubagentLimits);
-        if (presentation) await mountNativeInteraction(ctx, env, storage, scope, owner);
+        if (presentation) refreshSubagents = await mountNativeSubagents(ctx, storage, context.subagents as unknown as SubagentLimits);
+        if (presentation) await mountNativeInteraction(ctx, env, storage, scope, owner, {models: context.models as EnvironmentModels, ...(context.permissionDefault === undefined ? {} : {permissionDefault: context.permissionDefault})});
         if (presentation) {await mountNativeComposition(ctx, [nativePresetDefinition(profile)], profile.spec.id); composition = ctx;}
         // Without preset realms the persona row's text is the root prefix; the root owns that prompt section.
         else await mountPlugins(ctx, profile.spec.plugins.filter(plugin => plugin.id !== 'persona'));

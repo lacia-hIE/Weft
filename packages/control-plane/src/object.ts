@@ -27,6 +27,7 @@ import { ConfigWriteQueue, D1AgentRevisions, D1SettingsDocuments, D1WorkspaceReg
 import { DurableSessionIndex } from './session-index.ts';
 import type { HarnessHomeFacts } from '../../native-environment/src/harness-home.ts';
 import { EnvironmentModelWorld } from '../../native-models/src/environment.ts';
+import { credentialRefFor, type EnvironmentModels } from '../../native-models/src/index.ts';
 import { ScriptedAdapter } from '../../harness-runtime/src/scripted-adapter.ts';
 import { EnvironmentDeepSeekFiles, EnvironmentUploadIndex } from '../../model-provider/src/files.ts';
 import type { BundleInfo } from '@deepseek-ai/dsh-plugin-manager/types';
@@ -49,6 +50,18 @@ export const SETTINGS_DOCUMENT_PATH = '/workspace/.dsh/profile.yml';
 const SETTINGS_DOCUMENT_ERROR_PATH = '/workspace/.dsh/profile.error.txt';
 /** Asks the environment's clients to open the configuration document. */
 export const SETTINGS_DOCUMENT_EVENT = 'weft/settings-document';
+
+/** What a Session world reads from its environment when it opens and before each turn. */
+export interface NativeSessionContext {
+  models: ReturnType<NativeSettings['modelSections']>;
+  /** Whether each credential reference the model settings name has a value. */
+  credentials: Record<string, boolean>;
+  harnessHome: HarnessHomeFacts;
+  loop: {maxParallelToolCalls: number};
+  subagents: Record<string, unknown>;
+  permissionDefault?: string;
+  profileOverrides: Record<string, Record<string, unknown>>;
+}
 import { NativeWorkspaces } from './native-workspaces.ts';
 import type { WorkspaceDO } from '../../workspace/src/object.ts';
 import type { SessionDO } from '../../../apps/worker/src/index.ts';
@@ -249,6 +262,32 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
     return String(value.selectedDefault ?? value.default);
   }
   async nativePresetDefault(scope: ControlScope): Promise<string> {return this.presetDefault(scope);}
+  /**
+   * Everything a Session world reads from its environment, in one round trip:
+   * a world opens and starts each turn with this instead of a call per setting.
+   * Credentials are reported as set or unset, never their values.
+   */
+  async nativeSessionContext(scope: ControlScope): Promise<Response> {
+    this.scope(scope);
+    await this.syncSettingsDocument(scope);
+    const settings = this.settings(scope);
+    const models = settings.modelSections();
+    const providers = models.piAi.providers !== null && typeof models.piAi.providers === 'object' ? Object.keys(models.piAi.providers) : [];
+    const refs = new Set(['deepseek-official', ...providers].flatMap(provider => credentialRefFor(models as EnvironmentModels, provider) ?? []));
+    const credentials: Record<string, boolean> = {};
+    for (const ref of refs) {
+      try { credentials[ref] = await settings.credentials.resolve(credentialRef(ref)) !== undefined; }
+      catch { credentials[ref] = false; }
+    }
+    const permission = settings.value(PERMISSION_NAMESPACE).defaultPreset;
+    const context: NativeSessionContext = {
+      models, credentials, harnessHome: await this.nativeHarnessHome(scope),
+      loop: settings.value(LOOP_NAMESPACE) as {maxParallelToolCalls: number}, subagents: settings.value(SUBAGENT_NAMESPACE),
+      ...(typeof permission === 'string' ? {permissionDefault: permission} : {}),
+      profileOverrides: settings.profileOverrides(),
+    };
+    return Response.json(context);
+  }
   /** The environment's configuration of official profile rows, by row id. */
   async nativeProfileOverrides(scope: ControlScope): Promise<Record<string, Record<string, unknown>>> {
     await this.syncSettingsDocument(scope);
@@ -265,9 +304,10 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
   async nativeSubagentConfiguration(scope: ControlScope): Promise<Response> {
     return Response.json(this.settings(scope).value(SUBAGENT_NAMESPACE));
   }
-  async nativeProfile(scope: ControlScope, preset: string, revision?: number): Promise<Response> {
+  /** A preset's revision; without a preset, the environment's default preset. */
+  async nativeProfile(scope: ControlScope, preset: string | undefined, revision?: number): Promise<Response> {
     this.scope(scope); this.ensureDefault(); this.ensureNativePresets();
-    const value = await this.agent(scope, preset, revision);
+    const value = await this.agent(scope, preset ?? this.presetDefault(scope), revision);
     return Response.json({value: value?.spec.disabled ? undefined : value});
   }
   async nativePresetIds(scope: ControlScope): Promise<string[]> {return (await this.state(scope)).agents.filter(row => !row.spec.disabled).map(row => row.spec.id);}
@@ -809,13 +849,25 @@ export class TenantDO extends DurableObject<TenantEnvironment> {
     this.tail = result.catch(() => undefined);
     return result;
   }
-  private async environmentRows(tenantId: string): Promise<EnvironmentRecord[]> {
-    const db = this.env.CONFIG_DB;
-    const now = new Date().toISOString();
-    const fallback: EnvironmentRecord = {id: "default", name: "我的 Harness", createdAt: now, updatedAt: now};
-    await db.prepare('INSERT INTO environments (tenant_id, environment_id, document) VALUES (?, ?, ?) ON CONFLICT DO NOTHING').bind(tenantId, 'default', JSON.stringify(fallback)).run();
-    const {results} = await db.prepare('SELECT document FROM environments WHERE tenant_id = ? ORDER BY environment_id').bind(tenantId).all<{document: string}>();
-    return results.map(row => JSON.parse(row.document) as EnvironmentRecord);
+  /**
+   * The tenant's environments, read from D1 once per activation: this object is
+   * the registry's only writer, so its copy stays current. Every request names
+   * an environment, so the registry must not cost a D1 round trip each time.
+   */
+  private registry: Promise<EnvironmentRecord[]> | undefined;
+  private environmentRows(tenantId: string): Promise<EnvironmentRecord[]> {
+    const load = async () => {
+      const db = this.env.CONFIG_DB;
+      const now = new Date().toISOString();
+      const fallback: EnvironmentRecord = {id: "default", name: "我的 Harness", createdAt: now, updatedAt: now};
+      await db.prepare('INSERT INTO environments (tenant_id, environment_id, document) VALUES (?, ?, ?) ON CONFLICT DO NOTHING').bind(tenantId, 'default', JSON.stringify(fallback)).run();
+      const {results} = await db.prepare('SELECT document FROM environments WHERE tenant_id = ? ORDER BY environment_id').bind(tenantId).all<{document: string}>();
+      return results.map(row => JSON.parse(row.document) as EnvironmentRecord);
+    };
+    const pending = this.registry ??= load();
+    // A failed read is not remembered; the next request reads again.
+    pending.catch(() => { if (this.registry === pending) this.registry = undefined; });
+    return pending.then(rows => structuredClone(rows));
   }
   async environments(tenantId: string): Promise<EnvironmentRecord[]> {
     this.scope(tenantId);
@@ -845,7 +897,11 @@ export class TenantDO extends DurableObject<TenantEnvironment> {
       const record: EnvironmentRecord = {id: environmentId, name: parsed.data.name, createdAt: now, updatedAt: now};
       const result = await this.env.CONFIG_DB.prepare('INSERT INTO environments (tenant_id, environment_id, document) VALUES (?, ?, ?) ON CONFLICT DO NOTHING')
         .bind(tenantId, record.id, JSON.stringify(record)).run();
-      if (result.meta.changes !== 1) return Response.json({ error: "Environment already exists" }, { status: 409 });
+      if (result.meta.changes !== 1) {
+        this.registry = undefined;
+        return Response.json({ error: "Environment already exists" }, { status: 409 });
+      }
+      this.registry = Promise.resolve([...rows, record].sort((left, right) => left.id.localeCompare(right.id)));
       return Response.json(record, { status: 201 });
     });
   }
