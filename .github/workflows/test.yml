@@ -1,7 +1,7 @@
 # Unit and browser suites, sharded across runners. Live model suites skip
-# without credentials. Each shard builds on its own: the build reuses the
-# cached upstream checkout and npm cache, which is faster than moving the
-# build outputs between jobs.
+# without credentials. One job builds; the shards download its outputs (the
+# workers in dist/ and the top-level .generated files the tests read) instead
+# of each building again.
 name: Test
 
 # `ci` is the branch for candidate commits: it runs the suites without deploying
@@ -17,8 +17,33 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Cache upstream checkout
+        uses: actions/cache@v4
+        with:
+          path: deepseek-harness
+          key: upstream-${{ hashFiles('upstream.lock.json') }}
+      - run: npm ci
+      - run: npm run build
+      - name: Pack test inputs
+        run: tar -czf build.tgz dist $(find .generated -maxdepth 1 -type f)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build
+          path: build.tgz
+          retention-days: 1
+
   unit:
     name: Unit ${{ matrix.shard }}/4
+    needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -31,18 +56,17 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - name: Cache upstream checkout
-        uses: actions/cache@v4
-        with:
-          path: deepseek-harness
-          key: upstream-${{ hashFiles('upstream.lock.json') }}
       - run: npm ci
-      - run: npm run build
+      - uses: actions/download-artifact@v4
+        with:
+          name: build
+      - run: tar -xzf build.tgz
       - name: Unit tests
         run: npx tsx --test --test-concurrency=2 --test-timeout=300000 --test-shard=${{ matrix.shard }}/4 tests/*.test.ts
 
   browser:
     name: Browser ${{ matrix.shard }}/2
+    needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -55,14 +79,12 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - name: Cache upstream checkout
-        uses: actions/cache@v4
-        with:
-          path: deepseek-harness
-          key: upstream-${{ hashFiles('upstream.lock.json') }}
       - run: npm ci
       - run: npx playwright install --with-deps chromium
-      - run: npm run build
+      - uses: actions/download-artifact@v4
+        with:
+          name: build
+      - run: tar -xzf build.tgz
       - name: Browser tests
         run: npx playwright test --shard=${{ matrix.shard }}/2
       - name: Keep failure traces
