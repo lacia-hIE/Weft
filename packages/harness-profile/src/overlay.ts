@@ -78,6 +78,8 @@ export const MOUNTED_BY_WEFT: Record<string, string> = {
   'cordis-host-runner': 'native-plugins', 'cordis-inspect-providers': 'native-plugins', 'plugin-inventory': 'native-composition',
   'skill': 'native interaction', 'settings-controller': 'environment settings', 'workspace-controller': 'native workspaces',
   'session-log-download': 'session reader', 'tool-working-directory': 'workspace provider',
+  // Its git snapshots run in the workspace container, so it is mounted only while the environment uses the container shell.
+  'workspace-changes': 'workspace changes (container shell)',
   'authorization': 'native-plugins', 'plugin-package-inventory-deepseek': 'native-composition',
   'cordis-client-runner': 'native-plugins (its browser module is in the Boot Graph)',
 };
@@ -106,7 +108,6 @@ export const NOT_APPLICABLE: Record<string, string> = {
 export const EXTERNAL: Record<string, string> = {
   'office-to-pdf': 'LibreOffice Container', 'deepseek-account': 'platform OAuth callback', 'llm-deepseek-account': 'platform OAuth callback',
   'account-controller': 'platform OAuth callback',
-  'workspace-changes': 'container-shell git snapshots',
 };
 
 /** Rows whose Weft provider does not exist yet. */

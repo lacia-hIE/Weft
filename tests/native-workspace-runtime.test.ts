@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { Response, type V4FetchHandler } from 'miniflare';
 import type { SessionFollowFrame } from '@deepseek-ai/dsh-api-session-controller/types';
 import type { SettingsDescribeValue } from '@deepseek-ai/dsh-settings/types';
-import { createRuntime } from './helpers/miniflare.ts';
+import { createRuntime, tenantId, url } from './helpers/miniflare.ts';
 import { nativeClient } from './helpers/native.ts';
 
 /** The model calls each listed tool of the latest turn once; only model HTTP is scripted. */
@@ -57,9 +57,18 @@ test('the workspace runtime setting chooses where commands run and file search n
       }
     };
     await turn('RUNTIME_ONE');
+    const deliverable = (route: string) => runtime.dispatchFetch(url('alpha', `/v1/tenants/${tenantId('alpha')}/environments/default/native/api/${route}`));
+    // Change summaries follow the container shell: the worker shell's Session serves no change routes.
+    assert.equal(await (await deliverable('changes.summary?sessionId=runtime&seq=1')).text(), 'Native Fetch route not found');
+    assert.deepEqual(await (await deliverable('present.host')).json(), {name: 'Cloudflare', available: false, fileManager: null});
     // A turn reads the environment's settings before it starts.
     await api.call('settings/update', {ns: 'workspace-runtime', patch: {shell: 'container'}, expectedRevision: row.revision});
     await turn('RUNTIME_TWO');
+    // With the container shell the official change recorder and its routes are mounted; this deployment has no container to snapshot in.
+    const summary = await deliverable('changes.summary?sessionId=runtime&seq=1');
+    assert.equal(summary.status, 404);
+    assert.equal(await summary.text(), 'Change summary unavailable.');
+    assert.equal((await deliverable('changes.open?sessionId=runtime&seq=1&index=0')).status, 409);
     await follow.close();
     assert.equal(results.length, 3, results.join('\n'));
     assert.match(results[0]!, /worker-ran/);

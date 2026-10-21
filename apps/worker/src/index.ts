@@ -25,6 +25,7 @@ import {openPermissionWorld} from '../../../packages/native-environment/src/perm
 import {readScheduleCatalog, drainDueReminders} from '../../../packages/native-schedule/src/index.ts';
 import questionRemote from '../../../.generated/official-remotes/packages/interaction/user-questions/typert.remote-client.js';
 import {FILE_UPLOAD_PATH} from '@weft/upstream/packages/client/file-upload/src/protocol.ts';
+import {CHANGED_FILES_PATH, CHANGES_DIFF_PATH} from '@weft/upstream/packages/client/ui-deliverables/src/changes.ts';
 import { workspaceIdSchema, workspaceAddress, workspacePath } from '../../../packages/workspace/src/protocol.ts';
 export { WorkspaceDO, TenantDO, EnvironmentDO };
 // The shell Dynamic Worker reaches its own WorkspaceDO through this entrypoint (ctx.exports).
@@ -741,12 +742,15 @@ export class SessionDO extends DurableObject<Env> {
 
   /** Internal binding transport; external requests are authenticated by the entry Worker. */
   override async fetch(request: Request): Promise<Response> {
-    if (new URL(request.url).pathname === FILE_UPLOAD_PATH) {
+    const pathname = new URL(request.url).pathname;
+    if (pathname === FILE_UPLOAD_PATH || pathname === CHANGED_FILES_PATH || pathname === CHANGES_DIFF_PATH) {
       const scope = this.assertScope(scopeSchema.parse(JSON.parse(request.headers.get('x-weft-session-scope') ?? 'null')));
-      if (new URL(request.url).searchParams.get('sessionId') !== scope.sessionId) throw new RemoteError('gateway/bad-request', 'Upload session scope mismatch', {});
+      if (new URL(request.url).searchParams.get('sessionId') !== scope.sessionId) throw new RemoteError('gateway/bad-request', 'Session route scope mismatch', {});
+      // A change summary lives in the running Session's recorder; a Session that is not running has none to serve.
+      if (pathname !== FILE_UPLOAD_PATH && !this.nativeHost) return new Response('Change summary unavailable.', {status: 404, headers: {'cache-control': 'no-store'}});
       const host = await this.getNativeHost(scope);
       const response = await host.ctx.weftConnectionRoutes.dispatch(request);
-      await this.ctx.storage.sync();
+      if (pathname === FILE_UPLOAD_PATH) await this.ctx.storage.sync();
       return response;
     }
     const raw: unknown = await request.json();

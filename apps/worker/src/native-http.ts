@@ -24,6 +24,8 @@ import permissionRemote from '../../../.generated/official-remotes/packages/inte
 import {remoteAgentId} from '../../../packages/harness-runtime/src/remote-dispatch.ts';
 import questionRemote from '../../../.generated/official-remotes/packages/interaction/user-questions/typert.remote-client.js';
 import {FILE_UPLOAD_PATH} from '@weft/upstream/packages/client/file-upload/src/protocol.ts';
+import {CHANGED_FILES_PATH, CHANGES_DIFF_PATH, CHANGES_OPEN_PATH} from '@weft/upstream/packages/client/ui-deliverables/src/changes.ts';
+import {PRESENT_HOST_PATH, PRESENT_OPEN_PATH} from '@weft/upstream/packages/client/ui-deliverables/src/presented.ts';
 import type { NativePluginEndpoint } from '../../../packages/native-plugins/src/host.ts';
 import { MODEL_NAMESPACE } from '../../../packages/control-plane/src/native-settings.ts';
 import {mapConcurrent} from '../../../packages/native-query/src/concurrent.ts';
@@ -83,6 +85,22 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
       const failure = remoteErrorOf(error) ?? {code: 'gateway/internal', message: 'File upload failed', details: {}};
       return Response.json({ok: false, error: {code: failure.code, message: failure.message, details: failure.details}}, {headers: {'cache-control': 'no-store'}});
     }
+  }
+  const deliverables = /^\/v1\/tenants\/([^/]+)\/native(\/api\/(?:changes\.(?:summary|diff|open)|present\.(?:host|open)))$/.exec(pathname);
+  if (deliverables) {
+    if (deliverables[1] !== principal.tenantId) throw new HttpError(403, 'Tenant access denied');
+    const route = deliverables[2]!;
+    const headers = {'cache-control': 'no-store'};
+    // A Weft deployment has no Host desktop: the deliverables client hides native opens, as on a headless Host.
+    if (route === PRESENT_HOST_PATH) return request.method === 'GET' ? Response.json({name: 'Cloudflare', available: false, fileManager: null}, {headers}) : new Response(null, {status: 405, headers: {allow: 'GET'}});
+    if (route === PRESENT_OPEN_PATH || route === CHANGES_OPEN_PATH) return new Response('Host desktop unavailable.', {status: 409, headers});
+    if (request.method !== 'GET') return new Response(null, {status: 405, headers: {allow: 'GET'}});
+    const url = new URL(request.url);
+    const parsed = scopeSchema.safeParse({tenantId: principal.tenantId, sessionId: url.searchParams.get('sessionId'), ...(environmentId ? {environmentId} : {})});
+    if (!parsed.success) return new Response('valid sessionId is required', {status: 400, headers});
+    // Summaries and comparisons are served by the Session's live change recorder.
+    url.pathname = route === CHANGED_FILES_PATH ? CHANGED_FILES_PATH : CHANGES_DIFF_PATH;
+    return env.SESSIONS.getByName(sessionAddress(parsed.data)).fetch(new Request(url, {headers: {'x-weft-session-scope': JSON.stringify(parsed.data)}, signal: request.signal}));
   }
   const observerCancel = /^\/v1\/tenants\/([^/]+)\/native\/file-observers\/cancel$/.exec(pathname);
   if (observerCancel) {

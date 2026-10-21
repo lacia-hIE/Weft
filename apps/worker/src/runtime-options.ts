@@ -36,6 +36,7 @@ import {ComputerFileReferences} from '../../../packages/native-files/src/referen
 import {mountWorkspaceShell} from '../../../packages/workspace/src/subprocess.ts';
 import {WorkerPtcRuntime} from '../../../packages/native-ptc/src/index.ts';
 import {reconcileProfileOverrides} from '../../../packages/native-profile/src/loader.ts';
+import {mountWorkspaceChanges} from '../../../packages/workspace/src/changes.ts';
 import {forwardNativeNotifications, mountNativeInteraction} from './native-interaction.ts';
 import {HarnessHome} from '../../../packages/native-environment/src/harness-home.ts';
 
@@ -74,6 +75,7 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
   let activeAgent: Agent | undefined;
   let composition: Context | undefined;
   let refreshSubagents: ((limits: SubagentLimits) => void) | undefined;
+  let reconcileChanges: (() => Promise<void>) | undefined;
   const options: RuntimeOptions = {
     sessionId: scope.sessionId,
     persona: profile ? `${presentation ? profile.spec.persona : rootPersona(profile)}\n${profile.spec.allowClientPlugins ? presentation ? NATIVE_PLUGIN_GUIDE : CLIENT_PLUGIN_GUIDE : ''}` : persona,
@@ -103,6 +105,7 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
       if (refreshSubagents) refreshSubagents(context.subagents as unknown as SubagentLimits);
       // Settings edits to official profile rows reach a live Session before its next turn.
       if (presentation && world) profileOverrides = await reconcileProfileOverrides(world, profileOverrides, context.profileOverrides);
+      await reconcileChanges?.();
     },
     ...(presentation ? {meta: {cwd, ...(profile ? {agentPreset: profile.spec.id} : {})}} : {}),
     ...(presentation && profile ? {setupAgent: async (ctx, agent) => {
@@ -140,6 +143,11 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
           }, kill: id => stub.killExec(workspace, id)}, cwd);
         }
         if (presentation) await mountNativeAttachments(ctx, {storage, scope: workspace, sessionId: scope.sessionId, transport: env.WORKSPACES.getByName(workspaceAddress(workspace)), ...(env.IMAGES ? {images: env.IMAGES} : {})});
+        // Change summaries come from git snapshots in the workspace container, so they follow the environment's shell.
+        if (presentation) {
+          reconcileChanges = mountWorkspaceChanges(ctx, () => context.workspaceRuntime.shell === 'container');
+          await reconcileChanges();
+        }
       }
       if (profile) {
         if (presentation) refreshSubagents = await mountNativeSubagents(ctx, storage, context.subagents as unknown as SubagentLimits);
