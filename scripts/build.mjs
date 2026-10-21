@@ -11,6 +11,7 @@ import {nativeWebPlatform} from './native-web-platform.mjs';
 import {nativeShellPlatform} from './native-shell-platform.mjs';
 import {nativeMarketPlatform} from './native-market-platform.mjs';
 import {nativeHarnessHomePlatform} from './native-harness-home-platform.mjs';
+import {nativeWorkflowPlatform} from './native-workflow-platform.mjs';
 import {officialProfilePlugin} from './official-profile.mjs';
 
 const officialModules = await officialProfilePlugin();
@@ -154,14 +155,14 @@ const result = await build({
   target: 'es2024',
   external: ['cloudflare:workers', 'node:*'],
   tsconfig: '.generated/upstream.source.tsconfig.json',
-  plugins: [staticAttribution, providerFetch, nativeCordisPlatform, nativeCompositionPlatform, nativeAttachmentsPlatform, nativeQueryPlatform, nativeWebPlatform, nativeShellPlatform, nativeMarketPlatform, nativeHarnessHomePlatform, officialModules],
+  plugins: [staticAttribution, providerFetch, nativeCordisPlatform, nativeCompositionPlatform, nativeAttachmentsPlatform, nativeQueryPlatform, nativeWebPlatform, nativeShellPlatform, nativeMarketPlatform, nativeHarnessHomePlatform, nativeWorkflowPlatform([staticAttribution]), officialModules],
   define: {WEFT_VALIDATION_BUILD: 'false'},
   minifySyntax: true,
   sourcemap: true,
   metafile: true,
 });
 // Validation-only bundle: scripted adapters and short deadlines cannot be enabled in production.
-await build({entryPoints: {'test-worker': 'apps/worker/src/index.ts', 'images-worker': 'tests/fixtures/images-worker.ts', 'native-query-worker': 'tests/fixtures/native-query-worker.ts', 'contracts-worker': 'tests/fixtures/contracts-worker.ts', 'dynamic-worker': 'tests/fixtures/dynamic-worker.ts', 'composition-worker': 'tests/fixtures/composition-worker.ts', 'preset-worker': 'tests/fixtures/preset-worker.ts'}, outdir: 'dist', bundle: true, format: 'esm', platform: 'browser', target: 'es2024', external: ['cloudflare:workers', 'node:*'], tsconfig: '.generated/upstream.source.tsconfig.json', plugins: [staticAttribution, providerFetch, nativeCordisPlatform, nativeCompositionPlatform, nativeAttachmentsPlatform, nativeQueryPlatform, nativeWebPlatform, nativeShellPlatform, nativeMarketPlatform, nativeHarnessHomePlatform, officialModules], define: {WEFT_VALIDATION_BUILD: 'true'}});
+await build({entryPoints: {'test-worker': 'apps/worker/src/index.ts', 'images-worker': 'tests/fixtures/images-worker.ts', 'native-query-worker': 'tests/fixtures/native-query-worker.ts', 'contracts-worker': 'tests/fixtures/contracts-worker.ts', 'dynamic-worker': 'tests/fixtures/dynamic-worker.ts', 'composition-worker': 'tests/fixtures/composition-worker.ts', 'preset-worker': 'tests/fixtures/preset-worker.ts'}, outdir: 'dist', bundle: true, format: 'esm', platform: 'browser', target: 'es2024', external: ['cloudflare:workers', 'node:*'], tsconfig: '.generated/upstream.source.tsconfig.json', plugins: [staticAttribution, providerFetch, nativeCordisPlatform, nativeCompositionPlatform, nativeAttachmentsPlatform, nativeQueryPlatform, nativeWebPlatform, nativeShellPlatform, nativeMarketPlatform, nativeHarnessHomePlatform, nativeWorkflowPlatform([staticAttribution]), officialModules], define: {WEFT_VALIDATION_BUILD: 'true'}});
 if (Object.entries(result.metafile.outputs['dist/worker.js'].inputs).some(([path, input]) => input.bytesInOutput > 0 && path.endsWith('/scripted-adapter.ts'))) throw new Error('Validation model adapter leaked into production');
 const forbiddenWorkspaceDependencies = ['just-bash', 'guarded-fetch', 'sprintf-js'];
 const shippedInputs = Object.entries(result.metafile.outputs['dist/worker.js'].inputs)

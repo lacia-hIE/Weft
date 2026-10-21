@@ -29,6 +29,12 @@ export const nativeShellPlatform = {
       }
       return {contents: source, loader: 'ts', resolveDir: resolve(path, '..')};
     });
+    builder.onLoad({filter: /packages\/terminal\/terminal-bash\/src\/session\.ts$/}, async ({path}) => {
+      const source = (await import('node:fs')).readFileSync(path, 'utf8');
+      const before = "const requireHeadless = createLazyRequire<typeof import('@xterm/headless')>('@xterm/headless', import.meta.url)";
+      if (!source.includes(before)) throw new Error('Upstream terminal-bash emulator loading changed; review the workerd bundling');
+      return {contents: source.replace(before, "import * as XtermHeadless from '@xterm/headless'\nconst requireHeadless = () => XtermHeadless"), loader: 'ts', resolveDir: resolve(path, '..')};
+    });
     builder.onLoad({filter: /.*/, namespace: 'weft-shell-stub'}, () => ({
       contents: "const unavailable = () => { throw new Error('just-bash runs only inside the shell Dynamic Worker'); };\nexport const Bash = class { constructor() { unavailable(); } };\nexport const defineCommand = unavailable;\n",
       loader: 'js',

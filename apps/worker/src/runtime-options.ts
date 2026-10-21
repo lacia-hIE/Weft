@@ -34,6 +34,7 @@ import {mountNativeSubagents, type SubagentLimits} from '../../../packages/nativ
 import SessionFileReferences from '@weft/upstream/packages/api/session-controller/src/file-references.ts';
 import {ComputerFileReferences} from '../../../packages/native-files/src/references.ts';
 import {mountWorkspaceShell} from '../../../packages/workspace/src/subprocess.ts';
+import {WorkerPtcRuntime} from '../../../packages/native-ptc/src/index.ts';
 import {forwardNativeNotifications, mountNativeInteraction} from './native-interaction.ts';
 import {HarnessHome} from '../../../packages/native-environment/src/harness-home.ts';
 
@@ -106,6 +107,8 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
     mountTools: async ctx => {
       registerIdentityTool(ctx, scope.tenantId);
       if (presentation) forwardNativeNotifications(ctx, env, owner, () => activeAgent !== undefined);
+      // run_code programs run in per-run Dynamic Workers; PTC presentation waits for this service.
+      if (presentation) await ctx.plugin(WorkerPtcRuntime, {...(env.LOADER ? {loader: env.LOADER} : {}), cwd});
       if (presentation) ctx.on('agent/created', async ({agent}) => {
         const header = agent.session.header;
         if (header.origin !== 'subagent') return;

@@ -16,9 +16,8 @@ test('official preset roster and declaration views reflect real environment prof
   try {
     const roster = await api.call<{presets: {id: string; isDefault: boolean; broken?: string}[]}>('agentPresets/list', {});
     assert.deepEqual(roster.presets.map(row => row.id), ['standard', 'ptc', 'minimal', 'cordis'], 'the official presets in their official order');
-    // Every official row of standard and cordis runs; ptc and minimal wait for their execution backends.
-    assert.deepEqual(roster.presets.filter(row => row.broken !== undefined).map(row => row.id), ['ptc', 'minimal'], JSON.stringify(roster));
-    assert.ok(roster.presets.filter(row => row.broken !== undefined).every(row => /^Needs .* does not provide yet$/.test(row.broken!)));
+    // Every official preset composes: PTC, workflow and the persistent shell run on Computer backends.
+    assert.deepEqual(roster.presets.filter(row => row.broken !== undefined).map(row => row.id), [], JSON.stringify(roster));
     assert.equal(roster.presets.find(row => row.isDefault)?.id, 'standard');
     const document = await api.call<{agentPreset: string; content: string}>('agentPresets/read', {agentPreset: 'cordis'});
     assert.equal(document.agentPreset, 'cordis');

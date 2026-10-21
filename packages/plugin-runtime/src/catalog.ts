@@ -22,6 +22,12 @@ import * as ToolSchedule from '@deepseek-ai/dsh-tool-schedule';
 import * as ToolWeb from '@deepseek-ai/dsh-tool-web';
 import * as ToolBash from '@deepseek-ai/dsh-tool-bash';
 import * as ToolJobs from '@deepseek-ai/dsh-tool-jobs';
+import * as ToolPresentation from '@deepseek-ai/dsh-agent-tool-presentation';
+import WorkflowPtc from '@deepseek-ai/dsh-workflow-ptc';
+import * as ToolWorkflow from '@deepseek-ai/dsh-tool-workflow';
+import Terminals from '@deepseek-ai/dsh-terminal';
+import * as TerminalBash from '@deepseek-ai/dsh-terminal-bash';
+import * as PersistentBash from '@deepseek-ai/dsh-tool-bash-persistent';
 import z from '@deepseek-ai/schemastery';
 
 /** The official persona schema over a stored selection; `prefix` is required. */
@@ -67,6 +73,7 @@ const ListAgentsBundle = {...ListAgents, Config: z.object({})};
 const PlanModeConfig = z.object({section: z.string().required()});
 const CommandGoalBundle = {...CommandGoal, Config: z.object({})};
 const ToolScheduleBundle = {...ToolSchedule, Config: z.object({})};
+const TerminalsConfig = z.object({});
 
 // Only the platform adapter lives here. Schemas, tools, projections and lifecycle
 // come from the same pinned upstream tree as the AgentLoop and browser renderer.
@@ -126,6 +133,48 @@ const entries: Entry[] = [
     workspace: true, schema: ToolJobs.Config, defaults: {},
     validate: config => {ToolJobs.Config(config);},
     mount: async (ctx, config) => {await ctx.plugin(ToolJobs, ToolJobs.Config(config));},
+  },
+  {
+    id: 'tool-presentation', package: '@deepseek-ai/dsh-agent-tool-presentation', module: ToolPresentation, title: '工具呈现方式',
+    description: '官方工具呈现选择；ptc 模式下模型只见 run_code 与生成的 SDK，程序在每次运行独立的 Dynamic Worker 中执行。',
+    workspace: false, schema: ToolPresentation.Config, defaults: {mode: 'native'},
+    validate: config => {ToolPresentation.Config(config as unknown as ToolPresentation.Config);},
+    mount: async (ctx, config) => {await ctx.plugin(ToolPresentation, ToolPresentation.Config(config as unknown as ToolPresentation.Config));},
+  },
+  {
+    id: 'workflow-ptc', module: WorkflowPtc, title: 'Workflow 引擎',
+    description: '官方 workflow 引擎；脚本与官方 guest 在会话的 Dynamic Worker PTC 运行时中执行，子 Agent 由会话派生。',
+    workspace: false, schema: WorkflowPtc.Config, defaults: {provider: 'spawn'},
+    validate: config => {WorkflowPtc.Config(config);},
+    mount: async (ctx, config) => {await ctx.plugin(WorkflowPtc, WorkflowPtc.Config(config));},
+  },
+  {
+    id: 'tool-workflow', module: ToolWorkflow, title: 'Workflow 工具',
+    description: '官方 workflow 工具；Agent 编写并运行编排多个子 Agent 的工作流脚本。',
+    workspace: false, schema: ToolWorkflow.Config, defaults: {},
+    validate: config => {ToolWorkflow.Config(config as unknown as ToolWorkflow.Config);},
+    mount: async (ctx, config) => {await ctx.plugin(ToolWorkflow, ToolWorkflow.Config(config as unknown as ToolWorkflow.Config));},
+  },
+  {
+    id: 'pty', package: '@deepseek-ai/dsh-terminal', module: Terminals, title: '持久终端',
+    description: '官方持久终端服务；终端会话属于 Agent，命令在 Computer shell 中运行。',
+    workspace: true, schema: TerminalsConfig, defaults: {},
+    validate: config => {TerminalsConfig(config);},
+    mount: async ctx => {await ctx.plugin(Terminals);},
+  },
+  {
+    id: 'terminal-bash', package: '@deepseek-ai/dsh-terminal-bash', module: TerminalBash, title: 'Bash 终端后端',
+    description: '官方 bash 终端后端；每条命令在新的 just-bash 中运行，变量、别名、函数与工作目录在命令之间保持。',
+    workspace: true, schema: TerminalBash.Config, defaults: {},
+    validate: config => {TerminalBash.Config(config as unknown as TerminalBash.Config);},
+    mount: async (ctx, config) => {await ctx.plugin(TerminalBash, TerminalBash.Config(config as unknown as TerminalBash.Config));},
+  },
+  {
+    id: 'persistent-bash', package: '@deepseek-ai/dsh-tool-bash-persistent', module: PersistentBash, title: '持久 Bash',
+    description: '官方持久 bash 工具；Agent 在同一个终端会话中连续执行命令。',
+    workspace: true, schema: PersistentBash.Config, defaults: {},
+    validate: config => {PersistentBash.Config(config as unknown as PersistentBash.Config);},
+    mount: async (ctx, config) => {await ctx.plugin(PersistentBash, PersistentBash.Config(config as unknown as PersistentBash.Config));},
   },
   {
     id: 'tool-web', module: ToolWeb, title: '网页搜索与抓取',

@@ -77,7 +77,7 @@ export const MOUNTED_BY_WEFT: Record<string, string> = {
 export const PLATFORM: Record<string, string> = {
   'session-persistence-jsonl': 'SessionDO SQLite persistence',
   'credentials': 'EnvironmentDO credentials', 'settings': 'EnvironmentDO settings', 'config-editor': 'EnvironmentDO settings (no document)',
-  'storage-json': 'Durable Object storage',
+  'storage-json': 'Durable Object storage', 'ptc-runtime': 'per-run Dynamic Worker PTC runtime',
   'subprocess': 'Computer execution backends', 'sandbox': 'Computer file observer policy', 'bash-sandbox': 'Computer file observer policy',
   'fs-sandbox': 'Computer workspace filesystem', 'directory-picker': 'native workspaces',
   'plugin-manager': 'native plugin management', 'hmr': 'immutable Worker deployment', 'typert-loader': 'generated Typert registry',
@@ -96,7 +96,7 @@ export const NOT_APPLICABLE: Record<string, string> = {
 /** Rows waiting for a Cloudflare service (see docs/architecture/external-services.md). */
 export const EXTERNAL: Record<string, string> = {
   'office-to-pdf': 'LibreOffice Container', 'deepseek-account': 'platform OAuth callback', 'llm-deepseek-account': 'platform OAuth callback',
-  'account-controller': 'platform OAuth callback', 'ptc-runtime': 'worker-javascript execution backend',
+  'account-controller': 'platform OAuth callback',
   'workspace-changes': 'container-shell git snapshots',
 };
 

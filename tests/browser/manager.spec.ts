@@ -27,7 +27,7 @@ test('the official Plugins page renders actual profile entries, persists preset 
   expect((await rpc('pluginInventory/list', {})).entries.find((row: {entryId: string}) => row.entryId === 'preset-cordis')).toMatchObject({enabled: false, fiberPhase: null});
   await page.getByRole('button', {name: 'New session', exact: true}).first().click();
   await page.getByRole('button', {name: 'Standard mode', exact: true}).click();
-  await expect(page.locator('[role^="menuitem"]').filter({hasText: 'Standard'})).toBeVisible();
+  await expect(page.getByRole('menuitem', {name: /^Standard mode/})).toBeVisible();
   await expect(page.locator('[role^="menuitem"]').filter({hasText: 'Creator'})).toHaveCount(0);
   await page.keyboard.press('Escape');
   await page.reload();

@@ -32,6 +32,8 @@ export async function mountNativeComposition(ctx: Context, definitions: readonly
 const presetGroups = [
   {id: 'planning', members: ['plan-mode'], isolate: {planMode: true}},
   {id: 'compaction', members: ['compaction-basic', 'command-compact', 'tool-result-pruner'], isolate: {compaction: true, toolResultPruner: true}},
+  {id: 'persistent-shell', members: ['pty', 'terminal-bash', 'persistent-bash'], isolate: {terminals: true}},
+  {id: 'delegation', members: ['tool-subagent-control', 'tool-subagent-list-agents', 'tool-subagent', 'tool-subagent-fork', 'workflow-ptc', 'tool-workflow'], isolate: {workflowEngine: true}},
 ] as const;
 
 export function nativePresetDefinition(profile: {spec: {id: string; name: string; plugins: PluginSelection[]; allowClientPlugins?: boolean}}): PresetDefinition {

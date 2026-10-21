@@ -8,7 +8,7 @@
 
 环境持久化 Standard 和 Creator（原版 ID `cordis`），并通过原版设置 schema 保存新任务默认值。列表与声明查看在真实组合上下文和环境文件系统上运行，不启动 Agent、不取得会话写入权。声明查看得到原版 registry 生成的 YAML。
 
-预设清单就是官方 Web 的四个预设：标准模式（`standard`，默认）、PTC 模式（`ptc`）、极简模式（`minimal`）、创造模式（`cordis`），按官方 `order` 排列。`packages/harness-profile/src/presets.ts` 在模块加载时读取官方预设 patch，每个官方条目以同 id 的预构建插件（`cordis:<id>`）和官方配置运行；名称不写入，由客户端按界面语言显示官方名称与描述。不能直接运行的条目分两张表：`PRESET_PROVIDED`（文件工具、Skills 加载、插件编写由 Weft 的工作区与原生插件提供）和 `PRESET_PENDING`（ripgrep 文件搜索、PTC 运行时、持久 shell 等待 Computer 执行后端）。待提供的条目在标准与创造模式中是可选工具，暂不挂载；PTC 与极简模式离不开它们，因此注册表把这两个预设标为不可用，并写明缺少的能力。人设由预设内的官方 `persona` 条目提供（`{{model}}` 由系统提示渲染）。
+预设清单就是官方 Web 的四个预设：标准模式（`standard`，默认）、PTC 模式（`ptc`）、极简模式（`minimal`）、创造模式（`cordis`），按官方 `order` 排列。`packages/harness-profile/src/presets.ts` 在模块加载时读取官方预设 patch，每个官方条目以同 id 的预构建插件（`cordis:<id>`）和官方配置运行；名称不写入，由客户端按界面语言显示官方名称与描述。不能直接运行的条目分两张表：`PRESET_PROVIDED`（文件工具、Skills 加载、插件编写由 Weft 的工作区与原生插件提供）和 `PRESET_PENDING`（ripgrep 文件搜索等待 `container-shell` 执行后端）。待提供的条目在标准与创造模式中是可选工具，暂不挂载；预设离不开的待提供条目会让注册表把该预设标为不可用，并写明缺少的能力，目前四个预设都可用。极简模式的持久 shell 运行在工作区的行模式终端上（见 [原生运行时](../architecture/native-runtime.md)）。PTC 模式的 `tool-presentation` 由会话的 Dynamic Worker PTC 运行时支持（见 [原生运行时](../architecture/native-runtime.md)），`tests/native-ptc.test.ts` 用脚本模型验证类型擦除、日志、工具绑定与失败分类；标准与创造模式的 workflow 工具也运行在这个运行时上（`tests/native-workflow.test.ts`）。人设由预设内的官方 `persona` 条目提供（`{{model}}` 由系统提示渲染）。
 
 Session 在原版 Agent setup 阶段绑定预设作用域，首轮前选择通过 registry 写入原生事件。创建 header 不重写，当前选择以 projection 为准。预设版本、persona 和插件编写能力冻结在 Session 快照，环境发布新版本不改变已经开始的会话。
 

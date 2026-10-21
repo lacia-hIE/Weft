@@ -13,6 +13,7 @@ import WebRuntime from '@deepseek-ai/dsh-web';
 import {mountWorkspaceShell} from '../../workspace/src/subprocess.ts';
 import SubagentModelSelection from '@deepseek-ai/dsh-tool-subagent/model-selection-settings';
 import remote from '../../../.generated/official-remotes/packages/preset/agent-preset-registry/typert.remote-client.js';
+import {WorkerPtcRuntime} from '../../native-ptc/src/index.ts';
 import {mountNativeComposition, nativePresetDefinition, presetTitle} from './index.ts';
 import type {AgentRevision} from '../../control-plane/src/contracts.ts';
 import {RemoteError} from '@deepseek-ai/dsh-typert-protocol';
@@ -51,6 +52,8 @@ export async function readNativePresets(profiles: AgentRevision[], defaultId: st
     const inspectOnly = () => Promise.reject(new Error('Preset inspection does not execute commands'));
     await mountWorkspaceShell(ctx, {exec: inspectOnly, kill: inspectOnly}, '/workspace');
     await mountNativeSubagentProviders(ctx, {maxDepth: 1, maxActiveSubagents: 8});
+    // Without a loader the runtime is present for PTC and workflow rows but runs nothing.
+    await ctx.plugin(WorkerPtcRuntime, {cwd: '/workspace'});
     const registry = await mountNativeComposition(ctx, profiles.map(nativePresetDefinition), defaultId, profiles.filter(profile => profile.spec.disabled).map(profile => profile.spec.id));
     let value: unknown;
     if (endpoint === 'agentPresets/list') value = await registry.remoteExportList();

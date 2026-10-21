@@ -24,16 +24,10 @@ export const PRESET_PROVIDED: Record<string, string> = {
  */
 export const PRESET_PENDING: Record<string, string> = {
   'tool-fs-search': 'ripgrep on the container-shell execution backend',
-  'workflow-ptc': 'the PTC runtime on the worker-javascript execution backend',
-  'tool-workflow': 'the PTC runtime on the worker-javascript execution backend',
-  'tool-presentation': 'the PTC runtime on the worker-javascript execution backend',
-  'pty': 'a persistent shell on the Computer execution backends',
-  'terminal-bash': 'a persistent shell on the Computer execution backends',
-  'persistent-bash': 'a persistent shell on the Computer execution backends',
 };
 
 /** Pending rows a preset cannot do without. */
-const ESSENTIAL_PENDING = new Set(['tool-presentation', 'pty', 'terminal-bash', 'persistent-bash']);
+const ESSENTIAL_PENDING = new Set<string>();
 
 /**
  * Deployment facts for the official rows' `disabled` expressions; workerd
