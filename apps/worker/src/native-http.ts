@@ -40,6 +40,9 @@ const payloadSchema = z.object({args: z.unknown()}).strict();
 type Endpoint = keyof typeof sessionRemote.methods;
 
 /** Official Connection envelopes and generated codecs at the CF host boundary. */
+/** Session Durable Objects one environment-wide read asks at once; each answer is a cross-object round trip. */
+const SESSION_FAN_OUT = 16;
+
 export async function handleNativeRequest(request: Request, env: Env, principal: Principal, environmentId?: string): Promise<Response | undefined> {
   const pathname = new URL(request.url).pathname;
   const upload = /^\/v1\/tenants\/([^/]+)\/native\/api\/session\/uploadFileBinary$/.exec(pathname);
@@ -198,7 +201,7 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
       const method = scheduleRemote.methods[endpoint];
       method.input({strict: true}).create().parse(payload.args);
       const records = await control.sessionIndex(owner);
-      const groups = await mapConcurrent(records, async record => {const target = session(record.id); return target.stub.nativeScheduleCatalog(target.scope);}, request.signal);
+      const groups = await mapConcurrent(records, async record => {const target = session(record.id); return target.stub.nativeScheduleCatalog(target.scope);}, request.signal, SESSION_FAN_OUT);
       const value = method.result.create().parse(groups.flat().sort((a, b) => {
         const left = a as {scheduledAt: string; id: string}, right = b as {scheduledAt: string; id: string};
         return left.scheduledAt.localeCompare(right.scheduledAt) || left.id.localeCompare(right.id);
@@ -345,7 +348,7 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
         const groups = await mapConcurrent(records, async record => {
           const target = session(record.id);
           return sessionRemote.methods[endpoint].result.create().parse(await (await target.stub.nativeSessionSummaries(target.scope)).json()).items;
-        }, request.signal);
+        }, request.signal, SESSION_FAN_OUT);
         value = {items: groups.flat()};
         break;
       }
