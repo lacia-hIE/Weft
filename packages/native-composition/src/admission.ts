@@ -13,6 +13,8 @@ export function prepareProfileEntries(ctx: Context, entries: readonly EntryOptio
   visit(rows);
   const check = (entries: readonly EntryOptions[]): void => {
     for (const row of entries) {
+      // A disabled row is never imported; the inventory still lists it.
+      if (row.disabled === true) continue;
       if (!row.name.startsWith('cordis:') || !Object.hasOwn(ctx.loader.builtins, row.name.slice(7))) {
         const pending = row.name.startsWith('cordis:') ? PRESET_PENDING[row.name.slice(7)] : undefined;
         throw new Error(pending ? `Needs ${pending}, which this deployment does not provide yet` : 'Plugin is not in the prebuilt workerd catalog: '+row.name);

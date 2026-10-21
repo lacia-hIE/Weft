@@ -117,7 +117,7 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
       }, {global: true});
       if (workspaceId !== null) {
         const workspace = {tenantId: scope.tenantId, workspaceId, ...(scope.environmentId ? {environmentId: scope.environmentId} : {})};
-        await mountWorkspace(ctx, {scope: workspace, transport: env.WORKSPACES.getByName(workspaceAddress(workspace)), cwd, readImage: presentation && env.IMAGES !== undefined});
+        await mountWorkspace(ctx, {scope: workspace, transport: env.WORKSPACES.getByName(workspaceAddress(workspace)), cwd, fileTools: !presentation});
         if (presentation) {await ctx.plugin(ComputerFileReferences); await ctx.plugin(SessionFileReferences);}
         if (presentation) {
           const stub = env.WORKSPACES.getByName(workspaceAddress(workspace));

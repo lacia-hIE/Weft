@@ -6,6 +6,7 @@ import * as Repeat from "@deepseek-ai/dsh-repeat-tool-reminder";
 import Skills from "@deepseek-ai/dsh-skill";
 import * as SkillFiles from "@deepseek-ai/dsh-skill-filesystem";
 import * as SkillTool from "@deepseek-ai/dsh-tool-skill";
+import * as FileTools from '@deepseek-ai/dsh-tool-fs';
 import * as Subagent from '@deepseek-ai/dsh-tool-subagent';
 import * as SubagentControl from '@deepseek-ai/dsh-tool-subagent-control';
 import * as ListAgents from '@deepseek-ai/dsh-tool-subagent-control/list-agents';
@@ -40,6 +41,8 @@ function personaConfig(config: Record<string, unknown>): Persona.Config {
 export interface PluginSelection {
   id: string;
   config: Record<string, unknown>;
+  /** Listed by the official inventory, never mounted. */
+  disabled?: boolean | undefined;
 }
 interface Entry {
   id: string;
@@ -54,7 +57,8 @@ interface Entry {
   mount(ctx: Context, config: Record<string, unknown>): Promise<void>;
 }
 
-async function mountSkills(ctx: Context, config: Record<string, unknown>): Promise<void> {
+/** The skill catalog and the environment workspace's skill directories, in place of the Node host's home roots. */
+async function mountSkillCatalog(ctx: Context): Promise<void> {
   const cwd = ctx.workingDirectory.defaultDirectory;
   await ctx.plugin(Skills, {});
   await ctx.plugin(SkillFiles, {
@@ -62,11 +66,15 @@ async function mountSkills(ctx: Context, config: Record<string, unknown>): Promi
     dshHome: `${cwd}/.dsh`, agentsHome: `${cwd}/.agents`,
     customSkillDirs: [`${cwd}/.agents/skills`],
   });
+}
+
+async function mountSkills(ctx: Context, config: Record<string, unknown>): Promise<void> {
+  await mountSkillCatalog(ctx);
   await ctx.plugin(SkillTool, SkillTool.Config(config));
 }
 
 /** The original modules are compiled into the Worker, never fetched at runtime. */
-const SkillBundle = {name: 'workerd-skill-bundle', Config: SkillTool.Config, inject: ['workingDirectory'], apply: mountSkills};
+const SkillCatalogBundle = {name: 'workerd-skill-filesystem', Config: z.object({}), inject: ['workingDirectory'], apply: mountSkillCatalog};
 const SubagentControlBundle = {...SubagentControl, Config: z.object({})};
 const CommandCompactBundle = {...CommandCompact, Config: z.object({})};
 const ListAgentsBundle = {...ListAgents, Config: z.object({})};
@@ -74,6 +82,18 @@ const PlanModeConfig = z.object({section: z.string().required()});
 const CommandGoalBundle = {...CommandGoal, Config: z.object({})};
 const ToolScheduleBundle = {...ToolSchedule, Config: z.object({})};
 const TerminalsConfig = z.object({});
+/**
+ * The official file tools with their preset configuration; read_image is left
+ * out where the deployment accepts no image type (no image codec), as the
+ * workspace provider does outside preset realms.
+ */
+const FileToolsBundle = {
+  name: 'workerd-tool-fs', Config: FileTools.Config,
+  apply: async (ctx: Context, config: FileTools.Config) => {
+    const accepted = (ctx.get('attachments') as {imageLimits?: {mediaTypes: readonly string[]}} | undefined)?.imageLimits?.mediaTypes.length ?? 0;
+    await ctx.plugin(FileTools, {...config, readImage: config.readImage !== false && accepted > 0});
+  },
+};
 
 // Only the platform adapter lives here. Schemas, tools, projections and lifecycle
 // come from the same pinned upstream tree as the AgentLoop and browser renderer.
@@ -330,7 +350,7 @@ const entries: Entry[] = [
   },
   {
     id: "tool-skill",
-    module: SkillBundle,
+    module: SkillTool,
     title: "Skills",
     description:
       "官方 SKILL.md 发现、目录上下文与 skill 工具；目录 /workspace/.agents/skills。",
@@ -345,7 +365,24 @@ const entries: Entry[] = [
       )
         throw new Error("Invalid catalog description length");
     },
+    // A Session without preset realms has no skill-filesystem row; the tool brings the catalog itself.
     mount: mountSkills,
+  },
+  {
+    id: 'skill-filesystem', package: '@deepseek-ai/dsh-skill-filesystem', module: SkillCatalogBundle, title: 'Skills 目录',
+    description: '官方 SKILL.md 发现；目录为环境工作区的 /workspace/.agents/skills。',
+    workspace: true, schema: SkillCatalogBundle.Config, defaults: {},
+    validate: config => {SkillCatalogBundle.Config(config);},
+    // tool-skill mounts the catalog where no preset realm composes this row.
+    mount: async () => {},
+  },
+  {
+    id: 'tool-fs', package: '@deepseek-ai/dsh-tool-fs', module: FileToolsBundle, title: '文件工具',
+    description: '官方 read、write、edit 与 read_image；文件在环境工作区的 Computer 卷上。',
+    workspace: true, schema: FileTools.Config, defaults: {},
+    validate: config => {FileTools.Config(config as unknown as FileTools.Config);},
+    // The workspace provider mounts the file tools where no preset realm composes this row.
+    mount: async () => {},
   },
 ];
 export const prebuiltPluginModules = Object.fromEntries(entries.map(entry => [entry.id, entry.module]));
@@ -375,6 +412,12 @@ export function validatePlugins(
 ): void {
   const seen = new Set<string>();
   for (const selection of plugins) {
+    // A disabled row is an official row Weft lists but does not load; it needs no catalog entry.
+    if (selection.disabled) {
+      if (seen.has(selection.id)) throw new Error("Unknown or duplicate plugin");
+      seen.add(selection.id);
+      continue;
+    }
     const entry = entries.find((item) => item.id === selection.id);
     if (!entry || seen.has(entry.id))
       throw new Error("Unknown or duplicate plugin");
@@ -397,6 +440,7 @@ export async function mountPlugins(
   plugins: PluginSelection[],
 ): Promise<void> {
   for (const selection of plugins) {
+    if (selection.disabled) continue;
     const entry = entries.find((item) => item.id === selection.id);
     if (!entry)
       throw new Error(

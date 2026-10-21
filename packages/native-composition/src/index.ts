@@ -32,12 +32,14 @@ export async function mountNativeComposition(ctx: Context, definitions: readonly
 const presetGroups = [
   {id: 'planning', members: ['plan-mode'], isolate: {planMode: true}},
   {id: 'compaction', members: ['compaction-basic', 'command-compact', 'tool-result-pruner'], isolate: {compaction: true, toolResultPruner: true}},
+  // Weft's skill catalog service rides with the skill rows, private to the preset.
+  {id: 'skills', members: ['skill-filesystem', 'tool-skill'], isolate: {skills: true}},
   {id: 'persistent-shell', members: ['pty', 'terminal-bash', 'persistent-bash'], isolate: {terminals: true}},
   {id: 'delegation', members: ['tool-subagent-control', 'tool-subagent-list-agents', 'tool-subagent', 'tool-subagent-fork', 'workflow-ptc', 'tool-workflow'], isolate: {workflowEngine: true}},
 ] as const;
 
 export function nativePresetDefinition(profile: {spec: {id: string; name: string; plugins: PluginSelection[]; allowClientPlugins?: boolean}}): PresetDefinition {
-  const row = (plugin: PluginSelection) => ({id: plugin.id, name: 'cordis:'+plugin.id, config: plugin.config, ...(plugin.id === 'tool-skill' ? {isolate: {skills: true as const}} : {})});
+  const row = (plugin: PluginSelection) => ({id: plugin.id, name: 'cordis:'+plugin.id, config: plugin.config, ...(plugin.disabled ? {disabled: true} : {})});
   const plugins: Array<PresetDefinition['plugins'][number]> = [];
   for (const plugin of profile.spec.plugins) {
     const group = presetGroups.find(item => (item.members as readonly string[]).includes(plugin.id));

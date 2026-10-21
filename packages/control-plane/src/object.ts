@@ -9,6 +9,7 @@ import {
   clientPluginSchema,
   id,
   type AgentRevision,
+  type AgentSpec,
   type ClientPlugin,
   type SessionRecord,
   type TenantState,
@@ -208,7 +209,7 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
     let read = this.presetReads.get(key);
     if (!read) {
       const volume = {...scope, workspaceId: 'default'};
-      read = readNativePresets(profiles, defaultId, endpoint, args, ctx => mountWorkspace(ctx, {scope: volume, transport: this.env.WORKSPACES.getByName(workspaceAddress(volume)), cwd: '/workspace'})).then(response => response.text());
+      read = readNativePresets(profiles, defaultId, endpoint, args, ctx => mountWorkspace(ctx, {scope: volume, transport: this.env.WORKSPACES.getByName(workspaceAddress(volume)), cwd: '/workspace', fileTools: false})).then(response => response.text());
       const reads = this.presetReads;
       reads.set(key, read);
       // A failed composition is not remembered; the next read composes again.
@@ -431,27 +432,43 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
   /** Every bundled official preset is published once, when the environment first activates. */
   private ensureDefault(): void { this.agents(); }
   private ensureNativePresets(): void { this.agents(); }
+  /**
+   * Publish the official presets. A preset whose latest revision is still the
+   * one Weft published follows the official definition and upstream; once the
+   * environment publishes its own revision, Weft leaves the preset alone.
+   * Revision 1 is always Weft's, so presets seeded before the record existed
+   * count as unchanged.
+   */
   private async seedAgents(): Promise<void> {
     const agents = this.agents();
+    this.ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS official_preset_seeds (id TEXT PRIMARY KEY, revision INTEGER NOT NULL)');
     for (const definition of profileDefinitions) {
-      if (agents.latest(definition.id)) continue;
-      await agents.publish(definition.id, {
-        revision: 1,
-        publishedAt: new Date().toISOString(),
-        upstream: upstream.commit,
-        spec: {
-          id: definition.id,
-          // Official presets keep their id as name; the client shows its localized official name.
-          name: definition.id,
-          // The preset's own persona row supplies the system prompt persona.
-          persona: '',
-          workspaceId: "default",
-          allowClientPlugins: definition.id === 'cordis',
-          plugins: definition.plugins.map(row => ({id: row.id!, config: structuredClone(row.config ?? {}) as Record<string, unknown>})),
-        },
-      });
+      const spec: AgentSpec = {
+        id: definition.id,
+        // Official presets keep their id as name; the client shows its localized official name.
+        name: definition.id,
+        // The preset's own persona row supplies the system prompt persona.
+        persona: '',
+        workspaceId: "default",
+        allowClientPlugins: definition.id === 'cordis',
+        plugins: definition.plugins.map(row => ({id: row.id!, config: structuredClone(row.config ?? {}) as Record<string, unknown>, ...(row.disabled === true ? {disabled: true} : {})})),
+      };
+      const latest = agents.latest(definition.id);
+      if (latest) {
+        const seeded = this.ctx.storage.sql.exec<{revision: number}>('SELECT revision FROM official_preset_seeds WHERE id=?', definition.id).toArray()[0]?.revision ?? 1;
+        if (latest.revision !== seeded) continue;
+        // Enablement is the environment's choice and survives a definition update.
+        const current = {...spec, ...(latest.spec.disabled === undefined ? {} : {disabled: latest.spec.disabled})};
+        if (latest.upstream === upstream.commit && JSON.stringify(latest.spec) === JSON.stringify(current)) continue;
+        Object.assign(spec, current);
+      }
+      const revision = (latest?.revision ?? 0) + 1;
+      if (await agents.publish(definition.id, {revision, publishedAt: new Date().toISOString(), upstream: upstream.commit, spec})) {
+        this.ctx.storage.sql.exec('INSERT INTO official_preset_seeds VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision', definition.id, revision);
+      }
     }
   }
+
   async state(tenantId: ControlScope): Promise<TenantState> {
     this.scope(tenantId);
     this.ensureDefault();

@@ -9,7 +9,7 @@ import type { SandboxExecutionPolicy } from '@deepseek-ai/dsh-sandbox';
 import type {} from '@deepseek-ai/dsh-sandbox-policy';
 import { workspaceAddress, workspacePath, ROOT, MAX_BYTE_RANGE_BYTES, MAX_BINARY_FILE_BYTES, type WorkspaceScope, type WorkspaceTransport, type WorkspaceOperation, type FileInfo, type FileRead, type WriteResult, type SearchResult } from './protocol.ts';
 
-interface ProviderConfig { scope: WorkspaceScope; transport: WorkspaceTransport; cwd?: string; listLimit?: number; readImage?: boolean }
+interface ProviderConfig { scope: WorkspaceScope; transport: WorkspaceTransport; cwd?: string; listLimit?: number; readImage?: boolean; fileTools?: boolean }
 export class ComputerFileSystem extends FileSystem {
   private readonly watchBacklogs = new Map<string, Set<{pending: number}>>();
   constructor(ctx: Context, private readonly config: ProviderConfig) { super(ctx); }
@@ -181,7 +181,8 @@ export async function mountWorkspace(ctx: Context, config: ProviderConfig): Prom
   const cwd = config.cwd ?? ROOT;
   await ctx.plugin(WorkingDirectory, { defaultDirectory: cwd });
   await ctx.plugin(ObservationPolicy);
-  await ctx.plugin(FileTools, {readImage: config.readImage ?? false});
+  // Native Sessions compose the official tool-fs row from their preset instead.
+  if (config.fileTools !== false) await ctx.plugin(FileTools, {readImage: config.readImage ?? false});
   ctx.tools.register(defineTool({
     name: 'workspace_search', description: 'Search literal text within the attached workspace. Returns bounded matching lines.',
     parameters: { query: { type: 'string', required: true }, path: { type: 'string', description: 'Directory or file under /workspace. Defaults to /workspace.' } },

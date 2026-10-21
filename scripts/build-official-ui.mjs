@@ -41,6 +41,14 @@ writeFileSync(
     2,
   ) + "\n",
 );
+// The official Web build's public client values: the DeepSeek Harness brand and
+// title, and the exact upstream commit and version these bundles are built from.
+Object.assign(process.env, {
+  DSH_CLIENT_BUILD_PROFILE: "official",
+  DSH_CLIENT_TITLE: "DeepSeek Harness",
+  DSH_CLIENT_COMMIT_HASH: source.commit,
+  DSH_CLIENT_VERSION: JSON.parse(readFileSync(resolve(source.directory, "package.json"), "utf8")).version,
+});
 const roster = officialUiRoster(source.directory);
 const output = resolve(root, ".generated/official-ui");
 mkdirSync(output, { recursive: true });

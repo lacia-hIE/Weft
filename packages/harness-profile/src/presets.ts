@@ -11,16 +11,14 @@ import officialPresets from '../../../.generated/official-presets.json';
 
 /** Rows whose capability a Weft provider already supplies to every Session. */
 export const PRESET_PROVIDED: Record<string, string> = {
-  'tool-fs': 'the Computer workspace provider registers the original file tools',
-  'skill-filesystem': 'tool-skill loads Skills from the environment workspace',
   'tool-cordis': 'native Cordis plugin authoring, enabled for presets that allow client plugins',
 };
 
 /**
  * Rows that need a Weft provider not yet available. In a preset where they
- * are optional tools they are left out; where the preset exists for them
- * (`ESSENTIAL_PENDING`) they stay, and the registry reports the preset as
- * unavailable until the provider lands.
+ * are optional tools they stay listed but disabled; where the preset exists
+ * for them (`ESSENTIAL_PENDING`) they stay enabled, and the registry reports
+ * the preset as unavailable until the provider lands.
  */
 export const PRESET_PENDING: Record<string, string> = {
   'tool-fs-search': 'ripgrep on the container-shell execution backend',
@@ -49,14 +47,21 @@ function disabledOf(row: OfficialRow): boolean {
   return fact;
 }
 
-/** One official row as the rows Weft composes in its place. */
+/** Rows whose official configuration addresses the Node host; Weft's provider supplies the environment's equivalent. */
+const WEFT_CONFIG = new Set(['skill-filesystem']);
+
+/**
+ * One official row as the rows Weft composes in its place. Disabled rows stay
+ * listed, as the official inventory shows them, but are never loaded.
+ */
 function rows(row: OfficialRow, preset: OfficialPreset): PresetDefinition['plugins'] {
-  if (disabledOf(row)) return [];
-  // Weft stores a preset's rows flat; composition regroups the official planning and compaction realms.
-  if (row.group) return (row.config as OfficialRow[]).flatMap(member => rows(member, preset));
+  // Weft stores a preset's rows flat; composition regroups the official realms.
+  if (row.group) return disabledOf(row) ? [] : (row.config as OfficialRow[]).flatMap(member => rows(member, preset));
   if (Object.hasOwn(PRESET_PROVIDED, row.id)) return [];
-  if (Object.hasOwn(PRESET_PENDING, row.id) && !ESSENTIAL_PENDING.has(row.id)) return [];
-  return [{id: row.id, name: 'cordis:'+row.id, ...(row.config === undefined ? {} : {config: structuredClone(row.config) as Record<string, unknown>})}];
+  const disabled = disabledOf(row) || (Object.hasOwn(PRESET_PENDING, row.id) && !ESSENTIAL_PENDING.has(row.id));
+  // A disabled row keeps no Node-host expressions: it is listed, never configured.
+  const config = disabled || WEFT_CONFIG.has(row.id) || row.config === undefined ? undefined : structuredClone(row.config) as Record<string, unknown>;
+  return [{id: row.id, name: 'cordis:'+row.id, ...(config === undefined ? {} : {config}), ...(disabled ? {disabled: true} : {})}];
 }
 
 /** Every official row of every preset, groups expanded, for the classification check. */

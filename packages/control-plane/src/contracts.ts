@@ -7,9 +7,9 @@ export const agentSchema = z
     persona: z.string().max(4000),
     workspaceId: id,
     plugins: z
-      .array(z.object({ id, config: z.record(z.string(), z.json()) }).strict())
-      // The official standard preset composes 21 rows.
-      .max(32),
+      .array(z.object({ id, config: z.record(z.string(), z.json()), disabled: z.boolean().optional() }).strict())
+      // The official presets declare up to 30 rows, disabled ones included.
+      .max(48),
     allowClientPlugins: z.boolean(),
     disabled: z.boolean().optional(),
     model: z
@@ -28,7 +28,7 @@ export interface AgentSpec {
   name: string;
   persona: string;
   workspaceId: string;
-  plugins: { id: string; config: Record<string, unknown> }[];
+  plugins: { id: string; config: Record<string, unknown>; disabled?: boolean | undefined }[];
   allowClientPlugins: boolean;
   disabled?: boolean | undefined;
   model?: { provider: "deepseek"; name: string } | undefined;
