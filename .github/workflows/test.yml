@@ -1,7 +1,7 @@
 # Unit and browser suites, sharded across runners. Live model suites skip
 # without credentials. One job builds; the shards download its outputs (the
 # workers in dist/ and the top-level .generated files the tests read) instead
-# of each building again.
+# of each building again, and unit shards restore the cached upstream checkout.
 name: Test
 
 # `ci` is the branch for candidate commits: it runs the suites without deploying
@@ -61,6 +61,16 @@ jobs:
         with:
           name: build
       - run: tar -xzf build.tgz
+      # A few suites import the pinned upstream sources at run time (the build's paths point at this checkout).
+      - name: Restore upstream checkout
+        id: upstream
+        uses: actions/cache/restore@v4
+        with:
+          path: deepseek-harness
+          key: upstream-${{ hashFiles('upstream.lock.json') }}
+      - name: Clone upstream checkout
+        if: steps.upstream.outputs.cache-hit != 'true'
+        run: node scripts/prepare-upstream.mjs
       - name: Unit tests
         run: npx tsx --test --test-concurrency=2 --test-timeout=300000 --test-shard=${{ matrix.shard }}/4 tests/*.test.ts
 
