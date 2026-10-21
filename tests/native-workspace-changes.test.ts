@@ -57,6 +57,9 @@ test('the official change recorder snapshots and compares a turn through the wor
     const created = (await readdir('/tmp')).filter(name => !before.has(name) && name.startsWith('dsh-workspace-changes-'));
     assert.equal(created.length, 1);
     await ctx.fiber.dispose();
+    // Disposal removes the scratch directory with one more container command after the recorder's queued work settles.
+    const deadline = Date.now() + 10_000;
+    while ((await readdir('/tmp')).some(name => created.includes(name)) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 100));
     assert.equal((await readdir('/tmp')).filter(name => created.includes(name)).length, 0, 'disposal removes the scratch directory in the container');
   } finally {
     await rm(scratch, {recursive: true, force: true});
