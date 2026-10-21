@@ -22,13 +22,13 @@ for (const row of roster) for (const request of [...row.inject ?? [], ...row.ext
 const unsorted = [];
 // Weft contributes an ordinary native module, never a replacement workbench.
 const environmentId = '@weft/harness-environment';
-const environmentModule = await build({entryPoints: [resolve(root, 'apps/web/src/official/environment-plugin.ts')], bundle: true, platform: 'browser', format: 'cjs', target: 'es2022', minify: true, write: false, external: ['react']});
+const environmentModule = await build({entryPoints: [resolve(root, 'apps/web/src/official/environment-plugin.ts')], bundle: true, platform: 'browser', format: 'cjs', target: 'es2022', minify: true, write: false, external: ['react', '@deepseek-ai/dsh-client-ui-primitives']});
 const environmentFactory = `globalThis.__ModuleLoader__.load({id:${JSON.stringify(environmentId)},factory(require){const module={exports:{}};const exports=module.exports;${environmentModule.outputFiles[0].text}\nconst published={...module.exports};Object.defineProperty(published,Symbol.toStringTag,{value:'Module'});return published;}});`;
 const environmentDirectory = resolve(output, 'harness', environmentId);
 mkdirSync(environmentDirectory, {recursive: true});
 writeFileSync(resolve(environmentDirectory, 'client.js'), environmentFactory);
 const environmentRev = digest(environmentFactory);
-unsorted.push({id: environmentId, url: `/harness/??${environmentId}/client.js&rev=${environmentRev}`, rev: environmentRev, external: ['react'], inject: ['@deepseek-ai/dsh-cordis-client-runner', '@deepseek-ai/dsh-api-remotes', '@deepseek-ai/dsh-client-ui-renderer', '@deepseek-ai/dsh-client-ui-sidebar']});
+unsorted.push({id: environmentId, url: `/harness/??${environmentId}/client.js&rev=${environmentRev}`, rev: environmentRev, external: ['react', '@deepseek-ai/dsh-client-ui-primitives'], inject: ['@deepseek-ai/dsh-cordis-client-runner', '@deepseek-ai/dsh-api-remotes', '@deepseek-ai/dsh-client-ui-renderer', '@deepseek-ai/dsh-client-ui-sidebar', '@deepseek-ai/dsh-client-ui-settings', '@deepseek-ai/dsh-client-ui-plugin-manager']});
 for (const row of roster) {
   const directory = resolve(root, '.generated/official-ui', relative(source.directory, row.directory));
   const primary = ['client.js', 'client.browser.js'].find(file => existsSync(resolve(directory, file)));
