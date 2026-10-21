@@ -21,6 +21,7 @@ export interface ShellTransport {
 
 const SHELLS = new Set(['bash', 'sh']);
 import { CONTAINER_SH, GIT, RIPGREP, shellWord } from './container-commands.ts';
+import { SPILL_ROOT, storeText } from './spill.ts';
 export { RIPGREP };
 /** One argv element as a POSIX shell word. */
 
@@ -52,13 +53,36 @@ export class WorkspaceSandbox extends SandboxProvider {
   }
 }
 
-/** Bounded tail retention with absolute byte offsets, as the collect disposition specifies. */
+/** Bytes of one stream kept for its full-output file, whatever larger spill cap a caller asks for: the stream is held in the Session's memory until the command ends. */
+const FULL_OUTPUT_MAX_BYTES = 8 * 1024 * 1024;
+
+/**
+ * Bounded tail retention with absolute byte offsets, as the collect
+ * disposition specifies. With a spill cap the whole stream is also kept, up to
+ * that cap, so a truncated stream can be saved in full when the command ends.
+ */
 class TailCollector implements SubprocessOutputReader {
   private chunks: Uint8Array[] = [];
   private retained = 0;
   private total = 0;
-  constructor(private readonly maxBytes: number) {}
+  private full: Uint8Array[] | undefined;
+  /** The workspace file holding the complete stream, once saved. */
+  spillPath: string | undefined;
+  constructor(private readonly maxBytes: number, private readonly spillMaxBytes?: number) {
+    if (spillMaxBytes !== undefined) this.full = [];
+  }
+  /** The complete stream when it was truncated and kept whole, else undefined. */
+  fullText(): string | undefined {
+    if (!this.full || this.total === this.retained) return undefined;
+    const bytes = new Uint8Array(this.total);
+    let offset = 0;
+    for (const chunk of this.full) {bytes.set(chunk, offset); offset += chunk.byteLength;}
+    return new TextDecoder().decode(bytes);
+  }
   push(bytes: Uint8Array): void {
+    // A stream beyond the spill cap keeps only its tail, as an incomplete spill file is discarded.
+    if (this.full && this.total + bytes.byteLength <= this.spillMaxBytes!) this.full.push(bytes);
+    else this.full = undefined;
     this.chunks.push(bytes);
     this.retained += bytes.byteLength;
     this.total += bytes.byteLength;
@@ -76,7 +100,7 @@ class TailCollector implements SubprocessOutputReader {
     const bytes = new Uint8Array(this.retained);
     let offset = 0;
     for (const chunk of this.chunks) {bytes.set(chunk, offset); offset += chunk.byteLength;}
-    return {text: new TextDecoder().decode(bytes.subarray(skip)), nextOffset: this.total, lossy};
+    return {text: new TextDecoder().decode(bytes.subarray(skip)), nextOffset: this.total, lossy, ...(this.spillPath ? {spillPath: this.spillPath} : {})};
   }
 }
 
@@ -88,6 +112,23 @@ class TailCollector implements SubprocessOutputReader {
  */
 export class WorkspaceSubprocess extends SubprocessRuntime {
   constructor(ctx: Context, private readonly transport: ShellTransport) { super(ctx); }
+
+  /** Save each truncated stream that asked for a spill file into the workspace, where the model reads it with the file tools. */
+  private async saveFullOutput(id: string, outputs: Record<'stdout' | 'stderr', {collector: TailCollector | undefined}>): Promise<void> {
+    const fs = this.ctx.get('fs');
+    if (!fs) return;
+    for (const stream of ['stdout', 'stderr'] as const) {
+      const collector = outputs[stream].collector;
+      const text = collector?.fullText();
+      if (!collector || text === undefined) continue;
+      try {
+        collector.spillPath = (await storeText(fs, `${SPILL_ROOT}/output/${id}-${stream}.txt`, `${SPILL_ROOT}/output/${id}-${stream}`, text)).path;
+      } catch (error) {
+        // The tail stays available; the tool then reports the full output as unavailable.
+        this.ctx.logger.warn(`full ${stream} of a command could not be saved: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+  }
 
   override async resolveExecutable(command: string): Promise<string> {
     const name = posix.basename(command);
@@ -168,6 +209,7 @@ export class WorkspaceSubprocess extends SubprocessRuntime {
           }
         }
         if (pending.trim()) frame(pending);
+        await this.saveFullOutput(id, outputs);
         return killed && exitCode === null ? {exitCode: null, signal: 'SIGKILL'} : {exitCode, signal: null};
       } finally {
         spec.signal?.removeEventListener('abort', terminate);
@@ -200,7 +242,7 @@ export class WorkspaceSubprocess extends SubprocessRuntime {
 /** One stdout/stderr disposition: a raw pipe, a bounded collector, or nothing. */
 function output(mode: 'pipe' | 'inherit' | SubprocessCollect) {
   const pipe = mode === 'pipe' ? new PassThrough() : undefined;
-  const collector = typeof mode === 'object' ? new TailCollector(mode.maxBytes) : undefined;
+  const collector = typeof mode === 'object' ? new TailCollector(mode.maxBytes, mode.spill ? Math.min(mode.spill.maxBytes, FULL_OUTPUT_MAX_BYTES) : undefined) : undefined;
   return {
     readable: pipe as Readable | undefined,
     collector,

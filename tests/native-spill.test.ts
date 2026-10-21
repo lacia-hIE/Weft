@@ -34,8 +34,8 @@ function toolModel(turns: Record<string, {name: string; input: Record<string, un
 test('an oversized tool result spills into the workspace and the model sees where to read it', {timeout: 180_000}, async () => {
   const calls = {
     SPILL_ONE: [
-      {name: 'bash', input: {command: 'seq 1 60000', description: 'Print many lines'}},
-      {name: 'bash', input: {command: 'cat /workspace/.dsh/spill/.gitignore; tail -n 4 $(find /workspace/.dsh/spill -type f -name "*-bash.txt")', description: 'Inspect the spilled result'}},
+      {name: 'bash', input: {command: 'seq 1 40000', description: 'Print many lines'}},
+      {name: 'bash', input: {command: 'cat /workspace/.dsh/spill/.gitignore; tail -n 4 $(find /workspace/.dsh/spill -type f -name "*-bash.txt"); wc -l < $(find /workspace/.dsh/spill/output -type f -name "*-stdout.txt")', description: 'Inspect the spilled result'}},
     ],
   };
   const runtime = createRuntime(undefined, {browser: true, bindings: {MODEL_BACKEND: 'deepseek', DEEPSEEK_API_KEY: 'spill-fixture', DEEPSEEK_BASE_URL: 'https://runtime-model.test/anthropic'}, outbound: toolModel(calls)});
@@ -58,9 +58,13 @@ test('an oversized tool result spills into the workspace and the model sees wher
     assert.match(results[0]!, /Full formatted result stored at: \/workspace\/\.dsh\/spill\/session-[0-9a-f]{12}\/[0-9a-f-]+-bash\.txt\./);
     assert.match(results[0]!, /Use read with offset\/limit, or grep this path/);
     assert.ok(results[0]!.length < 120_000, 'the inline result is cut to the token budget');
+    // The shell kept the tail of a long output and saved all of it in the workspace.
+    assert.match(results[0]!, /\[output truncated; full output: \/workspace\/\.dsh\/spill\/output\/[0-9a-f-]+-stdout\.txt\]/);
     // The full text is a workspace file the shell reads, and git ignores the spill directory.
     assert.match(results[1]!, /"text":"\*\\n/);
-    assert.match(results[1]!, /60000\\n/);
+    assert.match(results[1]!, /40000\\n/);
+    // `wc -l` of the saved output follows the tail's last line.
+    assert.match(results[1]!, /\]40000\\n"/, 'the saved output holds every line');
   } finally {
     await runtime.dispose();
   }
