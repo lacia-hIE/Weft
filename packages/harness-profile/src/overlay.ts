@@ -57,6 +57,7 @@ export const LOADED: Record<string, {world: 'session'; phase: ProfilePhase; nati
   // Its base URL follows the environment's DeepSeek endpoint through the environment's row configuration.
   'web-search-deepseek': {world: 'session', phase: 'late', native: true},
   'repeat-tool-reminder': {world: 'session', phase: 'late', native: true},
+  'spill-policy': {world: 'session', phase: 'late', native: true},
 };
 
 /** Original packages that Weft's world setup mounts today. */
@@ -80,6 +81,7 @@ export const MOUNTED_BY_WEFT: Record<string, string> = {
   'session-log-download': 'session reader', 'tool-working-directory': 'workspace provider',
   // Its git snapshots run in the workspace container, so it is mounted only while the environment uses the container shell.
   'workspace-changes': 'workspace changes (container shell)',
+  'spill-local': 'workspace spill store (packages/workspace/src/spill.ts)',
   'authorization': 'native-plugins', 'plugin-package-inventory-deepseek': 'native-composition',
   'cordis-client-runner': 'native-plugins (its browser module is in the Boot Graph)',
 };
@@ -112,8 +114,6 @@ export const EXTERNAL: Record<string, string> = {
 
 /** Rows whose Weft provider does not exist yet. */
 export const PENDING: Record<string, string> = {
-  'spill-local': 'spill storage over Durable Object or workspace storage',
-  'spill-policy': 'needs spill storage',
   'session-projection-cache': 'projection checkpoint records in SessionDO storage',
   'mcp-resources': 'MCP client and server provisioning per environment',
 };

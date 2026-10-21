@@ -37,6 +37,7 @@ import {mountWorkspaceShell} from '../../../packages/workspace/src/subprocess.ts
 import {WorkerPtcRuntime} from '../../../packages/native-ptc/src/index.ts';
 import {reconcileProfileOverrides} from '../../../packages/native-profile/src/loader.ts';
 import {mountWorkspaceChanges} from '../../../packages/workspace/src/changes.ts';
+import {WorkspaceSpillStore} from '../../../packages/workspace/src/spill.ts';
 import {forwardNativeNotifications, mountNativeInteraction} from './native-interaction.ts';
 import {HarnessHome} from '../../../packages/native-environment/src/harness-home.ts';
 
@@ -134,6 +135,8 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
         const workspace = {tenantId: scope.tenantId, workspaceId, ...(scope.environmentId ? {environmentId: scope.environmentId} : {})};
         await mountWorkspace(ctx, {scope: workspace, transport: env.WORKSPACES.getByName(workspaceAddress(workspace)), cwd, fileTools: !presentation});
         if (presentation) {await ctx.plugin(ComputerFileReferences); await ctx.plugin(SessionFileReferences);}
+        // Oversized tool results spill into the workspace, where the model reads them back with the file tools.
+        if (presentation) await ctx.plugin(WorkspaceSpillStore);
         if (presentation) {
           const stub = env.WORKSPACES.getByName(workspaceAddress(workspace));
           // The environment chooses where commands run; ripgrep requests the container itself.
