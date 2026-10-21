@@ -39,7 +39,7 @@ const WorkspaceRuntimeConfig = z.object({
   shell: z.union(['worker', 'container'] as const).default('worker').volatile()
     .description('Where bash and terminal commands run: "worker" is an instant shell in a Dynamic Worker; "container" is a full Linux container (node, npm, python, git, ripgrep) that starts in seconds and sleeps when idle. File search always uses the container.'),
   containerInstance: z.union(CONTAINER_INSTANCES).default('basic').volatile()
-    .description('Container size: lite (1/16 vCPU, 256 MiB), basic (1/4 vCPU, 1 GiB), standard-1 (1/2 vCPU, 4 GiB) up to standard-4 (4 vCPU, 12 GiB). A change applies when the container next starts.'),
+    .description('Container size: basic (1/4 vCPU, 1 GiB), standard-1 (1/2 vCPU, 4 GiB) or standard-2 (1 vCPU, 6 GiB). A change applies when the container next starts.'),
 });
 type Section = Record<string, unknown>;
 interface Namespace {
