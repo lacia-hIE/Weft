@@ -43,10 +43,16 @@ const remoteEventResultSchema = z.object({
 }).strict();
 export const NATIVE_FORWARDED_EVENTS = ['goal/activation-changed', 'commands/change', 'schedule/changed'] as const;
 export const NATIVE_WATERFALLS = ['user-questions/request', 'approval/request'] as const;
+/** The environment's configuration document in its default workspace, and the note left when an edit is rejected. */
+export const SETTINGS_DOCUMENT_DIRECTORY = '/workspace/.dsh';
+export const SETTINGS_DOCUMENT_PATH = '/workspace/.dsh/profile.yml';
+const SETTINGS_DOCUMENT_ERROR_PATH = '/workspace/.dsh/profile.error.txt';
+/** Asks the environment's clients to open the configuration document. */
+export const SETTINGS_DOCUMENT_EVENT = 'weft/settings-document';
 import { NativeWorkspaces } from './native-workspaces.ts';
 import type { WorkspaceDO } from '../../workspace/src/object.ts';
 import type { SessionDO } from '../../../apps/worker/src/index.ts';
-import { workspaceAddress } from '../../workspace/src/protocol.ts';
+import { workspaceAddress, type WorkspaceOperation } from '../../workspace/src/protocol.ts';
 import { sessionAddress, type SessionScope } from '../../tenant/src/index.ts';
 import sessionRemote from '../../../.generated/official-remotes/packages/api/session-controller/typert.remote-client.js';
 import type { SessionControlFrame, SessionProjectionBaseline } from '@deepseek-ai/dsh-api-session-controller/types';
@@ -166,16 +172,88 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
         }
       },
       validatePreset: id => {const value = this.latest(id); if (!value || value.spec.disabled) throw new Error('Unknown preset');},
+      openDocument: () => this.openSettingsDocument(scope),
     }, documents);
   }
   async nativeSettingsRequest(scope: ControlScope, endpoint: string, args: unknown): Promise<Response> {
-    return this.settings(scope).invoke(endpoint, args);
+    await this.syncSettingsDocument(scope);
+    const response = await this.settings(scope).invoke(endpoint, args);
+    // A form edit shows in an open document; the document took in its own edits above first.
+    if (endpoint !== 'settings/describe' && endpoint !== 'settings/openSettingsDocument') await this.renderSettingsDocument(scope);
+    return response;
+  }
+  /**
+   * The configuration document lives in the environment's default workspace,
+   * where the official file preview opens it and Agents edit it with their file
+   * tools. Once opened, the object follows it: an edited file replaces the
+   * configuration when every row passes, and a form edit rewrites the file.
+   */
+  private documentWork: Promise<unknown> = Promise.resolve();
+  private documentVolume(scope: ControlScope) { return {...scope, workspaceId: 'default'}; }
+  private async documentCall<T>(scope: ControlScope, operation: WorkspaceOperation): Promise<T | undefined> {
+    const volume = this.documentVolume(scope);
+    const response = await this.env.WORKSPACES.getByName(workspaceAddress(volume)).call(volume, operation);
+    if (response.status === 404) return undefined;
+    const body = await response.json() as {value?: T; error?: string};
+    if (!response.ok) throw new Error(body.error ?? `Workspace operation failed (${response.status})`);
+    return body.value;
+  }
+  private documentVersion(): string | undefined {
+    this.ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS settings_document (id INTEGER PRIMARY KEY CHECK (id = 1), version TEXT NOT NULL)');
+    return this.ctx.storage.sql.exec<{version: string}>('SELECT version FROM settings_document WHERE id = 1').toArray()[0]?.version;
+  }
+  private rememberDocument(version: string): void {
+    this.documentVersion();
+    this.ctx.storage.sql.exec('INSERT INTO settings_document VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET version = excluded.version', version);
+  }
+  private serialDocument<T>(work: () => Promise<T>): Promise<T> {
+    const run = this.documentWork.then(work, work);
+    this.documentWork = run.catch(() => {});
+    return run;
+  }
+  private writeSettingsDocument(scope: ControlScope): Promise<void> {
+    return this.serialDocument(async () => {
+      if (!await this.documentCall(scope, {type: 'stat', path: SETTINGS_DOCUMENT_DIRECTORY})) await this.documentCall(scope, {type: 'mkdir', path: SETTINGS_DOCUMENT_DIRECTORY});
+      const written = await this.documentCall<{version: string}>(scope, {type: 'write', path: SETTINGS_DOCUMENT_PATH, content: this.settings(scope).document()});
+      if (written) this.rememberDocument(written.version);
+    });
+  }
+  private async renderSettingsDocument(scope: ControlScope): Promise<void> {
+    if (this.documentVersion() !== undefined) await this.writeSettingsDocument(scope);
+  }
+  private async openSettingsDocument(scope: ControlScope): Promise<void> {
+    await this.writeSettingsDocument(scope);
+    this.nativeEvents.emit(SETTINGS_DOCUMENT_EVENT, [{path: SETTINGS_DOCUMENT_PATH}]);
+  }
+  /** Take in the document's edits, once per file version. */
+  private syncSettingsDocument(scope: ControlScope): Promise<void> {
+    if (this.documentVersion() === undefined) return Promise.resolve();
+    return this.serialDocument(async () => {
+      const known = this.documentVersion();
+      const info = await this.documentCall<{version: string}>(scope, {type: 'stat', path: SETTINGS_DOCUMENT_PATH});
+      if (!info || info.version === known) return;
+      const file = await this.documentCall<{version: string; content: string}>(scope, {type: 'read', path: SETTINGS_DOCUMENT_PATH});
+      if (!file) return;
+      this.rememberDocument(file.version);
+      try {
+        await this.settings(scope).replaceDocument(file.content);
+      } catch (error) {
+        await this.documentCall(scope, {type: 'write', path: SETTINGS_DOCUMENT_ERROR_PATH, content: `${new Date().toISOString()}: the configuration in profile.yml was not applied and the previous configuration stays in effect.\n${error instanceof Error ? error.message : String(error)}\n`});
+        return;
+      }
+      await this.documentCall(scope, {type: 'write', path: SETTINGS_DOCUMENT_ERROR_PATH, content: ''});
+    });
   }
   private presetDefault(scope: ControlScope): string {
     const value = this.settings(scope).value(PRESET_NAMESPACE);
     return String(value.selectedDefault ?? value.default);
   }
   async nativePresetDefault(scope: ControlScope): Promise<string> {return this.presetDefault(scope);}
+  /** The environment's configuration of official profile rows, by row id. */
+  async nativeProfileOverrides(scope: ControlScope): Promise<Record<string, Record<string, unknown>>> {
+    await this.syncSettingsDocument(scope);
+    return this.settings(scope).profileOverrides();
+  }
   async nativeLoopConfiguration(scope: ControlScope): Promise<Response> {
     return Response.json(this.settings(scope).value(LOOP_NAMESPACE));
   }
@@ -241,6 +319,7 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
   /** Private binding only: the effective model sections for the official model entries. */
   async nativeModelSections(scope: ControlScope): Promise<Response> {
     this.scope(scope);
+    await this.syncSettingsDocument(scope);
     return Response.json(this.settings(scope).modelSections());
   }
   private modelWorld: EnvironmentModelWorld | undefined;

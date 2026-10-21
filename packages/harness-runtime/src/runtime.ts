@@ -17,6 +17,8 @@ export interface RuntimeOptions {
   /** A fork's exact inherited prefix (the original `buildForkSeed` output) and its length. */
   seed?: { events: readonly SessionEvent[]; inherited: number };
   presentation?: boolean;
+  /** The environment's configuration of official profile rows, applied as the rows are created. */
+  profileOverrides?: import('../../native-profile/src/loader.ts').ProfileOverrides;
   requestId?: import('@deepseek-ai/dsh-api-session-controller/types').SessionRequestId;
   clientTimeZone?: string;
   promptContent?: readonly {type: 'text'; text: string}[];
@@ -69,17 +71,17 @@ export async function openHarnessSession(options: RuntimeOptions): Promise<Harne
     if (options.onSessionCreated) ctx.on('session/created', session => { options.onSessionCreated!(session); }, {global: true});
     // Root services of the official profile (llm, sessions, projections, token meter, commands,
     // questions, subagent model selection), loaded from its rows; tools, agents and goals follow the system prompt.
-    await mountOfficialProfile(ctx, 'core', options.presentation === true);
+    await mountOfficialProfile(ctx, 'core', options.presentation === true, options.profileOverrides);
     if (options.presentation) installModelSelectionProjection(ctx);
     if (options.presentation) await ctx.plugin(SessionTitle, { fallbackMaxWords: 5, fallbackMaxBytes: 40, maxTitleBytes: 80 });
     await ctx.plugin(SystemPrompt, { personaPrefix: options.persona });
-    await mountOfficialProfile(ctx, 'agents', options.presentation === true);
+    await mountOfficialProfile(ctx, 'agents', options.presentation === true, options.profileOverrides);
     if (options.mountPersistence) await options.mountPersistence(ctx);
     await ctx.plugin(AgentLoop, { agents: [], ...options.agentLoop });
     if (options.mountModels) await options.mountModels(ctx);
     else if (options.adapter) ctx.llm.registerAdapter([options.model.provider], options.adapter);
     else throw new Error('A Harness runtime needs model providers');
-    await mountOfficialProfile(ctx, 'late', options.presentation === true);
+    await mountOfficialProfile(ctx, 'late', options.presentation === true, options.profileOverrides);
     if (options.mountTools) await options.mountTools(ctx);
     // Install before resume: persisted waking input may start assembling as
     // soon as the native factory releases the restored Agent.

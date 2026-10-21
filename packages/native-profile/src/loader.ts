@@ -53,14 +53,33 @@ export async function createEntry(loader: Loader, entry: EntryOptions): Promise<
  * world never provides stay pending. Rows the overlay disables are served by
  * Weft providers under the same ids, so they are not created here.
  */
-export async function mountOfficialProfile(ctx: Context, phase: ProfilePhase, native: boolean): Promise<void> {
+export async function mountOfficialProfile(ctx: Context, phase: ProfilePhase, native: boolean, overrides: ProfileOverrides = {}): Promise<void> {
   const loader = await workerdLoader(ctx);
   const rows = new Map(enabledEntries().map(entry => [entry.id, entry]));
   for (const [id, row] of Object.entries(LOADED)) {
     if (row.phase !== phase || (row.native && !native)) continue;
     const entry = rows.get(id);
     if (!entry) throw new Error(`Official profile row ${id} is not enabled`);
-    if (phase !== 'late') await createEntry(loader, structuredClone(entry));
-    else await loader.create(structuredClone(entry));
+    const options = {...structuredClone(entry), ...(Object.hasOwn(overrides, id) ? {config: structuredClone(overrides[id])} : {})};
+    if (phase !== 'late') await createEntry(loader, options);
+    else await loader.create(options);
   }
+}
+
+/** An environment's configuration for profile rows, by row id; a row's value replaces its profile configuration. */
+export type ProfileOverrides = Record<string, Record<string, unknown>>;
+
+/**
+ * Apply an environment's changed row configuration to a live world through
+ * the Loader, as a profile patch reconciles: live fields update in place and
+ * other fields restart the row.
+ * @returns the configuration now applied.
+ */
+export async function reconcileProfileOverrides(ctx: Context, applied: ProfileOverrides, next: ProfileOverrides): Promise<ProfileOverrides> {
+  const rows = new Map(enabledEntries().map(entry => [entry.id, entry]));
+  for (const id of new Set([...Object.keys(applied), ...Object.keys(next)])) {
+    if (JSON.stringify(applied[id]) === JSON.stringify(next[id]) || ![...ctx.loader.entries()].some(entry => entry.options.id === id)) continue;
+    await ctx.loader.update(id, {config: structuredClone(next[id] ?? (rows.get(id)?.config as Record<string, unknown> | undefined) ?? {})});
+  }
+  return structuredClone(next);
 }

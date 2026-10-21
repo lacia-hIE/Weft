@@ -1,4 +1,5 @@
 import React from 'react';
+import { fileAddressFor } from '@deepseek-ai/dsh-util-workspace-path';
 interface InventoryRow {
     pluginId: string;
     agentId: string;
@@ -52,9 +53,16 @@ interface ClientContext {
     layout: {
         selectPanel(panelId: string | null): void;
     };
+    sidebarRight: {
+        mounted: { getSnapshot(): string | undefined };
+        openResource(address: string): void;
+    };
+    sessions: {
+        list: { getSnapshot(): { byId: Record<string, { cwd?: string } | undefined> } };
+    };
 }
 export const name = 'weft-environment';
-export const inject = ['slots', 'remote', 'remote.dynamicCordisRunner', 'dynamicCordisRunner', 'locale', 'layout'];
+export const inject = ['slots', 'remote', 'remote.dynamicCordisRunner', 'dynamicCordisRunner', 'locale', 'layout', 'sidebarRight', 'sessions'];
 /** A small host extension; the official loader and UI own the workspace. */
 export function apply(ctx: ClientContext): void {
     try {
@@ -93,6 +101,12 @@ function mount(ctx: ClientContext): void {
     ctx.on('connection/reset', recover);
     ctx.remote.$on('cordis/dynamic-package', recover);
     recover();
+    // Settings' Open configuration file writes the environment's document to its workspace; show it in the open Session.
+    ctx.remote.$on('weft/settings-document', ((document: { path: string }) => {
+        const sessionId = ctx.sidebarRight.mounted.getSnapshot();
+        if (sessionId === undefined) return;
+        ctx.sidebarRight.openResource(fileAddressFor(sessionId, ctx.sessions.list.getSnapshot().byId[sessionId]?.cwd, document.path));
+    }) as () => void);
     // My Agents is the site home page, outside every environment's workbench; the sidebar entry leaves for it.
     ctx.effect(() => ctx.locale.register(NS, {zh, en}), 'weft.environments-locale');
     const t = ctx.locale.bind(NS);

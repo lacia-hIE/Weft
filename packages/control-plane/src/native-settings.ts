@@ -17,6 +17,8 @@ import AgentLoop from '@deepseek-ai/dsh-agent-loop';
 import Subagents from '@deepseek-ai/dsh-subagent';
 import PermissionPresets from '@deepseek-ai/dsh-permission-presets';
 import PluginMarket from '@deepseek-ai/dsh-plugin-market';
+import { profileSettingRows } from '../../native-profile/src/settings-rows.ts';
+import YAML from 'yaml';
 import { Config as PiAiConfig } from '@deepseek-ai/dsh-llm-pi-ai';
 
 // The official composition's entry id differs from its provider package name.
@@ -35,13 +37,25 @@ interface Namespace {
   validate(value: Section): void;
   /** Held for a service the official profile does not mount, so Settings does not list it. */
   hidden?: true;
+  /** An official profile row loaded by the Loader; its value overrides the row's configuration. */
+  profileRow?: true;
 }
 export interface NativeSettingsHost {
   providerBase(): Section;
   modelBase(): Section;
   changed(event: string, args: readonly unknown[]): void;
   validatePreset?(id: string): void;
+  /** Materialize the configuration document where the environment's client can open it. */
+  openDocument?(): Promise<void>;
 }
+
+/** The header of the configuration document; the rows below replace the environment's configuration as a whole. */
+export const DOCUMENT_HEADER = [
+  '# This environment\'s plugin configuration, as official profile patch rows: one row per edited entry.',
+  '# Saving replaces the whole configuration once every row passes its plugin schema; a rejected document',
+  '# leaves the configuration unchanged and explains why in profile.error.txt. Secret fields are never',
+  '# written here and keep their values.',
+].join('\n');
 const object = (value: unknown): value is Section => value !== null && typeof value === 'object' && !Array.isArray(value);
 function reference(value: string): CredentialRef {
   try { return credentialRef(value); }
@@ -99,6 +113,15 @@ export class NativeSettings {
       {id: 'ui-settings', schema: DeveloperToolsConfig, base: () => ({}), autoGenerate: false, validate: () => {}},
       {id: 'ui-settings-general', schema: WelcomeConfig, base: () => ({}), autoGenerate: false, validate: () => {}},
     ];
+    // Profile rows the Loader composes: their forms come from the official schemas, edits override the profile configuration.
+    for (const row of profileSettingRows) {
+      if (this.namespaces.some(ns => ns.id === row.id)) continue;
+      this.namespaces.push({id: row.id, schema: row.schema, base: () => structuredClone(row.base), autoGenerate: false, validate: () => {}, profileRow: true});
+    }
+  }
+  /** The environment's configuration of the profile rows it has edited, applied to Loader rows in every world. */
+  profileOverrides(): Record<string, Section> {
+    return Object.fromEntries(this.namespaces.filter(ns => ns.profileRow && Object.keys(this.row(ns.id).user).length > 0).map(ns => [ns.id, this.value(ns.id)]));
   }
   private namespace(id: string): Namespace {
     const ns = this.namespaces.find(row => row.id === id);
@@ -122,7 +145,64 @@ export class NativeSettings {
     return settingsRemote.methods['settings/update'].result.create().parse({ns: id, revision, autoGenerate: ns.autoGenerate, schema: form.toJSON(), value: value.value, base: redactSecrets(redaction, projectForm(form, base)).value, user: redactSecrets(redaction, projectForm(form, user)).value, secrets: value.secrets, applies: 'live'});
   }
   describe(): SettingsDescribeValue {
-    return {writable: true, hasDocument: false, namespaces: this.namespaces.filter(ns => !ns.hidden).map(ns => this.view(ns.id))};
+    return {writable: true, hasDocument: this.host.openDocument !== undefined, namespaces: this.namespaces.filter(ns => !ns.hidden).map(ns => this.view(ns.id))};
+  }
+  /** Reject a user section its namespace would not accept: unknown or non-live fields, schema or provider failures. */
+  private check(ns: Namespace, next: Section): void {
+    for (const key of Object.keys(next)) if (!Object.hasOwn(ns.schema.dict ?? {}, key) || !isVolatilePath(ns.schema, [key])) throw new Error(`Config field "${key}" of "${ns.id}" is not editable`);
+    const effective = merge(ns.base(), next);
+    ns.schema(effective);
+    ns.validate(effective);
+  }
+  private secrets(ns: Namespace, user: Section): readonly {path: string[]; set: boolean}[] {
+    const form = volatileForm(ns.schema);
+    return form ? redactSecrets(form as Schema<never>, user).secrets : [];
+  }
+  /** The environment's configuration as official profile patch rows, secrets left out. */
+  document(): string {
+    const rows = this.namespaces.flatMap(ns => {
+      const {user} = this.row(ns.id);
+      if (Object.keys(user).length === 0) return [];
+      const form = volatileForm(ns.schema);
+      return [{id: ns.id, config: form ? redactSecrets(form as Schema<never>, user).value : user}];
+    });
+    return `${DOCUMENT_HEADER}\n${rows.length ? YAML.stringify(rows) : '[]\n'}`;
+  }
+  /**
+   * Replace the environment's configuration with a document's rows. Every row
+   * is checked before anything is written; an entry the document leaves out
+   * returns to its profile configuration, and secret fields keep their values.
+   * @throws Error naming the first rejected row; nothing is written then.
+   */
+  async replaceDocument(text: string): Promise<void> {
+    const parsed: unknown = YAML.parse(text) ?? [];
+    if (!Array.isArray(parsed)) throw new Error('The document must be a YAML list of profile rows');
+    const next = new Map<string, Section>();
+    for (const [index, row] of parsed.entries()) {
+      if (!object(row) || typeof row.id !== 'string') throw new Error(`Row ${index + 1} needs an id`);
+      const ns = this.namespaces.find(item => item.id === row.id);
+      if (!ns) throw new Error(`"${row.id}" is not a configurable plugin entry`);
+      if (next.has(ns.id)) throw new Error(`"${ns.id}" appears more than once`);
+      const config = row.config ?? {};
+      if (!object(config)) throw new Error(`The config of "${ns.id}" must be a mapping`);
+      const user = structuredClone(config);
+      const current = this.row(ns.id).user;
+      for (const secret of this.secrets(ns, current)) {
+        if (!secret.set) continue;
+        const kept = secret.path.reduce<unknown>((value, key) => object(value) ? value[key] : undefined, current);
+        let target: Section = user;
+        for (const key of secret.path.slice(0, -1)) target = object(target[key]) ? target[key] as Section : (target[key] = {}) as Section;
+        const last = secret.path.at(-1)!;
+        if (!Object.hasOwn(target, last)) target[last] = kept;
+      }
+      try { this.check(ns, user); }
+      catch (error) { throw new Error(`"${ns.id}": ${error instanceof Error ? error.message : String(error)}`); }
+      next.set(ns.id, user);
+    }
+    for (const ns of this.namespaces) {
+      const user = next.get(ns.id) ?? {};
+      if (JSON.stringify(user) !== JSON.stringify(this.row(ns.id).user)) await this.write(ns.id, undefined, () => user);
+    }
   }
   /** Preset declarations are dependencies of the roster/default settings view. */
   async invalidate(id: string): Promise<void> {
@@ -135,10 +215,7 @@ export class NativeSettings {
     const {revision} = await this.documents.update(id, current => {
       if (expected !== undefined && expected !== current.revision) throw new RemoteError('settings/conflict', 'Configuration changed since it was read', {ns: id, expected, actual: current.revision});
       const next = change(current.user, ns.schema);
-      for (const key of Object.keys(next)) if (!Object.hasOwn(ns.schema.dict ?? {}, key) || !isVolatilePath(ns.schema, [key])) throw new Error('Config field is not editable');
-      const effective = merge(ns.base(), next);
-      ns.schema(effective);
-      ns.validate(effective);
+      this.check(ns, next);
       return {revision: current.revision + Number(JSON.stringify(current.user) !== JSON.stringify(next)), user: next};
     });
     this.host.changed('settings/document-updated', [id, revision]);
@@ -170,7 +247,12 @@ export class NativeSettings {
     try {
       switch (endpoint) {
         case 'settings/describe': settingsRemote.methods[endpoint].input({strict: true}).create().parse(raw); value = this.describe(); break;
-        case 'settings/openSettingsDocument': settingsRemote.methods[endpoint].input({strict: true}).create().parse(raw); throw new RemoteError('settings/rejected', 'This environment stores configuration in Durable Objects', {ns: ''});
+        case 'settings/openSettingsDocument': {
+          settingsRemote.methods[endpoint].input({strict: true}).create().parse(raw);
+          if (!this.host.openDocument) throw new RemoteError('settings/rejected', 'This environment has no configuration document', {ns: ''});
+          await this.host.openDocument();
+          value = {opened: true}; break;
+        }
         case 'settings/update': case 'settings/replace': {
           const args = endpoint === 'settings/update' ? settingsRemote.methods[endpoint].input({strict: true}).create().parse(raw) : settingsRemote.methods[endpoint].input({strict: true}).create().parse(raw);
           subject = args.ns;

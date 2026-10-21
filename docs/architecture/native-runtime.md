@@ -34,6 +34,7 @@ DeepSeek Harness 的所有能力都是插件，由 Cordis Loader 按 profile（`
 | | 凭据（EnvironmentDO，见下） |
 
 - **访问方式：** 仓储层封装 D1，所有查询带 `tenant_id` 与 `environment_id` 条件；写入经 EnvironmentDO 串行化，保持设置 revision 与冲突检测语义。
+- **插件配置：** 环境设置就是官方 profile 条目的配置覆盖层，命名空间 id 即条目 id。Weft 自己挂载的条目（模型、Agent 循环、子 Agent、权限、预设注册表等）由 `NativeSettings` 显式登记；由 Loader 加载的官方条目只要其 schema 声明了热更新字段，就由 `packages/native-profile/src/settings-rows.ts` 从官方模块表自动登记，表单与默认值都来自官方 schema 与 profile 配置。会话世界创建条目时套用覆盖层，每轮开始前比较覆盖层并以 `loader.update` 让改动生效（热更新字段原地更新，其余字段重启该条目），与官方 `config-editor` 调和 profile patch 的效果一致（`tests/native-profile-settings.test.ts`）。
 - **迁移：** 使用 D1 migrations（`migrations/` 目录），本地由 miniflare 提供 D1。本轮沿用全新数据布局，不迁移旧 DO 数据。
 - **会话索引：** 会话只属于一个环境，也只经它读取，所以索引留在 EnvironmentDO 自己的 SQLite（`session_index` 表），创建与更新会话不再跨区域写 D1。D1 的 `session_index` 表由迁移 `0006` 删除，旧索引行不保留。
 - **凭据：** 存于 EnvironmentDO，不进入 D1，保持密钥与可查询配置分离（已确认）。

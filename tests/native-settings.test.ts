@@ -30,7 +30,7 @@ test('native settings and write-only credentials persist by environment and cont
   try {
     for (const id of ['a', 'b']) assert.equal((await runtime.dispatchFetch(url('alpha', `/v1/tenants/${tenantId('alpha')}/environments`), {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({id, name: id})})).status, 201);
     const initial = await describe();
-    assert.equal(initial.writable, true); assert.equal(initial.hasDocument, false);
+    assert.equal(initial.writable, true); assert.equal(initial.hasDocument, true);
     const ns = initial.namespaces.find(row => row.ns === provider)!;
     assert.equal(ns.revision, 0);
     assert.match(JSON.stringify(ns.schema), /credential-ref/);

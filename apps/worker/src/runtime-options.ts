@@ -35,6 +35,7 @@ import SessionFileReferences from '@weft/upstream/packages/api/session-controlle
 import {ComputerFileReferences} from '../../../packages/native-files/src/references.ts';
 import {mountWorkspaceShell} from '../../../packages/workspace/src/subprocess.ts';
 import {WorkerPtcRuntime} from '../../../packages/native-ptc/src/index.ts';
+import {reconcileProfileOverrides} from '../../../packages/native-profile/src/loader.ts';
 import {forwardNativeNotifications, mountNativeInteraction} from './native-interaction.ts';
 import {HarnessHome} from '../../../packages/native-environment/src/harness-home.ts';
 
@@ -64,6 +65,8 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
   const harnessHome = {...await control.nativeHarnessHome(owner), deepSeekFiles: files};
   let commitModels: ((next: EnvironmentModels) => Promise<void>) | undefined;
   const loop = await (await controlFor(env, owner).nativeLoopConfiguration(owner)).json() as {maxParallelToolCalls: number};
+  let profileOverrides = presentation ? await control.nativeProfileOverrides(owner) : {};
+  let world: Context | undefined;
   let activeAgent: Agent | undefined;
   let composition: Context | undefined;
   let refreshSubagents: ((limits: SubagentLimits) => void) | undefined;
@@ -72,6 +75,7 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
     persona: profile ? `${presentation ? profile.spec.persona : rootPersona(profile)}\n${profile.spec.allowClientPlugins ? presentation ? NATIVE_PLUGIN_GUIDE : CLIENT_PLUGIN_GUIDE : ''}` : persona,
     model: selection(), presentation,
     mountModels: async ctx => {
+      world = ctx;
       await ctx.plugin(HarnessHome, harnessHome);
       await ctx.plugin(EnvironmentCredentialReader, (ref: string) => control.nativeResolveCredential(owner, credentialRef(ref)));
       if (models) commitModels = await mountNativeModels(ctx, models);
@@ -79,6 +83,7 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
       else throw new Error('Environment model settings are unavailable');
     },
     agentLoop: {maxParallelToolCalls: loop.maxParallelToolCalls},
+    profileOverrides,
     defaultModel: selection,
     beforeAssembly: async () => {
       if (models) {
@@ -91,6 +96,8 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
       const next = await (await controlFor(env, owner).nativeLoopConfiguration(owner)).json() as {maxParallelToolCalls: number};
       if (runtimeRoot) updateVolatile(runtimeRoot.agentLoop.config.maxParallelToolCalls, AgentLoop.Config({maxParallelToolCalls: next.maxParallelToolCalls}).maxParallelToolCalls);
       if (refreshSubagents) refreshSubagents(await (await controlFor(env, owner).nativeSubagentConfiguration(owner)).json() as SubagentLimits);
+      // Settings edits to official profile rows reach a live Session before its next turn.
+      if (presentation && world) profileOverrides = await reconcileProfileOverrides(world, profileOverrides, await control.nativeProfileOverrides(owner));
     },
     ...(presentation ? {meta: {cwd, ...(profile ? {agentPreset: profile.spec.id} : {})}} : {}),
     ...(presentation && profile ? {setupAgent: async (ctx, agent) => {
