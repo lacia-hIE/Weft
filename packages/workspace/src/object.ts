@@ -3,8 +3,8 @@ import { DurableObject } from 'cloudflare:workers';
 import { FsError } from '@deepseek-ai/dsh-fs';
 import { WorkerShellBackend } from '@cloudflare/computer/backends/worker-shell';
 import curlCommands from '@cloudflare/computer/shell/curl';
-import { ContainerBackend, type ContainerInstanceSize } from '@cloudflare/computer/backends/container';
-import { remoteContainerHost, type WorkspaceContainerDO } from './container-host.ts';
+import { LegacyContainerBackend } from '@cloudflare/computer/backends/container-legacy';
+import { CONTAINER_HOSTS, remoteContainerHost } from './container-host.ts';
 import { WorkspaceStore } from './store.ts';
 import { shellPolicy, type ShellSandbox } from './shell.ts';
 import { fsStatus, workspaceAddress, workspaceScopeSchema, workspaceOperationSchema, workspacePath, type WorkspaceScope, type WorkspaceOperation } from './protocol.ts';
@@ -17,9 +17,9 @@ interface Env { WORKSPACES: DurableObjectNamespace<WorkspaceDO>; LOADER?: Worker
 
 /** The selector of the container backend, beside Computer's default `worker-shell`. */
 export const CONTAINER_SHELL = 'container-shell';
-/** Container sizes an environment may choose; the platform's named instance types. */
-export const CONTAINER_INSTANCES = ['lite', 'basic', 'standard-1', 'standard-2', 'standard-3', 'standard-4'] as const;
-export type ContainerInstance = typeof CONTAINER_INSTANCES[number] & ContainerInstanceSize;
+/** Container sizes an environment may choose; each is a Container application with that instance type. */
+export const CONTAINER_INSTANCES = Object.keys(CONTAINER_HOSTS) as (keyof typeof CONTAINER_HOSTS)[];
+export type ContainerInstance = keyof typeof CONTAINER_HOSTS;
 const DEFAULT_INSTANCE: ContainerInstance = 'basic';
 
 /** No unscoped Computer stub is exposed to clients or model tools. */
@@ -31,7 +31,7 @@ export class WorkspaceDO extends DurableObject<Env> {
    * Weft's private attachment area stays local to the container disk, so it is
    * neither readable from the container nor synced back.
    */
-  private readonly container: ContainerBackend | undefined;
+  private readonly container: LegacyContainerBackend | undefined;
   private readonly watchers = new Map<string, {path: string; invalidate(): void; close(endStream?: boolean): void}>();
   /** The sandbox of every running shell execution, by execution id. */
   private readonly sandboxes = new Map<string, ShellSandbox>();
@@ -43,13 +43,18 @@ export class WorkspaceDO extends DurableObject<Env> {
       loader: env.LOADER, ctx, workspace: {binding: 'WORKSPACES', id: ctx.id.toString()},
       commands: [curlCommands], egress: {mode: 'direct'},
     }) : undefined;
-    // Only a deployment that declares the container-hosting Durable Object exports it as a namespace.
-    const exported = (ctx.exports as unknown as {WorkspaceContainerDO?: Partial<DurableObjectNamespace<WorkspaceContainerDO>>} | undefined)?.WorkspaceContainerDO;
-    const hosts = typeof exported?.getByName === 'function' ? exported as DurableObjectNamespace<WorkspaceContainerDO> : undefined;
-    this.container = hosts ? new ContainerBackend({
+    // Only a deployment that declares the container hosts exports them as namespaces; the size this
+    // workspace last asked for picks the host each time the container starts.
+    const exported = ctx.exports as unknown as Record<string, Partial<DurableObjectNamespace> | undefined> | undefined;
+    const host = (instance: ContainerInstance) => {
+      const hosts = exported?.[CONTAINER_HOSTS[instance]];
+      return typeof hosts?.getByName === 'function' ? hosts as DurableObjectNamespace : undefined;
+    };
+    this.container = CONTAINER_INSTANCES.every(instance => host(instance)) ? new LegacyContainerBackend({
       id: CONTAINER_SHELL, workspace: {binding: 'WORKSPACES', id: ctx.id.toString()},
-      container: () => ({getWorkspaceContainer: () => remoteContainerHost(hosts.getByName(ctx.id.toString()))}),
-      egress: {mode: 'direct'}, name: 'shell', instance: this.containerInstance(), ignore: ['/.weft'],
+      container: () => ({getWorkspaceContainer: () => remoteContainerHost(host(this.containerInstance())!.getByName(ctx.id.toString()) as unknown as Parameters<typeof remoteContainerHost>[0])}),
+      // Weft's private attachment area is a container-local path: neither readable there nor synced back.
+      egress: {mode: 'direct'}, containerEnv: {MOUNT_IGNORE: '/.weft'},
     }) : undefined;
     const backends = [shell, this.container].filter(backend => backend !== undefined);
     this.files = new WorkspaceStore(ctx.storage, shell ? {backends, observer: shellPolicy(changes => {

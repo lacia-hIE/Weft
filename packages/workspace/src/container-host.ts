@@ -1,19 +1,22 @@
 import { DurableObject } from 'cloudflare:workers';
-import { WorkspaceContainerAPI, type ContainerLaunchSpec, type ContainerRuntimeInfo, type IWorkspaceContainerAPI, type WorkspaceRef } from '@cloudflare/computer/backends/container';
+import { LegacyWorkspaceContainerAPI, type ContainerLaunchSpec, type ContainerRuntimeInfo, type ILegacyWorkspaceContainerAPI, type WorkspaceRef } from '@cloudflare/computer/backends/container-legacy';
 
 /** How long an idle workspace container keeps running before it sleeps; the next command starts it again. */
 const IDLE_MS = 10 * 60_000;
 
 /**
- * The Cloudflare Container of one workspace. The configuration language binds
- * every Durable Object by Worker name, and a Durable Object bound that way
- * cannot host a Container, so the container lives in this unbound object
- * (reached through `ctx.exports`) while the workspace itself stays in
- * WorkspaceDO. computerd still connects back to WorkspaceDO through
+ * The Cloudflare Container of one workspace, on the platform-scheduled
+ * Container applications this account supports. Each application has one
+ * instance type, so each size has its own host class.
+ *
+ * The configuration language binds every Durable Object by Worker name, and a
+ * Durable Object bound that way cannot host a Container, so the container
+ * lives in an unbound host (reached through `ctx.exports`) while the workspace
+ * itself stays in WorkspaceDO. computerd connects back to WorkspaceDO through
  * `WorkspaceProxy`, so files and executions remain the workspace's own.
  */
-export class WorkspaceContainerDO extends DurableObject {
-  private api(): WorkspaceContainerAPI { return new WorkspaceContainerAPI(this.ctx); }
+class WorkspaceContainerHost extends DurableObject {
+  private api(): LegacyWorkspaceContainerAPI { return new LegacyWorkspaceContainerAPI(this.ctx); }
   async start(spec: ContainerLaunchSpec): Promise<ContainerRuntimeInfo> {
     const api = this.api();
     const info = await api.start(spec);
@@ -35,14 +38,25 @@ export class WorkspaceContainerDO extends DurableObject {
   }
 }
 
-type ContainerHostStub = Pick<WorkspaceContainerDO, 'start' | 'restart' | 'exitInfo' | 'status' | 'interceptOutboundHttp' | 'interceptAllOutboundHttp' | 'fetchPort'>;
+export class WorkspaceContainerBasicDO extends WorkspaceContainerHost {}
+export class WorkspaceContainerStandard1DO extends WorkspaceContainerHost {}
+export class WorkspaceContainerStandard2DO extends WorkspaceContainerHost {}
+
+/** The container sizes an environment may choose, each the export name of its host class. */
+export const CONTAINER_HOSTS = {
+  'basic': 'WorkspaceContainerBasicDO',
+  'standard-1': 'WorkspaceContainerStandard1DO',
+  'standard-2': 'WorkspaceContainerStandard2DO',
+} as const;
+
+type ContainerHostStub = Pick<WorkspaceContainerHost, 'start' | 'restart' | 'exitInfo' | 'status' | 'interceptOutboundHttp' | 'interceptAllOutboundHttp' | 'fetchPort'>;
 
 /**
- * The container host `ContainerBackend` drives, over RPC to the workspace's
- * WorkspaceContainerDO. Abort signals cannot cross RPC: a request's deadline
- * is kept here, and the remote fetch is left to finish on its own.
+ * The container host the backend drives, over RPC to the workspace's host
+ * object. Abort signals cannot cross RPC: a request's deadline is kept here,
+ * and the remote fetch is left to finish on its own.
  */
-export function remoteContainerHost(stub: ContainerHostStub): IWorkspaceContainerAPI {
+export function remoteContainerHost(stub: ContainerHostStub): ILegacyWorkspaceContainerAPI {
   const unsupported = (name: string) => () => { throw new Error(`Workspace container hosts do not provide ${name} over RPC`); };
   return {
     start: spec => stub.start(spec),
@@ -65,6 +79,6 @@ export function remoteContainerHost(stub: ContainerHostStub): IWorkspaceContaine
       signal.throwIfAborted();
       return Promise.race([request, new Promise<never>((_, reject) => signal.addEventListener('abort', () => reject(signal.reason), {once: true}))]);
     },
-    port: unsupported('port') as IWorkspaceContainerAPI['port'],
+    port: unsupported('port') as ILegacyWorkspaceContainerAPI['port'],
   };
 }

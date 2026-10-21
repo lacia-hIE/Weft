@@ -3,12 +3,15 @@ import workspaceImage from './apps/workspace-container/image.json' with { type: 
 
 const accessAudience = 'a9f868c801ff9618d72eb834aeddbd37b2778f5ce054fef65c14168619d462b9';
 // Each workspace's Linux container, started by its WorkspaceDO when an environment runs commands there
-// (scripts/workspace-container.mjs builds and pushes the image).
-const workspaceContainer = defineContainer({ name: 'weft-workspace-shell', schedulingPolicy: 'durable-object', images: { shell: { reference: workspaceImage.reference } }, observability: { enabled: true } });
+// (scripts/workspace-container.mjs builds and pushes the image). One application per size an environment may choose.
+const workspaceContainer = (size: 'basic' | 'standard-1' | 'standard-2', maxInstances: number) => defineContainer({
+  name: `weft-workspace-shell-${size}`, image: { reference: workspaceImage.reference }, instanceType: size, maxInstances, observability: { logs: { enabled: true } },
+});
+const workspaceContainers = { basic: workspaceContainer('basic', 10), standard1: workspaceContainer('standard-1', 5), standard2: workspaceContainer('standard-2', 3) };
 const uiWorker = defineWorker({ name:'weft-ui-assets',entrypoint:'./dist/assets-worker.js',compatibilityDate:'2026-07-30',workersDev:false,previewUrls:false });
 
 export default defineConfig({
-  containers: [workspaceContainer],
+  containers: Object.values(workspaceContainers),
   worker: {
     name: 'weft-kernel-validation',
     entrypoint: './dist/worker.js',
@@ -42,8 +45,10 @@ export default defineConfig({
       PluginCapabilities: exports.worker(),
       SessionDO: exports.durableObject({ storage: 'sqlite' }),
       WorkspaceDO: exports.durableObject({ storage: 'sqlite' }),
-      // Hosts each workspace's container; unbound, because a bound Durable Object cannot host one (see container-host.ts).
-      WorkspaceContainerDO: exports.durableObject({ storage: 'sqlite', container: workspaceContainer }),
+      // Host each workspace's container by size; unbound, because a bound Durable Object cannot host one (see container-host.ts).
+      WorkspaceContainerBasicDO: exports.durableObject({ storage: 'sqlite', container: workspaceContainers.basic }),
+      WorkspaceContainerStandard1DO: exports.durableObject({ storage: 'sqlite', container: workspaceContainers.standard1 }),
+      WorkspaceContainerStandard2DO: exports.durableObject({ storage: 'sqlite', container: workspaceContainers.standard2 }),
       // computerd's connection back to its WorkspaceDO.
       WorkspaceProxy: exports.worker(),
       EnvironmentDO: exports.durableObject({ storage: 'sqlite' }),

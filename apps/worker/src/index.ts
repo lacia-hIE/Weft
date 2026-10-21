@@ -29,7 +29,7 @@ import { workspaceIdSchema, workspaceAddress, workspacePath } from '../../../pac
 export { WorkspaceDO, TenantDO, EnvironmentDO };
 // The shell Dynamic Worker reaches its own WorkspaceDO through this entrypoint (ctx.exports).
 export { WorkspaceServiceProxy, WorkspaceProxy } from '@cloudflare/computer';
-export { WorkspaceContainerDO } from '../../../packages/workspace/src/container-host.ts';
+export { WorkspaceContainerBasicDO, WorkspaceContainerStandard1DO, WorkspaceContainerStandard2DO } from '../../../packages/workspace/src/container-host.ts';
 import { z } from 'zod';
 import { Context } from '@deepseek-ai/cordis';
 import { createUserMessage } from '@deepseek-ai/dsh-llm';

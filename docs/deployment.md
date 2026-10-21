@@ -17,7 +17,7 @@ npm run deploy
 
 ## 工作区容器
 
-`container-shell` 后端的镜像在 `apps/workspace-container/Dockerfile`。修改 Dockerfile 或升级 `@cloudflare/computer` 后运行 `node scripts/workspace-container.mjs`：它构建镜像、用 `cf containers push` 推送到账号的 Cloudflare 镜像仓库，并把镜像地址写进 `apps/workspace-container/image.json`（需提交）。构建会校验该地址与当前 Dockerfile 一致，未推送的修改会让构建失败。部署时 Cloudflare 按这个地址创建由 Durable Object 调度的 Container 应用 `weft-workspace-shell`；容器按运行时长计费，空闲 10 分钟后休眠。
+`container-shell` 后端的镜像在 `apps/workspace-container/Dockerfile`。修改 Dockerfile 或升级 `@cloudflare/computer` 后运行 `node scripts/workspace-container.mjs`：它构建镜像、用 `cf containers push` 推送到账号的 Cloudflare 镜像仓库，并把镜像地址写进 `apps/workspace-container/image.json`（需提交）。构建会校验该地址与当前 Dockerfile 一致，未推送的修改会让构建失败。部署时 Cloudflare 按这个地址为每个可选规格创建一个普通调度的 Container 应用（`weft-workspace-shell-basic`、`-standard-1`、`-standard-2`，各有实例上限）；容器按运行时长计费，空闲 10 分钟后休眠。
 
 ## 配置数据库（D1）
 
