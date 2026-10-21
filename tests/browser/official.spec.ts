@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import {compose} from './compose.ts';
 
 test('the official Harness entry sends native turns, restores history and scopes browser state per environment', async ({page, request}) => {
   const failures: string[] = [];
@@ -26,7 +27,7 @@ test('the official Harness entry sends native turns, restores history and scopes
     sessionStorage.setItem('same-native-key', 'first session state');
   });
   const message = 'Official native browser '+suffix;
-  await page.locator('[contenteditable=true]').fill(message);
+  await compose(page, message);
   await page.getByRole('button', {name: 'Send message', exact: true}).click();
   await expect(page.getByText('Tenant: '+me.tenantId, {exact: true})).toBeVisible({timeout: 30_000});
   const sessions = await native(first, 'session/list', {_request: {}});
@@ -66,7 +67,7 @@ test('the official entry uses real DeepSeek and restores its native history', as
   await page.goto(`/agents/${environment}`);
   await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
   await expect(page.getByRole('button', {name: /Select model, current DeepSeek/})).toBeVisible({timeout: 45_000});
-  await page.locator('[contenteditable=true]').fill('只回复这一行，不调用工具：WEFT_OFFICIAL_UI_OK');
+  await compose(page, '只回复这一行，不调用工具：WEFT_OFFICIAL_UI_OK');
   await page.getByRole('button', {name: 'Send message', exact: true}).click();
   await expect(page.getByText('WEFT_OFFICIAL_UI_OK', {exact: true})).toBeVisible({timeout: 120_000});
   await page.reload();

@@ -1,4 +1,5 @@
 import {test, expect} from '@playwright/test';
+import {compose} from './compose.ts';
 import sharp from 'sharp';
 import type {FileUploadValue} from '@deepseek-ai/dsh-client-file-upload/types';
 
@@ -22,7 +23,7 @@ test('real DeepSeek reads a workspace image with the original read_image tool an
   expect(receipt.result.ok).toBe(true);
   const file = receipt.result.value.file, digest = file.attachmentId.slice('sha256:'.length);
   const path = `/workspace/.weft/attachments/v1/files/${digest.slice(0, 2)}/${digest}/${file.name}`;
-  await page.locator('[contenteditable=true]').fill(`请调用 read_image 工具读取 ${path}，只回复图片中显示的完整校验码，不要添加解释。`);
+  await compose(page, `请调用 read_image 工具读取 ${path}，只回复图片中显示的完整校验码，不要添加解释。`);
   await page.getByRole('button', {name: 'Send message', exact: true}).click();
   await expect(page.getByText(checksum, {exact: true}).last()).toBeVisible({timeout: 120_000});
   const {events} = await (await request.get(base + '/sessions/' + sessionId + '/events')).json() as {events: Array<{type: string; data: unknown}>};

@@ -1,4 +1,5 @@
 import {test, expect} from '@playwright/test';
+import {compose} from './compose.ts';
 import type {SessionEvent} from '@deepseek-ai/dsh-session';
 
 test('real DeepSeek reads an uploaded file through the original composer and native filesystem tool', async ({page, request}) => {
@@ -12,7 +13,7 @@ test('real DeepSeek reads an uploaded file through the original composer and nat
   await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
   await created;
   await expect(page.getByRole('button', {name: /Select model, current DeepSeek/})).toBeVisible({timeout: 45_000});
-  await page.locator('[contenteditable=true]').fill('使用 read 工具读取我上传的 live-upload.txt，最终只回复文件中的完整校验码这一行。');
+  await compose(page, '使用 read 工具读取我上传的 live-upload.txt，最终只回复文件中的完整校验码这一行。');
   const checksum = 'WEFT_NATIVE_ATTACHMENT_'+crypto.randomUUID();
   const uploaded = page.waitForResponse(response => response.url().includes('/native/api/session/uploadFileBinary'));
   await page.locator('input[type="file"]').first().setInputFiles({name: 'live-upload.txt', mimeType: 'text/plain', buffer: Buffer.from(checksum)});

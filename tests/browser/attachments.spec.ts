@@ -1,4 +1,5 @@
 import {test, expect} from '@playwright/test';
+import {compose} from './compose.ts';
 import {createHash} from 'node:crypto';
 import {writeFile} from 'node:fs/promises';
 
@@ -14,7 +15,7 @@ test('the original composer uploads a file before the first prompt and restores 
   await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
   await created;
   await expect(page.getByRole('button', {name: 'Select model, current scripted', exact: true})).toBeVisible({timeout: 45_000});
-  await page.locator('[contenteditable=true]').fill('Use this uploaded invoice');
+  await compose(page, 'Use this uploaded invoice');
   const filePath = testInfo.outputPath('browser-invoice.txt');
   await writeFile(filePath, bytes);
   const uploading = page.waitForResponse(response => response.url().includes('/native/api/session/uploadFileBinary'), {timeout: 120_000});

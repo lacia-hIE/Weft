@@ -1,4 +1,5 @@
 import {test, expect} from '@playwright/test';
+import {compose} from './compose.ts';
 import sharp from 'sharp';
 import type {SessionEvent} from '@deepseek-ai/dsh-session';
 
@@ -12,7 +13,7 @@ test('real DeepSeek recognizes a checksum present only in an image through the o
   await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
   await created;
   await expect(page.getByRole('button', {name: /Select model, current DeepSeek/})).toBeVisible({timeout: 45_000});
-  await page.locator('[contenteditable=true]').fill('只回复图片中显示的完整校验码，不要添加解释。');
+  await compose(page, '只回复图片中显示的完整校验码，不要添加解释。');
   const checksum = 'WEFT-' + crypto.randomUUID().replaceAll('-', '').slice(0, 6).toUpperCase();
   const pixels = await sharp(Buffer.from(`<svg width="720" height="220" xmlns="http://www.w3.org/2000/svg"><rect width="720" height="220" fill="white"/><text x="30" y="145" font-family="monospace" font-size="86" fill="black">${checksum}</text></svg>`)).png().toBuffer();
   await page.locator('input[type="file"]').first().setInputFiles({name: 'vision-card.png', mimeType: 'image/png', buffer: pixels});

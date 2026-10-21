@@ -1,4 +1,5 @@
 import {test, expect} from '@playwright/test';
+import {compose} from './compose.ts';
 
 test('official preset settings view real compositions, persist defaults and keep existing sessions on their selected preset', async ({page, request}) => {
   const me = await (await request.get('/v1/me')).json() as {tenantId: string};
@@ -27,7 +28,7 @@ test('official preset settings view real compositions, persist defaults and keep
   await expect(creator.getByRole('button', {name: 'New task default: Creator mode', exact: true})).toHaveAttribute('aria-pressed', 'true');
   await page.reload();
   await expect(page.getByRole('button', {name: 'Creator mode', exact: true})).toBeVisible({timeout: 45_000});
-  await page.locator('[contenteditable=true]').fill('Preset UI flow');
+  await compose(page, 'Preset UI flow');
   await page.getByRole('button', {name: 'Send message', exact: true}).click();
   await expect(page.getByText(/^Tenant: /).last()).toBeVisible({timeout: 30_000});
   const sessions = await rpc('session/list', {_request: {}});
@@ -43,7 +44,7 @@ test('official preset settings view real compositions, persist defaults and keep
   await page.getByRole('button', {name: 'New session', exact: true}).first().click({timeout: 45_000});
   await page.getByRole('button', {name: 'Standard mode', exact: true}).click();
   await page.locator('[role^="menuitem"]').filter({hasText: 'Creator'}).click();
-  await page.locator('[contenteditable=true]').fill('Staged Creator choice');
+  await compose(page, 'Staged Creator choice');
   await page.getByRole('button', {name: 'Send message', exact: true}).click();
   await expect(page.getByText(/^Tenant: /).last()).toBeVisible({timeout: 30_000});
   const next = (await rpc('session/list', {_request: {}})).items.find((row: {sessionId: string}) => row.sessionId !== sessionId);

@@ -1,4 +1,5 @@
 import {test, expect} from '@playwright/test';
+import {compose} from './compose.ts';
 
 test('the original Files sidebar previews text and byte images and refreshes external changes', async ({page, request}) => {
   const me = await (await request.get('/v1/me')).json() as {tenantId: string};
@@ -19,7 +20,7 @@ test('the original Files sidebar previews text and byte images and refreshes ext
   await page.goto('/agents/'+id);
   expect(await page.evaluate(() => (performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming).nextHopProtocol)).toBe('h2');
   await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
-  await page.locator('[contenteditable=true]').fill('Open this environment workspace');
+  await compose(page, 'Open this environment workspace');
   await page.getByRole('button', {name: 'Send message', exact: true}).click({timeout: 45_000});
   await expect(page.getByText('Tenant: '+me.tenantId, {exact: true})).toBeVisible({timeout: 30_000});
   await page.locator('[data-sidebar-right-expand]').click();

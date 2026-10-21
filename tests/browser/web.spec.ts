@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import {compose} from './compose.ts';
 
 test("Agent catalogue opens the official Harness by default and keeps environment sessions isolated", async ({ page }) => {
   const errors: string[] = [];
@@ -10,7 +11,7 @@ test("Agent catalogue opens the official Harness by default and keeps environmen
   await page.getByRole("link", {name: "进入 Research environment", exact: true}).click();
   await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
   await expect(page.getByRole('button', {name: 'Select model, current scripted', exact: true})).toBeVisible({timeout: 45_000});
-  await page.locator('[contenteditable=true]').fill('Research environment only');
+  await compose(page, 'Research environment only');
   await page.getByRole('button', {name: 'Send message', exact: true}).click();
   await expect(page.getByText(/^Tenant: /).last()).toBeVisible({timeout: 30_000});
   await page.getByRole('button', {name: 'My Agents', exact: true}).click();

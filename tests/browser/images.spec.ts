@@ -1,4 +1,5 @@
 import {test, expect} from '@playwright/test';
+import {compose} from './compose.ts';
 import {imageFixtures} from '../helpers/images.ts';
 
 test('the original composer admits an image and reloads its authorized native gallery and lightbox', async ({page, request}) => {
@@ -10,7 +11,7 @@ test('the original composer admits an image and reloads its authorized native ga
   await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
   await created;
   await expect(page.getByRole('button', {name: 'Select model, current scripted', exact: true})).toBeVisible({timeout: 45_000});
-  await page.locator('[contenteditable=true]').fill('Inspect this red image');
+  await compose(page, 'Inspect this red image');
   const fixture = await imageFixtures();
   await page.locator('input[type="file"]').first().setInputFiles({name: 'red-card.png', mimeType: 'image/png', buffer: fixture.png});
   await expect(page.getByRole('img', {name: 'red-card.png', exact: true})).toBeVisible();
