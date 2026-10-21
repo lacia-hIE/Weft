@@ -49,6 +49,18 @@ export interface NativeSettingsHost {
   openDocument?(): Promise<void>;
 }
 
+/**
+ * Environment facts a profile row's configuration follows: DeepSeek search
+ * uses the environment's configured DeepSeek endpoint with `/v1`, as the
+ * official default does for its own endpoint. User edits still override them.
+ */
+const PROFILE_ROW_BASES: Record<string, (settings: NativeSettings) => Section> = {
+  'web-search-deepseek': settings => {
+    const baseURL = settings.value(MODEL_NAMESPACE).baseURL;
+    return typeof baseURL === 'string' ? {baseURL: `${baseURL.replace(/\/+$/, '')}/v1`} : {};
+  },
+};
+
 /** The header of the configuration document; the rows below replace the environment's configuration as a whole. */
 export const DOCUMENT_HEADER = [
   '# This environment\'s plugin configuration, as official profile patch rows: one row per edited entry.',
@@ -116,12 +128,18 @@ export class NativeSettings {
     // Profile rows the Loader composes: their forms come from the official schemas, edits override the profile configuration.
     for (const row of profileSettingRows) {
       if (this.namespaces.some(ns => ns.id === row.id)) continue;
-      this.namespaces.push({id: row.id, schema: row.schema, base: () => structuredClone(row.base), autoGenerate: false, validate: () => {}, profileRow: true});
+      const derived = PROFILE_ROW_BASES[row.id];
+      this.namespaces.push({id: row.id, schema: row.schema, base: () => ({...structuredClone(row.base), ...derived?.(this)}), autoGenerate: false, validate: () => {}, profileRow: true});
     }
   }
-  /** The environment's configuration of the profile rows it has edited, applied to Loader rows in every world. */
+  /** The environment's configuration of profile rows whose value differs from the official profile, applied to Loader rows in every world. */
   profileOverrides(): Record<string, Section> {
-    return Object.fromEntries(this.namespaces.filter(ns => ns.profileRow && Object.keys(this.row(ns.id).user).length > 0).map(ns => [ns.id, this.value(ns.id)]));
+    return Object.fromEntries(this.namespaces.flatMap(ns => {
+      if (!ns.profileRow) return [];
+      const value = this.value(ns.id);
+      const official = profileSettingRows.find(row => row.id === ns.id)!;
+      return JSON.stringify(value) === JSON.stringify(plainConfig(ns.schema(official.base))) ? [] : [[ns.id, value]];
+    }));
   }
   private namespace(id: string): Namespace {
     const ns = this.namespaces.find(row => row.id === id);

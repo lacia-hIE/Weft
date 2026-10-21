@@ -5,7 +5,6 @@ import SessionSkillCatalog from '@weft/upstream/packages/api/session-controller/
 import Typert from '../../../.generated/official-typert-registry.js';
 import JobController from '@deepseek-ai/dsh-api-job-controller';
 import TerminalController from '@deepseek-ai/dsh-api-terminal-controller';
-import * as WebSearchDeepSeek from '@deepseek-ai/dsh-web-search-deepseek';
 import { mountPermissions } from '../../../packages/native-environment/src/permissions.ts';
 import type { EnvironmentModels } from '../../../packages/native-models/src/index.ts';
 import type { Env } from './index.ts';
@@ -41,11 +40,6 @@ export async function mountNativeInteraction(ctx: Context, env: Env, storage: Du
   if (ctx.get('subprocess')) await ctx.plugin(TerminalController, TerminalController.Config({} as never));
   // Permission presets bundle the shell's sandbox mode with the approval policy; approvals reach the client as waterfalls.
   if (ctx.get('shell')) await mountPermissions(ctx, settings.permissionDefault);
-  // The profile loads the web runtime and HTTP fetch; DeepSeek search uses the environment's configured
-  // DeepSeek endpoint and model key (the official default is that endpoint's `/v1`).
-  const {deepseek} = settings.models;
-  const baseURL = typeof deepseek.baseURL === 'string' ? deepseek.baseURL : undefined;
-  await ctx.plugin(WebSearchDeepSeek, baseURL ? {baseURL: `${baseURL.replace(/\/+$/, '')}/v1`} : {});
   await mountSessionReferences(ctx, env, storage, scope, owner);
   await mountNativeSchedule(ctx, storage, {set: async at => {
     if (at === undefined) {await storage.deleteAlarm(); return;}

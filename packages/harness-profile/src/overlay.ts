@@ -54,6 +54,9 @@ export const LOADED: Record<string, {world: 'session'; phase: ProfilePhase; nati
   'command-feedback': {world: 'session', phase: 'late', native: true},
   'web': {world: 'session', phase: 'late', native: true},
   'web-fetch-http': {world: 'session', phase: 'late', native: true},
+  // Its base URL follows the environment's DeepSeek endpoint through the environment's row configuration.
+  'web-search-deepseek': {world: 'session', phase: 'late', native: true},
+  'repeat-tool-reminder': {world: 'session', phase: 'late', native: true},
 };
 
 /** Original packages that Weft's world setup mounts today. */
@@ -64,7 +67,7 @@ export const MOUNTED_BY_WEFT: Record<string, string> = {
   'agent-default-model': 'environment settings', 'jobs': 'workspace shell', 'shell-env': 'workspace shell',
   'sandbox-policy': 'workspace shell', 'approval': 'native permissions', 'permission': 'native permissions',
   'subagent': 'native-subagents', 'subagent-spawn-in-process': 'native-subagents', 'subagent-fork-in-process': 'native-subagents',
-  'web-search-deepseek': 'native interaction (base URL from the environment model settings)', 'schedule': 'native-schedule',
+  'schedule': 'native-schedule',
   'session-reference': 'native interaction', 'file-reference-local': 'native-files', 'working-directory': 'workspace provider',
   'workspace': 'native workspaces', 'fs-observation-policy': 'workspace provider', 'attachment-local': 'native-attachments',
   'session-query-sqlite': 'native-query', 'storage': 'native-storage', 'storage-domain': 'native-storage',
@@ -74,7 +77,7 @@ export const MOUNTED_BY_WEFT: Record<string, string> = {
   'workspace-files': 'native-files', 'session-controller': 'Weft session host',
   'cordis-host-runner': 'native-plugins', 'cordis-inspect-providers': 'native-plugins', 'plugin-inventory': 'native-composition',
   'skill': 'native interaction', 'settings-controller': 'environment settings', 'workspace-controller': 'native workspaces',
-  'session-log-download': 'session reader', 'tool-working-directory': 'workspace provider', 'repeat-tool-reminder': 'preset catalog',
+  'session-log-download': 'session reader', 'tool-working-directory': 'workspace provider',
   'authorization': 'native-plugins', 'plugin-package-inventory-deepseek': 'native-composition',
   'cordis-client-runner': 'native-plugins (its browser module is in the Boot Graph)',
 };
