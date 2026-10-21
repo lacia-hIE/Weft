@@ -1,3 +1,4 @@
+import type { ControlScope } from '../../../packages/control-plane/src/contracts.ts';
 import { z } from 'zod';
 import { SessionId } from '@deepseek-ai/dsh-session';
 import { RemoteError, remoteErrorOf } from '@deepseek-ai/dsh-typert-protocol';
@@ -42,6 +43,26 @@ type Endpoint = keyof typeof sessionRemote.methods;
 /** Official Connection envelopes and generated codecs at the CF host boundary. */
 /** Session Durable Objects one environment-wide read asks at once; each answer is a cross-object round trip. */
 const SESSION_FAN_OUT = 16;
+
+/**
+ * A Session's root never changes once the environment records it (a child's
+ * owner is immutable and a root owns itself), so this isolate keeps found
+ * roots instead of asking the environment before every Session call. Unknown
+ * Sessions are asked again: they may be created later.
+ */
+const roots = new Map<string, {root: string; at: number}>();
+const ROOT_MS = 600_000;
+async function cachedRoot(owner: ControlScope, control: ReturnType<typeof controlFor>, sessionId: string): Promise<string | undefined> {
+  const key = JSON.stringify([owner.tenantId, owner.environmentId, sessionId]);
+  const cached = roots.get(key);
+  if (cached && Date.now() - cached.at < ROOT_MS) return cached.root;
+  const root = await control.nativeSessionRoot(owner, sessionId);
+  if (root !== undefined) {
+    if (roots.size >= 4096) roots.clear();
+    roots.set(key, {root, at: Date.now()});
+  }
+  return root;
+}
 
 export async function handleNativeRequest(request: Request, env: Env, principal: Principal, environmentId?: string): Promise<Response | undefined> {
   const pathname = new URL(request.url).pathname;
@@ -90,6 +111,7 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
   assertSameOrigin(request);
   const owner = controlScope(principal.tenantId, environmentId);
   const control = controlFor(env, owner);
+  const sessionRoot = (sessionId: string) => cachedRoot(owner, control, sessionId);
   const endpoint = match[3]!;
   let rpcId = 'invalid-request';
   const session = (sessionId: string) => {
@@ -99,7 +121,7 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
   const notFound = (sessionId: string): never => { throw new RemoteError('session/not-found', 'Session not found', {sessionId: SessionId(sessionId)}); };
   const parentSession = async (parentId: string, childId = parentId) => {
     session(parentId);
-    const root = await control.nativeSessionRoot(owner, parentId);
+    const root = await sessionRoot(parentId);
     if (!root) throw new RemoteError('subagent/not-found', 'Subagent parent is not available', {parentSessionId: SessionId(parentId), childSessionId: SessionId(childId)});
     return session(root);
   };
@@ -130,7 +152,7 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
       const streamRemote = agentRemoteFor(endpoint);
       if (streamRemote && endpoint !== 'userQuestions/attachWait') {
         const args = payloadSchema.parse(raw).args;
-        const target = session(await control.nativeSessionRoot(owner, remoteAgentId(streamRemote, endpoint, args)) ?? remoteAgentId(streamRemote, endpoint, args));
+        const target = session(await sessionRoot(remoteAgentId(streamRemote, endpoint, args)) ?? remoteAgentId(streamRemote, endpoint, args));
         const streamId = request.headers.get('x-weft-stream-id') ?? undefined;
         return await target.stub.fetch(new Request('https://session.internal/native-agent-stream', {
           method: 'POST', body: JSON.stringify({scope: target.scope, operation: 'native-agent-stream', endpoint, args, ...(streamId ? {streamId: z.uuid().parse(streamId)} : {})}), signal: request.signal,
@@ -138,7 +160,7 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
       }
       if (endpoint === 'userQuestions/attachWait') {
         const args = questionRemote.methods[endpoint].input({strict: true}).create().parse(payloadSchema.parse(raw).args);
-        const target = session(await control.nativeSessionRoot(owner, args.agentId) ?? args.agentId);
+        const target = session(await sessionRoot(args.agentId) ?? args.agentId);
         return await target.stub.fetch(new Request('https://session.internal/native-question-wait', {
           method: 'POST', body: JSON.stringify({scope: target.scope, operation: 'native-question-wait', args}), signal: request.signal,
         }));
@@ -189,7 +211,7 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
       const remote = agentRemoteFor(input.endpoint);
       if (!remote) throw new RemoteError('gateway/method-unavailable', 'Remote stream is not connected yet', {endpoint: input.endpoint});
       const agentId = remoteAgentId(remote, input.endpoint, input.args);
-      const target = session(await control.nativeSessionRoot(owner, agentId) ?? agentId);
+      const target = session(await sessionRoot(agentId) ?? agentId);
       await target.stub.nativeStreamInput(target.scope, input.streamId, input.items, input.end);
       return Response.json({type: 'server-response', rpcId, result: {ok: true}}, {headers: {'cache-control': 'private, no-store'}});
     }
@@ -210,7 +232,7 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
     }
     const agentRemote = agentRemoteFor(endpoint);
     if (agentRemote) {
-      const target = session(await control.nativeSessionRoot(owner, remoteAgentId(agentRemote, endpoint, payload.args)) ?? remoteAgentId(agentRemote, endpoint, payload.args));
+      const target = session(await sessionRoot(remoteAgentId(agentRemote, endpoint, payload.args)) ?? remoteAgentId(agentRemote, endpoint, payload.args));
       const result = await (await target.stub.nativeAgentRemote(target.scope, endpoint, payload.args)).json() as {ok: boolean; value?: unknown; error?: unknown};
       if (!result.ok) {
         const failure = remoteErrorOf(result.error);
@@ -307,7 +329,7 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
         const {request: input} = sessionRemote.methods[endpoint].input({strict: true}).create().parse(payload.args);
         let sessionId = input.sessionId ?? SessionId(crypto.randomUUID());
         let target = session(sessionId);
-        const [workspace, existingOwner] = await Promise.all([control.nativeResolveWorkspace(owner, input.workspaceId, input.cwd), control.nativeSessionRoot(owner, sessionId)]);
+        const [workspace, existingOwner] = await Promise.all([control.nativeResolveWorkspace(owner, input.workspaceId, input.cwd), sessionRoot(sessionId)]);
         if (existingOwner && existingOwner !== sessionId) {sessionId = SessionId(crypto.randomUUID()); target = session(sessionId);}
         const existing = await target.stub.nativeStatus(target.scope);
         if (existing && (!existing.blank || existing.running)) {
@@ -328,7 +350,7 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
       }
       case 'session/fork': {
         const {request: input} = sessionRemote.methods[endpoint].input({strict: true}).create().parse(payload.args);
-        const source = session(await control.nativeSessionRoot(owner, input.sessionId) ?? notFound(input.sessionId));
+        const source = session(await sessionRoot(input.sessionId) ?? notFound(input.sessionId));
         const sessionId = SessionId(crypto.randomUUID());
         const target = session(sessionId);
         const seeded = await (await source.stub.nativeForkSeed(source.scope, input.sessionId, input.atSeq)).json() as {ok: boolean; value?: Parameters<typeof target.stub.nativeCreateFork>[1]; error?: unknown};
@@ -337,7 +359,7 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
           throw failure ? new RemoteError(failure.code, failure.message, failure.details) : new RemoteError('gateway/internal', 'Invalid fork seed response', {});
         }
         await target.stub.nativeCreateFork(target.scope, {...seeded.value, parentSession: input.sessionId});
-        const workspace = await control.nativeWorkspaceOf(owner, await control.nativeSessionRoot(owner, input.sessionId) ?? input.sessionId);
+        const workspace = await control.nativeWorkspaceOf(owner, await sessionRoot(input.sessionId) ?? input.sessionId);
         if (workspace) await control.nativeAttachWorkspace(owner, workspace, sessionId);
         value = {sessionId};
         break;
@@ -374,13 +396,13 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
       }
       case 'session/projections': {
         const {request: input} = sessionRemote.methods[endpoint].input({strict: true}).create().parse(payload.args);
-        const target = session(await control.nativeSessionRoot(owner, input.sessionId) ?? input.sessionId);
+        const target = session(await sessionRoot(input.sessionId) ?? input.sessionId);
         value = await (await target.stub.nativeProjections(target.scope, input.sessionId)).json();
         break;
       }
       case 'session/attachment': {
         const {request: input} = sessionRemote.methods[endpoint].input({strict: true}).create().parse(payload.args);
-        const target = session(await control.nativeSessionRoot(owner, input.sessionId) ?? input.sessionId);
+        const target = session(await sessionRoot(input.sessionId) ?? input.sessionId);
         const response = await target.stub.nativeImageAttachment(target.scope, input.attachmentId, input.sessionId);
         value = (await response.json() as {value: unknown}).value;
         break;
