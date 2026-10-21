@@ -7,6 +7,7 @@ import Skills from "@deepseek-ai/dsh-skill";
 import * as SkillFiles from "@deepseek-ai/dsh-skill-filesystem";
 import * as SkillTool from "@deepseek-ai/dsh-tool-skill";
 import * as FileTools from '@deepseek-ai/dsh-tool-fs';
+import * as FileSearch from '@deepseek-ai/dsh-tool-fs-search';
 import * as Subagent from '@deepseek-ai/dsh-tool-subagent';
 import * as SubagentControl from '@deepseek-ai/dsh-tool-subagent-control';
 import * as ListAgents from '@deepseek-ai/dsh-tool-subagent-control/list-agents';
@@ -375,6 +376,13 @@ const entries: Entry[] = [
     validate: config => {SkillCatalogBundle.Config(config);},
     // tool-skill mounts the catalog where no preset realm composes this row.
     mount: async () => {},
+  },
+  {
+    id: 'tool-fs-search', package: '@deepseek-ai/dsh-tool-fs-search', module: FileSearch, title: '文件搜索',
+    description: '官方 glob 与 grep；ripgrep 在环境工作区的 Linux 容器中运行。',
+    workspace: true, schema: FileSearch.Config, defaults: {},
+    validate: config => {FileSearch.Config(config as unknown as FileSearch.Config);},
+    mount: async (ctx, config) => {await ctx.plugin(FileSearch, FileSearch.Config(config as unknown as FileSearch.Config));},
   },
   {
     id: 'tool-fs', package: '@deepseek-ai/dsh-tool-fs', module: FileToolsBundle, title: '文件工具',

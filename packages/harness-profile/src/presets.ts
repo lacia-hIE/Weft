@@ -20,9 +20,7 @@ export const PRESET_PROVIDED: Record<string, string> = {
  * for them (`ESSENTIAL_PENDING`) they stay enabled, and the registry reports
  * the preset as unavailable until the provider lands.
  */
-export const PRESET_PENDING: Record<string, string> = {
-  'tool-fs-search': 'ripgrep on the container-shell execution backend',
-};
+export const PRESET_PENDING: Record<string, string> = {};
 
 /** Pending rows a preset cannot do without. */
 const ESSENTIAL_PENDING = new Set<string>();

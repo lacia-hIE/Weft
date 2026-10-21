@@ -12,14 +12,18 @@ import type { SandboxExecutionPolicy } from '@deepseek-ai/dsh-sandbox';
 import type { ShellSandbox, ShellSandboxMode } from './shell.ts';
 import type { SubprocessCollect, SubprocessHandle, SubprocessOutcome, SubprocessOutputReader, SubprocessSpawnSpec, SubprocessTerminalActivity, SubprocessTerminalEnvironment, SubprocessTerminalForeground, SubprocessTerminalHandle, SubprocessTerminalSignal, SubprocessTerminalSpawnSpec } from '@deepseek-ai/dsh-subprocess';
 
-/** One shell execution request for the environment's Computer runtime. */
-export interface ShellExecRequest { id: string; command: string; cwd: string; env?: Record<string, string>; stdin?: string; sandbox?: ShellSandbox }
+/** One shell execution request for the environment's Computer runtime; `container` requires the workspace container. */
+export interface ShellExecRequest { id: string; command: string; cwd: string; env?: Record<string, string>; stdin?: string; sandbox?: ShellSandbox; container?: true }
 export interface ShellTransport {
   exec(request: ShellExecRequest): Promise<Response>;
   kill(id: string): Promise<void>;
 }
 
 const SHELLS = new Set(['bash', 'sh']);
+/** ripgrep in the workspace container image, which the official file search tools spawn directly. */
+export const RIPGREP = '/usr/bin/rg';
+/** One argv element as a POSIX shell word. */
+const shellWord = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
 
 /** The argv prefix {@link WorkspaceSandbox.confine} adds; the subprocess seam turns it back into a shell sandbox. */
 const SANDBOX_RUNNER = '/weft/sandbox';
@@ -88,6 +92,7 @@ export class WorkspaceSubprocess extends SubprocessRuntime {
 
   override async resolveExecutable(command: string): Promise<string> {
     const name = posix.basename(command);
+    if (command === RIPGREP || command === 'rg') return RIPGREP;
     if (SHELLS.has(name) && (command === name || command === `/bin/${name}` || command === `/usr/bin/${name}`)) return `/bin/${name}`;
     throw new SubprocessExecutableNotFoundError(`${command}: only bash and sh exist in this workerd environment`);
   }
@@ -113,10 +118,13 @@ export class WorkspaceSubprocess extends SubprocessRuntime {
   override spawn(spec: SubprocessSpawnSpec): SubprocessHandle {
     spec.signal?.throwIfAborted();
     const {argv, sandbox: confined} = unconfine(spec.argv);
-    const [executable, flag, command] = argv;
-    if (executable === undefined || !SHELLS.has(posix.basename(executable)) || flag !== '-c' || typeof command !== 'string' || argv.length > 3) {
-      throw new SubprocessExecutableNotFoundError(`${argv.join(' ')}: only \`bash -c\` and \`sh -c\` run in this workerd environment`);
+    const ripgrep = argv[0] === RIPGREP;
+    const [executable, flag, script] = argv;
+    if (!ripgrep && (executable === undefined || !SHELLS.has(posix.basename(executable)) || flag !== '-c' || typeof script !== 'string' || argv.length > 3)) {
+      throw new SubprocessExecutableNotFoundError(`${argv.join(' ')}: only \`bash -c\`, \`sh -c\` and ripgrep run in this workerd environment`);
     }
+    // ripgrep exists in the workspace container; its argv becomes one quoted command there.
+    const command = ripgrep ? argv.map(shellWord).join(' ') : script!;
     if (spec.stdio.stdin === 'pipe') throw new Error('Interactive stdin is not available in this workerd environment');
     const id = crypto.randomUUID();
     const encoder = new TextEncoder();
@@ -133,7 +141,7 @@ export class WorkspaceSubprocess extends SubprocessRuntime {
     const sandbox: ShellSandbox | undefined = confined ?? (mode ? {mode, root: spec.env?.WEFT_SANDBOX_ROOT ?? '/workspace'} : undefined);
     const done = (async (): Promise<SubprocessOutcome> => {
       try {
-        const response = await this.transport.exec({id, command, cwd: spec.cwd, env, ...(sandbox ? {sandbox} : {}), ...(typeof spec.stdio.stdin === 'object' ? {stdin: spec.stdio.stdin.data} : {})});
+        const response = await this.transport.exec({id, command, cwd: spec.cwd, env, ...(sandbox ? {sandbox} : {}), ...(ripgrep ? {container: true as const} : {}), ...(typeof spec.stdio.stdin === 'object' ? {stdin: spec.stdio.stdin.data} : {})});
         if (!response.ok || !response.body) {
           const failure = await response.json().catch(() => ({error: `HTTP ${response.status}`})) as {error?: string};
           throw new Error(`Shell execution failed to start: ${failure.error ?? response.status}`);

@@ -29,6 +29,14 @@ export const nativeShellPlatform = {
       }
       return {contents: source, loader: 'ts', resolveDir: resolve(path, '..')};
     });
+    // The official file search spawns ripgrep from the workspace container image instead of an npm binary.
+    builder.onLoad({filter: /packages\/fs\/tool-fs-search\/src\/search-core\.ts$/}, async ({path}) => {
+      const source = (await import('node:fs')).readFileSync(path, 'utf8');
+      const start = source.indexOf('export function resolveRgPath(): Promise<string> {');
+      const end = source.indexOf('\n}\n', start);
+      if (start < 0 || end < 0 || !source.slice(start, end).includes("import('@vscode/ripgrep')")) throw new Error('Upstream ripgrep resolution changed; review the container file search');
+      return {contents: source.slice(0, start) + "export function resolveRgPath(): Promise<string> {\n  return Promise.resolve('/usr/bin/rg')\n" + source.slice(end + 1), loader: 'ts', resolveDir: resolve(path, '..')};
+    });
     builder.onLoad({filter: /packages\/terminal\/terminal-bash\/src\/session\.ts$/}, async ({path}) => {
       const source = (await import('node:fs')).readFileSync(path, 'utf8');
       const before = "const requireHeadless = createLazyRequire<typeof import('@xterm/headless')>('@xterm/headless', import.meta.url)";

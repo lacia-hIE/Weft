@@ -133,7 +133,11 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
         if (presentation) {await ctx.plugin(ComputerFileReferences); await ctx.plugin(SessionFileReferences);}
         if (presentation) {
           const stub = env.WORKSPACES.getByName(workspaceAddress(workspace));
-          await mountWorkspaceShell(ctx, {exec: request => stub.exec(workspace, request), kill: id => stub.killExec(workspace, id)}, cwd);
+          // The environment chooses where commands run; ripgrep requests the container itself.
+          await mountWorkspaceShell(ctx, {exec: ({container, ...request}) => {
+            const runtime = context.workspaceRuntime;
+            return stub.exec(workspace, {...request, ...(container || runtime.shell === 'container' ? {container: {instance: runtime.containerInstance}} : {})});
+          }, kill: id => stub.killExec(workspace, id)}, cwd);
         }
         if (presentation) await mountNativeAttachments(ctx, {storage, scope: workspace, sessionId: scope.sessionId, transport: env.WORKSPACES.getByName(workspaceAddress(workspace)), ...(env.IMAGES ? {images: env.IMAGES} : {})});
       }

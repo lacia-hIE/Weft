@@ -3,6 +3,8 @@ import { DurableObject } from 'cloudflare:workers';
 import { FsError } from '@deepseek-ai/dsh-fs';
 import { WorkerShellBackend } from '@cloudflare/computer/backends/worker-shell';
 import curlCommands from '@cloudflare/computer/shell/curl';
+import { ContainerBackend, type ContainerInstanceSize } from '@cloudflare/computer/backends/container';
+import { remoteContainerHost, type WorkspaceContainerDO } from './container-host.ts';
 import { WorkspaceStore } from './store.ts';
 import { shellPolicy, type ShellSandbox } from './shell.ts';
 import { fsStatus, workspaceAddress, workspaceScopeSchema, workspaceOperationSchema, workspacePath, type WorkspaceScope, type WorkspaceOperation } from './protocol.ts';
@@ -12,9 +14,24 @@ import type {ImageVariantRecord} from '../../native-attachments/src/image-varian
 import {storedFilePath} from '../../../.generated/official-file-reference.ts';
 
 interface Env { WORKSPACES: DurableObjectNamespace<WorkspaceDO>; LOADER?: WorkerLoader }
+
+/** The selector of the container backend, beside Computer's default `worker-shell`. */
+export const CONTAINER_SHELL = 'container-shell';
+/** Container sizes an environment may choose; the platform's named instance types. */
+export const CONTAINER_INSTANCES = ['lite', 'basic', 'standard-1', 'standard-2', 'standard-3', 'standard-4'] as const;
+export type ContainerInstance = typeof CONTAINER_INSTANCES[number] & ContainerInstanceSize;
+const DEFAULT_INSTANCE: ContainerInstance = 'basic';
+
 /** No unscoped Computer stub is exposed to clients or model tools. */
 export class WorkspaceDO extends DurableObject<Env> {
   private readonly files: WorkspaceStore;
+  /**
+   * The workspace's Linux container, where the deployment provides one; its
+   * WorkspaceContainerDO hosts it. It mounts the same volume at /workspace;
+   * Weft's private attachment area stays local to the container disk, so it is
+   * neither readable from the container nor synced back.
+   */
+  private readonly container: ContainerBackend | undefined;
   private readonly watchers = new Map<string, {path: string; invalidate(): void; close(endStream?: boolean): void}>();
   /** The sandbox of every running shell execution, by execution id. */
   private readonly sandboxes = new Map<string, ShellSandbox>();
@@ -26,7 +43,16 @@ export class WorkspaceDO extends DurableObject<Env> {
       loader: env.LOADER, ctx, workspace: {binding: 'WORKSPACES', id: ctx.id.toString()},
       commands: [curlCommands], egress: {mode: 'direct'},
     }) : undefined;
-    this.files = new WorkspaceStore(ctx.storage, shell ? {backends: [shell], observer: shellPolicy(changes => {
+    // Only a deployment that declares the container-hosting Durable Object exports it as a namespace.
+    const exported = (ctx.exports as unknown as {WorkspaceContainerDO?: Partial<DurableObjectNamespace<WorkspaceContainerDO>>} | undefined)?.WorkspaceContainerDO;
+    const hosts = typeof exported?.getByName === 'function' ? exported as DurableObjectNamespace<WorkspaceContainerDO> : undefined;
+    this.container = hosts ? new ContainerBackend({
+      id: CONTAINER_SHELL, workspace: {binding: 'WORKSPACES', id: ctx.id.toString()},
+      container: () => ({getWorkspaceContainer: () => remoteContainerHost(hosts.getByName(ctx.id.toString()))}),
+      egress: {mode: 'direct'}, name: 'shell', instance: this.containerInstance(), ignore: ['/.weft'],
+    }) : undefined;
+    const backends = [shell, this.container].filter(backend => backend !== undefined);
+    this.files = new WorkspaceStore(ctx.storage, shell ? {backends, observer: shellPolicy(changes => {
       this.files.externalChanges(changes);
       for (const change of changes) this.invalidate(change.path);
     }, () => [...this.sandboxes.values()])} : undefined);
@@ -34,8 +60,25 @@ export class WorkspaceDO extends DurableObject<Env> {
   /** The Workspace RPC surface for this object's own shell Dynamic Worker (via `WorkspaceServiceProxy`). */
   __getWorkspaceStub() { return this.files.stub(); }
 
+  /** computerd's session upgrade from this workspace's container. */
+  override async fetch(request: Request): Promise<Response> {
+    if (this.container) return this.container.handleFetch(request);
+    return new Response('Not found', {status: 404});
+  }
+
+  /** The container size this workspace launches with; a change applies when the container next starts. */
+  private containerInstance(): ContainerInstance {
+    this.ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_container (id INTEGER PRIMARY KEY CHECK (id = 1), instance TEXT NOT NULL)');
+    const stored = this.ctx.storage.sql.exec<{instance: string}>('SELECT instance FROM weft_container WHERE id = 1').toArray()[0]?.instance;
+    return (CONTAINER_INSTANCES as readonly string[]).includes(stored ?? '') ? stored as ContainerInstance : DEFAULT_INSTANCE;
+  }
+  private rememberInstance(instance: ContainerInstance): void {
+    this.containerInstance();
+    this.ctx.storage.sql.exec('INSERT INTO weft_container VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET instance = excluded.instance', instance);
+  }
+
   /** Run one shell command; the response streams NDJSON `stdout`/`stderr` chunks and the final `exit`. */
-  async exec(input: WorkspaceScope, request: {id: string; command: string; cwd: string; timeoutMs?: number; env?: Record<string, string>; stdin?: string; sandbox?: ShellSandbox}): Promise<Response> {
+  async exec(input: WorkspaceScope, request: {id: string; command: string; cwd: string; timeoutMs?: number; env?: Record<string, string>; stdin?: string; sandbox?: ShellSandbox; container?: {instance: ContainerInstance}}): Promise<Response> {
     const scope = workspaceScopeSchema.safeParse(input);
     if (!scope.success || !this.ctx.id.equals(this.env.WORKSPACES.idFromName(workspaceAddress(scope.data)))) {
       return Response.json({error: 'Workspace scope mismatch', code: 'FS_SANDBOX_DENIED'}, {status: 403});
@@ -50,11 +93,21 @@ export class WorkspaceDO extends DurableObject<Env> {
       if (!['read-only', 'workspace-write', 'danger-full-access'].includes(mode)) throw new Error('Unknown sandbox mode');
       sandbox = {mode, root: workspacePath(request.sandbox?.root ?? '/workspace')};
     } catch (error) { return Response.json({error: error instanceof Error ? error.message : 'Invalid sandbox', code: 'FS_SANDBOX_DENIED'}, {status: 400}); }
+    // The container applies file effects in its own filesystem and syncs them back, so only the worker
+    // shell can refuse each one: read-only commands always run there.
+    let backend: string | undefined;
+    if (request.container && sandbox.mode !== 'read-only') {
+      if (!this.container) return Response.json({error: 'This deployment has no workspace container', code: 'EXEC_UNAVAILABLE'}, {status: 501});
+      if (!(CONTAINER_INSTANCES as readonly string[]).includes(request.container.instance)) return Response.json({error: 'Unknown container size', code: 'EXEC_UNAVAILABLE'}, {status: 400});
+      this.rememberInstance(request.container.instance);
+      backend = CONTAINER_SHELL;
+    }
     this.sandboxes.set(request.id, sandbox);
     const release = () => { this.sandboxes.delete(request.id); };
     let run: import('@cloudflare/computer').WorkspaceRuntimeExecHandle<'utf8'>;
     try { run = await this.files.runtime.exec(request.command, {
       id: request.id, cwd, encoding: 'utf8',
+      ...(backend ? {backend} : {}),
       ...(request.timeoutMs !== undefined ? {timeoutMs: request.timeoutMs} : {}),
       ...(request.env ? {env: request.env} : {}),
       ...(request.stdin !== undefined ? {stdin: request.stdin} : {}),

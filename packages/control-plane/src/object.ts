@@ -61,16 +61,19 @@ export interface NativeSessionContext {
   subagents: Record<string, unknown>;
   permissionDefault?: string;
   profileOverrides: Record<string, Record<string, unknown>>;
+  /** Where the environment's workspace commands run. */
+  workspaceRuntime: {shell: 'worker' | 'container'; containerInstance: ContainerInstance};
 }
 import { NativeWorkspaces } from './native-workspaces.ts';
 import type { WorkspaceDO } from '../../workspace/src/object.ts';
 import type { SessionDO } from '../../../apps/worker/src/index.ts';
 import { workspaceAddress, type WorkspaceOperation } from '../../workspace/src/protocol.ts';
+import type { ContainerInstance } from '../../workspace/src/object.ts';
 import { sessionAddress, type SessionScope } from '../../tenant/src/index.ts';
 import sessionRemote from '../../../.generated/official-remotes/packages/api/session-controller/typert.remote-client.js';
 import type { SessionControlFrame, SessionProjectionBaseline } from '@deepseek-ai/dsh-api-session-controller/types';
 import { remoteStream } from '../../harness-runtime/src/remote-stream.ts';
-import { NativeSettings, PRESET_NAMESPACE, LOOP_NAMESPACE, SUBAGENT_NAMESPACE, PERMISSION_NAMESPACE, MARKET_NAMESPACE, MODEL_NAMESPACE, PI_AI_NAMESPACE, DEFAULT_MODEL_NAMESPACE } from './native-settings.ts';
+import { NativeSettings, PRESET_NAMESPACE, LOOP_NAMESPACE, SUBAGENT_NAMESPACE, PERMISSION_NAMESPACE, MARKET_NAMESPACE, MODEL_NAMESPACE, PI_AI_NAMESPACE, WORKSPACE_RUNTIME_NAMESPACE, DEFAULT_MODEL_NAMESPACE } from './native-settings.ts';
 import {readNativePresets, type CompositionEndpoint} from '../../native-composition/src/profile-host.ts';
 import {profileDefinitions} from '../../harness-profile/src/index.ts';
 import {manageNativePlugins} from '../../native-composition/src/manager.ts';
@@ -285,6 +288,7 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
       loop: settings.value(LOOP_NAMESPACE) as {maxParallelToolCalls: number}, subagents: settings.value(SUBAGENT_NAMESPACE),
       ...(typeof permission === 'string' ? {permissionDefault: permission} : {}),
       profileOverrides: settings.profileOverrides(),
+      workspaceRuntime: settings.value(WORKSPACE_RUNTIME_NAMESPACE) as NativeSessionContext['workspaceRuntime'],
     };
     return Response.json(context);
   }

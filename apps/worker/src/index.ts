@@ -28,7 +28,8 @@ import {FILE_UPLOAD_PATH} from '@weft/upstream/packages/client/file-upload/src/p
 import { workspaceIdSchema, workspaceAddress, workspacePath } from '../../../packages/workspace/src/protocol.ts';
 export { WorkspaceDO, TenantDO, EnvironmentDO };
 // The shell Dynamic Worker reaches its own WorkspaceDO through this entrypoint (ctx.exports).
-export { WorkspaceServiceProxy } from '@cloudflare/computer';
+export { WorkspaceServiceProxy, WorkspaceProxy } from '@cloudflare/computer';
+export { WorkspaceContainerDO } from '../../../packages/workspace/src/container-host.ts';
 import { z } from 'zod';
 import { Context } from '@deepseek-ai/cordis';
 import { createUserMessage } from '@deepseek-ai/dsh-llm';

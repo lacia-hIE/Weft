@@ -1,4 +1,6 @@
 import type Schema from '@deepseek-ai/schemastery';
+import z from '@deepseek-ai/schemastery';
+import { CONTAINER_INSTANCES } from '../../workspace/src/object.ts';
 import { Context } from '@deepseek-ai/cordis';
 import { Config as DeepSeekConfig, resolveAdapterOptions, type Options as DeepSeekOptions } from '@weft/upstream/packages/llm/llm-deepseek-api-key/src/config.ts';
 import { AgentDefaultModelConfig } from '@deepseek-ai/dsh-agent-default-model';
@@ -31,6 +33,14 @@ export const SUBAGENT_NAMESPACE = 'subagent';
 export const PERMISSION_NAMESPACE = 'permission';
 export const MARKET_NAMESPACE = 'plugin-market';
 export const PI_AI_NAMESPACE = 'llm-pi-ai';
+/** Weft's own namespace: where the environment's workspace commands run. */
+export const WORKSPACE_RUNTIME_NAMESPACE = 'workspace-runtime';
+const WorkspaceRuntimeConfig = z.object({
+  shell: z.union(['worker', 'container'] as const).default('worker').volatile()
+    .description('Where bash and terminal commands run: "worker" is an instant shell in a Dynamic Worker; "container" is a full Linux container (node, npm, python, git, ripgrep) that starts in seconds and sleeps when idle. File search always uses the container.'),
+  containerInstance: z.union(CONTAINER_INSTANCES).default('basic').volatile()
+    .description('Container size: lite (1/16 vCPU, 256 MiB), basic (1/4 vCPU, 1 GiB), standard-1 (1/2 vCPU, 4 GiB) up to standard-4 (4 vCPU, 12 GiB). A change applies when the container next starts.'),
+});
 type Section = Record<string, unknown>;
 interface Namespace {
   id: string; schema: Schema; base(): Section; autoGenerate: boolean;
@@ -122,6 +132,7 @@ export class NativeSettings {
         }
       }},
       {id: MARKET_NAMESPACE, schema: PluginMarket.Config, base: () => ({}), autoGenerate: false, validate: () => {}, hidden: true},
+      {id: WORKSPACE_RUNTIME_NAMESPACE, schema: WorkspaceRuntimeConfig, base: () => ({}), autoGenerate: false, validate: () => {}},
       {id: 'ui-settings', schema: DeveloperToolsConfig, base: () => ({}), autoGenerate: false, validate: () => {}},
       {id: 'ui-settings-general', schema: WelcomeConfig, base: () => ({}), autoGenerate: false, validate: () => {}},
     ];

@@ -3,6 +3,8 @@ import {
   cleanBuildOutputDir,
   writeRootConfig,
   writeWorkerConfig,
+  writeContainerConfig,
+  normalizeDirectoryName,
   getWorkerBundleDir,
   getWorkerAssetsDir,
 } from "@cloudflare/build-output-utils";
@@ -27,10 +29,14 @@ export async function writeBuildOutput() {
   await cleanBuildOutputDir(root);
   const {
     worker: _worker,
-    containers: _containers,
+    containers,
     ...settings
   } = main.result.data;
   await writeRootConfig(root, settings, context);
+  // Container images are prebuilt and pushed (scripts/workspace-container.mjs); their configs carry registry references.
+  for (const container of containers ?? []) {
+    await writeContainerConfig({ root, config: container, directoryName: normalizeDirectoryName(container.name) });
+  }
   for (const [parsed, directoryName, path] of [
     [main.result.data, "default", "dist/worker.js"],
     [assets.result.data, "ui", "dist/assets-worker.js"],

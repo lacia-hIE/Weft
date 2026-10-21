@@ -15,6 +15,10 @@ npm run deploy
 
 也可以先运行 `npm run build`，再执行 `npm run deploy:workers`。该命令使用 `cf deploy --prebuilt` 顺序发布两个 Worker；先运行 `npm run deploy:check` 可检查两份产物。构建产物生成后才能发布。
 
+## 工作区容器
+
+`container-shell` 后端的镜像在 `apps/workspace-container/Dockerfile`。修改 Dockerfile 或升级 `@cloudflare/computer` 后运行 `node scripts/workspace-container.mjs`：它构建镜像、用 `cf containers push` 推送到账号的 Cloudflare 镜像仓库，并把镜像地址写进 `apps/workspace-container/image.json`（需提交）。构建会校验该地址与当前 Dockerfile 一致，未推送的修改会让构建失败。部署时 Cloudflare 按这个地址创建由 Durable Object 调度的 Container 应用 `weft-workspace-shell`；容器按运行时长计费，空闲 10 分钟后休眠。
+
 ## 配置数据库（D1）
 
 环境设置等非密钥配置保存在 D1 数据库 `weft-config`，主 Worker 以 `CONFIG_DB` 绑定（见 `cloudflare.config.ts`）；凭据仍保存在各环境的 EnvironmentDO。表结构由 `migrations/` 下的迁移文件定义，部署新版本前先应用迁移：

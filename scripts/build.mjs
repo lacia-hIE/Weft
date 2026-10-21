@@ -12,6 +12,10 @@ import {nativeShellPlatform} from './native-shell-platform.mjs';
 import {nativeMarketPlatform} from './native-market-platform.mjs';
 import {nativeHarnessHomePlatform} from './native-harness-home-platform.mjs';
 import {nativeWorkflowPlatform} from './native-workflow-platform.mjs';
+import { execFileSync } from 'node:child_process';
+
+// The deployed configuration must name the image built from the current workspace container Dockerfile.
+execFileSync(process.execPath, [resolve('scripts/workspace-container.mjs'), '--check'], {stdio: 'inherit'});
 import {officialProfilePlugin} from './official-profile.mjs';
 
 const officialModules = await officialProfilePlugin();

@@ -1,9 +1,14 @@
-import { bindings, defineConfig, defineWorker, exports } from 'cf/config';
+import { bindings, defineConfig, defineContainer, defineWorker, exports } from 'cf/config';
+import workspaceImage from './apps/workspace-container/image.json' with { type: 'json' };
 
 const accessAudience = 'a9f868c801ff9618d72eb834aeddbd37b2778f5ce054fef65c14168619d462b9';
+// Each workspace's Linux container, started by its WorkspaceDO when an environment runs commands there
+// (scripts/workspace-container.mjs builds and pushes the image).
+const workspaceContainer = defineContainer({ name: 'weft-workspace-shell', schedulingPolicy: 'durable-object', images: { shell: { reference: workspaceImage.reference } }, observability: { enabled: true } });
 const uiWorker = defineWorker({ name:'weft-ui-assets',entrypoint:'./dist/assets-worker.js',compatibilityDate:'2026-07-30',workersDev:false,previewUrls:false });
 
 export default defineConfig({
+  containers: [workspaceContainer],
   worker: {
     name: 'weft-kernel-validation',
     entrypoint: './dist/worker.js',
@@ -37,6 +42,10 @@ export default defineConfig({
       PluginCapabilities: exports.worker(),
       SessionDO: exports.durableObject({ storage: 'sqlite' }),
       WorkspaceDO: exports.durableObject({ storage: 'sqlite' }),
+      // Hosts each workspace's container; unbound, because a bound Durable Object cannot host one (see container-host.ts).
+      WorkspaceContainerDO: exports.durableObject({ storage: 'sqlite', container: workspaceContainer }),
+      // computerd's connection back to its WorkspaceDO.
+      WorkspaceProxy: exports.worker(),
       EnvironmentDO: exports.durableObject({ storage: 'sqlite' }),
       TenantDO: exports.durableObject({ storage: 'sqlite' }),
     },
