@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import {compose} from './compose.ts';
 
 // Capabilities a workerd environment explicitly does not provide; see docs/validation/native-interaction.md.
 const UNAVAILABLE = (endpoint: string) => /^(api|streams):(account|officeToPdf)\//.test(endpoint);
@@ -21,7 +22,7 @@ test('the official Harness UI reaches connected native services everywhere excep
   await page.goto(`/agents/${id}`);
   await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
   const composer = page.locator('[contenteditable=true]');
-  await composer.fill('coverage prompt');
+  await compose(page, 'coverage prompt');
   await page.getByRole('button', {name: 'Send message', exact: true}).click();
   await expect(page.getByText('Tenant: '+me.tenantId, {exact: true})).toBeVisible({timeout: 30_000});
   // Composer popovers: commands, skills and `@` references.

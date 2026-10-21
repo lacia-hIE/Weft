@@ -38,7 +38,9 @@ test('signed Access users load concurrent modules and retain the same tenant wit
     // A cold isolate receives the same parallel graph fetches as a real browser.
     const responses = await Promise.all(paths.map(path => runtime.dispatchFetch(url('anonymous', path), {headers})));
     for (const [index, response] of responses.entries()) {
-      assert.equal(response.status, 200, paths[index] + ': ' + await response.clone().text());
+      // Each body is read once; the status message reuses it.
+      const body = await response.text();
+      assert.equal(response.status, 200, paths[index] + ': ' + body);
       assert.match(response.headers.get('content-type')!, /javascript/);
       // Hashed chunks are content-addressed; the entry module follows each deployment.
       assert.equal(response.headers.get('cache-control'), /\/(?:chunk|entry)-[A-Z0-9]{8}\.js$/.test(paths[index]!) ? 'private, max-age=31536000, immutable' : 'private, no-store', paths[index]);

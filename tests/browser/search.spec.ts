@@ -1,4 +1,5 @@
 import {test, expect} from '@playwright/test';
+import {compose} from './compose.ts';
 
 for (const live of [false, true]) {
   test(live ? 'official search finds real DeepSeek history after a browser refresh' : 'official search finds message content and opens the native conversation after refresh', async ({page, request}) => {
@@ -16,7 +17,7 @@ for (const live of [false, true]) {
     await page.goto(`/agents/${environment}`);
     await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45000});
     await expect(page.getByRole('button', {name: /Select model, current /})).toBeVisible({timeout: 45000});
-    await page.locator('[contenteditable=true]').fill(live ? `Reply exactly ${marker}. Do not call tools.` : `Remember this content marker ${marker}.`);
+    await compose(page, live ? `Reply exactly ${marker}. Do not call tools.` : `Remember this content marker ${marker}.`);
     await page.getByRole('button', {name: 'Send message', exact: true}).click();
     await expect(page.getByText(live ? marker : 'Tenant: '+me.tenantId, {exact: true})).toBeVisible({timeout: 90000});
     const sessions = await rpc('session/list', {_request: {}});
