@@ -32,49 +32,64 @@ function toolModel(turns: Record<string, {name: string; input: Record<string, un
   return outbound;
 }
 
-test('the workspace runtime setting chooses where commands run and file search needs the container', {timeout: 180_000}, async () => {
+test('the workspace runtime is the agent\'s choice under auto, never the container under worker only, and always the container when forced', {timeout: 240_000}, async () => {
   const calls = {
-    RUNTIME_ONE: [{name: 'bash', input: {command: 'echo worker-ran', description: 'Run in the worker shell'}}],
-    RUNTIME_TWO: [{name: 'bash', input: {command: 'echo container-ran', description: 'Run in the container'}}, {name: 'grep', input: {pattern: 'weft'}}],
+    RUNTIME_AUTO: [{name: 'bash', input: {command: 'echo worker-ran', description: 'Run in the worker shell'}}],
+    RUNTIME_SWITCH: [{name: 'workspace_runtime', input: {target: 'container'}}, {name: 'bash', input: {command: 'echo container-ran', description: 'Run in the container'}}],
+    RUNTIME_DENY: [{name: 'grep', input: {pattern: 'weft'}}, {name: 'workspace_runtime', input: {target: 'container'}}, {name: 'bash', input: {command: 'echo worker-again', description: 'Run in the worker shell'}}],
+    RUNTIME_FORCED: [{name: 'bash', input: {command: 'echo container-ran', description: 'Run in the container'}}, {name: 'grep', input: {pattern: 'weft'}}],
   };
   const runtime = createRuntime(undefined, {browser: true, bindings: {MODEL_BACKEND: 'deepseek', DEEPSEEK_API_KEY: 'runtime-fixture', DEEPSEEK_BASE_URL: 'https://runtime-model.test/anthropic'}, outbound: toolModel(calls)});
   const api = nativeClient(() => runtime);
   try {
-    const row = (await api.call<SettingsDescribeValue>('settings/describe', {})).namespaces.find(ns => ns.ns === 'workspace-runtime');
-    assert.ok(row, 'the environment chooses its workspace runtime in settings');
-    assert.deepEqual(row.value, {shell: 'worker', containerInstance: 'basic'});
+    const row = async () => (await api.call<SettingsDescribeValue>('settings/describe', {})).namespaces.find(ns => ns.ns === 'workspace-runtime')!;
+    assert.deepEqual((await row()).value, {shell: 'auto', containerInstance: 'basic'});
+    const setShell = async (shell: string) => api.call('settings/update', {ns: 'workspace-runtime', patch: {shell}, expectedRevision: (await row()).revision});
     await api.call('session/create', {request: {sessionId: 'runtime'}});
     const follow = await api.follow('runtime');
     assert.equal((await follow.next()).type, 'snapshot');
-    const results: string[] = [];
     const turn = async (text: string) => {
+      const results: string[] = [];
       await api.call('session/prompt', {request: {sessionId: 'runtime', requestId: crypto.randomUUID(), mode: 'queue', content: [{type: 'text', text}]}});
       for (;;) {
         const frame: SessionFollowFrame = await follow.next();
         if (frame.type !== 'event') continue;
         if (frame.event.type === 'tool/result') results.push(JSON.stringify(frame.event));
-        if (frame.event.type === 'turn/end') break;
+        if (frame.event.type === 'turn/end') return results;
       }
     };
-    await turn('RUNTIME_ONE');
     const deliverable = (route: string) => runtime.dispatchFetch(url('alpha', `/v1/tenants/${tenantId('alpha')}/environments/default/native/api/${route}`));
-    // Change summaries follow the container shell: the worker shell's Session serves no change routes.
+
+    // Auto starts in the worker shell, without change summaries.
+    const auto = await turn('RUNTIME_AUTO');
+    assert.match(auto[0]!, /worker-ran/);
     assert.equal(await (await deliverable('changes.summary?sessionId=runtime&seq=1')).text(), 'Native Fetch route not found');
     assert.deepEqual(await (await deliverable('present.host')).json(), {name: 'Cloudflare', available: false, fileManager: null});
-    // A turn reads the environment's settings before it starts.
-    await api.call('settings/update', {ns: 'workspace-runtime', patch: {shell: 'container'}, expectedRevision: row.revision});
-    await turn('RUNTIME_TWO');
-    // With the container shell the official change recorder and its routes are mounted; this deployment has no container to snapshot in.
+
+    // The agent switches to the container, and the next command goes there.
+    const switched = await turn('RUNTIME_SWITCH');
+    assert.match(switched[0]!, /Commands now run in the container/);
+    assert.match(switched[1]!, /no workspace container/, 'a deployment without containers says so instead of running elsewhere');
+
+    // Worker only forbids the container: file search cannot start ripgrep, the switch is gone, and commands stay in the worker.
+    await setShell('worker');
+    const denied = await turn('RUNTIME_DENY');
+    // The official file search reports the refused ripgrep as its own provider failure.
+    assert.match(denied[0]!, /ripgrep provider failure[\s\S]*SEARCH_FAILED/);
+    assert.doesNotMatch(denied[1]!, /Commands now run/, 'the switch tool is not offered');
+    assert.match(denied[2]!, /worker-again/);
+
+    // Always container: every command and the change recorder use it.
+    await setShell('container');
+    const forced = await turn('RUNTIME_FORCED');
+    assert.match(forced[0]!, /no workspace container/);
+    // The official file search reports a ripgrep that could not start as its own provider failure.
+    assert.match(forced[1]!, /ripgrep provider failure[\s\S]*SEARCH_FAILED/, 'file search runs ripgrep in the container, which this deployment lacks');
     const summary = await deliverable('changes.summary?sessionId=runtime&seq=1');
     assert.equal(summary.status, 404);
     assert.equal(await summary.text(), 'Change summary unavailable.');
     assert.equal((await deliverable('changes.open?sessionId=runtime&seq=1&index=0')).status, 409);
     await follow.close();
-    assert.equal(results.length, 3, results.join('\n'));
-    assert.match(results[0]!, /worker-ran/);
-    assert.match(results[1]!, /no workspace container/, 'a deployment without containers says so instead of running elsewhere');
-    // The official file search reports a ripgrep that could not start as its own provider failure.
-    assert.match(results[2]!, /ripgrep provider failure[\s\S]*SEARCH_FAILED/, 'file search runs ripgrep in the container, which this deployment lacks');
   } finally {
     await runtime.dispose();
   }

@@ -11,7 +11,7 @@ import { SegmentedControl, SettingsForm, SettingsFormModel, settingsTextField, t
 const NS = 'weft.workspace-runtime';
 /** The environment settings namespace this page edits (packages/control-plane/src/native-settings.ts). */
 const SETTINGS_NS = 'workspace-runtime';
-const SHELLS = ['worker', 'container'] as const;
+const SHELLS = ['auto', 'worker', 'container'] as const;
 const SIZES = ['basic', 'standard-1', 'standard-2'] as const;
 
 interface WorkspaceRuntime { shell?: string; containerInstance?: string }
@@ -35,11 +35,12 @@ interface CardProps {
 
 const zh = {
   title: '工作区运行环境',
-  description: '选择命令在 Worker 还是 Linux 容器中运行。',
+  description: '选择命令在 Worker 还是 Linux 容器中运行，或交给 Agent 按任务选择。',
   shell: '命令运行位置',
-  shellHint: 'Worker 即开即用；容器是完整的 Linux（git、node、python、ripgrep），首次启动需要几秒，空闲 10 分钟后休眠。选择容器后，每轮回复会列出改动的文件。',
-  worker: 'Worker',
-  container: '容器',
+  shellHint: '自动：从即开即用的 Worker 开始，任务需要 git、node、python 时 Agent 自行切到容器。仅 Worker：不使用容器，文件搜索（ripgrep）不可用。始终容器：完整的 Linux，首次启动需要几秒，空闲 10 分钟后休眠。使用容器时，每轮回复会列出改动的文件。',
+  auto: '自动',
+  worker: '仅 Worker',
+  container: '始终容器',
   containerInstance: '容器规格',
   containerInstanceHint: 'basic：1/4 vCPU、1 GiB；standard-1：1/2 vCPU、4 GiB；standard-2：1 vCPU、6 GiB。下次容器启动时生效。',
   readOnly: '本部署的设置为只读。',
@@ -50,11 +51,12 @@ const zh = {
 };
 const en: typeof zh = {
   title: 'Workspace runtime',
-  description: 'Choose whether commands run in a Worker or a Linux container.',
+  description: 'Choose whether commands run in a Worker or a Linux container, or let the agent choose for each task.',
   shell: 'Where commands run',
-  shellHint: 'The Worker is instant; the container is a full Linux (git, node, python, ripgrep) that takes a few seconds to start and sleeps after 10 idle minutes. With the container, each reply lists the files it changed.',
-  worker: 'Worker',
-  container: 'Container',
+  shellHint: 'Auto starts in the instant Worker and lets the agent switch to the container when a task needs git, node or python. Worker only never uses the container, so file search (ripgrep) is unavailable. Always container runs a full Linux that takes a few seconds to start and sleeps after 10 idle minutes. With the container, each reply lists the files it changed.',
+  auto: 'Auto',
+  worker: 'Worker only',
+  container: 'Always container',
   containerInstance: 'Container size',
   containerInstanceHint: 'basic: 1/4 vCPU, 1 GiB; standard-1: 1/2 vCPU, 4 GiB; standard-2: 1 vCPU, 6 GiB. Applies when the container next starts.',
   readOnly: 'This deployment stores settings read-only.',
@@ -92,7 +94,7 @@ function WorkspaceRuntimeCard(props: CardProps): React.ReactNode {
   if (props.view === 'summary') return t('description');
   const disabled = !state.writable;
   // An empty draft is the default the environment runs with.
-  const shell = (SHELLS as readonly string[]).includes(state.shell.text) ? state.shell.text as typeof SHELLS[number] : 'worker';
+  const shell = (SHELLS as readonly string[]).includes(state.shell.text) ? state.shell.text as typeof SHELLS[number] : 'auto';
   const size = (SIZES as readonly string[]).includes(state.containerInstance.text) ? state.containerInstance.text as typeof SIZES[number] : 'basic';
   return React.createElement(SettingsForm, {
     labels: {unavailable: t('unavailable'), readOnly: t('readOnly'), saveFailed: t('saveFailed'), save: t('save'), saving: t('saving')},
@@ -100,7 +102,7 @@ function WorkspaceRuntimeCard(props: CardProps): React.ReactNode {
     children: [
       React.createElement(Choice<typeof SHELLS[number]>, {key: 'shell', id: 'weft-workspace-shell', label: t('shell'), hint: t('shellHint'), value: shell, disabled,
         options: SHELLS.map(value => ({value, label: t(value)})), onChange: next => { props.edit('shell', next); }}),
-      React.createElement(Choice<typeof SIZES[number]>, {key: 'size', id: 'weft-container-size', label: t('containerInstance'), hint: t('containerInstanceHint'), value: size, disabled: disabled || shell !== 'container',
+      React.createElement(Choice<typeof SIZES[number]>, {key: 'size', id: 'weft-container-size', label: t('containerInstance'), hint: t('containerInstanceHint'), value: size, disabled: disabled || shell === 'worker',
         options: SIZES.map(value => ({value, label: value})), onChange: next => { props.edit('containerInstance', next); }}),
     ],
   });

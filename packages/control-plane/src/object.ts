@@ -62,13 +62,14 @@ export interface NativeSessionContext {
   permissionDefault?: string;
   profileOverrides: Record<string, Record<string, unknown>>;
   /** Where the environment's workspace commands run. */
-  workspaceRuntime: {shell: 'worker' | 'container'; containerInstance: ContainerInstance};
+  workspaceRuntime: {shell: WorkspaceShell; containerInstance: ContainerInstance};
 }
 import { NativeWorkspaces } from './native-workspaces.ts';
 import type { WorkspaceDO } from '../../workspace/src/object.ts';
 import type { SessionDO } from '../../../apps/worker/src/index.ts';
 import { workspaceAddress, type WorkspaceOperation } from '../../workspace/src/protocol.ts';
 import type { ContainerInstance } from '../../workspace/src/object.ts';
+import type { WorkspaceShell } from '../../workspace/src/runtime-choice.ts';
 import { sessionAddress, type SessionScope } from '../../tenant/src/index.ts';
 import sessionRemote from '../../../.generated/official-remotes/packages/api/session-controller/typert.remote-client.js';
 import type { SessionControlFrame, SessionProjectionBaseline } from '@deepseek-ai/dsh-api-session-controller/types';

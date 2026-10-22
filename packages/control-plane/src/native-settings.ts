@@ -36,8 +36,8 @@ export const PI_AI_NAMESPACE = 'llm-pi-ai';
 /** Weft's own namespace: where the environment's workspace commands run. */
 export const WORKSPACE_RUNTIME_NAMESPACE = 'workspace-runtime';
 const WorkspaceRuntimeConfig = z.object({
-  shell: z.union(['worker', 'container'] as const).default('worker').volatile()
-    .description('Where bash and terminal commands run: "worker" is an instant shell in a Dynamic Worker; "container" is a full Linux container (node, npm, python, git, ripgrep) that starts in seconds and sleeps when idle. File search always uses the container.'),
+  shell: z.union(['auto', 'worker', 'container'] as const).default('auto').volatile()
+    .description('Where bash and terminal commands run: "auto" starts in the instant Worker shell and lets the agent switch to the container when a task needs it; "worker" never uses the container, so file search (ripgrep) is unavailable; "container" runs every command in a full Linux container (node, npm, python, git, ripgrep) that starts in seconds and sleeps when idle.'),
   containerInstance: z.union(CONTAINER_INSTANCES).default('basic').volatile()
     .description('Container size: basic (1/4 vCPU, 1 GiB), standard-1 (1/2 vCPU, 4 GiB) or standard-2 (1 vCPU, 6 GiB). A change applies when the container next starts.'),
 });

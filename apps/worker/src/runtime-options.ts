@@ -37,6 +37,7 @@ import {mountWorkspaceShell} from '../../../packages/workspace/src/subprocess.ts
 import {WorkerPtcRuntime} from '../../../packages/native-ptc/src/index.ts';
 import {reconcileProfileOverrides} from '../../../packages/native-profile/src/loader.ts';
 import {mountWorkspaceChanges} from '../../../packages/workspace/src/changes.ts';
+import {WorkspaceRuntimeChoice} from '../../../packages/workspace/src/runtime-choice.ts';
 import {SPILL_ROOT, WorkspaceSpillStore} from '../../../packages/workspace/src/spill.ts';
 import {forwardNativeNotifications, mountNativeInteraction} from './native-interaction.ts';
 import {HarnessHome} from '../../../packages/native-environment/src/harness-home.ts';
@@ -77,6 +78,7 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
   let composition: Context | undefined;
   let refreshSubagents: ((limits: SubagentLimits) => void) | undefined;
   let reconcileChanges: (() => Promise<void>) | undefined;
+  let runtimeChoice: WorkspaceRuntimeChoice | undefined;
   const options: RuntimeOptions = {
     sessionId: scope.sessionId,
     persona: profile ? `${presentation ? profile.spec.persona : rootPersona(profile)}\n${profile.spec.allowClientPlugins ? presentation ? NATIVE_PLUGIN_GUIDE : CLIENT_PLUGIN_GUIDE : ''}` : persona,
@@ -106,6 +108,7 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
       if (refreshSubagents) refreshSubagents(context.subagents as unknown as SubagentLimits);
       // Settings edits to official profile rows reach a live Session before its next turn.
       if (presentation && world) profileOverrides = await reconcileProfileOverrides(world, profileOverrides, context.profileOverrides);
+      await runtimeChoice?.reconcile();
       await reconcileChanges?.();
     },
     ...(presentation ? {meta: {cwd, ...(profile ? {agentPreset: profile.spec.id} : {})}} : {}),
@@ -147,16 +150,20 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
         }
         if (presentation) {
           const stub = env.WORKSPACES.getByName(workspaceAddress(workspace));
-          // The environment chooses where commands run; ripgrep requests the container itself.
-          await mountWorkspaceShell(ctx, {exec: ({container, ...request}) => {
+          // The environment, or under `auto` the agent, chooses where commands run; ripgrep requests the container itself.
+          runtimeChoice = new WorkspaceRuntimeChoice(ctx, storage, () => context.workspaceRuntime.shell);
+          const choice = runtimeChoice;
+          await mountWorkspaceShell(ctx, {exec: async ({container, ...request}) => {
             const runtime = context.workspaceRuntime;
-            return stub.exec(workspace, {...request, ...(container || runtime.shell === 'container' ? {container: {instance: runtime.containerInstance}} : {})});
+            if (container && runtime.shell === 'worker') return Response.json({error: 'This environment does not allow the workspace container', code: 'EXEC_UNAVAILABLE'}, {status: 403});
+            return stub.exec(workspace, {...request, ...(container || choice.container() ? {container: {instance: runtime.containerInstance}} : {})});
           }, kill: id => stub.killExec(workspace, id)}, cwd);
+          await choice.reconcile();
         }
         if (presentation) await mountNativeAttachments(ctx, {storage, scope: workspace, sessionId: scope.sessionId, transport: env.WORKSPACES.getByName(workspaceAddress(workspace)), ...(env.IMAGES ? {images: env.IMAGES} : {})});
         // Change summaries come from git snapshots in the workspace container, so they follow the environment's shell.
         if (presentation) {
-          reconcileChanges = mountWorkspaceChanges(ctx, () => context.workspaceRuntime.shell === 'container');
+          reconcileChanges = mountWorkspaceChanges(ctx, () => runtimeChoice?.container() === true);
           await reconcileChanges();
         }
       }
