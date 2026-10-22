@@ -5,6 +5,15 @@ import { LegacyWorkspaceContainerAPI, type ContainerLaunchSpec, type ContainerRu
 const IDLE_MS = 10 * 60_000;
 /** How often a running container command renews its host's activity, well inside {@link IDLE_MS}. */
 export const CONTAINER_TOUCH_MS = 60_000;
+/** The address computerd connects to for the workspace: in the reserved benchmarking range, never a real destination. */
+export const CONTAINER_EGRESS_ADDRESS = '198.18.0.1';
+/**
+ * Longest wait for one request to the container's port. Computer bounds its
+ * own startup steps only partly: computerd answers `/connect` once it has
+ * reached the workspace, so an unreachable workspace would otherwise hold the
+ * command, and the host, forever.
+ */
+const PORT_REQUEST_MS = 60_000;
 
 /**
  * The Cloudflare Container of one workspace, on the platform-scheduled
@@ -43,7 +52,8 @@ class WorkspaceContainerHost extends DurableObject {
   interceptOutboundHttp(host: string, ref: WorkspaceRef): Promise<void> { return this.api().interceptOutboundHttp(host, ref); }
   interceptAllOutboundHttp(ref: WorkspaceRef, token: string): Promise<void> { return this.api().interceptAllOutboundHttp(ref, token); }
   fetchPort(port: number, input: string, init?: {method?: string; headers?: Record<string, string>; body?: string}): Promise<Response> {
-    return this.api().fetchPort(port, input, init);
+    // Bounded here too, so a request the container never answers does not keep this host active and its container running.
+    return this.api().fetchPort(port, input, {...init, signal: AbortSignal.timeout(PORT_REQUEST_MS)});
   }
 }
 
@@ -86,9 +96,11 @@ export function remoteContainerHost(stub: ContainerHostStub): ILegacyWorkspaceCo
         ...(init?.headers ? {headers: Object.fromEntries(new Headers(init.headers))} : {}),
         ...(body === undefined ? {} : {body}),
       });
-      if (!signal) return request;
-      signal.throwIfAborted();
-      return Promise.race([request, new Promise<never>((_, reject) => signal.addEventListener('abort', () => reject(signal.reason), {once: true}))]);
+      const deadline = AbortSignal.any([AbortSignal.timeout(PORT_REQUEST_MS), ...(signal ? [signal] : [])]);
+      deadline.throwIfAborted();
+      return Promise.race([request, new Promise<never>((_, reject) => deadline.addEventListener('abort', () => {
+        reject(signal?.aborted ? signal.reason : new Error(`The workspace container did not answer ${new URL(url).pathname} within ${PORT_REQUEST_MS / 1000}s`));
+      }, {once: true}))]);
     },
     port: unsupported('port') as ILegacyWorkspaceContainerAPI['port'],
   };

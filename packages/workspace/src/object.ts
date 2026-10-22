@@ -4,7 +4,7 @@ import { FsError } from '@deepseek-ai/dsh-fs';
 import { WorkerShellBackend } from '@cloudflare/computer/backends/worker-shell';
 import curlCommands from '@cloudflare/computer/shell/curl';
 import { LegacyContainerBackend } from '@cloudflare/computer/backends/container-legacy';
-import { CONTAINER_HOSTS, CONTAINER_TOUCH_MS, remoteContainerHost, type ContainerHostActivity } from './container-host.ts';
+import { CONTAINER_EGRESS_ADDRESS, CONTAINER_HOSTS, CONTAINER_TOUCH_MS, remoteContainerHost, type ContainerHostActivity } from './container-host.ts';
 import { WorkspaceStore } from './store.ts';
 import { shellPolicy, type ShellSandbox } from './shell.ts';
 import { fsStatus, workspaceAddress, workspaceScopeSchema, workspaceOperationSchema, workspacePath, type WorkspaceScope, type WorkspaceOperation } from './protocol.ts';
@@ -57,6 +57,9 @@ export class WorkspaceDO extends DurableObject<Env> {
       container: () => ({getWorkspaceContainer: () => remoteContainerHost(host(this.containerInstance())!.getByName(ctx.id.toString()) as unknown as Parameters<typeof remoteContainerHost>[0])}),
       // Weft's private attachment area is a container-local path: neither readable there nor synced back.
       egress: {mode: 'direct'}, containerEnv: {MOUNT_IGNORE: '/.weft'},
+      // computerd reaches the workspace through an outbound intercept. A container with Internet access
+      // resolves names publicly, where the default host name does not exist, so the intercept is an address.
+      egressHost: CONTAINER_EGRESS_ADDRESS,
     }) : undefined;
     const backends = [shell, this.container].filter(backend => backend !== undefined);
     this.files = new WorkspaceStore(ctx.storage, shell ? {backends, observer: shellPolicy(changes => {
