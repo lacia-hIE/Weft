@@ -149,7 +149,7 @@ export class WorkspaceDO extends DurableObject<Env> {
     try {
       const value = this.files.execute(parsed.data);
       await this.ctx.storage.sync();
-      if (parsed.data.type === 'write' || parsed.data.type === 'edit' || parsed.data.type === 'mkdir') {
+      if (parsed.data.type === 'write' || parsed.data.type === 'edit' || parsed.data.type === 'mkdir' || (parsed.data.type === 'sweep' && (value as {removed: number}).removed > 0)) {
         const changed = workspacePath(parsed.data.path);
         this.invalidate(changed);
       }

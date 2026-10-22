@@ -1,7 +1,7 @@
 import { posix } from 'node:path';
 import { Workspace, type WorkspaceObserver, type WorkspaceRegisteredBackend } from '@cloudflare/computer';
 import { FsError } from '@deepseek-ai/dsh-fs';
-import { ROOT, MAX_FILE_BYTES, workspacePath, type FileInfo, type FileRead, type WriteResult, type SearchResult, type WorkspaceOperation } from './protocol.ts';
+import { ROOT, MAX_FILE_BYTES, SPILL_ROOT as SWEEP_ROOT, workspacePath, type FileInfo, type FileRead, type WriteResult, type SearchResult, type WorkspaceOperation } from './protocol.ts';
 import {ComputerImageVariants} from '../../native-attachments/src/image-variants.ts';
 import {ComputerAttachmentFiles, ATTACHMENT_PRIVATE_ROOT} from '../../native-attachments/src/storage.ts';
 
@@ -74,6 +74,23 @@ export class WorkspaceStore {
       return { path, type: stat.isDirectory() ? 'directory' : 'file', size: stat.size, version: row ? String(row.version) : `computer-${stat.ino}-${stat.mtimeMs}-${this.revision()}` };
     } catch (error) { if (this.code(error) === 'ENOENT') return undefined; throw error; }
   }
+  /** Remove files older than `before` below `directory`, then the directories that empties; returns the files removed. */
+  private sweep(directory: string, before: number, prune: boolean): number {
+    const provider = this.computer.provider();
+    let removed = 0;
+    for (const name of provider.readdirSync(directory) as string[]) {
+      const path = posix.join(directory, name);
+      const stat = provider.statSync(path);
+      if (stat.isDirectory()) removed += this.sweep(path, before, true);
+      else if (stat.isFile() && stat.mtimeMs < before && name !== '.gitignore') {
+        provider.unlinkSync(path);
+        this.storage.sql.exec('DELETE FROM weft_file_versions WHERE path=?', path);
+        removed++;
+      }
+    }
+    if (prune && (provider.readdirSync(directory) as string[]).length === 0) provider.rmdirSync(directory);
+    return removed;
+  }
   private read(path: string): FileRead {
     const info = this.metadata(path);
     if (!info) throw new FsError('Workspace file not found', 'FS_NOT_FOUND');
@@ -111,6 +128,10 @@ export class WorkspaceStore {
           this.computer.provider().mkdirSync(path);
           this.storage.sql.exec('UPDATE weft_workspace_state SET revision=revision+1 WHERE id=1');
           return this.metadata(path);
+        }
+        if (operation.type === 'sweep') {
+          if (path !== SWEEP_ROOT && !path.startsWith(SWEEP_ROOT + '/')) throw new FsError('Only spilled output is swept', 'FS_SANDBOX_DENIED');
+          return {removed: this.metadata(path)?.type === 'directory' ? this.sweep(path, operation.before, false) : 0};
         }
         if (operation.type === 'list') {
           const info = this.metadata(path);

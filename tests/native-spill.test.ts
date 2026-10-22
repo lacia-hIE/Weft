@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Response, type V4FetchHandler } from 'miniflare';
 import type { SessionFollowFrame } from '@deepseek-ai/dsh-api-session-controller/types';
-import { createRuntime } from './helpers/miniflare.ts';
+import { createRuntime, tenantId } from './helpers/miniflare.ts';
+import type { WorkspaceOperation, WorkspaceScope } from '../packages/workspace/src/protocol.ts';
+import { DATA_LAYOUT_VERSION } from '../packages/tenant/src/layout.ts';
 import { nativeClient } from './helpers/native.ts';
 
 /** The model calls each listed tool of the latest turn once; only model HTTP is scripted. */
@@ -65,6 +67,34 @@ test('an oversized tool result spills into the workspace and the model sees wher
     assert.match(results[1]!, /40000\\n/);
     // `wc -l` of the saved output follows the tail's last line.
     assert.match(results[1]!, /\]40000\\n"/, 'the saved output holds every line');
+  } finally {
+    await runtime.dispose();
+  }
+});
+
+test('the spill cleanup removes only expired spilled files and the directories it empties', {timeout: 120_000}, async () => {
+  const runtime = createRuntime();
+  try {
+    const namespace = await runtime.getDurableObjectNamespace('WORKSPACES', 'alpha');
+    const scope: WorkspaceScope = {tenantId: tenantId('alpha'), workspaceId: 'sweep'};
+    const workspace = namespace.get(namespace.idFromName(JSON.stringify([DATA_LAYOUT_VERSION, 'workspace', scope.tenantId, 'default', scope.workspaceId]))) as unknown as {call(scope: WorkspaceScope, operation: WorkspaceOperation): Promise<Response>};
+    const call = async (operation: WorkspaceOperation) => {
+      const response = await workspace.call(scope, operation);
+      return {status: response.status, body: await response.json() as {value?: unknown; code?: string}};
+    };
+    for (const path of ['/workspace/.dsh/spill/.gitignore', '/workspace/.dsh/spill/session-a/one.txt', '/workspace/.dsh/spill/output/two/part-1.txt', '/workspace/notes.txt']) {
+      assert.equal((await call({type: 'write', path, content: 'x'})).status, 200);
+    }
+    // Nothing is older than the cutoff yet.
+    assert.deepEqual((await call({type: 'sweep', path: '/workspace/.dsh/spill', before: Date.now() - 60_000})).body.value, {removed: 0});
+    assert.deepEqual((await call({type: 'sweep', path: '/workspace/.dsh/spill', before: Date.now() + 60_000})).body.value, {removed: 2});
+    assert.equal((await call({type: 'stat', path: '/workspace/.dsh/spill/session-a'})).body.value, null, 'an emptied session directory is pruned');
+    assert.equal((await call({type: 'stat', path: '/workspace/.dsh/spill/output'})).body.value, null);
+    assert.ok((await call({type: 'stat', path: '/workspace/.dsh/spill/.gitignore'})).body.value, 'the ignore file stays');
+    assert.ok((await call({type: 'stat', path: '/workspace/notes.txt'})).body.value);
+    // Only spilled output is ever swept.
+    assert.equal((await call({type: 'sweep', path: '/workspace', before: Date.now() + 60_000})).body.code, 'FS_SANDBOX_DENIED');
+    assert.ok((await call({type: 'stat', path: '/workspace/notes.txt'})).body.value);
   } finally {
     await runtime.dispose();
   }

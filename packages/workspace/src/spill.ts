@@ -2,10 +2,9 @@ import type { Context } from '@deepseek-ai/cordis';
 import { SpillLocator, SpillStore, type SaveTextSpill, type SpillRef } from '@deepseek-ai/dsh-spill';
 import type FileSystem from '@deepseek-ai/dsh-fs';
 import { encodeSegment, sessionDir } from '@weft/upstream/packages/spill/spill-local/src/store.ts';
-import { MAX_FILE_BYTES } from './protocol.ts';
+import { MAX_FILE_BYTES, SPILL_ROOT } from './protocol.ts';
 
-/** Where spilled text lands: a workspace directory the file tools can read and git ignores. */
-export const SPILL_ROOT = '/workspace/.dsh/spill';
+export { SPILL_ROOT };
 /** Bytes per stored part, under the workspace's single-write limit with room for multibyte characters. */
 const PART_BYTES = MAX_FILE_BYTES - 4096;
 
@@ -42,16 +41,39 @@ export function retrievalHint(stored: StoredText): string {
   return `The text is split in order across ${stored.parts} files in this directory (part-${first}.txt first). Use read with offset/limit on a part, or grep this directory to search all of it.`;
 }
 
+/** Milliseconds per day, for the cleanup cutoff. */
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+export interface WorkspaceSpillConfig {
+  /** Remove spilled files last modified before `before` (epoch ms); returns how many were removed. */
+  sweep?: (before: number) => Promise<number>;
+  /** Days spilled files are kept before the startup cleanup removes them, as the official local store; 0 keeps them. */
+  cleanupPeriodDays?: number;
+}
+
 /**
  * The spill storage seam over the environment's workspace: oversized text is
  * written under {@link SPILL_ROOT} in a Session-scoped directory, so the
- * model reads it back with the same file tools as any workspace file.
- * Spilled files stay until removed from the workspace.
+ * model reads it back with the same file tools as any workspace file. On
+ * activation one best-effort cleanup removes spilled files older than
+ * `cleanupPeriodDays`; the plugin's disposal waits for it.
  */
 export class WorkspaceSpillStore extends SpillStore {
   static inject = ['fs'];
 
-  constructor(ctx: Context) { super(ctx); }
+  constructor(ctx: Context, config: WorkspaceSpillConfig = {}) {
+    super(ctx);
+    const days = config.cleanupPeriodDays ?? 30;
+    const sweep = config.sweep;
+    if (sweep && days > 0) {
+      ctx.effect(() => {
+        const cleanup = sweep(Date.now() - days * MS_PER_DAY).catch((error: unknown) => {
+          ctx.logger.warn(`spilled output cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
+        });
+        return async () => { await cleanup; };
+      }, 'workspace spill cleanup');
+    }
+  }
 
   async saveText(input: SaveTextSpill): Promise<SpillRef> {
     const name = `${crypto.randomUUID().slice(0, 12)}-${encodeSegment(input.suggestedName)}`;

@@ -37,7 +37,7 @@ import {mountWorkspaceShell} from '../../../packages/workspace/src/subprocess.ts
 import {WorkerPtcRuntime} from '../../../packages/native-ptc/src/index.ts';
 import {reconcileProfileOverrides} from '../../../packages/native-profile/src/loader.ts';
 import {mountWorkspaceChanges} from '../../../packages/workspace/src/changes.ts';
-import {WorkspaceSpillStore} from '../../../packages/workspace/src/spill.ts';
+import {SPILL_ROOT, WorkspaceSpillStore} from '../../../packages/workspace/src/spill.ts';
 import {forwardNativeNotifications, mountNativeInteraction} from './native-interaction.ts';
 import {HarnessHome} from '../../../packages/native-environment/src/harness-home.ts';
 
@@ -136,7 +136,15 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
         await mountWorkspace(ctx, {scope: workspace, transport: env.WORKSPACES.getByName(workspaceAddress(workspace)), cwd, fileTools: !presentation});
         if (presentation) {await ctx.plugin(ComputerFileReferences); await ctx.plugin(SessionFileReferences);}
         // Oversized tool results spill into the workspace, where the model reads them back with the file tools.
-        if (presentation) await ctx.plugin(WorkspaceSpillStore);
+        if (presentation) {
+          const files = env.WORKSPACES.getByName(workspaceAddress(workspace));
+          await ctx.plugin(WorkspaceSpillStore, {sweep: async before => {
+            const response = await files.call(workspace, {type: 'sweep', path: SPILL_ROOT, before});
+            const body = await response.json() as {value?: {removed: number}; error?: string};
+            if (!response.ok) throw new Error(body.error ?? `HTTP ${response.status}`);
+            return body.value!.removed;
+          }});
+        }
         if (presentation) {
           const stub = env.WORKSPACES.getByName(workspaceAddress(workspace));
           // The environment chooses where commands run; ripgrep requests the container itself.

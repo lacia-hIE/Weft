@@ -10,7 +10,7 @@ DeepSeek Harness 的所有能力都是插件，由 Cordis Loader 按 profile（`
 
 - 用 `WorkerdLoader` 加载官方 `base` 与 `web-app` bundle patch，模块来自构建期静态模块表，不读磁盘。
 - Weft 增加一层覆盖 patch（官方 profile 的标准机制），只做三类修改：
-  - **替换平台条目：** `session-persistence-jsonl` → DO SQLite 持久化；`credentials-local` → 环境凭据；`subprocess-local` / `sandbox-local` / `bash-sandbox` → Computer 执行后端；`storage-json` → DO 存储；`spill-local` → 工作区 spill 存储（`packages/workspace/src/spill.ts`：超出 `spill-policy` 预算的工具结果写入 `/workspace/.dsh/spill/session-*/`，模型用文件工具读回；超过单次写入上限的文本按顺序分片存放；目录内 `.gitignore` 使其不进入 git 与改动快照；暂无过期清理；bash 等命令超出内存上限的输出也完整保存到 `/workspace/.dsh/spill/output/`，结果里报告该路径，单条流最多保留 8 MiB，`tests/native-spill.test.ts`）；`settings` → 环境设置。
+  - **替换平台条目：** `session-persistence-jsonl` → DO SQLite 持久化；`credentials-local` → 环境凭据；`subprocess-local` / `sandbox-local` / `bash-sandbox` → Computer 执行后端；`storage-json` → DO 存储；`spill-local` → 工作区 spill 存储（`packages/workspace/src/spill.ts`：超出 `spill-policy` 预算的工具结果写入 `/workspace/.dsh/spill/session-*/`，模型用文件工具读回；超过单次写入上限的文本按顺序分片存放；目录内 `.gitignore` 使其不进入 git 与改动快照；每个 Session 启动时按原版规则清理 30 天前的溢出文件（WorkspaceDO 的 `sweep` 操作只作用于溢出区，并清掉清空的目录）；bash 等命令超出内存上限的输出也完整保存到 `/workspace/.dsh/spill/output/`，结果里报告该路径，单条流最多保留 8 MiB，`tests/native-spill.test.ts`）；`settings` → 环境设置。
   - **禁用桌面、遥测与开发条目：** `otel`、`session-telemetry-otel`、`open-in-app`、`directory-picker`、`desktop-product-telemetry`、`harness-dev-context`、PowerShell。
   - **调整部署选择：** 例如 HTTPS 端点要求。
 - 构建期平台替换继续沿用现有方式（`scripts/native-*-platform.mjs`），只处理在模块加载时就用到 Node API 的包。
