@@ -89,7 +89,13 @@ if (emitted.emitSkipped) throw new Error('Unable to emit pinned vendor declarati
 const typePaths = { ...paths };
 for (const [name, moduleName] of Object.entries(vendorNames)) typePaths[`@deepseek-ai/${moduleName}`] = [`./types/vendor/${name}/src/index.d.ts`];
 for (const [name, path] of Object.entries(declarationOnlyPackages)) typePaths[name] = [`./types/${path.replace(/\.ts$/, '.d.ts')}`];
-writeFileSync(resolve(output, 'upstream.tsconfig.json'), JSON.stringify({ compilerOptions: { paths: typePaths } }, null, 2) + '\n');
+// Include ambient declarations from the selected checkout, whether it is the
+// configured CI directory or the isolated source copy used for a dirty checkout.
+const ambientDeclarations = [
+  'packages/web/tool-web/src/turndown-plugin-gfm.d.ts',
+  'packages/fs/tool-fs-search/src/ripgrep.d.ts',
+].map(path => sourcePath(resolve(checkout, path)));
+writeFileSync(resolve(output, 'upstream.tsconfig.json'), JSON.stringify({ compilerOptions: { paths: typePaths }, files: ambientDeclarations }, null, 2) + '\n');
 console.log(`Pinned Harness ${actual.slice(0, 12)}; generated source aliases.`);
 
 // The official profile's bundle patches in the Loader's entry-list dialect:
