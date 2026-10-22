@@ -2,29 +2,31 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {mkdtemp, rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
-import {join} from 'node:path';
-import {Context} from '@deepseek-ai/cordis';
-import {readPluginRuntime} from '../packages/native-composition/src/runtime.ts';
-import type {PluginRuntimeSnapshot} from '../packages/native-composition/src/runtime-contract.ts';
+import {join, resolve} from 'node:path';
+import {Miniflare, convertV4MiniflareOptions} from 'miniflare';
+import type {PluginRuntimeSnapshot, PluginRuntimeEntry} from '../packages/native-composition/src/runtime-contract.ts';
 import {createRuntime, tenantId, url} from './helpers/miniflare.ts';
 import {nativeClient} from './helpers/native.ts';
 
 test('runtime diagnostics read real fibers, report missing dependencies and never export raw errors or configuration', async () => {
-  const ctx = new Context();
+  const options = convertV4MiniflareOptions({modules: true, scriptPath: resolve('dist/plugin-runtime-worker.js'), compatibilityDate: '2026-07-30', compatibilityFlags: ['nodejs_compat']});
+  options.workers[0]!.dev = {...options.workers[0]!.dev, unsafeRegisterWorker: false};
+  const runtime = new Miniflare(options);
   try {
-    await ctx.plugin({name: 'fixture-active', apply() {}});
-    ctx.plugin({name: 'fixture-pending', inject: ['fixtureUnavailable'], apply() {}});
-    try {await ctx.plugin({name: 'fixture-failed', apply(_ctx: Context, _config: {password: string}) {throw new Error('apiKey=fixture-private-secret');}}, {password: 'another-private-secret'});} catch {}
-    const snapshot = await readPluginRuntime(ctx);
+    const response = await runtime.dispatchFetch('http://localhost');
+    assert.equal(response.status, 200);
+    const snapshot = await response.json() as {entries: PluginRuntimeEntry[]; truncated: boolean};
     assert.equal(snapshot.entries.find(row => row.moduleName === 'fixture-active')?.phase, 'active');
     const pending = snapshot.entries.find(row => row.moduleName === 'fixture-pending');
     assert.ok(pending);
     assert.equal(pending?.phase, 'pending');
     assert.deepEqual(pending.missingServices, ['fixtureUnavailable']);
     assert.deepEqual(snapshot.entries.find(row => row.moduleName === 'fixture-failed')?.failure, {kind: 'startup', name: 'Error'});
+    assert.deepEqual(snapshot.entries.find(row => row.moduleName === 'fixture-config')?.failure, {kind: 'configuration', name: 'ValidationError'});
+    assert.deepEqual(snapshot.entries.find(row => row.moduleName === 'fixture-custom-error')?.failure, {kind: 'startup', name: 'Error'});
     assert.doesNotMatch(JSON.stringify(snapshot), /private-secret|password|apiKey/);
     assert.equal(snapshot.truncated, false);
-  } finally {await ctx.fiber.dispose();}
+  } finally {await runtime.dispose();}
 });
 
 test('authenticated Session diagnostics do not wake inactive owners, observe real Loader changes and preserve environment boundaries', {timeout: 120_000}, async () => {

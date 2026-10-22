@@ -151,6 +151,7 @@ if (existsSync('.generated/official-web-assets/harness/boot.json')) {
 }
 writeFileSync('.generated/ui-paths.ts', `export const uiPaths: string[] = ${JSON.stringify(paths)};\n/** Content revision of each boot graph module; a request naming it may be cached as immutable. */\nexport const uiRevisions: Record<string, string> = ${JSON.stringify(revisions)};\n`);
 writeFileSync('dist/web-metafile.json', JSON.stringify(web.metafile, null, 2) + '\n');
+await build({entryPoints: {'plugin-runtime-worker': 'tests/fixtures/plugin-runtime-worker.ts'}, outdir: 'dist', bundle: true, format: 'esm', platform: 'browser', target: 'es2024', external: ['node:*'], tsconfig: '.generated/upstream.source.tsconfig.json'});
 const result = await build({
   entryPoints: {worker: 'apps/worker/src/index.ts', 'assets-worker': 'apps/assets/src/index.ts'},
   outdir: 'dist',

@@ -42,7 +42,8 @@ export async function readPluginRuntime(ctx: Context): Promise<{entries: PluginR
     if (rows.length >= LIMIT) continue;
     const row = fiber ? await describeFiber(fiber, fiber.uid === null ? 'entry:'+entry.id : 'fiber:'+fiber.uid, entry.options.name)
       : {id: 'entry:'+entry.id, moduleName: entry.options.name, phase: entry.disabled ? 'disabled' as const : 'unavailable' as const, missingServices: []};
-    rows.push({...row, entryId: entry.id, ...(entry.disabled ? {phase: 'disabled' as const} : {})});
+    // An enabled-to-disabled transition can still be unloading asynchronous resources.
+    rows.push({...row, entryId: entry.id, ...(entry.disabled && (!fiber || fiber.state === 4) ? {phase: 'disabled' as const} : {})});
   }
   for (const runtime of ctx.registry.values()) for (const fiber of runtime.fibers) {
     if (seen.has(fiber) || fiber.uid === null) continue;
