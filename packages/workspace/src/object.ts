@@ -148,7 +148,8 @@ export class WorkspaceDO extends DurableObject<Env> {
     const epoch = this.admission.begin();
     const operation = this.finishContainerStop(scope, sessions, epoch);
     this.stopping = operation;
-    this.ctx.waitUntil(operation.then(() => {if (this.stopping === operation) this.stopping = undefined;}));
+    const clear = () => {if (this.stopping === operation) this.stopping = undefined;};
+    this.ctx.waitUntil(operation.then(clear, clear));
     return operation.then(response => response.clone());
   }
   private async finishContainerStop(scope: WorkspaceScope, sessions: string[], epoch: number): Promise<Response> {
@@ -159,10 +160,14 @@ export class WorkspaceDO extends DurableObject<Env> {
       await host.beginStop(epoch); held = true;
       const running = (await host.state()).running;
       // Archive/session-stop also disables schedules; only cancel container activity here.
-      for (let offset = 0; offset < sessions.length; offset += 8) await Promise.all(sessions.slice(offset, offset + 8).map(sessionId => {
-        const address = {tenantId: scope.tenantId, environmentId: scope.environmentId ?? 'default', sessionId};
-        return this.env.SESSIONS.getByName(sessionAddress(address)).nativeStopContainerProcesses(address, scope.workspaceId);
-      }));
+      for (let offset = 0; offset < sessions.length; offset += 8) {
+        const results = await Promise.allSettled(sessions.slice(offset, offset + 8).map(sessionId => {
+          const address = {tenantId: scope.tenantId, environmentId: scope.environmentId ?? 'default', sessionId};
+          return this.env.SESSIONS.getByName(sessionAddress(address)).nativeStopContainerProcesses(address, scope.workspaceId);
+        }));
+        const failed = results.find(result => result.status === 'rejected');
+        if (failed?.status === 'rejected') throw failed.reason;
+      }
       const executions = [...this.containerRuns];
       await Promise.allSettled(executions.map(([, run]) => run));
       await Promise.all(executions.map(([id]) => this.killExec(scope, id)));

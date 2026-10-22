@@ -111,5 +111,16 @@ test('workspace stop coalesces requests, gates new connections, syncs before des
         assert.throws(() => workspace.stopContainer({...scope, tenantId: 'another-tenant'}, []), /scope mismatch/);
       } finally {db.close();}
     });
+    await t.test('a failed host release remains retryable without rebuilding the workspace object', async () => {
+      const {workspace, containerHost, db} = make();
+      const finish = containerHost.finishStop.bind(containerHost);
+      let fails = true;
+      containerHost.finishStop = async epoch => {if (fails) {fails = false; throw new Error('host release unavailable');} await finish(epoch);};
+      try {
+        await assert.rejects(workspace.stopContainer(scope, []), /host release unavailable/);
+        assert.equal((await workspace.stopContainer(scope, [])).status, 200);
+        assert.equal((await workspace.containerState(scope)).status, 'stopped');
+      } finally {db.close();}
+    });
   } finally {await rm(directory, {recursive: true, force: true});}
 });
