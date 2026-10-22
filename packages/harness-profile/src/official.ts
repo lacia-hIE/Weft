@@ -2,6 +2,7 @@ import { applyEntryPatches, type PatchOptions } from '@deepseek-ai/cordis-plugin
 import type { EntryOptions } from '@deepseek-ai/cordis-plugin-loader';
 import bundles from '../../../.generated/official-bundles.json';
 import { EXTERNAL, LOADED, MOUNTED_BY_WEFT, NOT_APPLICABLE, PENDING, PLATFORM, PRESET_ROWS, isBrowserRow, overlayPatches } from './overlay.ts';
+import {MANAGEABLE_PROFILE_ROWS} from './management.ts';
 
 const fail = (message: string, ...args: unknown[]) => { throw new Error(`Official profile patch failed: ${message} ${args.join(' ')}`); };
 
@@ -48,6 +49,7 @@ export function enabledEntries(entries: readonly EntryOptions[] = officialEntrie
  */
 export function overlayProblems(): string[] {
   const problems: string[] = [];
+  for (const id of MANAGEABLE_PROFILE_ROWS) if (LOADED[id]?.phase !== 'late') problems.push(`Manageable row ${id} must be an optional late-loaded policy`);
   const tables = {LOADED, MOUNTED_BY_WEFT, PLATFORM, NOT_APPLICABLE, EXTERNAL, PENDING} as Record<string, Record<string, unknown>>;
   const known = new Set(rows.map(row => row.id));
   for (const [table, entries] of Object.entries(tables)) for (const id of Object.keys(entries)) if (!known.has(id)) problems.push(`${table} names ${id}, which the official profile no longer has`);

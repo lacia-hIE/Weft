@@ -13,7 +13,7 @@ import type {SettingsDescribeValue} from '@deepseek-ai/dsh-settings/types';
 import type {SessionEvent} from '@deepseek-ai/dsh-session';
 import type {AgentRevision} from '../packages/control-plane/src/contracts.ts';
 
-test('the original plugin inventory reads real Loader entries and durable management retires presets without changing frozen sessions', async () => {
+test('inventory covers the pinned official profile and durable management retires presets without changing frozen sessions', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'weft-manager-'));
   const provider = nativePluginModel();
   const options = {browser: true, bindings: {MODEL_BACKEND: 'deepseek', DEEPSEEK_API_KEY: 'manager-fixture', DEEPSEEK_BASE_URL: 'https://model.test/anthropic'}, outbound: provider.outbound};
@@ -23,15 +23,34 @@ test('the original plugin inventory reads real Loader entries and durable manage
   try {
     const inventory = await api.call<PluginInventorySnapshot>('pluginInventory/list', {});
     assert.equal(inventory.managementAvailable, true);
-    assert.deepEqual(inventory.entries.map(row => row.entryId).sort(), ['preset-cordis', 'preset-minimal', 'preset-ptc', 'preset-standard']);
-    assert.ok(inventory.entries.every(row => row.moduleName === 'cordis:agent-preset' && row.enabled));
+    const profile = await import('../.generated/official-profile.mjs');
+    const expected: string[] = [];
+    profile.walkEntries(profile.officialProfile, row => {if (!row.group) expected.push(row.id);});
+    const presets = inventory.entries.filter(row => row.moduleName === 'cordis:agent-preset');
+    assert.deepEqual(presets.map(row => row.entryId).sort(), ['preset-cordis', 'preset-minimal', 'preset-ptc', 'preset-standard']);
+    const globals = inventory.entries.filter(row => row.moduleName !== 'cordis:agent-preset');
+    assert.deepEqual(globals.map(row => row.entryId).sort(), expected.sort());
+    assert.equal(new Set(inventory.entries.map(row => row.entryId)).size, inventory.entries.length);
+    assert.ok(globals.every(row => row.fiberPhase === null), 'deployment inventory does not invent live Session fiber states');
+    const description = (id: string) => JSON.stringify(globals.find(row => row.entryId === id)?.meta?.description);
+    assert.match(description('subprocess'), /Platform replacement/);
+    assert.match(description('mcp-resources'), /Not implemented/);
+    assert.match(description('office-to-pdf'), /Not connected/);
+    assert.match(description('tool-bash'), /Agent presets/);
+    assert.match(description('agent-loop'), /Mounted by Weft/);
+    assert.equal(globals.find(row => row.entryId === 'ui-settings-account')?.enabled, false);
+    assert.equal(globals.find(row => row.moduleName === '@deepseek-ai/dsh-client-ui-settings-plugin-inventory')?.enabled, true);
     assert.ok(inventory.entries.filter(row => row.entryId === 'preset-standard' || row.entryId === 'preset-cordis').every(row => row.fiberPhase === 'active'));
     assert.equal(inventory.agentPresets?.find(row => row.id === 'cordis')?.rows.find(row => row.entryId === 'tool-todo')?.fiberPhase, 'active');
     const bundles = await api.call<BundleInfo[]>('pluginManager/listBundles', {});
-    assert.deepEqual(bundles.map(bundle => bundle.name), ['@weft/harness-profile']);
-    assert.equal(bundles[0]?.rows.length, 4);
+    assert.deepEqual(bundles.map(bundle => bundle.name), ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', '@weft/harness-profile']);
+    assert.equal(bundles.find(bundle => bundle.name === '@weft/harness-profile')?.rows.length, 4);
+    assert.deepEqual(bundles.flatMap(bundle => bundle.rows.map(row => row.rowId)).sort(), inventory.entries.map(row => row.entryId).sort());
     const plugins = await api.call<PluginInfo[]>('pluginManager/listPlugins', {});
     assert.equal(plugins.find(row => row.entryId === 'preset-standard')?.readOnlyReason, 'management-required');
+    assert.equal(plugins.find(row => row.entryId === 'llm')?.readOnlyReason, 'management-required');
+    assert.equal(plugins.find(row => row.entryId === 'mcp-resources')?.readOnlyReason, 'management-required');
+    assert.equal(plugins.find(row => row.entryId === 'llm-retry')?.patchId, 'llm-retry');
     await api.call('session/create', {request: {sessionId: 'retained', agentPreset: 'cordis'}});
     const changes = await api.events();
     assert.equal((await changes.next()).type, 'ready');
@@ -73,12 +92,55 @@ test('management guards protect the selected default, preserve environment bound
     assert.equal((await other.call<PluginInventorySnapshot>('pluginInventory/list', {})).entries.find(row => row.entryId === 'preset-standard')?.enabled, true);
     assert.equal((await api.raw('settings/update', {ns: 'agent-preset-registry', patch: {selectedDefault: 'standard'}})).result.error?.code, 'settings/rejected');
     assert.equal((await api.call<ChangeResult>('pluginManager/setPluginEnabled', {id: 'preset-unknown', enabled: true})).error?.code, 'unknown-plugin');
+    for (const id of ['llm', 'mcp-resources', 'office-to-pdf', 'ui-settings-account']) assert.equal((await api.call<ChangeResult>('pluginManager/setPluginEnabled', {id, enabled: true})).error?.code, 'management-required');
     assert.equal((await api.call<ChangeResult>('pluginManager/removeBundle', {name: '@weft/harness-profile'})).error?.code, 'management-required');
+    assert.equal((await api.call<ChangeResult>('pluginManager/setBundleEnabled', {name: '@deepseek-ai/dsh-base', enabled: false})).error?.code, 'management-required');
     assert.equal((await api.call<{status: string}>('pluginManager/inspect', {spec: '@some/unsupported-bundle'})).status, 'refused');
     const install = await api.call<ChangeResult>('pluginManager/installBundle', {spec: '@some/unsupported-bundle'});
     assert.equal(install.changed, false); assert.equal(install.application, 'failed');
     assert.equal((await api.raw('pluginManager/setPluginEnabled', {id: 'preset-cordis', enabled: 'yes'})).result.error?.code, 'gateway/bad-request');
   } finally {await runtime.dispose();}
+});
+
+test('global policy switches persist per environment, survive restart and change actual commands at the next turn', {timeout: 120_000}, async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'weft-global-plugins-'));
+  let runtime = createRuntime(directory, {browser: true});
+  const api = nativeClient(() => runtime);
+  const other = nativeClient(() => runtime, 'other');
+  const base = `/v1/tenants/${tenantId('alpha')}/environments/default`;
+  const feedback = async (session: string) => (await api.call<{name: string}[]>('commands/list', {agentId: session})).some(row => row.name === 'feedback');
+  const turn = async (session: string) => {
+    await api.call('session/prompt', {request: {sessionId: session, requestId: crypto.randomUUID(), mode: 'queue', content: [{type: 'text', text: 'Hello'}]}});
+    await (await runtime.dispatchFetch(url('alpha', base+`/sessions/${session}/events`))).json();
+  };
+  const toggle = (id: string, enabled: boolean) => api.call<ChangeResult>('pluginManager/setPluginEnabled', {id, enabled});
+  try {
+    assert.equal((await runtime.dispatchFetch(url('alpha', `/v1/tenants/${tenantId('alpha')}/environments`), {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({id: 'other', name: 'Other'})})).status, 201);
+    await api.call('session/create', {request: {sessionId: 'policy'}});
+    assert.equal(await feedback('policy'), true);
+    await api.call('settings/openSettingsDocument', {});
+    const changes = await Promise.all([toggle('command-feedback', false), toggle('llm-retry', false)]);
+    assert.ok(changes.every(row => row.application === 'applied' && row.changed));
+    assert.equal((await toggle('llm-retry', false)).changed, false);
+    assert.equal(await feedback('policy'), true, 'an existing world stays unchanged until the next turn boundary');
+    await turn('policy');
+    assert.equal(await feedback('policy'), false, 'the real command registration was disposed');
+    await api.call('session/create', {request: {sessionId: 'disabled'}});
+    assert.equal(await feedback('disabled'), false, 'new worlds respect saved enablement');
+    assert.equal((await other.call<PluginInventorySnapshot>('pluginInventory/list', {})).entries.find(row => row.entryId === 'command-feedback')?.enabled, true);
+    const file = await (await runtime.dispatchFetch(url('alpha', base+'/workspaces/default/files?path='+encodeURIComponent('/workspace/.dsh/profile.yml')))).json() as {value: {content: string}};
+    assert.match(file.value.content, /command-feedback: false/);
+    assert.match(file.value.content, /llm-retry: false/);
+    assert.equal((await api.raw('settings/update', {ns: 'weft-plugin-enablement', patch: {llm: false}})).result.error?.code, 'settings/rejected');
+    await runtime.dispose(); runtime = createRuntime(directory, {browser: true});
+    const restored = await api.call<PluginInventorySnapshot>('pluginInventory/list', {});
+    for (const id of ['command-feedback', 'llm-retry']) assert.equal(restored.entries.find(row => row.entryId === id)?.enabled, false);
+    assert.equal(await feedback('policy'), false);
+    assert.equal((await toggle('command-feedback', true)).changed, true);
+    await turn('policy');
+    assert.equal(await feedback('policy'), true, 're-enabling mounts the original policy in an existing world');
+    assert.equal((await api.call<PluginInventorySnapshot>('pluginInventory/list', {})).entries.find(row => row.entryId === 'llm-retry')?.enabled, false, 'independent switches do not overwrite one another');
+  } finally {await runtime.dispose(); await rm(directory, {recursive: true, force: true});}
 });
 
 test('concurrent preset publications and default selection preserve CAS and never leave the default disabled', async () => {

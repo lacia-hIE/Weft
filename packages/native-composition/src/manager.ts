@@ -3,11 +3,14 @@ import remote from '../../../.generated/official-remotes/packages/boot/plugin-ma
 import type {ChangeResult} from '@deepseek-ai/dsh-plugin-manager/types';
 import type {AgentSpec, AgentRevision} from '../../control-plane/src/contracts.ts';
 import {profileManifest, presetEntryId} from '../../harness-profile/src/index.ts';
+import {isManageableProfileRow} from '../../harness-profile/src/management.ts';
+import {officialPluginIds, officialBundleNames} from './inventory.ts';
 
 interface ProfileManagementHost {
   profiles(): Promise<AgentRevision[]>;
   defaultPreset(): Promise<string>;
   publish(spec: AgentSpec, expectedRevision: number): Promise<Response>;
+  setProfileEnabled(id: string, enabled: boolean): Promise<boolean>;
 }
 
 /** Original Remote contracts over a scoped, durable profile publisher. */
@@ -22,7 +25,9 @@ export async function manageNativePlugins(host: ProfileManagementHost, endpoint:
       const entryId = String(args.id);
       const preset = (await host.profiles()).find(row => presetEntryId(row.spec.id) === entryId);
       const failure = (code: 'unknown-plugin' | 'management-required'): ChangeResult => ({changed: false, application: 'failed', stage: 'enable', target: entryId, enabled: Boolean(args.enabled), error: {code}});
-      if (!preset) value = failure('unknown-plugin');
+      if (isManageableProfileRow(entryId)) value = {changed: await host.setProfileEnabled(entryId, Boolean(args.enabled)), application: 'applied', stage: 'enable', target: entryId, enabled: Boolean(args.enabled),
+        warnings: ['Saved for this environment. Applies before the next turn; active turns finish unchanged.']} satisfies ChangeResult;
+      else if (!preset) value = failure(officialPluginIds.has(entryId) ? 'management-required' : 'unknown-plugin');
       else if (!args.enabled && preset.spec.id === await host.defaultPreset()) value = failure('management-required');
       else if (Boolean(preset.spec.disabled) === !args.enabled) value = {changed: false, application: 'applied', stage: 'enable', target: entryId, enabled: args.enabled};
       else {
@@ -31,7 +36,7 @@ export async function manageNativePlugins(host: ProfileManagementHost, endpoint:
         value = {changed: true, application: 'applied', stage: 'enable', target: entryId, enabled: args.enabled};
       }
     } else if (endpoint === 'pluginManager/setBundleEnabled' || endpoint === 'pluginManager/removeBundle') {
-      value = {changed: false, application: 'failed', stage: endpoint.endsWith('removeBundle') ? 'remove' : 'enable', target: args.name, error: {code: args.name === profileManifest.name ? 'management-required' : 'unknown-plugin'}};
+      value = {changed: false, application: 'failed', stage: endpoint.endsWith('removeBundle') ? 'remove' : 'enable', target: args.name, error: {code: args.name === profileManifest.name || officialBundleNames.includes(String(args.name)) ? 'management-required' : 'unknown-plugin'}};
     } else if (endpoint === 'pluginManager/registries') {
       value = {registry: null, fallbackRegistries: [], resolved: null};
     } else if (endpoint === 'pluginManager/inspect') {

@@ -22,6 +22,10 @@ import PluginMarket from '@deepseek-ai/dsh-plugin-market';
 import { profileSettingRows } from '../../native-profile/src/settings-rows.ts';
 import YAML from 'yaml';
 import { Config as PiAiConfig } from '@deepseek-ai/dsh-llm-pi-ai';
+import {MANAGEABLE_PROFILE_ROWS, isManageableProfileRow, type ProfileEnablement} from '../../harness-profile/src/management.ts';
+
+export const PROFILE_PLUGINS_NAMESPACE = 'weft-plugin-enablement';
+const ProfilePluginsConfig = z.object(Object.fromEntries(MANAGEABLE_PROFILE_ROWS.map(id => [id, z.boolean().default(true).volatile()])));
 
 // The official composition's entry id differs from its provider package name.
 // The curated Models editor addresses this entry id.
@@ -133,6 +137,7 @@ export class NativeSettings {
       }},
       {id: MARKET_NAMESPACE, schema: PluginMarket.Config, base: () => ({}), autoGenerate: false, validate: () => {}, hidden: true},
       {id: WORKSPACE_RUNTIME_NAMESPACE, schema: WorkspaceRuntimeConfig, base: () => ({}), autoGenerate: false, validate: () => {}},
+      {id: PROFILE_PLUGINS_NAMESPACE, schema: ProfilePluginsConfig, base: () => ({}), autoGenerate: false, validate: () => {}, hidden: true},
       {id: 'ui-settings', schema: DeveloperToolsConfig, base: () => ({}), autoGenerate: false, validate: () => {}},
       {id: 'ui-settings-general', schema: WelcomeConfig, base: () => ({}), autoGenerate: false, validate: () => {}},
     ];
@@ -252,6 +257,20 @@ export class NativeSettings {
   }
   async saveMarketIndexes(indexes: string[]): Promise<void> {
     await this.write(MARKET_NAMESPACE, undefined, user => ({...user, indexes}));
+  }
+  profileEnablement(): ProfileEnablement {return this.value(PROFILE_PLUGINS_NAMESPACE) as ProfileEnablement;}
+  /** Serialize each patch against the latest document so concurrent switches cannot lose another row's change. */
+  async setProfilePluginEnabled(id: string, enabled: boolean): Promise<boolean> {
+    if (!isManageableProfileRow(id)) throw new Error('Profile entry is not manageable');
+    let changed = false;
+    await this.write(PROFILE_PLUGINS_NAMESPACE, undefined, user => {
+      changed = (user[id] !== false) !== enabled;
+      const next = {...user};
+      if (enabled) Reflect.deleteProperty(next, id);
+      else next[id] = false;
+      return next;
+    });
+    return changed;
   }
   async saveDefault(selected: {provider: string; model: string; reasoningEffort?: string}): Promise<void> {
     await this.write(DEFAULT_MODEL_NAMESPACE, undefined, () => ({...selected}));

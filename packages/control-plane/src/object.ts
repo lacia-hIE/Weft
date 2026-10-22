@@ -61,6 +61,7 @@ export interface NativeSessionContext {
   subagents: Record<string, unknown>;
   permissionDefault?: string;
   profileOverrides: Record<string, Record<string, unknown>>;
+  profileEnablement: import('../../harness-profile/src/management.ts').ProfileEnablement;
   /** Where the environment's workspace commands run. */
   workspaceRuntime: {shell: WorkspaceShell; containerInstance: ContainerInstance};
 }
@@ -74,7 +75,7 @@ import { sessionAddress, type SessionScope } from '../../tenant/src/index.ts';
 import sessionRemote from '../../../.generated/official-remotes/packages/api/session-controller/typert.remote-client.js';
 import type { SessionControlFrame, SessionProjectionBaseline } from '@deepseek-ai/dsh-api-session-controller/types';
 import { remoteStream } from '../../harness-runtime/src/remote-stream.ts';
-import { NativeSettings, PRESET_NAMESPACE, LOOP_NAMESPACE, SUBAGENT_NAMESPACE, PERMISSION_NAMESPACE, MARKET_NAMESPACE, MODEL_NAMESPACE, PI_AI_NAMESPACE, WORKSPACE_RUNTIME_NAMESPACE, DEFAULT_MODEL_NAMESPACE } from './native-settings.ts';
+import { NativeSettings, PRESET_NAMESPACE, LOOP_NAMESPACE, SUBAGENT_NAMESPACE, PERMISSION_NAMESPACE, MARKET_NAMESPACE, MODEL_NAMESPACE, PI_AI_NAMESPACE, WORKSPACE_RUNTIME_NAMESPACE, DEFAULT_MODEL_NAMESPACE, PROFILE_PLUGINS_NAMESPACE } from './native-settings.ts';
 import {readNativePresets, type CompositionEndpoint} from '../../native-composition/src/profile-host.ts';
 import {profileDefinitions} from '../../harness-profile/src/index.ts';
 import {manageNativePlugins} from '../../native-composition/src/manager.ts';
@@ -179,7 +180,7 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
         : {provider: 'deepseek-official', model: this.latest(DEFAULT_PRESET)?.spec.model?.name ?? 'deepseek-flash'},
       changed: (event, args) => {
         this.nativeEvents.emit(event, args);
-        if (event === 'settings/document-updated' && args[0] === PRESET_NAMESPACE) this.nativeEvents.emit('plugin-manager/changed', [{reason: 'plugin'}]);
+        if (event === 'settings/document-updated' && (args[0] === PRESET_NAMESPACE || args[0] === PROFILE_PLUGINS_NAMESPACE)) this.nativeEvents.emit('plugin-manager/changed', [{reason: 'plugin'}]);
         if (event === 'settings/document-updated' && (args[0] === MODEL_NAMESPACE || args[0] === PI_AI_NAMESPACE || args[0] === DEFAULT_MODEL_NAMESPACE)) void this.modelWorld?.refresh().catch(() => { /* A rejected draft keeps the previous entries serving; the next read retries. */ });
         if (event === 'settings/document-updated' && args[0] === MARKET_NAMESPACE) {
           const previous = this.market;
@@ -289,6 +290,7 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
       loop: settings.value(LOOP_NAMESPACE) as {maxParallelToolCalls: number}, subagents: settings.value(SUBAGENT_NAMESPACE),
       ...(typeof permission === 'string' ? {permissionDefault: permission} : {}),
       profileOverrides: settings.profileOverrides(),
+      profileEnablement: settings.profileEnablement(),
       workspaceRuntime: settings.value(WORKSPACE_RUNTIME_NAMESPACE) as NativeSessionContext['workspaceRuntime'],
     };
     return Response.json(context);
@@ -324,15 +326,17 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
   private presetReads = new Map<string, Promise<string>>();
   private presetReadsVersion = '';
   async nativePreset(scope: ControlScope, endpoint: CompositionEndpoint, args: unknown): Promise<Response> {
+    await this.syncSettingsDocument(scope);
     const defaultId = await this.nativePresetDefault(scope);
     const profiles = (await this.state(scope)).agents;
-    const version = JSON.stringify([defaultId, profiles.map(profile => [profile.spec.id, profile.revision])]);
+    const enablement = this.settings(scope).profileEnablement();
+    const version = JSON.stringify([defaultId, profiles.map(profile => [profile.spec.id, profile.revision]), enablement]);
     if (version !== this.presetReadsVersion) {this.presetReads = new Map(); this.presetReadsVersion = version;}
     const key = JSON.stringify([endpoint, args]);
     let read = this.presetReads.get(key);
     if (!read) {
       const volume = {...scope, workspaceId: 'default'};
-      read = readNativePresets(profiles, defaultId, endpoint, args, ctx => mountWorkspace(ctx, {scope: volume, transport: this.env.WORKSPACES.getByName(workspaceAddress(volume)), cwd: '/workspace', fileTools: false})).then(response => response.text());
+      read = readNativePresets(profiles, defaultId, endpoint, args, ctx => mountWorkspace(ctx, {scope: volume, transport: this.env.WORKSPACES.getByName(workspaceAddress(volume)), cwd: '/workspace', fileTools: false}), enablement).then(response => response.text());
       const reads = this.presetReads;
       reads.set(key, read);
       // A failed composition is not remembered; the next read composes again.
@@ -354,11 +358,16 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
   }
   async nativeManagePlugins(scope: ControlScope, endpoint: string, raw: unknown): Promise<Response> {
     this.scope(scope); this.ensureDefault(); this.ensureNativePresets();
-    return manageNativePlugins({
+    await this.syncSettingsDocument(scope);
+    const response = await manageNativePlugins({
       profiles: async () => (await this.state(scope)).agents,
       defaultPreset: () => this.nativePresetDefault(scope),
       publish: (spec, revision) => this.publishAgent(scope, spec, revision),
+      setProfileEnabled: (id, enabled) => this.settings(scope).setProfilePluginEnabled(id, enabled),
     }, endpoint, raw);
+    const result = await response.clone().json() as {value?: {changed?: boolean}};
+    if (result.value?.changed) await this.renderSettingsDocument(scope);
+    return response;
   }
   /** Private binding only: never dispatch this snapshot as a client Remote. */
   /** Private binding only: the effective model sections for the official model entries. */

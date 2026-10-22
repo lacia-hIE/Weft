@@ -24,12 +24,14 @@ import type {PluginInfo, BundleInfo} from '@deepseek-ai/dsh-plugin-manager/types
 import pluginRemote from '../../../.generated/official-remotes/packages/boot/plugin-manager/typert.remote-client.js';
 import inventoryRemote from '../../../.generated/official-remotes/packages/host/plugin-inventory/typert.remote-client.js';
 import {mountNativeSubagentProviders} from '../../native-subagents/src/index.ts';
+import {officialInventory, officialPluginInfo, officialBundles} from './inventory.ts';
+import type {ProfileEnablement} from '../../harness-profile/src/management.ts';
 
 export type CompositionEndpoint = 'agentPresets/list' | 'agentPresets/read' | 'pluginInventory/list' | 'pluginManager/listPlugins' | 'pluginManager/listBundles';
 const methods = {...remote.methods, ...pluginRemote.methods, ...inventoryRemote.methods};
 
 /** A real composition inspection world. It creates no Agent or session writer. */
-export async function readNativePresets(profiles: AgentRevision[], defaultId: string, endpoint: CompositionEndpoint, raw: unknown, mountWorkspace: (ctx: Context) => Promise<void>): Promise<Response> {
+export async function readNativePresets(profiles: AgentRevision[], defaultId: string, endpoint: CompositionEndpoint, raw: unknown, mountWorkspace: (ctx: Context) => Promise<void>, enablement: ProfileEnablement = {}): Promise<Response> {
   const method = methods[endpoint];
   const args = method.input({strict: true}).create().parse(raw);
   const ctx = new Context();
@@ -60,15 +62,17 @@ export async function readNativePresets(profiles: AgentRevision[], defaultId: st
     else if (endpoint === 'agentPresets/read') value = await registry.readDocument('agentPreset' in args && typeof args.agentPreset === 'string' ? args.agentPreset : '');
     else {
       const inventory = await readPluginInventory(ctx);
-      const entries = inventory.entries.map(entry => {
+      const presets = inventory.entries.map(entry => {
         const owner = profiles.find(profile => presetEntryId(profile.spec.id) === entry.entryId);
         return {...entry, ...(owner ? {meta: {title: presetTitle(owner.spec.id, owner.spec.name)}} : {})};
       });
+      const globals = officialInventory(ctx, enablement);
+      const entries = [...globals, ...presets];
       if (endpoint === 'pluginInventory/list') value = {...inventory, entries, managementAvailable: true};
-      else if (endpoint === 'pluginManager/listPlugins') value = entries.map(entry => entry.entryId === presetEntryId(defaultId)
+      else if (endpoint === 'pluginManager/listPlugins') value = [...globals.map(officialPluginInfo), ...presets.map((entry): PluginInfo => entry.entryId === presetEntryId(defaultId)
         ? {...entry, readOnlyReason: 'management-required'}
-        : {...entry, patchId: entry.entryId}) satisfies PluginInfo[];
-      else value = [{name: profileManifest.name, version: profileManifest.version, description: profileManifest.description,
+        : {...entry, patchId: entry.entryId})] satisfies PluginInfo[];
+      else value = [...officialBundles(globals), {name: profileManifest.name, version: profileManifest.version, description: profileManifest.description,
         meta: {title: {en: 'Agent presets', zh: 'Agent 预设'}},
         availability: 'installation', official: false, installed: Object.hasOwn(profileDescriptor.dependencies, profileManifest.name), enabled: profileDescriptor.dsh.profile.bundles.includes(profileManifest.name), optional: false, removable: false, readOnlyReason: 'management-required',
         rows: profileEntries.map(entry => {

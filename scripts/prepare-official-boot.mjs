@@ -61,5 +61,5 @@ const graph = {rev: digest(JSON.stringify({entries, batches})), release: {versio
 // Validate with the upstream parser, rather than maintaining a second Boot ABI.
 parseBootManifest(graph);
 writeFileSync(resolve(output, 'harness/boot.json'), JSON.stringify(graph) + '\n');
-writeFileSync(resolve(root, '.generated/official-web-boot-report.json'), JSON.stringify({upstream: source.commit, built: report.entries.length, officialActive: roster.length, extensions: [environmentId], active: entries.length, disabled: report.entries.map(row => row.id).filter(id => !rows.has(id)), graph: relative(root, resolve(output, 'harness/boot.json'))}, null, 2) + '\n');
+writeFileSync(resolve(root, '.generated/official-web-boot-report.json'), JSON.stringify({upstream: source.commit, built: report.entries.length, officialActive: roster.length, extensions: [environmentId], active: entries.length, modules: entries.map(row => row.id), disabled: report.entries.map(row => row.id).filter(id => !rows.has(id)), graph: relative(root, resolve(output, 'harness/boot.json'))}, null, 2) + '\n');
 console.log(`Prepared ${roster.length} official Web entries and one Weft extension; validated the native Boot Graph.`);

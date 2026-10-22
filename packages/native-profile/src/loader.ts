@@ -4,6 +4,7 @@ import officialModules from 'weft:official-modules';
 import { enabledEntries } from '../../harness-profile/src/official.ts';
 import { LOADED, type ProfilePhase } from '../../harness-profile/src/overlay.ts';
 import { PRESET_PENDING } from '../../harness-profile/src/presets.ts';
+import {isManageableProfileRow, MANAGEABLE_PROFILE_ROWS, type ProfileEnablement} from '../../harness-profile/src/management.ts';
 
 /** The base URL of prebuilt rows; nothing is fetched from it. */
 const PREBUILT_BASE = 'https://weft.invalid/prebuilt/';
@@ -53,14 +54,15 @@ export async function createEntry(loader: Loader, entry: EntryOptions): Promise<
  * world never provides stay pending. Rows the overlay disables are served by
  * Weft providers under the same ids, so they are not created here.
  */
-export async function mountOfficialProfile(ctx: Context, phase: ProfilePhase, native: boolean, overrides: ProfileOverrides = {}): Promise<void> {
+export async function mountOfficialProfile(ctx: Context, phase: ProfilePhase, native: boolean, overrides: ProfileOverrides = {}, enablement: ProfileEnablement = {}): Promise<void> {
   const loader = await workerdLoader(ctx);
   const rows = new Map(enabledEntries().map(entry => [entry.id, entry]));
   for (const [id, row] of Object.entries(LOADED)) {
     if (row.phase !== phase || (row.native && !native)) continue;
     const entry = rows.get(id);
     if (!entry) throw new Error(`Official profile row ${id} is not enabled`);
-    const options = {...structuredClone(entry), ...(Object.hasOwn(overrides, id) ? {config: structuredClone(overrides[id])} : {})};
+    const options = {...structuredClone(entry), ...(Object.hasOwn(overrides, id) ? {config: structuredClone(overrides[id])} : {}),
+      ...(isManageableProfileRow(id) && enablement[id] === false ? {disabled: true} : {})};
     if (phase !== 'late') await createEntry(loader, options);
     else await loader.create(options);
   }
@@ -68,6 +70,17 @@ export async function mountOfficialProfile(ctx: Context, phase: ProfilePhase, na
 
 /** An environment's configuration for profile rows, by row id; a row's value replaces its profile configuration. */
 export type ProfileOverrides = Record<string, Record<string, unknown>>;
+
+/** Called at the turn boundary, so disposal never interrupts an active model/tool step. */
+export async function reconcileProfileEnablement(ctx: Context, applied: ProfileEnablement, next: ProfileEnablement): Promise<ProfileEnablement> {
+  const ids = new Set([...ctx.loader.entries()].map(entry => entry.options.id));
+  for (const id of MANAGEABLE_PROFILE_ROWS) {
+    if ((applied[id] !== false) === (next[id] !== false) || !ids.has(id)) continue;
+    await ctx.loader.update(id, {disabled: next[id] === false});
+    if (next[id] !== false) await ctx.loader.resolve(id).fiber?.await();
+  }
+  return structuredClone(next);
+}
 
 /**
  * Apply an environment's changed row configuration to a live world through

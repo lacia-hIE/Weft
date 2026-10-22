@@ -19,6 +19,7 @@ export interface RuntimeOptions {
   presentation?: boolean;
   /** The environment's configuration of official profile rows, applied as the rows are created. */
   profileOverrides?: import('../../native-profile/src/loader.ts').ProfileOverrides;
+  profileEnablement?: import('../../harness-profile/src/management.ts').ProfileEnablement;
   requestId?: import('@deepseek-ai/dsh-api-session-controller/types').SessionRequestId;
   clientTimeZone?: string;
   promptContent?: readonly {type: 'text'; text: string}[];
@@ -81,7 +82,7 @@ export async function openHarnessSession(options: RuntimeOptions): Promise<Harne
     if (options.mountModels) await options.mountModels(ctx);
     else if (options.adapter) ctx.llm.registerAdapter([options.model.provider], options.adapter);
     else throw new Error('A Harness runtime needs model providers');
-    await mountOfficialProfile(ctx, 'late', options.presentation === true, options.profileOverrides);
+    await mountOfficialProfile(ctx, 'late', options.presentation === true, options.profileOverrides, options.profileEnablement);
     if (options.mountTools) await options.mountTools(ctx);
     // Install before resume: persisted waking input may start assembling as
     // soon as the native factory releases the restored Agent.

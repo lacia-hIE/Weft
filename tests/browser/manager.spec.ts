@@ -1,5 +1,47 @@
 import {test, expect} from '@playwright/test';
 
+test('global plugins show deployment wiring and policy switches persist through the official UI', async ({page, request}) => {
+  const me = await (await request.get('/v1/me')).json() as {tenantId: string};
+  const id = 'global-'+crypto.randomUUID().slice(0, 8);
+  const base = `/v1/tenants/${me.tenantId}/environments/${id}`;
+  expect((await request.post(`/v1/tenants/${me.tenantId}/environments`, {data: {id, name: id}})).status()).toBe(201);
+  const rpc = async (method: string, args: unknown) => {
+    const response = await (await request.post(base+'/native/api/'+method, {data: {type: 'client-request', rpcId: crypto.randomUUID(), method, payload: {args}}})).json();
+    expect(response.result.ok, JSON.stringify(response)).toBe(true);
+    return response.result.value;
+  };
+  await page.goto('/agents/'+id);
+  await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
+  await page.getByRole('button', {name: 'Plugins', exact: true}).click({timeout: 45_000});
+  await page.getByRole('button', {name: 'View Core plugins', exact: true}).click();
+  const policy = page.locator('[data-plugin-row="command-feedback"]');
+  await expect(policy.getByRole('switch')).toBeChecked();
+  await expect(page.locator('[data-plugin-row="llm"]').getByRole('switch')).toBeDisabled();
+  await expect(policy).toContainText('Changes apply before the next turn');
+  await policy.getByRole('switch').click();
+  await expect(policy.getByRole('switch')).not.toBeChecked();
+  await page.reload();
+  await page.getByRole('button', {name: 'Plugins', exact: true}).click({timeout: 45_000});
+  await page.getByRole('button', {name: 'View Core plugins', exact: true}).click();
+  await expect(policy.getByRole('switch')).not.toBeChecked();
+  await page.reload();
+  await page.getByRole('button', {name: 'Settings', exact: true}).click({timeout: 45_000});
+  await page.getByRole('button', {name: 'Built-in plugins', exact: true}).click();
+  const globals = page.locator('[data-plugin-scope="global"]');
+  const snapshot = await rpc('pluginInventory/list', {});
+  expect(snapshot.entries.length).toBeGreaterThan(150);
+  await expect(globals).toHaveAttribute('data-plugin-count', String(snapshot.entries.length));
+  await globals.getByRole('button', {name: 'Global plugins', exact: true}).click();
+  await expect(globals.locator('[data-plugin-entry="mcp-resources"]')).toContainText('Not implemented');
+  await expect(globals.locator('[data-plugin-entry="subprocess"]')).toContainText('Platform replacement');
+  await expect(globals.locator('[data-plugin-entry="command-feedback"]')).toContainText('Disabled for Session loading');
+  await rpc('pluginManager/setPluginEnabled', {id: 'command-feedback', enabled: true});
+  await expect(globals.locator('[data-plugin-entry="command-feedback"]')).toContainText('Enabled for Session loading');
+  await page.getByRole('searchbox', {name: 'Search plugins', exact: true}).fill('mcp-resources');
+  await expect(globals).toHaveAttribute('data-plugin-count', '1');
+  await expect(globals.locator('[data-plugin-entry]')).toHaveCount(1);
+});
+
 test('the official Plugins page renders actual profile entries, persists preset enablement and saves the native Agent loop form', async ({page, request}) => {
   const me = await (await request.get('/v1/me')).json() as {tenantId: string};
   const id = 'manager-'+crypto.randomUUID().slice(0, 8);

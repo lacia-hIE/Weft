@@ -35,7 +35,7 @@ import SessionFileReferences from '@weft/upstream/packages/api/session-controlle
 import {ComputerFileReferences} from '../../../packages/native-files/src/references.ts';
 import {mountWorkspaceShell} from '../../../packages/workspace/src/subprocess.ts';
 import {WorkerPtcRuntime} from '../../../packages/native-ptc/src/index.ts';
-import {reconcileProfileOverrides} from '../../../packages/native-profile/src/loader.ts';
+import {reconcileProfileOverrides, reconcileProfileEnablement} from '../../../packages/native-profile/src/loader.ts';
 import {mountWorkspaceChanges} from '../../../packages/workspace/src/changes.ts';
 import {WorkspaceRuntimeChoice} from '../../../packages/workspace/src/runtime-choice.ts';
 import {PROCESS_PATH} from '../../../packages/workspace/src/process-protocol.ts';
@@ -74,6 +74,8 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
   let commitModels: ((next: EnvironmentModels) => Promise<void>) | undefined;
   const loop = context.loop;
   let profileOverrides = presentation ? context.profileOverrides : {};
+  let profileEnablement = presentation ? context.profileEnablement : {};
+  let profileEnablementTurn: number | undefined;
   let world: Context | undefined;
   let activeAgent: Agent | undefined;
   let composition: Context | undefined;
@@ -94,6 +96,7 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
     },
     agentLoop: {maxParallelToolCalls: loop.maxParallelToolCalls},
     profileOverrides,
+    profileEnablement,
     defaultModel: selection,
     beforeAssembly: async () => {
       context = await (await control.nativeSessionContext(owner)).json() as NativeSessionContext;
@@ -108,7 +111,16 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
       if (runtimeRoot) updateVolatile(runtimeRoot.agentLoop.config.maxParallelToolCalls, AgentLoop.Config({maxParallelToolCalls: next.maxParallelToolCalls}).maxParallelToolCalls);
       if (refreshSubagents) refreshSubagents(context.subagents as unknown as SubagentLimits);
       // Settings edits to official profile rows reach a live Session before its next turn.
-      if (presentation && world) profileOverrides = await reconcileProfileOverrides(world, profileOverrides, context.profileOverrides);
+      if (presentation && world) {
+        profileOverrides = await reconcileProfileOverrides(world, profileOverrides, context.profileOverrides);
+        const boundary = activeAgent && world.sessionProjections.stateOf(activeAgent.session, 'turnBoundary');
+        // Assembly also runs between steps and model selection can refresh while a turn is active.
+        // Change policy fibers only at that turn's first assembly, or while the Agent is idle.
+        if (boundary?.openTurnStartSeq == null || profileEnablementTurn !== boundary.lastTurn) {
+          profileEnablementTurn = boundary?.openTurnStartSeq != null ? boundary.lastTurn : undefined;
+          profileEnablement = await reconcileProfileEnablement(world, profileEnablement, context.profileEnablement);
+        }
+      }
       await runtimeChoice?.reconcile();
       await reconcileChanges?.();
     },
