@@ -3,6 +3,12 @@ export const pluginInventoryPlatform = {
   name: 'weft-plugin-inventory-platform',
   transform(source, id) {
     const path = id.replaceAll('\\', '/');
+    if (path.endsWith('/packages/client/ui-plugin-manager/src/client/PluginManagerPage.tsx')) {
+      const before = 'const listed = state.packages.filter(pkg => !BUILTIN_PROFILE_BUNDLES.has(pkg.name)';
+      const after = "const listed = state.packages.filter(pkg => (!BUILTIN_PROFILE_BUNDLES.has(pkg.name) || pkg.name === '@deepseek-ai/dsh-base' || pkg.name === '@deepseek-ai/dsh-web-app')";
+      if (!source.includes(before)) throw new Error('Upstream plugin manager bundle visibility changed');
+      return {code: source.replace(before, after), map: null};
+    }
     if (path.endsWith('/packages/client/ui-plugin-manager/src/client/locales.ts')) {
       for (const [before, after] of [["rowStateIdle: '未运行'", "rowStateIdle: '未观测实时状态'"], ["rowStateIdle: 'Not running'", "rowStateIdle: 'Live state not observed'"]]) {
         if (!source.includes(before)) throw new Error('Upstream plugin manager status copy changed');

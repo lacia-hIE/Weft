@@ -36,14 +36,17 @@ test('signed Access users load concurrent modules and retain the same tenant wit
     const paths = ['/assets/app.js', ...imports.filter(item => item.kind === 'import-statement')
       .map(item => '/assets/' + item.path.split('/').at(-1))];
     // A cold isolate receives the same parallel graph fetches as a real browser.
-    const responses = await Promise.all(paths.map(path => runtime.dispatchFetch(url('anonymous', path), {headers})));
-    for (const [index, response] of responses.entries()) {
-      // Each body is read once; the status message reuses it.
+    const responses = await Promise.all(paths.map(async path => {
+      const response = await runtime.dispatchFetch(url('anonymous', path), {headers});
+      // Miniflare expects dispatchFetch bodies to be consumed immediately, even while other graph requests are pending.
       const body = await response.text();
-      assert.equal(response.status, 200, paths[index] + ': ' + body);
+      return {path, response, body};
+    }));
+    for (const {path, response, body} of responses) {
+      assert.equal(response.status, 200, path + ': ' + body);
       assert.match(response.headers.get('content-type')!, /javascript/);
       // Hashed chunks are content-addressed; the entry module follows each deployment.
-      assert.equal(response.headers.get('cache-control'), /\/(?:chunk|entry)-[A-Z0-9]{8}\.js$/.test(paths[index]!) ? 'private, max-age=31536000, immutable' : 'private, no-store', paths[index]);
+      assert.equal(response.headers.get('cache-control'), /\/(?:chunk|entry)-[A-Z0-9]{8}\.js$/.test(path) ? 'private, max-age=31536000, immutable' : 'private, no-store', path);
     }
     for (const requestHeaders of [headers, {cookie: `other=x; CF_Authorization=${token}`}]) {
       const response = await runtime.dispatchFetch(url('anonymous', '/v1/me'), {headers: requestHeaders});
