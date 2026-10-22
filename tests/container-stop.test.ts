@@ -9,8 +9,9 @@ import {build} from 'esbuild';
 import {ContainerAdmission} from '../packages/workspace/src/container-admission.ts';
 
 function sqlStorage(db: DatabaseSync): SqlStorage {
-  return {exec(query: string, ...bindings: (string | number | null)[]) {
-    const rows = db.prepare(query).all(...bindings);
+  return {exec(query: string, ...bindings: unknown[]) {
+    const values = bindings.map(value => value instanceof ArrayBuffer ? new Uint8Array(value) : value);
+    const rows = db.prepare(query).all(...values as (string | number | null | Uint8Array)[]);
     return {toArray: () => rows, one: () => {assert.equal(rows.length, 1); return rows[0];}, [Symbol.iterator]: () => rows[Symbol.iterator]()};
   }} as unknown as SqlStorage;
 }

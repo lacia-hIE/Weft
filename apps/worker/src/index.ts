@@ -239,7 +239,7 @@ export class SessionDO extends DurableObject<Env> {
     const subprocess = runtime.ctx.get('subprocess');
     if (!(subprocess instanceof WorkspaceSubprocess)) return;
     if (subprocess.hasContainerActivity()) for (const agent of runtime.ctx.agents.list()) {
-      if (agent.status === 'running') agent.cancel({kind: 'user'});
+      if (agent.status === 'running') agent.cancel({kind: 'user'}, {keepInbox: true});
     }
     await subprocess.stopContainerProcesses();
   }

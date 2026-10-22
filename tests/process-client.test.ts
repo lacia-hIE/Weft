@@ -29,7 +29,7 @@ test('process connection retries an ambiguous start once, preserves application 
     const socket = new WebSocket(`ws://127.0.0.1:${address.port}`);
     await once(socket, 'open');
     (socket as unknown as {accept(): void}).accept = () => {};
-    return {webSocket: socket} as unknown as Response;
+    return {webSocket: socket, headers: new Headers()} as unknown as Response;
   };
   const client = new ContainerProcessClient(connect, async () => {assert.ok(connections > 0, 'the connection selects the container before sync');});
   try {
