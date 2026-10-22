@@ -9,6 +9,7 @@ import { WorkspaceStore } from './store.ts';
 import { shellPolicy, type ShellSandbox } from './shell.ts';
 import { CONTAINER_MOUNT_IGNORE } from './container-policy.ts';
 import { shellOutputFrames } from './exec-output.ts';
+import { PROCESS_PATH } from './process-protocol.ts';
 import { fsStatus, workspaceAddress, workspaceScopeSchema, workspaceOperationSchema, workspacePath, type WorkspaceScope, type WorkspaceOperation } from './protocol.ts';
 import {AttachmentError, type FileAttachmentRef} from '@deepseek-ai/dsh-attachment';
 import {attachmentOperationSchema, ATTACHMENT_ROOT, UPLOAD_CHUNK_BYTES} from '../../native-attachments/src/storage.ts';
@@ -38,6 +39,7 @@ export class WorkspaceDO extends DurableObject<Env> {
   private readonly watchers = new Map<string, {path: string; invalidate(): void; close(endStream?: boolean): void}>();
   /** The sandbox of every running shell execution, by execution id. */
   private readonly sandboxes = new Map<string, ShellSandbox>();
+  private processSyncTail: Promise<unknown> = Promise.resolve();
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     // Shell commands run in just-bash inside a Dynamic Worker whose filesystem calls come back
@@ -75,8 +77,34 @@ export class WorkspaceDO extends DurableObject<Env> {
 
   /** computerd's session upgrade from this workspace's container. */
   override async fetch(request: Request): Promise<Response> {
+    if (new URL(request.url).pathname === PROCESS_PATH) {
+      let input: unknown;
+      try {input = JSON.parse(request.headers.get('x-weft-workspace') ?? 'null');} catch {return new Response('Invalid scope', {status: 403});}
+      const scope = workspaceScopeSchema.safeParse(input);
+      const instance = request.headers.get('x-weft-container-instance') as ContainerInstance;
+      if (!scope.success || !this.ctx.id.equals(this.env.WORKSPACES.idFromName(workspaceAddress(scope.data)))) return new Response('Workspace scope mismatch', {status: 403});
+      if (!this.container || !CONTAINER_INSTANCES.includes(instance)) return new Response('This deployment has no workspace container', {status: 501});
+      this.rememberInstance(instance);
+      await this.syncProcesses(scope.data);
+      const namespaces = this.ctx.exports as unknown as Record<string, DurableObjectNamespace>;
+      return namespaces[CONTAINER_HOSTS[instance]]!.getByName(this.ctx.id.toString()).fetch(request);
+    }
     if (this.container) return this.container.handleFetch(request);
     return new Response('Not found', {status: 404});
+  }
+
+  /** Pull while processes are running and before acknowledging their final exit. */
+  async syncProcesses(input: WorkspaceScope, pull = true): Promise<void> {
+    const scope = workspaceScopeSchema.parse(input);
+    if (!this.ctx.id.equals(this.env.WORKSPACES.idFromName(workspaceAddress(scope)))) throw new Error('Workspace scope mismatch');
+    if (!this.container) throw new Error('This deployment has no workspace container');
+    const next = this.processSyncTail.then(async () => {
+      await this.containerHost()?.touch();
+      const paths = await this.files.synchronize(CONTAINER_SHELL, pull);
+      for (const path of paths) this.invalidate(path);
+    });
+    this.processSyncTail = next.catch(() => {});
+    await next;
   }
 
   /** The container size this workspace launches with; a change applies when the container next starts. */

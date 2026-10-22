@@ -20,6 +20,7 @@
     "test:images:remote": "npm run build && node scripts/verify-native-images.mjs",
     "test:live": "node scripts/verify-live-model.mjs",
     "test:live:workspace": "node scripts/verify-live-workspace.mjs",
+    "test:process:container": "WEFT_PROCESS_TESTS=1 tsx --test tests/process-container.test.ts",
     "test:workspace:container": "WEFT_CONTAINER_TESTS=1 tsx --test tests/workspace-container.test.ts",
     "test:web": "npm run build && playwright test",
     "test:web:live": "npm run build && WEFT_BROWSER_LIVE=1 playwright test --grep 'real DeepSeek'",

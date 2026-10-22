@@ -49,7 +49,7 @@ test('computerd keeps dependency trees local and supports shallow clone when a f
   try {
     await docker('run', '--detach', '--name', name, '--network', 'none', '--memory', '2g', '--cpus', '2', '--pids-limit', '128',
       '--device', '/dev/fuse', '--cap-add', 'SYS_ADMIN', '--security-opt', 'apparmor=unconfined',
-      '--env', `MOUNT_IGNORE=${CONTAINER_MOUNT_IGNORE}`, '--env', 'MOUNT_IGNORE_PATH=/var/tmp/weft-local',
+      '--env', 'RPC_CLIENT_SECRET=weft-container-test', '--env', `MOUNT_IGNORE=${CONTAINER_MOUNT_IGNORE}`, '--env', 'MOUNT_IGNORE_PATH=/var/tmp/weft-local',
       '--env', 'COMPUTERD_DB=/var/lib/computerd/state.db', image);
     const deadline = Date.now() + 20_000;
     for (;;) {

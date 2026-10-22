@@ -9,7 +9,7 @@ type Target = 'worker' | 'container';
 
 const DESCRIPTION = 'Choose where your shell commands run for the rest of this session. '
   + '"worker" (the default) is an instant shell with common Unix tools but no git, node, npm or python. '
-  + '"container" is a full Linux machine with git, node 22, npm, python 3 and ripgrep; it takes a few seconds to start and sleeps after 10 idle minutes. '
+  + '"container" is a full Linux machine with git, node 22, npm, python 3 and ripgrep, real PTYs and interactive stdin; it takes a few seconds to start and sleeps after 10 idle minutes. '
   + 'Source and .git in /workspace persist. Container dependencies and caches (including node_modules and .venv) are local-only, invisible to Worker/file tools, and must be rebuilt after the container is replaced. '
   + 'Synced files have a 256 MiB per-file limit; prefer shallow clones when full history is unnecessary. '
   + 'Switch to the container when a task needs those programs, and back to the worker when it no longer does.';

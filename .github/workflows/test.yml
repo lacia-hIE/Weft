@@ -33,6 +33,7 @@ jobs:
           key: upstream-${{ hashFiles('upstream.lock.json') }}
       - run: npm ci
       - run: npm run build
+      - run: npx tsc --noEmit
       - name: Pack test inputs
         run: tar -czf build.tgz dist $(find .generated -maxdepth 1 -type f)
       - uses: actions/upload-artifact@v4
@@ -40,6 +41,44 @@ jobs:
           name: build
           path: build.tgz
           retention-days: 1
+
+  container:
+    name: Container processes and FUSE
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: build
+      - run: tar -xzf build.tgz
+      - name: Restore upstream checkout
+        uses: actions/cache/restore@v4
+        with:
+          path: deepseek-harness
+          key: upstream-${{ hashFiles('upstream.lock.json') }}
+      - run: npm run upstream:prepare
+      - name: Enable FUSE
+        run: test -c /dev/fuse || sudo modprobe fuse
+      - name: Build the tested container locally on the runner
+        run: node scripts/workspace-container.mjs --local
+      - name: Select the matching local image
+        run: |
+          node --input-type=module <<'JS'
+          import {appendFileSync, readFileSync} from 'node:fs';
+          const {reference} = JSON.parse(readFileSync('apps/workspace-container/image.json', 'utf8'));
+          appendFileSync(process.env.GITHUB_ENV, `WEFT_CONTAINER_IMAGE=${reference.split('/').pop()}\n`);
+          JS
+      - name: Real subprocess and PTY integration
+        run: npm run test:process:container
+      - name: Git and FUSE regression
+        run: npm run test:workspace:container
 
   unit:
     name: Unit ${{ matrix.shard }}/4

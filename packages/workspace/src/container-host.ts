@@ -1,5 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
 import { LegacyWorkspaceContainerAPI, type ContainerLaunchSpec, type ContainerRuntimeInfo, type ILegacyWorkspaceContainerAPI, type WorkspaceRef } from '@cloudflare/computer/backends/container-legacy';
+import { PROCESS_PATH, PROCESS_PORT } from './process-protocol.ts';
 
 /** How long an idle workspace container keeps running before it sleeps; the next command starts it again. */
 const IDLE_MS = 10 * 60_000;
@@ -31,12 +32,14 @@ class WorkspaceContainerHost extends DurableObject {
   async start(spec: ContainerLaunchSpec): Promise<ContainerRuntimeInfo> {
     const api = this.api();
     const info = await api.start(spec);
+    await this.ctx.storage.put('weft_process_secret', info.clientSecret);
     await api.setInactivityTimeout(IDLE_MS);
     return info;
   }
   async restart(spec: ContainerLaunchSpec): Promise<ContainerRuntimeInfo> {
     const api = this.api();
     const info = await api.restart(spec);
+    await this.ctx.storage.put('weft_process_secret', info.clientSecret);
     await api.setInactivityTimeout(IDLE_MS);
     return info;
   }
@@ -47,6 +50,16 @@ class WorkspaceContainerHost extends DurableObject {
    * this for every container command and while one runs.
    */
   async touch(): Promise<void> { /* The request itself is the activity. */ }
+  /** Internal binding-only upgrade; preserve the container WebSocket response unchanged. */
+  override async fetch(request: Request): Promise<Response> {
+    if (new URL(request.url).pathname !== PROCESS_PATH || request.headers.get('upgrade')?.toLowerCase() !== 'websocket') return new Response('Not found', {status: 404});
+    const secret = await this.ctx.storage.get<string>('weft_process_secret');
+    const owner = request.headers.get('x-weft-process-owner');
+    if (!secret || !owner || !/^[\w-]{1,100}$/.test(owner)) return new Response('Process runtime unavailable', {status: 503});
+    return this.api().fetchPort(PROCESS_PORT, 'http://process.internal/connect', {
+      headers: {upgrade: 'websocket', authorization: `Bearer ${secret}`, 'x-weft-process-owner': owner}, signal: AbortSignal.timeout(PORT_REQUEST_MS),
+    });
+  }
   exitInfo() { return this.api().exitInfo(); }
   status() { return this.api().status(); }
   interceptOutboundHttp(host: string, ref: WorkspaceRef): Promise<void> { return this.api().interceptOutboundHttp(host, ref); }

@@ -38,6 +38,7 @@ import {WorkerPtcRuntime} from '../../../packages/native-ptc/src/index.ts';
 import {reconcileProfileOverrides} from '../../../packages/native-profile/src/loader.ts';
 import {mountWorkspaceChanges} from '../../../packages/workspace/src/changes.ts';
 import {WorkspaceRuntimeChoice} from '../../../packages/workspace/src/runtime-choice.ts';
+import {PROCESS_PATH} from '../../../packages/workspace/src/process-protocol.ts';
 import {SPILL_ROOT, WorkspaceSpillStore} from '../../../packages/workspace/src/spill.ts';
 import {forwardNativeNotifications, mountNativeInteraction} from './native-interaction.ts';
 import {HarnessHome} from '../../../packages/native-environment/src/harness-home.ts';
@@ -157,7 +158,14 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
             const runtime = context.workspaceRuntime;
             if (container && runtime.shell === 'worker') return Response.json({error: 'This environment does not allow the workspace container', code: 'EXEC_UNAVAILABLE'}, {status: 403});
             return stub.exec(workspace, {...request, ...(container || choice.container() ? {container: {instance: runtime.containerInstance}} : {})});
-          }, kill: id => stub.killExec(workspace, id)}, cwd);
+          }, kill: id => stub.killExec(workspace, id), container: () => choice.container(),
+          connectProcess: () => {
+            if (context.workspaceRuntime.shell === 'worker') throw new Error('This environment does not allow the workspace container');
+            return stub.fetch(new Request(`https://workspace.internal${PROCESS_PATH}`, {headers: {
+              upgrade: 'websocket', 'x-weft-workspace': JSON.stringify(workspace),
+              'x-weft-process-owner': scope.sessionId, 'x-weft-container-instance': context.workspaceRuntime.containerInstance,
+            }}));
+          }, syncProcesses: () => stub.syncProcesses(workspace)}, cwd);
           await choice.reconcile();
         }
         if (presentation) await mountNativeAttachments(ctx, {storage, scope: workspace, sessionId: scope.sessionId, transport: env.WORKSPACES.getByName(workspaceAddress(workspace)), ...(env.IMAGES ? {images: env.IMAGES} : {})});

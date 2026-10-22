@@ -30,6 +30,26 @@ export class WorkspaceStore {
 
   /** The Computer runtime that executes shell commands against these same files. */
   get runtime() { return this.computer.runtime; }
+
+  /** Sync changes made by the independent process daemon; keep Weft file versions authoritative. */
+  async synchronize(backend: string, pull: boolean): Promise<string[]> {
+    const before = this.storage.sql.exec<{v: number}>("SELECT v FROM vfs_meta WHERE k='rev'").one().v;
+    if (pull) for await (const block of this.computer.pull(backend)) {
+      if (block.skipped) throw new Error('Container file synchronization skipped conflicting or protected paths');
+    }
+    const after = this.storage.sql.exec<{v: number}>("SELECT v FROM vfs_meta WHERE k='rev'").one().v;
+    const paths = pull && after > before ? this.storage.sql.exec<{path: string; removed: number}>(`WITH RECURSIVE paths(inode,path) AS (
+      SELECT 1,'/' UNION ALL SELECT d.child_inode,rtrim(p.path,'/')||'/'||d.name FROM paths p JOIN vfs_dirents d ON d.parent_inode=p.inode
+    ) SELECT p.path,0 AS removed FROM paths p JOIN vfs_nodes n ON n.inode=p.inode WHERE n.rev>?
+      UNION SELECT path,1 AS removed FROM vfs_changes WHERE rev>? AND op='delete'`, before, before).toArray()
+      .filter(row => row.path === ROOT || row.path.startsWith(ROOT + '/')) : [];
+    if (paths.length) this.externalChanges(paths.map(row => ({path: row.path, removed: row.removed === 1})));
+    for await (const block of this.computer.push(backend)) {
+      if (block.skipped) throw new Error('Workspace file synchronization skipped conflicting or protected paths');
+    }
+    await this.storage.sync();
+    return paths.map(row => row.path);
+  }
   /** The Workspace RPC surface a Dynamic Worker backend reaches through `WorkspaceServiceProxy`. */
   async stub() { await this.computer.ready(); return this.computer.stub(); }
 

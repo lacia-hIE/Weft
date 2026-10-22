@@ -1,0 +1,11 @@
+{
+  "name": "weft-workspace-processes",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@deepseek-ai/node-addon-system": "0.1.2",
+    "koffi": "3.1.1",
+    "node-pty": "1.2.0-beta.15",
+    "ws": "8.21.3"
+  }
+}

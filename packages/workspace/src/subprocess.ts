@@ -1,12 +1,15 @@
 import type { Context } from '@deepseek-ai/cordis';
-import { PassThrough, type Readable } from 'node:stream';
+import { Duplex, PassThrough, Writable, type Readable } from 'node:stream';
+import { once } from 'node:events';
+import { ContainerProcessClient } from './process-client.ts';
+import type { ProcessSpec, ProcessOffsets } from './process-protocol.ts';
 import { posix } from 'node:path';
 import SubprocessRuntime, { SubprocessExecutableNotFoundError } from '@deepseek-ai/dsh-subprocess';
 import LocalBashExecutor from '@deepseek-ai/dsh-bash-local';
 import * as ShellEnv from '@deepseek-ai/dsh-shell-env';
 import LocalJobRegistry from '@deepseek-ai/dsh-jobs-local';
 import SandboxPolicy from '@deepseek-ai/dsh-sandbox-policy';
-import { SandboxProvider, type ConfinedArgv, type SandboxPolicy as ConfinedPolicy } from '@deepseek-ai/dsh-sandbox';
+import { SandboxProvider, SandboxUnavailableError, classifyRunnerFailure, matchesSignature, type ConfinedArgv, type SandboxPolicy as ConfinedPolicy } from '@deepseek-ai/dsh-sandbox';
 import type { ShellExecSpec, ShellExecRequest as BashRequest, ShellExecution } from '@deepseek-ai/dsh-shell';
 import type { SandboxExecutionPolicy } from '@deepseek-ai/dsh-sandbox';
 import type { ShellSandbox, ShellSandboxMode } from './shell.ts';
@@ -17,10 +20,14 @@ export interface ShellExecRequest { id: string; command: string; cwd: string; en
 export interface ShellTransport {
   exec(request: ShellExecRequest): Promise<Response>;
   kill(id: string): Promise<void>;
+  container?(): boolean;
+  connectProcess?(): Promise<Response>;
+  syncProcesses?(): Promise<void>;
 }
 
 const SHELLS = new Set(['bash', 'sh']);
 import { CONTAINER_SH, GIT, RIPGREP, shellWord } from './container-commands.ts';
+import {containerFailureHint} from './container-policy.ts';
 import { SPILL_ROOT, storeText } from './spill.ts';
 export { RIPGREP };
 /** One argv element as a POSIX shell word. */
@@ -43,12 +50,17 @@ function unconfine(argv: readonly string[]): {argv: readonly string[]; sandbox?:
  * for the subprocess seam to hand to the Workspace.
  */
 export class WorkspaceSandbox extends SandboxProvider {
+  static inject = ['subprocess'];
+  constructor(ctx: Context, private readonly transport?: ShellTransport) {super(ctx);}
   async confine(argv: readonly string[], policy: ConfinedPolicy): Promise<ConfinedArgv> {
+    const subprocess = this.ctx.subprocess as WorkspaceSubprocess;
+    const remote = this.transport?.container?.() ? subprocess.processClient() : undefined;
+    const facts = remote ? await remote.call(api => api.confine({mode: policy.mode, root: policy.workspaceRoot})) : undefined;
     return {
       argv: [SANDBOX_RUNNER, policy.mode, policy.workspaceRoot, '--', ...argv],
-      enforcement: 'full',
-      denialSignatures: ['blocked by the read-only sandbox', 'blocked by the workspace-write sandbox'],
-      runnerFailureRules: [],
+      enforcement: facts?.enforcement ?? 'full',
+      denialSignatures: facts?.denialSignatures ?? ['blocked by the read-only sandbox', 'blocked by the workspace-write sandbox'],
+      runnerFailureRules: facts?.runnerFailureRules ?? [],
     };
   }
 }
@@ -107,11 +119,25 @@ class TailCollector implements SubprocessOutputReader {
 /**
  * The subprocess seam over the environment's Computer shell: `bash -c` and
  * `sh -c` commands run in just-bash inside the workspace's Dynamic Worker,
- * against the same volume as every Weft file tool. Other executables do not
- * exist in this world, and interactive terminals are not provided.
+ * against the same volume as every Weft file tool. Arbitrary executables
+ * use the real Linux process service when a container is selected.
  */
 export class WorkspaceSubprocess extends SubprocessRuntime {
-  constructor(ctx: Context, private readonly transport: ShellTransport) { super(ctx); }
+  private processes: ContainerProcessClient | undefined;
+  private readonly live = new Set<{terminate(): void | Promise<void>}>();
+  constructor(ctx: Context, private readonly transport: ShellTransport) {
+    super(ctx);
+    ctx.effect(() => async () => {
+      await Promise.allSettled([...this.live].map(handle => handle.terminate()));
+      this.processes?.close();
+    });
+  }
+  processClient(): ContainerProcessClient | undefined {
+    if (!this.transport.connectProcess || !this.transport.syncProcesses) return;
+    if (this.processes?.ended) this.processes = undefined;
+    return this.processes ??= new ContainerProcessClient(() => this.transport.connectProcess!(), () => this.transport.syncProcesses!());
+  }
+  usesContainer(): boolean {return this.transport.container?.() === true;}
 
   /** Save each truncated stream that asked for a spill file into the workspace, where the model reads it with the file tools. */
   private async saveFullOutput(id: string, outputs: Record<'stdout' | 'stderr', {collector: TailCollector | undefined}>): Promise<void> {
@@ -130,7 +156,12 @@ export class WorkspaceSubprocess extends SubprocessRuntime {
     }
   }
 
-  override async resolveExecutable(command: string): Promise<string> {
+  override async resolveExecutable(command: string, env?: Readonly<Record<string, string>>, signal?: AbortSignal): Promise<string> {
+    signal?.throwIfAborted();
+    if (this.transport.container?.()) {
+      const resolved = await this.processClient()!.call(api => api.resolve(command, env));
+      signal?.throwIfAborted(); return resolved;
+    }
     const name = posix.basename(command);
     if (command === RIPGREP || command === 'rg') return RIPGREP;
     if (command === GIT || command === 'git') return GIT;
@@ -146,11 +177,12 @@ export class WorkspaceSubprocess extends SubprocessRuntime {
    * A line-mode terminal over the same shell: input is echoed and edited
    * locally, each submitted line runs as one command, and the working
    * directory carries over between lines. Full-screen and interactive
-   * programs are not available.
+   * programs use a real PTY when a container is selected.
    */
   override async spawnTerminal(spec: SubprocessTerminalSpawnSpec): Promise<SubprocessTerminalHandle> {
     spec.signal?.throwIfAborted();
     const {argv, sandbox} = unconfine(spec.argv);
+    if (this.transport.container?.()) return this.remoteTerminal(spec, argv, sandbox);
     const [executable] = argv;
     if (executable === undefined || !SHELLS.has(posix.basename(executable))) throw new SubprocessExecutableNotFoundError(`${executable ?? ''}: only bash and sh exist in this workerd environment`);
     return new LineTerminal(this.transport, spec.cwd, spec.env ?? {}, sandbox);
@@ -160,6 +192,9 @@ export class WorkspaceSubprocess extends SubprocessRuntime {
     spec.signal?.throwIfAborted();
     const {argv, sandbox: confined} = unconfine(spec.argv);
     const [executable, flag, script] = argv;
+    if (this.processClient() && (this.transport.container?.() || executable === CONTAINER_SH || executable === RIPGREP || executable === GIT)) {
+      return this.remoteSpawn(spec, executable === CONTAINER_SH ? ['/bin/sh', ...argv.slice(1)] : [...argv], confined);
+    }
     // ripgrep and git exist in the workspace container; their argv becomes one quoted command there.
     const direct = executable === RIPGREP || executable === GIT;
     const shell = executable === CONTAINER_SH || (executable !== undefined && SHELLS.has(posix.basename(executable)));
@@ -237,6 +272,125 @@ export class WorkspaceSubprocess extends SubprocessRuntime {
       },
     };
   }
+  private remoteSpec(kind: 'pipe' | 'pty', spec: {cwd: string; env?: NodeJS.ProcessEnv | undefined; graceMs: number}, argv: string[], sandbox?: ShellSandbox): ProcessSpec {
+    const mode = spec.env?.WEFT_SANDBOX_MODE as ShellSandboxMode | undefined;
+    const env = Object.fromEntries(Object.entries(spec.env ?? {}).filter((pair): pair is [string, string] => typeof pair[1] === 'string' && !pair[0].startsWith('WEFT_SANDBOX_')));
+    return {kind, argv, cwd: spec.cwd, graceMs: spec.graceMs, env, sandbox: sandbox ?? {mode: mode ?? 'workspace-write', root: spec.env?.WEFT_SANDBOX_ROOT ?? '/workspace'}};
+  }
+
+  private async pump(client: ContainerProcessClient, id: string, write: (name: 'stdout' | 'stderr' | 'control', bytes: Uint8Array) => Promise<void>): Promise<SubprocessOutcome> {
+    let offsets: ProcessOffsets = {stdout: 0, stderr: 0, control: 0};
+    let synced = Date.now();
+    for (;;) {
+      const frame = await client.call(api => api.read(id, offsets));
+      for (const name of ['stdout', 'stderr', 'control'] as const) if (frame[name].length) await write(name, frame[name]);
+      offsets = frame.offsets;
+      if ((frame.active || frame.stdout.length || frame.stderr.length || frame.control.length) && Date.now() - synced >= 1000 || frame.outcome) {await client.sync(); synced = Date.now();}
+      if (frame.error) throw new Error(frame.error);
+      if (frame.outcome) return frame.outcome;
+    }
+  }
+
+  private remoteSpawn(spec: SubprocessSpawnSpec, argv: string[], sandbox?: ShellSandbox): SubprocessHandle {
+    const client = this.processClient()!;
+    const id = crypto.randomUUID();
+    const outputs = {stdout: output(spec.stdio.stdout), stderr: output(spec.stdio.stderr)};
+    const request = {...this.remoteSpec('pipe', spec, argv, sandbox), ...(spec.stdio.control ? {control: true} : {})};
+    const ready = client.sync().then(() => client.call(api => api.start(id, request)));
+    const sequence = {stdin: 0, control: 0};
+    const input = async (channel: 'stdin' | 'control', data: Uint8Array, end: boolean) => {
+      await ready;
+      for (let offset = 0; offset < data.length || end; offset += 65536) {
+        const chunk = data.slice(offset, offset + 65536);
+        const final = end && offset + chunk.length >= data.length;
+        const number = ++sequence[channel];
+        await client.call(api => api.write(id, number, channel, chunk, final));
+        if (final) break;
+      }
+    };
+    const stdin = spec.stdio.stdin === 'pipe' ? new Writable({
+      write(chunk: Buffer, _encoding, callback) {void input('stdin', chunk, false).then(() => callback(), callback);},
+      final(callback) {void input('stdin', new Uint8Array(), true).then(() => callback(), callback);},
+    }) : undefined;
+    let readControl: (() => void) | undefined;
+    const control = spec.stdio.control ? new Duplex({
+      read() {readControl?.(); readControl = undefined;},
+      write(chunk: Buffer, _encoding, callback) {void input('control', chunk, false).then(() => callback(), callback);},
+      final(callback) {void input('control', new Uint8Array(), true).then(() => callback(), callback);},
+    }) : undefined;
+    stdin?.on('error', () => {}); control?.on('error', () => {});
+    let terminated = false;
+    const drain = () => {outputs.stdout.readable?.resume(); outputs.stderr.readable?.resume(); control?.resume(); readControl?.(); readControl = undefined;};
+    const terminate = () => {terminated = true; drain(); void ready.then(() => client.call(api => api.terminate(id))).catch(() => {});};
+    spec.signal?.addEventListener('abort', terminate, {once: true});
+    const handle = {terminate: async () => {terminated = true; drain(); await ready; await client.call(api => api.terminate(id));}};
+    this.live.add(handle);
+    const done = (async () => {
+      try {
+        await ready;
+        if (terminated) await client.call(api => api.terminate(id));
+        let stderr = '';
+        const pumping = this.pump(client, id, async (name, bytes) => {
+          if (name === 'control') {
+            if (control && !control.push(Buffer.from(bytes))) await new Promise<void>(resolve => {readControl = resolve;});
+          } else {
+            if (name === 'stderr') stderr = (stderr + new TextDecoder().decode(bytes)).slice(-8192);
+            if (!outputs[name].write(bytes) && outputs[name].readable) await once(outputs[name].readable!, 'drain');
+          }
+        });
+        const feeding = typeof spec.stdio.stdin === 'object' ? input('stdin', new TextEncoder().encode(spec.stdio.stdin.data), true)
+          : spec.stdio.stdin === 'ignore' ? input('stdin', new Uint8Array(), true) : Promise.resolve();
+        const [result] = await Promise.all([pumping, feeding]);
+        const hint = containerFailureHint(stderr, result.exitCode);
+        if (hint) outputs.stderr.write(new TextEncoder().encode('\n' + hint));
+        await this.saveFullOutput(id, outputs);
+        return result;
+      } finally {
+        spec.signal?.removeEventListener('abort', terminate);
+        outputs.stdout.end(); outputs.stderr.end(); control?.push(null);
+      }
+    })();
+    void done.then(() => client.call(api => api.wait(id))).then(quiet => {if (quiet) this.live.delete(handle);}).catch(() => {});
+    return {stdin, stdout: outputs.stdout.readable, stderr: outputs.stderr.readable, control, collected: {
+      ...(outputs.stdout.collector ? {stdout: outputs.stdout.collector} : {}), ...(outputs.stderr.collector ? {stderr: outputs.stderr.collector} : {}),
+    }, done, terminate, waitForExit: async signal => {
+      await ready;
+      while (!signal?.aborted) {if (await client.call(api => api.wait(id))) {this.live.delete(handle); return true;}}
+      return false;
+    }};
+  }
+
+  private async remoteTerminal(spec: SubprocessTerminalSpawnSpec, argv: readonly string[], sandbox?: ShellSandbox): Promise<SubprocessTerminalHandle> {
+    const client = this.processClient()!;
+    const id = crypto.randomUUID();
+    const request = {...this.remoteSpec('pty', spec, [...argv], sandbox ?? {mode: 'danger-full-access', root: '/workspace'}), rows: spec.rows, cols: spec.cols, terminalType: spec.terminalType, ...(spec.shellActivity ? {shellActivity: true} : {})};
+    const ready = client.sync().then(() => client.call(api => api.start(id, request)));
+    const cancel = () => {void ready.then(() => client.call(api => api.terminate(id))).catch(() => {});};
+    spec.signal?.addEventListener('abort', cancel, {once: true});
+    let pid: number;
+    try {({pid} = await ready); if (spec.signal?.aborted) {await client.call(api => api.terminate(id)); spec.signal.throwIfAborted();}}
+    finally {spec.signal?.removeEventListener('abort', cancel);}
+    const output = new PassThrough();
+    let sequence = 0;
+    const handle: SubprocessTerminalHandle = {
+      pid, output,
+      done: this.pump(client, id, async (name, bytes) => {if (name === 'stdout' && !output.write(Buffer.from(bytes))) await once(output, 'drain');}).finally(() => {output.end();}),
+      write: async data => {
+        const bytes = new TextEncoder().encode(data);
+        if (bytes.length > 65536) throw new Error('Terminal input exceeds 64 KiB; send it in smaller writes');
+        const number = ++sequence;
+        await client.call(api => api.write(id, number, 'stdin', bytes, false));
+      },
+      resize: (cols, rows) => client.call(api => api.resize(id, cols, rows)),
+      inspectForeground: () => client.call(api => api.foreground(id)),
+      inspectActivity: () => client.call(api => api.activity(id)),
+      signalForeground: signal => client.call(api => api.signal(id, signal)),
+      terminate: async () => {output.resume(); await client.call(api => api.terminate(id)); this.live.delete(handle);},
+    };
+    handle.done.catch(() => {});
+    this.live.add(handle);
+    return handle;
+  }
 }
 
 /** One stdout/stderr disposition: a raw pipe, a bounded collector, or nothing. */
@@ -246,7 +400,7 @@ function output(mode: 'pipe' | 'inherit' | SubprocessCollect) {
   return {
     readable: pipe as Readable | undefined,
     collector,
-    write(bytes: Uint8Array) { pipe?.write(bytes); collector?.push(bytes); },
+    write(bytes: Uint8Array) { collector?.push(bytes); return pipe?.write(bytes) ?? true; },
     end() { pipe?.end(); },
   };
 }
@@ -264,10 +418,17 @@ export class ComputerBashExecutor extends LocalBashExecutor {
   }
   override async execute(spec: ShellExecSpec): Promise<ShellExecution> {
     const policy = spec.sandboxPolicy as SandboxExecutionPolicy;
+    const subprocess = this.ctx.subprocess as WorkspaceSubprocess;
+    const remote = subprocess.usesContainer() ? subprocess.processClient() : undefined;
+    const facts = remote && policy.mode !== 'danger-full-access' ? await remote.call(api => api.confine({mode: policy.mode, root: policy.workspaceRoot})) : undefined;
     const execution = await super.execute({...spec, env: {...spec.env, WEFT_SANDBOX_MODE: policy.mode, WEFT_SANDBOX_ROOT: policy.workspaceRoot}});
     const base = execution.result.bind(execution);
     let decorated: ReturnType<ShellExecution['result']> | undefined;
-    execution.result = () => decorated ??= base().then(result => ({...result, sandbox: {mode: policy.mode, denied: /blocked by the (read-only|workspace-write) sandbox/.test(result.stderr.text), enforcement: 'full'}}));
+    execution.result = () => decorated ??= base().then(result => {
+      const failure = facts && classifyRunnerFailure(result.exitCode, result.stderr.text, facts.runnerFailureRules);
+      if (failure && policy.mode !== 'danger-full-access') throw new SandboxUnavailableError(policy.mode, failure.detail);
+      return {...result, sandbox: {mode: policy.mode, denied: facts ? matchesSignature(result.exitCode, result.stderr.text, facts.denialSignatures) : /blocked by the (read-only|workspace-write) sandbox/.test(result.stderr.text), enforcement: facts?.enforcement ?? 'full'}};
+    });
     return execution;
   }
 }
@@ -277,7 +438,7 @@ export async function mountWorkspaceShell(ctx: Context, transport: ShellTranspor
   await ctx.plugin(WorkspaceSubprocess, transport);
   await ctx.plugin(ShellEnv, {});
   await ctx.plugin(SandboxPolicy, {workspaceRoot: '/workspace', mode: 'workspace-write'});
-  await ctx.plugin(WorkspaceSandbox);
+  await ctx.plugin(WorkspaceSandbox, transport);
   await ctx.plugin(ComputerBashExecutor, {cwd});
   await ctx.plugin(LocalJobRegistry, {});
 }
