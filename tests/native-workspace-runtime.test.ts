@@ -98,7 +98,7 @@ test('the workspace runtime is the agent\'s choice under auto, never the contain
 });
 
 test('container controls are environment-scoped, do not activate Sessions, and preserve files when containers are unavailable', {timeout: 60_000}, async () => {
-  const runtime = createRuntime(undefined, {browser: true});
+  const runtime = createRuntime();
   const api = nativeClient(() => runtime);
   const base = `/v1/tenants/${tenantId('alpha')}/environments/default`;
   const endpoint = base + '/native/workspace-container';

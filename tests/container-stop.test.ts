@@ -45,6 +45,10 @@ test('workspace stop coalesces requests, gates new connections, syncs before des
     const bundle = join(directory, 'host', 'host.mjs');
     await build({entryPoints: ['tests/fixtures/container-stop-host.ts'], outfile: bundle, bundle: true, platform: 'node', format: 'esm', target: 'node22', tsconfig: '.generated/upstream.source.tsconfig.json', logLevel: 'error',
       plugins: [{name: 'container-lifecycle-test', setup(builder) {
+        // This fixture never runs the Worker shell. As in the production
+        // parent build, keep its Dynamic Worker's optional native modules out.
+        builder.onResolve({filter: /^just-bash$/}, ({importer}) => /@cloudflare\/computer\/dist\/backends\/worker-shell\/index\.js$/.test(importer) ? {path: 'shell', namespace: 'shell-unavailable'} : undefined);
+        builder.onLoad({filter: /.*/, namespace: 'shell-unavailable'}, () => ({contents: "export class Bash {constructor(){throw new Error('Worker shell is outside this lifecycle fixture')}} export function defineCommand(){throw new Error('Worker shell is outside this lifecycle fixture')}", loader: 'js'}));
         builder.onResolve({filter: /^cloudflare:workers$/}, () => ({path: 'base', namespace: 'cloudflare-test'}));
         builder.onLoad({filter: /.*/, namespace: 'cloudflare-test'}, () => ({contents: "export {RpcTarget} from 'capnweb'; export class DurableObject {constructor(ctx,env){this.ctx=ctx;this.env=env;}} export class WorkerEntrypoint {}", resolveDir: process.cwd()}));
       }}]});
@@ -73,7 +77,11 @@ test('workspace stop coalesces requests, gates new connections, syncs before des
       try {
         const first = workspace.stopContainer(scope, ['a', 'b']);
         const second = workspace.stopContainer(scope, ['a', 'b']);
-        while (!calls.includes('cancel')) await new Promise(resolve => setTimeout(resolve, 0));
+        const deadline = Date.now() + 5_000;
+        while (!calls.includes('cancel')) {
+          assert.ok(Date.now() < deadline, 'the stop must reach Session cancellation');
+          await new Promise(resolve => setTimeout(resolve, 0));
+        }
         await assert.rejects(containerHost.start({env: {}, enableInternet: true}), /stopping/);
         const connection = await workspace.fetch(new Request('https://workspace.internal/weft/process', {headers: {upgrade: 'websocket', 'x-weft-workspace': JSON.stringify(scope), 'x-weft-container-instance': 'basic'}}));
         assert.equal(connection.status, 409);
