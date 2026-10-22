@@ -159,8 +159,20 @@ export class WorkspaceSubprocess extends SubprocessRuntime {
   override async resolveExecutable(command: string, env?: Readonly<Record<string, string>>, signal?: AbortSignal): Promise<string> {
     signal?.throwIfAborted();
     if (this.transport.container?.()) {
-      const resolved = await this.processClient()!.call(api => api.resolve(command, env));
-      signal?.throwIfAborted(); return resolved;
+      try {
+        const resolved = await this.processClient()!.call(api => api.resolve(command, env));
+        signal?.throwIfAborted(); return resolved;
+      } catch (error) {
+        signal?.throwIfAborted();
+        // Capnweb 0.10 decodes custom Error subclasses as plain Error. Restore
+        // only the pinned local provider's exact lookup-miss diagnostics, so
+        // shell discovery can skip absent candidates without hiding failures.
+        const prefix = `subprocess-local: command ${JSON.stringify(command)}`;
+        if (error instanceof Error && (error.message === `${prefix} was not found on PATH` || error.message === `${prefix} is not an executable file`)) {
+          throw new SubprocessExecutableNotFoundError(error.message, {cause: error});
+        }
+        throw error;
+      }
     }
     const name = posix.basename(command);
     if (command === RIPGREP || command === 'rg') return RIPGREP;

@@ -472,6 +472,11 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
       : error instanceof ModelConfigurationError && error.code === 'MODEL_NOT_CONFIGURED'
       ? {code: 'session/provider-credentials-unavailable', message: error.message, details: {}}
       : {code: 'gateway/internal', message: 'Host operation failed', details: {}});
+    if (failure.code === 'gateway/internal' && failure.message === 'Host operation failed') {
+      console.error('weft.native.operation.failed', {endpoint, rpcId,
+        error: error instanceof Error ? {name: error.name, message: error.message.slice(0, 2048), stack: error.stack?.slice(0, 8192)} : {name: typeof error},
+      });
+    }
     return Response.json({type: 'server-response', rpcId, result: {ok: false, error: {code: failure.code, message: failure.message, details: failure.details}}}, {headers: {'cache-control': 'private, no-store'}});
   }
 }

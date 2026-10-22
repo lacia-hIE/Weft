@@ -152,6 +152,14 @@ test('real processes, PTYs, sandbox, reconnect and durable file synchronization'
         connectProcess: async () => {const {socket} = await connect('adapter');(socket as unknown as {accept(): void}).accept = () => {};return {webSocket: socket} as unknown as Response;},
         syncProcesses: async () => {syncs++;}, exec: async () => {throw Error('unexpected legacy exec');}, kill: async () => {}});
       try {
+        // The browser's shell discovery probes optional shells before creating
+        // a terminal. Their custom not-found errors cross the real RPC boundary.
+        const shells = await host.discoverShells(subprocess, undefined, ['zsh', 'bash', 'fish', 'pwsh', 'powershell', 'cmd'], new AbortController().signal);
+        assert.deepEqual(shells.map(shell => shell.path), ['/bin/bash']);
+        for (const command of ['weft-missing-shell', '/bin/weft-missing-shell']) {
+          await assert.rejects(subprocess.resolveExecutable(command), {name: 'SubprocessExecutableNotFoundError'});
+        }
+        await assert.rejects(subprocess.resolveExecutable('./bash'), {name: 'Error', message: /relative path/});
         const pipe = subprocess.spawn({argv: ['python3', '-c', 'import sys; sys.stdout.buffer.write(sys.stdin.buffer.read()); sys.stderr.write("err")'], cwd: '/workspace', graceMs: 300,
           stdio: {stdin: {data: 'x'.repeat(2 * 1024 * 1024)}, stdout: {maxBytes: 3 * 1024 * 1024}, stderr: {maxBytes: 1024}}});
         assert.equal((await pipe.done).exitCode, 0);assert.equal(pipe.collected.stdout?.readFrom(0).text.length, 2 * 1024 * 1024);assert.match(pipe.collected.stderr?.readFrom(0).text ?? '', /err$/);
@@ -159,7 +167,8 @@ test('real processes, PTYs, sandbox, reconnect and durable file synchronization'
         const control = subprocess.spawn({argv: ['python3', '-c', 'import os; os.write(7,os.read(7,20).upper())'], cwd: '/workspace', graceMs: 300, stdio: {stdin: 'ignore', stdout: {maxBytes: 1024}, stderr: {maxBytes: 1024}, control: 'pipe'}});
         const reading = readAll(control.control!);control.control!.write('adapter');
         assert.equal((await reading).toString(), 'ADAPTER');assert.equal((await control.done).exitCode, 0);await control.waitForExit();
-        const terminal = await subprocess.spawnTerminal({argv: ['/bin/bash', '--noprofile', '--norc', '-i'], cwd: '/workspace', graceMs: 300, rows: 24, cols: 80, terminalType: 'xterm-256color'});
+        const shell = shells[0]!;
+        const terminal = await subprocess.spawnTerminal({argv: [shell.path, ...shell.args], cwd: '/workspace', graceMs: 300, rows: 24, cols: 80, terminalType: 'xterm-256color', shellActivity: true});
         const output = readAll(terminal.output);await terminal.write("printf 'ADAPTER:%s\\n' \"$(tty)\"; exit\r");assert.equal((await terminal.done).exitCode, 0);assert.match((await output).toString(), /ADAPTER:\/dev\/pts\//);assert.ok(syncs >= 6);
 
         const blocked = subprocess.spawn({argv: ['python3', '-c', 'import sys,time; sys.stdout.buffer.write(b"x"*2097152); sys.stdout.flush(); time.sleep(120)'], cwd: '/workspace', graceMs: 300,
