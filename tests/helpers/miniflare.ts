@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { readdirSync, readFileSync } from "node:fs";
 import {
   Miniflare,
+  Request as MiniflareRequest,
   Response as MiniflareResponse,
   convertV4MiniflareOptions,
   type V4FetchHandler,
@@ -64,7 +65,9 @@ export const FIXTURE_TITLE = 'Fixture session title';
 function answerTitleRequests(outbound: V4FetchHandler): V4FetchHandler {
   return async (request, miniflare) => {
     if (request.method === 'POST' && new URL(request.url).pathname.endsWith('/v1/messages')) {
-      const body = await request.clone().json().catch(() => undefined) as {system?: unknown} | undefined;
+      // Read the body once and hand the fixture a rebuilt request: a cloned body intermittently reports itself already read under concurrent requests.
+      const text = await request.text();
+      const body = (() => { try { return JSON.parse(text) as {system?: unknown}; } catch { return undefined; } })();
       if (JSON.stringify(body?.system ?? '').includes(TITLE_INSTRUCTION)) {
         const event = (type: string, data: object) => `event: ${type}\ndata: ${JSON.stringify({type, ...data})}\n\n`;
         return new MiniflareResponse(
@@ -76,6 +79,7 @@ function answerTitleRequests(outbound: V4FetchHandler): V4FetchHandler {
           {headers: {'content-type': 'text/event-stream'}},
         );
       }
+      return outbound(new MiniflareRequest(request.url, {method: request.method, headers: request.headers, body: text}), miniflare);
     }
     return outbound(request, miniflare);
   };
