@@ -46,7 +46,7 @@ export class WorkspaceDO extends DurableObject<Env> {
   private processSyncTail: Promise<unknown> = Promise.resolve();
   private readonly admission: ContainerAdmission;
   private containerConnection: BackendHandle | undefined;
-  private readonly containerRuns = new Map<string, Promise<WorkspaceRuntimeExecHandle<'utf8'>>>();
+  private readonly containerRuns = new Map<string, {run: Promise<WorkspaceRuntimeExecHandle<'utf8'>>; release(): void}>();
   private stopping: Promise<Response> | undefined;
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -169,8 +169,8 @@ export class WorkspaceDO extends DurableObject<Env> {
         if (failed?.status === 'rejected') throw failed.reason;
       }
       const executions = [...this.containerRuns];
-      await Promise.allSettled(executions.map(([, run]) => run));
-      await Promise.all(executions.map(([id]) => this.killExec(scope, id)));
+      await Promise.allSettled(executions.map(([, execution]) => execution.run));
+      await Promise.all(executions.map(async ([id, execution]) => {await this.killExec(scope, id); execution.release();}));
       await this.processSyncTail;
       if (running) {
         const paths = await this.files.synchronize(CONTAINER_SHELL, true);
@@ -244,7 +244,7 @@ export class WorkspaceDO extends DurableObject<Env> {
       ...(request.env ? {env: request.env} : {}),
       ...(request.stdin !== undefined ? {stdin: request.stdin} : {}),
     });
-      if (backend === CONTAINER_SHELL) this.containerRuns.set(request.id, pending);
+      if (backend === CONTAINER_SHELL) this.containerRuns.set(request.id, {run: pending, release});
       run = await pending;
       if (backend === CONTAINER_SHELL) {
         try {this.admission.assert(epoch);} catch (error) {await this.killExec(scope.data, request.id); throw error;}

@@ -122,5 +122,14 @@ test('workspace stop coalesces requests, gates new connections, syncs before des
         assert.equal((await workspace.containerState(scope)).status, 'stopped');
       } finally {db.close();}
     });
+    await t.test('legacy command cleanup releases its keepalive without waiting for an output reader', async () => {
+      const {workspace, calls, db} = make();
+      workspace.killExec = async () => {calls.push('kill-exec');};
+      Reflect.set(workspace, 'containerRuns', new Map([['unread-output', {run: Promise.resolve({}), release: () => {calls.push('release-exec');}}]]));
+      try {
+        assert.equal((await workspace.stopContainer(scope, [])).status, 200);
+        assert.deepEqual(calls, ['kill-exec', 'release-exec', 'sync', 'destroy', 'close']);
+      } finally {db.close();}
+    });
   } finally {await rm(directory, {recursive: true, force: true});}
 });
