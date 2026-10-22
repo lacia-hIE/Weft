@@ -114,7 +114,9 @@ export const EXTERNAL: Record<string, string> = {
 
 /** Rows whose Weft provider does not exist yet. */
 export const PENDING: Record<string, string> = {
-  'session-projection-cache': 'projection checkpoint records in SessionDO storage',
+  // Its checkpoints serve the official session list snapshots and search hydration; Weft's session list is its own
+  // DurableSessionIndex and activation replays the log as the original does, so only search would gain.
+  'session-projection-cache': 'projection checkpoint records in SessionDO storage (only session search would use them)',
   'mcp-resources': 'MCP client and server provisioning per environment',
 };
 
