@@ -91,6 +91,8 @@ Plugins 页面已接通原版 `pluginInventory/list`、`pluginManager/listPlugin
 
 命令、压缩、提问、计划、目标、定时提醒、反馈、引用与分叉均挂载原版服务和插件，见 [原版交互服务](../validation/native-interaction.md)。Agent 级 Remote 方法按生成的描述以官方 direct 绑定分发到所属 SessionDO；`user-questions/request` 与 `approval/request` 按官方 waterfall 语义经 EnvironmentDO 的 `$events` 投递给浏览器。定时提醒的存储域使用 DO SQLite 后端，最早的提醒同步为 DO Alarm。环境卷就是整个文件系统，卷外路径对只读探测表现为不存在，Harness home 位于卷内。
 
+`@` 会话候选在所属 SessionDO 内用原版 title、subagent 和 session-list fold 生成只读摘要，以日志身份、fold 版本及事件数量绑定 SQLite 增量检查点；首次读取现有日志按分页让出执行，后续只折叠新增事件，不创建 Agent 或取得写入权。候选沿用原版工作目录排序、mention 编码与引用上下文准备，在搜索和数量截断前排除未开始轮次的空白会话，并按最新标题或子 Agent 标签匹配。空白会话仍持久保存，原版新建、复用与刷新恢复规则不变；这不代表通用 `session-projection-cache` 已全部接通。
+
 ## 验收状态
 
 已实现并验证环境目录创建、配置/文件/插件/同名会话的环境隔离及重启恢复。浏览器验证覆盖目录进入、环境切换卸载及既有工作台回归。旧数据兼容与迁移不再是验收目标。

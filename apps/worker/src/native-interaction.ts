@@ -1,6 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis';
 import Sessions, { SessionId } from '@deepseek-ai/dsh-session';
-import SessionReferenceResolver from '@deepseek-ai/dsh-session-reference';
+import {NativeSessionReferenceResolver} from '../../../packages/native-query/src/reference-resolver.ts';
+import type {SessionReferenceMetadata, SessionReferenceSummary} from '../../../packages/native-query/src/reference-metadata.ts';
 import SessionSkillCatalog from '@weft/upstream/packages/api/session-controller/src/skill-catalog.ts';
 import Typert from '../../../.generated/official-typert-registry.js';
 import JobController from '@deepseek-ai/dsh-api-job-controller';
@@ -63,13 +64,29 @@ async function mountSessionReferences(ctx: Context, env: Env, storage: DurableOb
     return listed.rows;
   };
   await references.plugin(Sessions);
-  await references.plugin(EnvironmentSessionPersistence, sessionReadPorts(async () => (await owners()).map(row => row.id), async sessionId => {
+  const target = async (sessionId: string) => {
     const root = (await owners()).find(row => row.id === sessionId)?.root;
     if (!root) throw new Error('Session is not readable from this environment');
     const address = {...scope, sessionId: root};
     return {scope: address, stub: env.SESSIONS.getByName(sessionAddress(address))};
-  }));
+  };
+  const summaries = new Map<string, SessionReferenceSummary>();
+  references.provide('weftSessionReferenceSummaries', summaries);
+  const ports = sessionReadPorts(async () => (await owners()).map(row => row.id), target);
+  await references.plugin(EnvironmentSessionPersistence, {...ports, metadata: async (sessionId, signal) => {
+    signal?.throwIfAborted();
+    const session = await target(sessionId);
+    const response = await session.stub.fetch(new Request('https://session.internal/native-reference-metadata', {
+      method: 'POST', body: JSON.stringify({scope: session.scope, sessionId, operation: 'native-reference-metadata'}), ...(signal ? {signal} : {}),
+    }));
+    if (!response.ok) throw new Error('Session reference metadata read failed');
+    const {value} = await response.json() as {value?: SessionReferenceMetadata};
+    signal?.throwIfAborted();
+    if (value) summaries.set(sessionId, value.reference);
+    else summaries.delete(sessionId);
+    return value;
+  }});
   await installDurableSessionQuery(references, storage, 'reference');
-  await references.plugin(SessionReferenceResolver, {});
+  await references.plugin(NativeSessionReferenceResolver, {});
   setRemoteReceiver(ctx, 'sessionReferenceResolver', references);
 }

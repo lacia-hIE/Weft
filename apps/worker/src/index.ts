@@ -36,6 +36,7 @@ import { Context } from '@deepseek-ai/cordis';
 import { createUserMessage } from '@deepseek-ai/dsh-llm';
 import type {} from '@deepseek-ai/dsh-cordis-host-runner';
 import { SessionId, SessionSeq, type SessionEvent } from '@deepseek-ai/dsh-session';
+import {readSessionReferenceMetadata} from '../../../packages/native-query/src/reference-metadata.ts';
 import { buildForkSeed } from '@deepseek-ai/dsh-session/fork';
 import { runHarnessTurn, initializeHarnessSession, renameHarnessSession, renameLiveHarnessSession, selectHarnessModel } from '../../../packages/harness-runtime/src/runtime.ts';
 import { selectLiveHarnessModel } from '../../../packages/harness-runtime/src/model-selection.ts';
@@ -763,13 +764,19 @@ export class SessionDO extends DurableObject<Env> {
         return Response.json({ok: false, error: {isDSHRemoteError: true, code: failure.code, message: failure.message, details: failure.details}});
       }
     }
-    if (typeof raw === 'object' && raw !== null && 'operation' in raw && (raw.operation === 'native-search-metadata' || raw.operation === 'native-search-page')) {
+    if (typeof raw === 'object' && raw !== null && 'operation' in raw && (raw.operation === 'native-search-metadata' || raw.operation === 'native-reference-metadata' || raw.operation === 'native-search-page')) {
       const envelope = z.discriminatedUnion('operation', [
         z.object({scope: scopeSchema, sessionId: id.optional(), operation: z.literal('native-search-metadata')}).strict(),
+        z.object({scope: scopeSchema, sessionId: id.optional(), operation: z.literal('native-reference-metadata')}).strict(),
         z.object({scope: scopeSchema, sessionId: id.optional(), operation: z.literal('native-search-page'), offset: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER), end: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER)}).strict(),
       ]).parse(raw);
       this.assertScope(envelope.scope);
       request.signal.throwIfAborted();
+      if (envelope.operation === 'native-reference-metadata') {
+        const sessionId = envelope.sessionId ?? envelope.scope.sessionId;
+        const metadata = await this.nativeSearchMetadata(envelope.scope, sessionId);
+        return Response.json({value: metadata ? await readSessionReferenceMetadata(this.ctx.storage, sessionId, request.signal) : undefined});
+      }
       return envelope.operation === 'native-search-metadata'
         ? Response.json({value: await this.nativeSearchMetadata(envelope.scope, envelope.sessionId ?? envelope.scope.sessionId)})
         : this.nativeSearchPage(envelope.scope, envelope.offset, envelope.end, envelope.sessionId ?? envelope.scope.sessionId);

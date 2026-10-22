@@ -43,6 +43,8 @@ test('native delegation owns real child logs, live history, browser continuation
     const foreign = await nativeClient(() => runtime, 'default', 'beta').raw('subagents/prompt', {request: {parentSessionId: 'parent', childSessionId: childId, mode: 'continuable', delivery: 'queue', requestId: 'forged-user', content: [{type: 'text', text: 'foreign'}]}});
     assert.equal(foreign.result.error?.code, 'subagent/not-found');
     await api.call('session/create', {request: {sessionId: 'unrelated'}});
+    const references = await api.call<{sessionId: string; displayTitle: string}[]>('sessionReferenceResolver/candidates', {agentId: 'unrelated', query: ''});
+    assert.equal(references.find(item => item.sessionId === childId)?.displayTitle, 'Native delegated task', 'cross-root reference discovery preserves the original child label');
     const unrelated = await api.raw('subagents/prompt', {request: {parentSessionId: 'unrelated', childSessionId: childId, mode: 'continuable', delivery: 'queue', requestId: 'forged-parent', content: [{type: 'text', text: 'foreign'}]}});
     assert.equal(unrelated.result.ok, false);
     await api.call('subagents/prompt', {request: {parentSessionId: 'parent', childSessionId: childId, mode: 'continuable', delivery: 'queue', requestId: 'child-follow', content: [{type: 'text', text: 'CHILD_FOLLOW_BETA'}]}});

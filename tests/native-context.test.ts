@@ -3,6 +3,10 @@ import { test } from 'node:test';
 import type { SessionFollowFrame } from '@deepseek-ai/dsh-api-session-controller/types';
 import { createRuntime, tenantId, url } from './helpers/miniflare.ts';
 import { nativeClient } from './helpers/native.ts';
+import {mkdtemp, rm} from 'node:fs/promises';
+import {join} from 'node:path';
+import {tmpdir} from 'node:os';
+import type {SessionReferenceMentionCandidate} from '@deepseek-ai/dsh-session-reference/types';
 
 test('the original skill catalog lists user-invocable skills from the environment volume', {timeout: 60_000}, async () => {
   const runtime = createRuntime(undefined, {browser: true});
@@ -42,9 +46,11 @@ test('@ file references enumerate the environment volume with the original ranki
   }
 });
 
-test('@ Session references list and inline other Sessions of the environment through the original resolver', {timeout: 90_000}, async () => {
-  const runtime = createRuntime(undefined, {browser: true});
+test('@ Session references hide blank Sessions, use current titles, inline content and restore read-only summaries', {timeout: 180_000}, async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'weft-references-'));
+  let runtime = createRuntime(directory, {browser: true});
   const api = nativeClient(() => runtime);
+  const candidates = (query = '') => api.call<SessionReferenceMentionCandidate[]>('sessionReferenceResolver/candidates', {agentId: 'reader', query});
   const turn = async (sessionId: string, text: string) => {
     const follow = await api.follow(sessionId);
     assert.equal((await follow.next()).type, 'snapshot');
@@ -57,13 +63,33 @@ test('@ Session references list and inline other Sessions of the environment thr
   try {
     await api.call('session/create', {request: {sessionId: 'source'}});
     await turn('source', 'SOURCE_SESSION_FACT');
+    await api.call('session/rename', {request: {sessionId: 'source', title: '算法讨论'}});
+    await api.call('session/create', {request: {sessionId: 'empty'}});
+    await api.call('session/rename', {request: {sessionId: 'empty', title: '命名了但还没有对话'}});
     await api.call('session/create', {request: {sessionId: 'reader'}});
-    const candidates = await api.call<{sessionId: string; mention: string}[]>('sessionReferenceResolver/candidates', {agentId: 'reader', query: ''});
-    assert.deepEqual(candidates.map(candidate => candidate.sessionId), ['source'], 'other Sessions are candidates; the caller is not');
-    const events = await turn('reader', `Summarize ${candidates[0]!.mention}`);
+    const first = await candidates();
+    assert.deepEqual(first.map(candidate => candidate.sessionId), ['source'], 'blank Sessions, even renamed ones, and the caller are excluded');
+    assert.equal(first[0]!.displayTitle, '算法讨论');
+    assert.equal(first[0]!.label, '算法讨论');
+    assert.match(first[0]!.mention, /算法讨论/);
+    assert.deepEqual((await candidates('算法')).map(candidate => candidate.sessionId), ['source'], 'search uses the owner title');
+    assert.deepEqual(await candidates('命名了'), [], 'a matching title cannot make an empty Session visible');
+    await api.call('session/rename', {request: {sessionId: 'source', title: '排序实现'}});
+    assert.equal((await candidates())[0]!.displayTitle, '排序实现', 'rename invalidates the derived summary by log revision');
+    assert.deepEqual(await candidates('算法'), [], 'old labels do not remain searchable');
+    const events = await turn('reader', `Summarize ${(await candidates())[0]!.mention}`);
     assert.ok(events.some(event => event.type === 'user/message' && JSON.stringify(event).includes('SOURCE_SESSION_FACT')), 'the referenced Session reaches the logged model context');
+    await runtime.dispose();
+    runtime = createRuntime(directory, {browser: true});
+    assert.equal((await candidates('排序'))[0]!.displayTitle, '排序实现', 'cold reference titles survive restart');
+    const listed = await api.call<{items: {sessionId: string; agentAvailable: boolean; blank: boolean}[]}>('session/list', {_request: {}});
+    assert.equal(listed.items.find(item => item.sessionId === 'source')!.agentAvailable, false, 'discovery never activates the referenced Agent');
+    assert.equal(listed.items.find(item => item.sessionId === 'empty')!.blank, true, 'empty records remain stored');
+    await turn('empty', 'NOW_HAS_A_TURN');
+    assert.ok((await candidates()).some(candidate => candidate.sessionId === 'empty'), 'a first turn makes an existing empty Session discoverable');
   } finally {
     await runtime.dispose();
+    await rm(directory, {recursive: true, force: true});
   }
 });
 

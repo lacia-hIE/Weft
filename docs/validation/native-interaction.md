@@ -62,7 +62,7 @@ Agent 级的直接调用方法（commands、userQuestions、goals、skills、fil
 - `tests/native-questions.test.ts`：`ask_user_question` 经 `$events` 推送到客户端，答案恢复原生轮次，失效结果被拒绝。
 - `tests/native-goals.test.ts`：Goal 创建、投影、激活通知、过期 revision 拒绝与清除。
 - `tests/native-schedule.test.ts`：`schedule_create` 设置 DO Alarm，workerd 重启后 Alarm 投递提醒，提醒结束并保留回执。
-- `tests/native-context.test.ts`：Skills 目录、`@` 文件引用、`@` 会话引用（候选与模型上下文）、AGENTS.md 注入。
+- `tests/native-context.test.ts`：Skills 目录、`@` 文件引用、`@` 会话引用（过滤空白会话、标题搜索与重命名、重启后的只读摘要、模型上下文）、AGENTS.md 注入。`tests/browser/references.spec.ts` 验证真实引用菜单的标题、空白过滤及刷新恢复。
 - `tests/native-fork.test.ts`：无完成轮次时拒绝分叉；分叉继承前缀、加入 Workspace，后续提示词不影响父会话。
 - `tests/native-models.test.ts`：模型发现与会话模型目录一致，自定义端点被拒绝。
 - `tests/native-plan.test.ts`：`/plan` 进入计划模式，`exit_plan_mode` 的审阅经 `$events` 批准后退出。
