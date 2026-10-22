@@ -56,8 +56,6 @@ curl http://localhost:8787/v1/tenants/TENANT_ID/sessions/example/events
 
 Settings → 内置插件会按固定版本的官方 base + web profile 列出全局条目，并保留预设组成；数量随固定版本变化，不按本地安装数量补齐。每项说明由原版 Loader 按会话加载、Weft 装配、平台替代、浏览器加载，或尚未接入/不适用；部署清单不冒充会话或浏览器的实时 Fiber 状态。Plugins 页面提供基础插件、Web 插件与 Agent 预设三个组合包；基础服务及未接入条目只读。`llm-retry`、`session-title-llm`、`repeat-tool-reminder`、`command-feedback` 可按环境持久启停，在下一轮运行前通过原版 Loader 应用，进行中的轮次保持原配置；已有插件参数继续使用官方配置表单与工作区 `.dsh/profile.yml`。
 
-Plugins → 插件运行诊断、Settings → 内置插件 → 插件运行诊断可读取当前浏览器及指定会话宿主的真实 Fiber 状态和缺失依赖。诊断读取不创建或恢复 Agent；冷会话显示宿主未激活，子会话通过所属根宿主查看。页面可见时每 5 秒刷新，也可手动刷新；失败记录只返回配置校验/启动失败类型及允许的错误码，不返回原始错误、配置或密钥。详见 [运行诊断](docs/validation/plugin-runtime.md)。
-
 目录职责：
 
 | 路径 | 职责 |

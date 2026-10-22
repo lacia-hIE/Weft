@@ -1,7 +1,6 @@
 import React from 'react';
 import { fileAddressFor } from '@deepseek-ai/dsh-util-workspace-path';
 import * as WorkspaceRuntimeSettings from './workspace-runtime-settings.ts';
-import * as PluginRuntimeSettings from './plugin-runtime-settings.tsx';
 interface InventoryRow {
     pluginId: string;
     agentId: string;
@@ -103,7 +102,6 @@ function mount(ctx: ClientContext): void {
     ctx.effect(() => () => { closed = true; }, 'weft.environment-lifetime');
     // The workspace runtime page waits for the Settings forms service on its own.
     ctx.plugin(WorkspaceRuntimeSettings);
-    ctx.plugin(PluginRuntimeSettings);
     ctx.on('connection/reset', recover);
     ctx.remote.$on('cordis/dynamic-package', recover);
     recover();
