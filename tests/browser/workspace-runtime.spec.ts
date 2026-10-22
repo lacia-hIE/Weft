@@ -16,6 +16,7 @@ test('the Plugins page chooses auto, worker only or always container and the con
   await page.goto('/agents/'+id);
   await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
   await open();
+  await expect(page.getByText('Source and .git persist.', {exact: false})).toBeVisible();
   const shell = page.getByRole('tablist', {name: 'Where commands run', exact: true});
   const size = page.getByRole('tablist', {name: 'Container size', exact: true});
   await expect(shell.getByRole('tab', {name: 'Auto', exact: true})).toHaveAttribute('aria-selected', 'true');

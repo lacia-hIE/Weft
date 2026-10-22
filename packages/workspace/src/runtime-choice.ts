@@ -1,5 +1,6 @@
 import type { Context, Fiber } from '@deepseek-ai/cordis';
 import { defineTool } from '@deepseek-ai/dsh-tools';
+import { workspaceRuntimeGuide } from './container-policy.ts';
 
 /** Where an environment runs commands: always the Worker shell, always the container, or as the agent chooses. */
 export type WorkspaceShell = 'worker' | 'container' | 'auto';
@@ -9,7 +10,8 @@ type Target = 'worker' | 'container';
 const DESCRIPTION = 'Choose where your shell commands run for the rest of this session. '
   + '"worker" (the default) is an instant shell with common Unix tools but no git, node, npm or python. '
   + '"container" is a full Linux machine with git, node 22, npm, python 3 and ripgrep; it takes a few seconds to start and sleeps after 10 idle minutes. '
-  + 'Both see the same /workspace files; anything outside /workspace in the container (installed packages, /tmp) is lost when it sleeps. '
+  + 'Source and .git in /workspace persist. Container dependencies and caches (including node_modules and .venv) are local-only, invisible to Worker/file tools, and must be rebuilt after the container is replaced. '
+  + 'Synced files have a 256 MiB per-file limit; prefer shallow clones when full history is unnecessary. '
   + 'Switch to the container when a task needs those programs, and back to the worker when it no longer does.';
 
 /**
@@ -26,6 +28,10 @@ export class WorkspaceRuntimeChoice {
     // The agent's choice under `auto`, kept with the Session's world so it survives a cold host.
     storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_runtime_choice (id INTEGER PRIMARY KEY CHECK (id = 1), target TEXT NOT NULL)');
     this.chosen = storage.sql.exec<{target: string}>('SELECT target FROM weft_runtime_choice WHERE id = 1').toArray()[0]?.target === 'container' ? 'container' : 'worker';
+    ctx.systemPrompt.context({
+      name: 'weft:workspace-runtime', order: 112, required: true, interpolate: false,
+      text: () => workspaceRuntimeGuide(this.shell(), this.container()),
+    });
   }
 
   /** Whether commands run in the container now. */

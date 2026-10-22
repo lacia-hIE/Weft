@@ -8,7 +8,7 @@ name: Test
 # (Cloudflare Workers Builds deploys main only). main moves to a commit once it passes.
 on:
   push:
-    branches: [main, ci]
+    branches: [ci]
   pull_request:
   workflow_dispatch:
 

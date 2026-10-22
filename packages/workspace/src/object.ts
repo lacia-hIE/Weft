@@ -7,6 +7,8 @@ import { LegacyContainerBackend } from '@cloudflare/computer/backends/container-
 import { CONTAINER_EGRESS_ADDRESS, CONTAINER_HOSTS, CONTAINER_TOUCH_MS, remoteContainerHost, type ContainerHostActivity } from './container-host.ts';
 import { WorkspaceStore } from './store.ts';
 import { shellPolicy, type ShellSandbox } from './shell.ts';
+import { CONTAINER_MOUNT_IGNORE } from './container-policy.ts';
+import { shellOutputFrames } from './exec-output.ts';
 import { fsStatus, workspaceAddress, workspaceScopeSchema, workspaceOperationSchema, workspacePath, type WorkspaceScope, type WorkspaceOperation } from './protocol.ts';
 import {AttachmentError, type FileAttachmentRef} from '@deepseek-ai/dsh-attachment';
 import {attachmentOperationSchema, ATTACHMENT_ROOT, UPLOAD_CHUNK_BYTES} from '../../native-attachments/src/storage.ts';
@@ -55,8 +57,9 @@ export class WorkspaceDO extends DurableObject<Env> {
     this.container = CONTAINER_INSTANCES.every(instance => host(instance)) ? new LegacyContainerBackend({
       id: CONTAINER_SHELL, workspace: {binding: 'WORKSPACES', id: ctx.id.toString()},
       container: () => ({getWorkspaceContainer: () => remoteContainerHost(host(this.containerInstance())!.getByName(ctx.id.toString()) as unknown as Parameters<typeof remoteContainerHost>[0])}),
-      // Weft's private attachment area is a container-local path: neither readable there nor synced back.
-      egress: {mode: 'direct'}, containerEnv: {MOUNT_IGNORE: '/.weft'},
+      // Private attachments stay inaccessible; dependencies and caches stay local and can be rebuilt.
+      // Source, .git, and deliverables retain their existing persistence.
+      egress: {mode: 'direct'}, containerEnv: {MOUNT_IGNORE: CONTAINER_MOUNT_IGNORE},
       // computerd reaches the workspace through an outbound intercept. A container with Internet access
       // resolves names publicly, where the default host name does not exist, so the intercept is an address.
       egressHost: CONTAINER_EGRESS_ADDRESS,
@@ -126,15 +129,7 @@ export class WorkspaceDO extends DurableObject<Env> {
       ...(request.env ? {env: request.env} : {}),
       ...(request.stdin !== undefined ? {stdin: request.stdin} : {}),
     }); } catch (error) { release(); throw error; }
-    const encoder = new TextEncoder();
-    const body = run.pipeThrough(new TransformStream<{name: string; value?: unknown; code?: unknown}, Uint8Array>({
-      transform(event, controller) {
-        const frame = event.name === 'exit' ? {type: 'exit', code: event.code ?? event.value} : {type: event.name, data: event.value};
-        controller.enqueue(encoder.encode(JSON.stringify(frame) + '\n'));
-        if (event.name === 'exit') release();
-      },
-      flush: release,
-    }));
+    const body = run.pipeThrough(shellOutputFrames(backend === CONTAINER_SHELL, release));
     return new Response(body, {headers: {'content-type': 'application/x-ndjson', 'cache-control': 'private, no-store'}});
   }
 

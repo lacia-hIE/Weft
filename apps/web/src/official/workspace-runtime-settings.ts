@@ -43,6 +43,7 @@ const zh = {
   container: '始终容器',
   containerInstance: '容器规格',
   containerInstanceHint: 'basic：1/4 vCPU、1 GiB；standard-1：1/2 vCPU、4 GiB；standard-2：1 vCPU、6 GiB。下次容器启动时生效。',
+  storageHint: '源码和 .git 持久保存。容器中的 node_modules、.venv 和常见缓存只保存在容器本地，休眠后可能需要重建；Worker 和文件侧栏看不到这些本地文件。同步文件单个最大 256 MiB，大型 Git 仓库可尝试浅克隆；增大容器规格不会提高此上限。',
   readOnly: '本部署的设置为只读。',
   unavailable: '此环境暂时无法配置运行环境。',
   save: '保存',
@@ -59,6 +60,7 @@ const en: typeof zh = {
   container: 'Always container',
   containerInstance: 'Container size',
   containerInstanceHint: 'basic: 1/4 vCPU, 1 GiB; standard-1: 1/2 vCPU, 4 GiB; standard-2: 1 vCPU, 6 GiB. Applies when the container next starts.',
+  storageHint: 'Source and .git persist. Container node_modules, .venv and common caches stay local and may need rebuilding after idle shutdown; the Worker and Files sidebar cannot see them. Synced files are limited to 256 MiB each. Try a shallow clone for large Git repositories; a larger container does not raise this limit.',
   readOnly: 'This deployment stores settings read-only.',
   unavailable: 'The workspace runtime cannot be configured here right now.',
   save: 'Save',
@@ -104,6 +106,7 @@ function WorkspaceRuntimeCard(props: CardProps): React.ReactNode {
         options: SHELLS.map(value => ({value, label: t(value)})), onChange: next => { props.edit('shell', next); }}),
       React.createElement(Choice<typeof SIZES[number]>, {key: 'size', id: 'weft-container-size', label: t('containerInstance'), hint: t('containerInstanceHint'), value: size, disabled: disabled || shell === 'worker',
         options: SIZES.map(value => ({value, label: value})), onChange: next => { props.edit('containerInstance', next); }}),
+      React.createElement('p', {key: 'storage', style: {fontSize: 12, opacity: 0.7}}, t('storageHint')),
     ],
   });
 }

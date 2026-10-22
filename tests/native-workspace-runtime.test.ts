@@ -13,6 +13,8 @@ function toolModel(turns: Record<string, {name: string; input: Record<string, un
   const outbound: V4FetchHandler = async request => {
     if (new URL(request.url).origin !== 'https://runtime-model.test') throw new Error(`Unexpected runtime fixture request ${request.url}`);
     const body = await request.text();
+    const payload = JSON.parse(body) as {messages: unknown};
+    assert.match(JSON.stringify(payload.messages), /Workspace runtime:/, 'all modes receive the actual workspace execution and persistence contract');
     const turn = Object.keys(turns).findLast(marker => body.includes(marker));
     let call: {name: string; input: Record<string, unknown>} | undefined;
     if (turn !== undefined) {

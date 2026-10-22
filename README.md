@@ -40,6 +40,8 @@ curl http://localhost:8787/v1/tenants/TENANT_ID/sessions/example/events
 
 创建文件 Session 时，在消息 JSON 中传入 `workspaceId`（例如 `project`），即可使用原生 `read`、`write`、`edit` 和 `workspace_search`。绑定在 Session 中持久保存，后续请求可省略；同一用户的多个 Session 可绑定同一个 Workspace 共享文件。真实文件工具验证命令为 `npm run test:live:workspace`。
 
+容器中的源码和 `.git` 持久化；`node_modules`、`.venv` 和常见工具缓存仅保存在容器本地，避免大量依赖文件同步到数据库，容器替换后按锁文件重建。Worker 和文件侧栏看不到这些本地依赖。同步文件有 256 MiB 单文件限制，大型 Git pack 可能导致克隆失败；不需要完整历史时优先浅克隆或稀疏检出。策略、现有缓存处理及真实容器验证见 [Git 项目与容器工作区](docs/architecture/workspace-git.md)。
+
 官方 Harness 的 Files 侧栏通过原版 `WorkspaceFiles` 读取所属环境的真实文件，支持目录、分页文本、字节预览和变更订阅；具体范围与附件待接入项见 [原版文件验证](docs/validation/native-files.md)。当前按新的原生数据布局开发，不要求保留旧数据兼容或迁移。
 
 官方输入框已接通通用文件上传，回执按 Session 持久化，文件可以随提示词进入原生队列并由真实工具读取，详见 [原版附件验证](docs/validation/native-attachments.md)。图片输入通过 Cloudflare Images 解码并保存到环境的 Computer 卷；原版图片历史、查看器和 DeepSeek Files API 已接通，上传缓存按环境隔离。原生会话的 Agent 还可通过原版 `read_image` 查看工作区已有图片，详见 [原版图片验证](docs/validation/native-images.md)。
