@@ -4,7 +4,7 @@ import { FsError } from '@deepseek-ai/dsh-fs';
 import { WorkerShellBackend } from '@cloudflare/computer/backends/worker-shell';
 import curlCommands from '@cloudflare/computer/shell/curl';
 import { LegacyContainerBackend } from '@cloudflare/computer/backends/container-legacy';
-import { CONTAINER_HOSTS, remoteContainerHost } from './container-host.ts';
+import { CONTAINER_HOSTS, CONTAINER_TOUCH_MS, remoteContainerHost, type ContainerHostActivity } from './container-host.ts';
 import { WorkspaceStore } from './store.ts';
 import { shellPolicy, type ShellSandbox } from './shell.ts';
 import { fsStatus, workspaceAddress, workspaceScopeSchema, workspaceOperationSchema, workspacePath, type WorkspaceScope, type WorkspaceOperation } from './protocol.ts';
@@ -31,6 +31,7 @@ export class WorkspaceDO extends DurableObject<Env> {
    * Weft's private attachment area stays local to the container disk, so it is
    * neither readable from the container nor synced back.
    */
+  private readonly containerHost: () => ContainerHostActivity | undefined;
   private readonly container: LegacyContainerBackend | undefined;
   private readonly watchers = new Map<string, {path: string; invalidate(): void; close(endStream?: boolean): void}>();
   /** The sandbox of every running shell execution, by execution id. */
@@ -50,6 +51,7 @@ export class WorkspaceDO extends DurableObject<Env> {
       const hosts = exported?.[CONTAINER_HOSTS[instance]];
       return typeof hosts?.getByName === 'function' ? hosts as DurableObjectNamespace : undefined;
     };
+    this.containerHost = () => host(this.containerInstance())?.getByName(ctx.id.toString()) as unknown as ContainerHostActivity | undefined;
     this.container = CONTAINER_INSTANCES.every(instance => host(instance)) ? new LegacyContainerBackend({
       id: CONTAINER_SHELL, workspace: {binding: 'WORKSPACES', id: ctx.id.toString()},
       container: () => ({getWorkspaceContainer: () => remoteContainerHost(host(this.containerInstance())!.getByName(ctx.id.toString()) as unknown as Parameters<typeof remoteContainerHost>[0])}),
@@ -108,7 +110,11 @@ export class WorkspaceDO extends DurableObject<Env> {
       backend = CONTAINER_SHELL;
     }
     this.sandboxes.set(request.id, sandbox);
-    const release = () => { this.sandboxes.delete(request.id); };
+    // The container's idle timeout counts from its host's last request, so a container command keeps the host active while it runs.
+    const touch = () => { void this.containerHost()?.touch().catch(() => { /* The next command touches again. */ }); };
+    const keepAlive = backend === CONTAINER_SHELL ? setInterval(touch, CONTAINER_TOUCH_MS) : undefined;
+    if (keepAlive) touch();
+    const release = () => { this.sandboxes.delete(request.id); clearInterval(keepAlive); };
     let run: import('@cloudflare/computer').WorkspaceRuntimeExecHandle<'utf8'>;
     try { run = await this.files.runtime.exec(request.command, {
       id: request.id, cwd, encoding: 'utf8',

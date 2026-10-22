@@ -3,6 +3,8 @@ import { LegacyWorkspaceContainerAPI, type ContainerLaunchSpec, type ContainerRu
 
 /** How long an idle workspace container keeps running before it sleeps; the next command starts it again. */
 const IDLE_MS = 10 * 60_000;
+/** How often a running container command renews its host's activity, well inside {@link IDLE_MS}. */
+export const CONTAINER_TOUCH_MS = 60_000;
 
 /**
  * The Cloudflare Container of one workspace, on the platform-scheduled
@@ -29,6 +31,13 @@ class WorkspaceContainerHost extends DurableObject {
     await api.setInactivityTimeout(IDLE_MS);
     return info;
   }
+  /**
+   * A request that keeps this host active. The platform's inactivity timeout
+   * counts from the host's last request, while commands reach the container
+   * over computerd's own connection to the workspace, so the workspace calls
+   * this for every container command and while one runs.
+   */
+  async touch(): Promise<void> { /* The request itself is the activity. */ }
   exitInfo() { return this.api().exitInfo(); }
   status() { return this.api().status(); }
   interceptOutboundHttp(host: string, ref: WorkspaceRef): Promise<void> { return this.api().interceptOutboundHttp(host, ref); }
@@ -50,6 +59,8 @@ export const CONTAINER_HOSTS = {
 } as const;
 
 type ContainerHostStub = Pick<WorkspaceContainerHost, 'start' | 'restart' | 'exitInfo' | 'status' | 'interceptOutboundHttp' | 'interceptAllOutboundHttp' | 'fetchPort'>;
+/** The host methods the workspace itself calls. */
+export type ContainerHostActivity = Pick<WorkspaceContainerHost, 'touch'>;
 
 /**
  * The container host the backend drives, over RPC to the workspace's host
