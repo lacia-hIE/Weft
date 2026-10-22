@@ -34,6 +34,7 @@ import { controlFor, controlScope } from '../../../packages/control-plane/src/ob
 import { sessionAddress, scopeSchema, type Principal } from '../../../packages/tenant/src/index.ts';
 import type { Env } from './index.ts';
 import { assertSameOrigin, HttpError, readJson } from './http.ts';
+import {workspaceAddress} from '../../../packages/workspace/src/protocol.ts';
 declare const WEFT_VALIDATION_BUILD: boolean;
 
 import { ModelConfigurationError } from '../../../packages/model-provider/src/index.ts';
@@ -68,6 +69,19 @@ async function cachedRoot(owner: ControlScope, control: ReturnType<typeof contro
 
 export async function handleNativeRequest(request: Request, env: Env, principal: Principal, environmentId?: string): Promise<Response | undefined> {
   const pathname = new URL(request.url).pathname;
+  const container = /^\/v1\/tenants\/([^/]+)\/native\/workspace-container$/.exec(pathname);
+  if (container) {
+    if (container[1] !== principal.tenantId) throw new HttpError(403, 'Tenant access denied');
+    if (!['GET', 'POST'].includes(request.method)) return new Response(null, {status: 405, headers: {allow: 'GET, POST'}});
+    const scope = {tenantId: principal.tenantId, environmentId: environmentId ?? 'default', workspaceId: 'default'};
+    const stub = env.WORKSPACES.getByName(workspaceAddress(scope));
+    if (request.method === 'GET') return Response.json(await stub.containerState(scope), {headers: {'cache-control': 'private, no-store'}});
+    assertSameOrigin(request);
+    if (!z.object({}).strict().safeParse(await readJson(request, 4096)).success) throw new HttpError(400, 'Expected an empty container stop request');
+    const owner = controlScope(principal.tenantId, environmentId);
+    const sessions = (await controlFor(env, owner).sessionIndex(owner)).filter(record => record.workspaceId === scope.workspaceId).map(record => record.id);
+    return stub.stopContainer(scope, sessions);
+  }
   const upload = /^\/v1\/tenants\/([^/]+)\/native\/api\/session\/uploadFileBinary$/.exec(pathname);
   if (upload) {
     if (upload[1] !== principal.tenantId) throw new HttpError(403, 'Tenant access denied');

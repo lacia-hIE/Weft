@@ -49,6 +49,16 @@ const zh = {
   save: '保存',
   saving: '保存中…',
   saveFailed: '本部署没有接受这些值，已保留供你修改。',
+  containerControl: '容器控制',
+  stopHint: '停止当前工作区容器会结束共享它的所有会话的容器任务和终端。源码和 .git 同步后保留；依赖与缓存可能需要重建。下次执行新的容器命令时重新启动。',
+  stop: '停止容器',
+  stopping: '正在停止容器…',
+  running: '容器正在运行',
+  stopped: '容器已停止',
+  loading: '正在读取容器状态…',
+  containerUnavailable: '本部署未提供容器。',
+  refresh: '刷新容器状态',
+  stopFailed: '容器操作失败，请刷新状态后重试。',
 };
 const en: typeof zh = {
   title: 'Workspace runtime',
@@ -66,6 +76,16 @@ const en: typeof zh = {
   save: 'Save',
   saving: 'Saving…',
   saveFailed: 'The deployment did not accept these values; they were left for you to correct.',
+  containerControl: 'Container control',
+  stopHint: 'Stopping this workspace container ends container tasks and terminals in every session sharing it. Source and .git are retained after synchronization; dependencies and caches may need rebuilding. A new container command starts it again.',
+  stop: 'Stop container',
+  stopping: 'Stopping container…',
+  running: 'Container is running',
+  stopped: 'Container is stopped',
+  loading: 'Reading container state…',
+  containerUnavailable: 'This deployment has no container.',
+  refresh: 'Refresh container state',
+  stopFailed: 'The container operation failed. Refresh its state and try again.',
 };
 
 export const name = 'weft-workspace-runtime-settings';
@@ -107,6 +127,40 @@ function WorkspaceRuntimeCard(props: CardProps): React.ReactNode {
       React.createElement(Choice<typeof SIZES[number]>, {key: 'size', id: 'weft-container-size', label: t('containerInstance'), hint: t('containerInstanceHint'), value: size, disabled: disabled || shell === 'worker',
         options: SIZES.map(value => ({value, label: value})), onChange: next => { props.edit('containerInstance', next); }}),
       React.createElement('p', {key: 'storage', style: {fontSize: 12, opacity: 0.7}}, t('storageHint')),
+      React.createElement(ContainerControl, {key: 'container-control', t}),
     ],
   });
+}
+
+function ContainerControl({t}: {t: CardProps['t']}): React.ReactNode {
+  const [state, setState] = React.useState<{available: boolean; status: 'running' | 'stopped' | 'stopping'}>();
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState<string>();
+  const [revision, setRevision] = React.useState(0);
+  const read = async (method: 'GET' | 'POST', signal?: AbortSignal) => {
+    const response = await fetch('workspace-container', {method, ...(signal ? {signal} : {}), ...(method === 'POST' ? {headers: {'content-type': 'application/json'}, body: '{}'} : {})});
+    const value = await response.json() as {available: boolean; status: 'running' | 'stopped' | 'stopping'; error?: string};
+    if (!response.ok) throw new Error(value.error ?? t('stopFailed'));
+    if (typeof value.available !== 'boolean' || !['running', 'stopped', 'stopping'].includes(value.status)) throw new Error(t('stopFailed'));
+    return value;
+  };
+  React.useEffect(() => {
+    const abort = new AbortController();
+    void read('GET', abort.signal).then(value => {setState(value);}).catch(reason => {if (!abort.signal.aborted) setError(String(reason instanceof Error ? reason.message : reason));});
+    return () => abort.abort();
+  }, [revision]);
+  const stop = async () => {
+    setBusy(true); setError(undefined);
+    try {setState(await read('POST'));}
+    catch (reason) {setError(reason instanceof Error ? reason.message : t('stopFailed')); setRevision(value => value + 1);}
+    finally {setBusy(false);}
+  };
+  const status = busy || state?.status === 'stopping' ? 'stopping' : !state ? 'loading' : !state.available ? 'containerUnavailable' : state.status;
+  return React.createElement('section', {style: {borderTop: '1px solid currentColor', paddingTop: 16, marginTop: 20}},
+    React.createElement('strong', null, t('containerControl')),
+    React.createElement('p', {style: {fontSize: 12, opacity: 0.7}}, t('stopHint')),
+    React.createElement('p', {role: 'status'}, t(status)),
+    error ? React.createElement('p', {role: 'alert'}, error) : null,
+    React.createElement('button', {type: 'button', disabled: busy || !state?.available || state.status === 'stopped', onClick: () => {void stop();}}, t('stop')),
+    React.createElement('button', {type: 'button', disabled: busy, onClick: () => {setError(undefined); setRevision(value => value + 1);}, style: {marginLeft: 12}}, t('refresh')));
 }

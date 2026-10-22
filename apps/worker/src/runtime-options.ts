@@ -171,13 +171,14 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
             if (container && runtime.shell === 'worker') return Response.json({error: 'This environment does not allow the workspace container', code: 'EXEC_UNAVAILABLE'}, {status: 403});
             return stub.exec(workspace, {...request, ...(container || choice.container() ? {container: {instance: runtime.containerInstance}} : {})});
           }, kill: id => stub.killExec(workspace, id), container: () => choice.container(),
-          connectProcess: () => {
+          connectProcess: epoch => {
             if (context.workspaceRuntime.shell === 'worker') throw new Error('This environment does not allow the workspace container');
             return stub.fetch(new Request(`https://workspace.internal${PROCESS_PATH}`, {headers: {
               upgrade: 'websocket', 'x-weft-workspace': JSON.stringify(workspace),
               'x-weft-process-owner': scope.sessionId, 'x-weft-container-instance': context.workspaceRuntime.containerInstance,
+              ...(epoch === undefined ? {} : {'x-weft-container-epoch': String(epoch)}),
             }}));
-          }, syncProcesses: () => stub.syncProcesses(workspace)}, cwd);
+          }, syncProcesses: epoch => stub.syncProcesses(workspace, true, epoch)}, cwd);
           await choice.reconcile();
         }
         if (presentation) await mountNativeAttachments(ctx, {storage, scope: workspace, sessionId: scope.sessionId, transport: env.WORKSPACES.getByName(workspaceAddress(workspace)), ...(env.IMAGES ? {images: env.IMAGES} : {})});

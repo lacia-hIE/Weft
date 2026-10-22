@@ -5,28 +5,35 @@ import type { ProcessService } from './process-protocol.ts';
 export class ContainerProcessClient {
   private connection: Promise<{api: RpcStub<ProcessService>; socket: WebSocket}> | undefined;
   private generation: string | undefined;
+  private epoch: number | undefined;
   private closed = false;
   get ended(): boolean {return this.closed;}
-  constructor(private readonly connect: () => Promise<Response>, private readonly syncFiles: () => Promise<void>) {}
+  constructor(private readonly connect: (epoch?: number) => Promise<Response>, private readonly syncFiles: (epoch?: number) => Promise<void>) {}
 
   async sync(): Promise<void> {
     // Opening selects the requested container size before synchronization can start it.
     await this.open();
-    await this.syncFiles();
+    await this.syncFiles(this.epoch);
   }
 
   private open() {
     if (this.closed) throw new Error('Process connection is closed');
     if (this.connection) return this.connection;
     const pending = (async () => {
-      const response = await this.connect();
+      const response = await this.connect(this.epoch);
       const socket = response.webSocket;
-      if (!socket) throw new Error(await response.text() || `Process connection failed (${response.status})`);
+      if (!socket) {
+        if (response.status === 409) this.closed = true;
+        throw new Error(await response.text() || `Process connection failed (${response.status})`);
+      }
+      const epoch = response.headers.get('x-weft-container-epoch');
+      if (epoch !== null) this.epoch = Number(epoch);
       socket.accept();
       const api = newWebSocketRpcSession<ProcessService>(socket);
       socket.addEventListener('close', () => {if (this.connection === pending) this.connection = undefined;});
       socket.addEventListener('error', () => {if (this.connection === pending) this.connection = undefined;});
       const {generation} = await api.info();
+      if (this.closed) {api[Symbol.dispose](); socket.close(); throw new Error('Process connection is closed');}
       if (this.generation !== undefined && this.generation !== generation) {
         socket.close(); this.closed = true;
         throw new Error('The workspace container restarted; its processes have ended. Commands were not replayed.');

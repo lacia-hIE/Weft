@@ -96,3 +96,33 @@ test('the workspace runtime is the agent\'s choice under auto, never the contain
     await runtime.dispose();
   }
 });
+
+test('container controls are environment-scoped, do not activate Sessions, and preserve files when containers are unavailable', {timeout: 60_000}, async () => {
+  const runtime = createRuntime(undefined, {browser: true});
+  const api = nativeClient(() => runtime);
+  const base = `/v1/tenants/${tenantId('alpha')}/environments/default`;
+  const endpoint = base + '/native/workspace-container';
+  try {
+    await api.call('session/create', {request: {sessionId: 'cold'}});
+    const written = await runtime.dispatchFetch(url('alpha', base + '/workspaces/default/files'), {method: 'PUT', headers: {'content-type': 'application/json'}, body: JSON.stringify({path: 'kept.txt', content: 'keep this', expectedVersion: null})});
+    assert.equal(written.status, 200);
+    const state = await runtime.dispatchFetch(url('alpha', endpoint));
+    assert.equal(state.status, 200);
+    assert.equal(state.headers.get('cache-control'), 'private, no-store');
+    assert.deepEqual(await state.json(), {available: false, status: 'stopped'});
+    const stop = await runtime.dispatchFetch(url('alpha', endpoint), {method: 'POST', headers: {'content-type': 'application/json'}, body: '{}'});
+    assert.equal(stop.status, 501);
+    assert.equal((await stop.json() as {code: string}).code, 'CONTAINER_UNAVAILABLE');
+    const listed = await api.call<{items: {agentAvailable: boolean}[]}>('session/list', {_request: {}});
+    assert.equal(listed.items[0]!.agentAvailable, false, 'read and stop never start a cold Agent');
+    const file = await runtime.dispatchFetch(url('alpha', base + '/workspaces/default/files?path=kept.txt'));
+    assert.equal(file.status, 200);
+    assert.match(await file.text(), /keep this/);
+    const foreign = await runtime.dispatchFetch(url('beta', endpoint));
+    assert.equal(foreign.status, 403);
+    const csrf = await runtime.dispatchFetch(url('alpha', endpoint), {method: 'POST', headers: {'content-type': 'application/json', origin: 'https://another.example'}, body: '{}'});
+    assert.equal(csrf.status, 403);
+    const invalid = await runtime.dispatchFetch(url('alpha', endpoint), {method: 'POST', headers: {'content-type': 'application/json'}, body: '{"workspaceId":"foreign"}'});
+    assert.equal(invalid.status, 400);
+  } finally {await runtime.dispose();}
+});

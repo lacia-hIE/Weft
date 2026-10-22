@@ -21,8 +21,8 @@ export interface ShellTransport {
   exec(request: ShellExecRequest): Promise<Response>;
   kill(id: string): Promise<void>;
   container?(): boolean;
-  connectProcess?(): Promise<Response>;
-  syncProcesses?(): Promise<void>;
+  connectProcess?(epoch?: number): Promise<Response>;
+  syncProcesses?(epoch?: number): Promise<void>;
 }
 
 const SHELLS = new Set(['bash', 'sh']);
@@ -135,9 +135,22 @@ export class WorkspaceSubprocess extends SubprocessRuntime {
   processClient(): ContainerProcessClient | undefined {
     if (!this.transport.connectProcess || !this.transport.syncProcesses) return;
     if (this.processes?.ended) this.processes = undefined;
-    return this.processes ??= new ContainerProcessClient(() => this.transport.connectProcess!(), () => this.transport.syncProcesses!());
+    return this.processes ??= new ContainerProcessClient(epoch => this.transport.connectProcess!(epoch), epoch => this.transport.syncProcesses!(epoch));
   }
   usesContainer(): boolean {return this.transport.container?.() === true;}
+  hasContainerActivity(): boolean {return this.live.size > 0 || this.usesContainer();}
+  /** Only real container handles live here; Worker shell sessions stay usable. */
+  async stopContainerProcesses(): Promise<void> {
+    try {
+      const outcomes = await Promise.allSettled([...this.live].map(handle => handle.terminate()));
+      const failure = outcomes.find(outcome => outcome.status === 'rejected');
+      if (failure?.status === 'rejected') throw failure.reason;
+    } finally {
+      this.processes?.close();
+      this.processes = undefined;
+      this.live.clear();
+    }
+  }
 
   /** Save each truncated stream that asked for a spill file into the workspace, where the model reads it with the file tools. */
   private async saveFullOutput(id: string, outputs: Record<'stdout' | 'stderr', {collector: TailCollector | undefined}>): Promise<void> {
@@ -335,7 +348,7 @@ export class WorkspaceSubprocess extends SubprocessRuntime {
     const drain = () => {outputs.stdout.readable?.resume(); outputs.stderr.readable?.resume(); control?.resume(); readControl?.(); readControl = undefined;};
     const terminate = () => {terminated = true; drain(); void ready.then(() => client.call(api => api.terminate(id))).catch(() => {});};
     spec.signal?.addEventListener('abort', terminate, {once: true});
-    const handle = {terminate: async () => {terminated = true; drain(); await ready; await client.call(api => api.terminate(id));}};
+    const handle = {terminate: async () => {terminated = true; drain(); try {await ready;} catch {return;} await client.call(api => api.terminate(id));}};
     this.live.add(handle);
     const done = (async () => {
       try {
@@ -377,11 +390,13 @@ export class WorkspaceSubprocess extends SubprocessRuntime {
     const id = crypto.randomUUID();
     const request = {...this.remoteSpec('pty', spec, [...argv], sandbox ?? {mode: 'danger-full-access', root: '/workspace'}), rows: spec.rows, cols: spec.cols, terminalType: spec.terminalType, ...(spec.shellActivity ? {shellActivity: true} : {})};
     const ready = client.sync().then(() => client.call(api => api.start(id, request)));
+    const pending = {terminate: async () => {try {await ready;} catch {return;} await client.call(api => api.terminate(id));}};
+    this.live.add(pending);
     const cancel = () => {void ready.then(() => client.call(api => api.terminate(id))).catch(() => {});};
     spec.signal?.addEventListener('abort', cancel, {once: true});
     let pid: number;
     try {({pid} = await ready); if (spec.signal?.aborted) {await client.call(api => api.terminate(id)); spec.signal.throwIfAborted();}}
-    finally {spec.signal?.removeEventListener('abort', cancel);}
+    finally {this.live.delete(pending); spec.signal?.removeEventListener('abort', cancel);}
     const output = new PassThrough();
     let sequence = 0;
     const handle: SubprocessTerminalHandle = {

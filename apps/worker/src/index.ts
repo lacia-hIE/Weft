@@ -37,6 +37,7 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm';
 import type {} from '@deepseek-ai/dsh-cordis-host-runner';
 import { SessionId, SessionSeq, type SessionEvent } from '@deepseek-ai/dsh-session';
 import {readSessionReferenceMetadata} from '../../../packages/native-query/src/reference-metadata.ts';
+import {WorkspaceSubprocess} from '../../../packages/workspace/src/subprocess.ts';
 import { buildForkSeed } from '@deepseek-ai/dsh-session/fork';
 import { runHarnessTurn, initializeHarnessSession, renameHarnessSession, renameLiveHarnessSession, selectHarnessModel } from '../../../packages/harness-runtime/src/runtime.ts';
 import { selectLiveHarnessModel } from '../../../packages/harness-runtime/src/model-selection.ts';
@@ -227,6 +228,20 @@ export class SessionDO extends DurableObject<Env> {
     const ctx = this.nativeHost?.ctx ?? reader.activeRuntime()?.ctx ?? reader.ctx;
     await ctx.parallel('workspace/session-stop', {sessionId: SessionId(scope.sessionId)});
     await ctx.sessionPersistence.flush();
+  }
+  /** Stop live container handles without opening a cold Agent or changing schedules. */
+  async nativeStopContainerProcesses(input: SessionScope, workspaceId: string): Promise<void> {
+    this.assertScope(input);
+    const configured = this.ctx.storage.sql.exec<{workspace_id: string}>('SELECT workspace_id FROM weft_session_config WHERE id=1').toArray()[0];
+    if (configured?.workspace_id !== workspaceId) return;
+    const runtime = this.nativeHost ?? (this.readerPromise ? (await this.readerPromise).activeRuntime() : undefined);
+    if (!runtime) return;
+    const subprocess = runtime.ctx.get('subprocess');
+    if (!(subprocess instanceof WorkspaceSubprocess)) return;
+    if (subprocess.hasContainerActivity()) for (const agent of runtime.ctx.agents.list()) {
+      if (agent.status === 'running') agent.cancel({kind: 'user'});
+    }
+    await subprocess.stopContainerProcesses();
   }
 
   constructor(ctx: DurableObjectState, env: Env) {

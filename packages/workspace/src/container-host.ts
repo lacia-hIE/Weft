@@ -28,20 +28,58 @@ const PORT_REQUEST_MS = 60_000;
  * `WorkspaceProxy`, so files and executions remain the workspace's own.
  */
 class WorkspaceContainerHost extends DurableObject {
+  private lifecycleTail: Promise<unknown> = Promise.resolve();
+  private lifecycle<T>(operation: () => Promise<T>): Promise<T> {
+    const next = this.lifecycleTail.then(operation);
+    this.lifecycleTail = next.catch(() => {});
+    return next;
+  }
   private api(): LegacyWorkspaceContainerAPI { return new LegacyWorkspaceContainerAPI(this.ctx); }
-  async start(spec: ContainerLaunchSpec): Promise<ContainerRuntimeInfo> {
+  start(spec: ContainerLaunchSpec): Promise<ContainerRuntimeInfo> {
+    return this.lifecycle(async () => {
+      if (await this.ctx.storage.get('weft_stopping') !== undefined) throw new Error('The workspace container is stopping');
+      return this.launch(spec);
+    });
+  }
+  private async launch(spec: ContainerLaunchSpec): Promise<ContainerRuntimeInfo> {
     const api = this.api();
     const info = await api.start(spec);
     await this.ctx.storage.put('weft_process_secret', info.clientSecret);
     await api.setInactivityTimeout(IDLE_MS);
     return info;
   }
-  async restart(spec: ContainerLaunchSpec): Promise<ContainerRuntimeInfo> {
-    const api = this.api();
-    const info = await api.restart(spec);
-    await this.ctx.storage.put('weft_process_secret', info.clientSecret);
-    await api.setInactivityTimeout(IDLE_MS);
-    return info;
+  restart(spec: ContainerLaunchSpec): Promise<ContainerRuntimeInfo> {
+    return this.lifecycle(async () => {
+      if (await this.ctx.storage.get('weft_stopping') !== undefined) throw new Error('The workspace container is stopping');
+      const api = this.api();
+      const info = await api.restart(spec);
+      await this.ctx.storage.put('weft_process_secret', info.clientSecret);
+      await api.setInactivityTimeout(IDLE_MS);
+      return info;
+    });
+  }
+  state() {return {available: this.ctx.container !== undefined, running: this.ctx.container?.running === true};}
+  beginStop(epoch: number): Promise<void> {
+    return this.lifecycle(async () => {await this.ctx.storage.put('weft_stopping', epoch);});
+  }
+  /** Final synchronization may adopt a running container, but cannot restart a failed one. */
+  adoptForStop(epoch: number, spec: ContainerLaunchSpec): Promise<ContainerRuntimeInfo> {
+    return this.lifecycle(async () => {
+      if (await this.ctx.storage.get('weft_stopping') !== epoch || !this.ctx.container?.running) throw new Error('The stopped container cannot be started for synchronization');
+      return this.launch(spec);
+    });
+  }
+  destroyForStop(epoch: number): Promise<void> {
+    return this.lifecycle(async () => {
+      if (await this.ctx.storage.get('weft_stopping') !== epoch) throw new Error('Container stop identity changed');
+      if (this.ctx.container?.running) await this.ctx.container.destroy();
+      await this.ctx.storage.delete('weft_process_secret');
+    });
+  }
+  finishStop(epoch: number): Promise<void> {
+    return this.lifecycle(async () => {
+      if (await this.ctx.storage.get('weft_stopping') === epoch) await this.ctx.storage.delete('weft_stopping');
+    });
   }
   /**
    * A request that keeps this host active. The platform's inactivity timeout
@@ -81,20 +119,20 @@ export const CONTAINER_HOSTS = {
   'standard-2': 'WorkspaceContainerStandard2DO',
 } as const;
 
-type ContainerHostStub = Pick<WorkspaceContainerHost, 'start' | 'restart' | 'exitInfo' | 'status' | 'interceptOutboundHttp' | 'interceptAllOutboundHttp' | 'fetchPort'>;
+type ContainerHostStub = Pick<WorkspaceContainerHost, 'start' | 'restart' | 'adoptForStop' | 'exitInfo' | 'status' | 'interceptOutboundHttp' | 'interceptAllOutboundHttp' | 'fetchPort'>;
 /** The host methods the workspace itself calls. */
-export type ContainerHostActivity = Pick<WorkspaceContainerHost, 'touch'>;
+export type ContainerHostActivity = Pick<WorkspaceContainerHost, 'touch' | 'state' | 'beginStop' | 'destroyForStop' | 'finishStop'>;
 
 /**
  * The container host the backend drives, over RPC to the workspace's host
  * object. Abort signals cannot cross RPC: a request's deadline is kept here,
  * and the remote fetch is left to finish on its own.
  */
-export function remoteContainerHost(stub: ContainerHostStub): ILegacyWorkspaceContainerAPI {
+export function remoteContainerHost(stub: ContainerHostStub, stopping: () => number | undefined = () => undefined): ILegacyWorkspaceContainerAPI {
   const unsupported = (name: string) => () => { throw new Error(`Workspace container hosts do not provide ${name} over RPC`); };
   return {
-    start: spec => stub.start(spec),
-    restart: spec => stub.restart(spec),
+    start: spec => {const epoch = stopping(); return epoch === undefined ? stub.start(spec) : stub.adoptForStop(epoch, spec);},
+    restart: spec => {if (stopping() !== undefined) throw new Error('The workspace container cannot restart while stopping'); return stub.restart(spec);},
     exitInfo: () => stub.exitInfo(),
     status: () => stub.status(),
     setInactivityTimeout: async () => { /* The host sets its own idle timeout at start. */ },

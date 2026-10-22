@@ -149,7 +149,7 @@ test('real processes, PTYs, sandbox, reconnect and durable file synchronization'
       const host = await import(pathToFileURL(bundle).href) as typeof import('./fixtures/process-host.ts');
       let syncs = 0;
       const {ctx, subprocess} = await host.boot({container: () => true,
-        connectProcess: async () => {const {socket} = await connect('adapter');(socket as unknown as {accept(): void}).accept = () => {};return {webSocket: socket} as unknown as Response;},
+        connectProcess: async () => {const {socket} = await connect('adapter');(socket as unknown as {accept(): void}).accept = () => {};return {webSocket: socket, headers: new Headers()} as unknown as Response;},
         syncProcesses: async () => {syncs++;}, exec: async () => {throw Error('unexpected legacy exec');}, kill: async () => {}});
       try {
         // The browser's shell discovery probes optional shells before creating
@@ -176,6 +176,34 @@ test('real processes, PTYs, sandbox, reconnect and durable file synchronization'
         await pause(150);blocked.terminate();await blocked.done;assert.equal(await blocked.waitForExit(), true);
         const blockedPty = await subprocess.spawnTerminal({argv: ['python3', '-c', 'import sys,time; sys.stdout.write("x"*2097152); sys.stdout.flush(); time.sleep(120)'], cwd: '/workspace', graceMs: 300, rows: 24, cols: 80, terminalType: 'xterm-256color'});
         await pause(150);await blockedPty.terminate();await blockedPty.done;
+
+        const background = subprocess.spawn({argv: ['/bin/sh', '-c', 'echo keep > /workspace/stop-kept.txt; sleep 120'], cwd: '/workspace', graceMs: 300,
+          stdio: {stdin: 'ignore', stdout: {maxBytes: 1024}, stderr: {maxBytes: 1024}}});
+        const openTerminal = await subprocess.spawnTerminal({argv: ['/bin/bash', '-i'], cwd: '/workspace', graceMs: 300, rows: 24, cols: 80, terminalType: 'xterm-256color'});
+        await pause(150);
+        await (subprocess as import('../packages/workspace/src/subprocess.ts').WorkspaceSubprocess).stopContainerProcesses();
+        await Promise.allSettled([background.done, openTerminal.done]);
+        assert.equal((await docker('exec', name, 'cat', '/workspace/stop-kept.txt')).stdout.trim(), 'keep');
+        const fresh = subprocess.spawn({argv: ['/bin/echo', 'fresh-after-stop'], cwd: '/workspace', graceMs: 300,
+          stdio: {stdin: 'ignore', stdout: {maxBytes: 1024}, stderr: {maxBytes: 1024}}});
+        assert.equal((await fresh.done).exitCode, 0);
+        assert.match(fresh.collected.stdout!.readFrom(0).text, /fresh-after-stop/);
+
+        let epoch = 0, admitted = 0;
+        const sockets: WebSocket[] = [];
+        const fenced = new host.ContainerProcessClient(async requested => {
+          if (requested !== undefined && requested !== epoch) return new globalThis.Response('Container connection has ended', {status: 409});
+          admitted++;
+          const {socket} = await connect('fenced'); sockets.push(socket);
+          (socket as unknown as {accept(): void}).accept = () => {};
+          return {webSocket: socket, headers: new Headers({'x-weft-container-epoch': String(epoch)})} as unknown as globalThis.Response;
+        }, async () => {});
+        await fenced.call(api => api.info());
+        const closed = once(sockets[0]!, 'close'); sockets[0]!.close(); await closed;
+        epoch++;
+        await assert.rejects(fenced.call(api => api.info()), /connection has ended/);
+        assert.equal(admitted, 1, 'an old process reconnect is rejected before any container connection can start');
+        assert.equal(fenced.ended, true);
 
         // The production sync implementation against real computerd/FUSE, with a SQLite DO storage adapter.
         const computer = await connect('sync', computerPort);
