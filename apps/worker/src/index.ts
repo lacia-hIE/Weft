@@ -40,6 +40,8 @@ import { buildForkSeed } from '@deepseek-ai/dsh-session/fork';
 import { runHarnessTurn, initializeHarnessSession, renameHarnessSession, renameLiveHarnessSession, selectHarnessModel } from '../../../packages/harness-runtime/src/runtime.ts';
 import { selectLiveHarnessModel } from '../../../packages/harness-runtime/src/model-selection.ts';
 import { NativeSessionHost, NativeHostReplacedError } from './native-session-host.ts';
+import {readPluginRuntime, runtimeFailure} from '../../../packages/native-composition/src/runtime.ts';
+import type {PluginRuntimeSnapshot} from '../../../packages/native-composition/src/runtime-contract.ts';
 import {replaceNativePreset, nativePresetDefinition} from '../../../packages/native-composition/src/index.ts';
 import { NativePlugins, nativePlugins, type NativePluginEndpoint } from '../../../packages/native-plugins/src/host.ts';
 import nativePluginRemote from '../../../.generated/official-remotes/packages/extensions/cordis-host-runner/typert.remote-client.js';
@@ -146,9 +148,20 @@ export class SessionDO extends DurableObject<Env> {
   private tail: Promise<void> = Promise.resolve();
   private readonly requests = new Map<string, AbortController>();
   private nativeHost: NativeSessionHost | undefined;
+  private nativeHostFailure: PluginRuntimeSnapshot['failure'];
+  /** Inspect only the live owner. Reading diagnostics must never restore or create an Agent. */
+  async nativePluginRuntime(input: SessionScope): Promise<PluginRuntimeSnapshot> {
+    const scope = this.assertScope(input);
+    const exists = this.ctx.storage.sql.exec<{presentation: number}>('SELECT presentation FROM weft_session_config WHERE id=1').toArray()[0]?.presentation === 1;
+    const ctx = this.nativeHost?.ctx;
+    return {observedAt: Date.now(), sessionId: scope.sessionId, state: !exists ? 'missing' : ctx ? 'active' : this.nativeHostFailure ? 'failed' : this.nativeHostPromise ? 'loading' : 'inactive',
+      ...(this.nativeHostFailure ? {failure: this.nativeHostFailure} : {}),
+      ...(ctx ? await readPluginRuntime(ctx) : {entries: [], truncated: false})};
+  }
   private nativeHostPromise: Promise<NativeSessionHost> | undefined;
   private getNativeHost(scope: SessionScope): Promise<NativeSessionHost> {
     if (this.nativeHostPromise) return this.nativeHostPromise;
+    this.nativeHostFailure = undefined;
     const pending = this.exclusive(async () => {
       this.recoverNativePreset(scope);
       const stored = this.ctx.storage.sql.exec<{workspace_id: string; agent_document: string; presentation: number}>('SELECT workspace_id,agent_document,presentation FROM weft_session_config WHERE id=1').toArray()[0];
@@ -186,7 +199,7 @@ export class SessionDO extends DurableObject<Env> {
       return host;
     });
     this.nativeHostPromise = pending;
-    void pending.catch(() => {if (this.nativeHostPromise === pending) this.nativeHostPromise = undefined;});
+    void pending.catch(error => {if (this.nativeHostPromise === pending) {this.nativeHostFailure = runtimeFailure(error); this.nativeHostPromise = undefined;}});
     return pending;
   }
   private nativeCwd(sessionId: string): string {

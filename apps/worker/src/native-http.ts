@@ -68,6 +68,19 @@ async function cachedRoot(owner: ControlScope, control: ReturnType<typeof contro
 
 export async function handleNativeRequest(request: Request, env: Env, principal: Principal, environmentId?: string): Promise<Response | undefined> {
   const pathname = new URL(request.url).pathname;
+  const runtime = /^\/v1\/tenants\/([^/]+)\/native\/plugins\/runtime$/.exec(pathname);
+  if (runtime) {
+    if (runtime[1] !== principal.tenantId) throw new HttpError(403, 'Tenant access denied');
+    if (request.method !== 'GET') return new Response(null, {status: 405, headers: {allow: 'GET'}});
+    const scope = scopeSchema.safeParse({tenantId: principal.tenantId, sessionId: new URL(request.url).searchParams.get('sessionId'), ...(environmentId ? {environmentId} : {})});
+    if (!scope.success) throw new HttpError(400, 'A valid sessionId is required');
+    const owner = controlScope(principal.tenantId, environmentId);
+    const root = await cachedRoot(owner, controlFor(env, owner), scope.data.sessionId);
+    if (!root) throw new HttpError(404, 'Session not found');
+    const target = {...scope.data, sessionId: root};
+    const snapshot = await env.SESSIONS.getByName(sessionAddress(target)).nativePluginRuntime(target);
+    return Response.json(snapshot, {headers: {'cache-control': 'private, no-store'}});
+  }
   const upload = /^\/v1\/tenants\/([^/]+)\/native\/api\/session\/uploadFileBinary$/.exec(pathname);
   if (upload) {
     if (upload[1] !== principal.tenantId) throw new HttpError(403, 'Tenant access denied');
