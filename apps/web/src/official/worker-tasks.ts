@@ -41,9 +41,10 @@ async function request(sessionId: string, operation: 'list' | 'status' | 'cancel
 function useTasks(sessionId: string, enabled: boolean, id?: string) {
   const [value, setValue] = React.useState<JavaScriptList>();
   const [error, setError] = React.useState(false);
+  const [mutationError, setMutationError] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const [revision, refresh] = React.useReducer((n: number) => n + 1, 0);
-  React.useEffect(() => {setValue(undefined); setError(false);}, [sessionId, id]);
+  React.useEffect(() => {setValue(undefined); setError(false); setMutationError(false);}, [sessionId, id]);
   React.useEffect(() => {
     if (!enabled || busy) return;
     const abort = new AbortController();
@@ -63,12 +64,12 @@ function useTasks(sessionId: string, enabled: boolean, id?: string) {
     return () => {abort.abort(); clearTimeout(timer); document.removeEventListener('visibilitychange', visible);};
   }, [sessionId, enabled, id, revision, busy]);
   const cancel = async (task?: string) => {
-    setBusy(true); setError(false);
+    setBusy(true); setMutationError(false);
     try {setValue(await request(sessionId, task ? 'cancel' : 'cancelAll', task));}
-    catch {setError(true);}
+    catch {setMutationError(true);}
     finally {setBusy(false); refresh();}
   };
-  return {value, error, busy, refresh, cancel};
+  return {value, error: error || mutationError, busy, refresh: () => {setMutationError(false); refresh();}, cancel};
 }
 
 function TaskDetails({task, t}: {task: JavaScriptStatus; t: Translate}): React.ReactNode {

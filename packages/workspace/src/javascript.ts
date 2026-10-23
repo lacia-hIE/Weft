@@ -116,6 +116,7 @@ export class WorkspaceJavaScript {
       await this.storage.sync();
       return this.status(this.owned(owner, id));
     }
+    if (!('id' in request)) throw new Error('Task id is required');
     const job = this.owned(owner, request.id);
     const runtime = this.runtime(job);
     if (request.operation === 'cancel') {await this.cancel(job); return this.status(this.owned(owner, job.id));}
@@ -148,8 +149,15 @@ export class WorkspaceJavaScript {
   }
   private async cancel(job: Job): Promise<void> {
     if (!active(job.state)) return;
-    try {await this.runtime(job).killExec(job.id, {backend: job.backend});} catch (error) {if (!missing(error)) throw error;}
-    this.save(job, {...this.receipt(job), status: 'cancelled', pending: [], exitCode: 130});
+    try {await this.runtime(job).killExec(job.id, {backend: job.backend});}
+    catch (error) {
+      if (!missing(error)) throw error;
+      this.save(job, {id: job.id, status: 'expired', stdout: '', stderr: '', pending: [], error: {code: 'TASK_LOG_EXPIRED', message: 'The execution log is no longer available.', retryable: false}});
+      return;
+    }
+    // A task may have completed before cancellation reached the backend.
+    // Preserve that outcome rather than inventing a cancelled result.
+    await this.readStatus(job);
   }
   private async dispose(job: Job): Promise<void> {
     try {await this.runtime(job).disposeExec(job.id, {backend: job.backend});} catch (error) {if (!missing(error)) throw error;}

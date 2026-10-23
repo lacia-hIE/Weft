@@ -59,6 +59,9 @@ test('document conversions coalesce, persist across converters, do not cache fai
   const timed = new WorkerDocuments(hanging, cache, 5);
   await assert.rejects(timed.convert('timeout.html', bytes), error => error instanceof DocumentConversionError && error.code === 'DOCUMENT_TIMEOUT' && error.retryable);
   await assert.rejects(timed.convert('timeout.html', bytes), error => error instanceof DocumentConversionError && error.code === 'DOCUMENT_TIMEOUT');
+  const four = Promise.allSettled(['1','2','3','4'].map(name => timed.convert(name+'.html', bytes)));
+  await assert.rejects(timed.convert('5.html', bytes), error => error instanceof DocumentConversionError && error.code === 'DOCUMENT_BUSY' && error.retryable);
+  assert.ok((await four).every(result => result.status === 'rejected'));
   assert.equal(rows.size, 1);
 });
 
