@@ -22,6 +22,13 @@ test('official Team bundle card installs, selects its browser module and persist
   // The official catalog switch opens the progress dialog and installs immediately.
   await expect.poll(async () => (await rpc('pluginManager/listBundles', {})).find((row: {name: string}) => row.name === '@deepseek-ai/dsh-experimental-agent-team-profile')?.enabled).toBe(true);
   await page.reload();
+  await page.getByRole('button', {name: 'New session', exact: true}).first().click({timeout: 45000});
+  const teamAction = page.getByRole('button', {name: 'Agent Team', exact: true});
+  await teamAction.click({timeout: 45000});
+  const teamPanel = page.getByRole('dialog', {name: 'Agent Team', exact: true});
+  await expect(teamPanel.getByText('Members', {exact: true})).toBeVisible();
+  await expect(teamPanel.getByText('No shared tasks yet. Create them through the conversation.', {exact: true})).toBeVisible();
+  await page.keyboard.press('Escape');
   await page.getByRole('button', {name: 'Plugins', exact: true}).click({timeout: 45000});
   await expect(card.getByRole('switch')).toBeChecked();
   const boot = await (await request.get(base+'/plugins/boot')).json();
@@ -31,4 +38,5 @@ test('official Team bundle card installs, selects its browser module and persist
   await page.reload();
   await page.getByRole('button', {name: 'Plugins', exact: true}).click({timeout: 45000});
   await expect(card.getByRole('switch')).not.toBeChecked();
+  await expect(page.getByRole('button', {name: 'Agent Team', exact: true})).toHaveCount(0);
 });

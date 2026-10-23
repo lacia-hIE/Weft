@@ -68,8 +68,9 @@ test('official patch installs real Team tools, persists roster/tasks, restores p
     assert.equal(team.members.find(row => row.name === 'reviewer')?.id, childId);
     assert.equal(team.tasks[0]?.revision, 1);
     await run('team-lead', 'MESSAGE_TEAM');
-    for (let attempt = 0; attempt < 200 && !model.observations.some(row => row.child && row.body.includes('WAKE_TEAM')); attempt++) await new Promise(resolve => setTimeout(resolve, 25));
+    for (let attempt = 0; attempt < 150 && !model.observations.some(row => !row.child && row.body.includes('REVIEWER_ACK')); attempt++) await new Promise(resolve => setTimeout(resolve, 100));
     assert.ok(model.observations.some(row => row.child && row.body.includes('WAKE_TEAM')), 'a peer send cold-restores the teammate inbox');
+    assert.ok(model.observations.some(row => !row.child && row.body.includes('REVIEWER_ACK')), 'the teammate can send a real peer message back to its Lead');
     const disabled = await api.call<ChangeResult>('pluginManager/setBundleEnabled', {name: bundle, enabled: false});
     assert.equal(disabled.application, 'applied');
     assert.equal((await boot()).entries.some(row => row.id === client), false);
