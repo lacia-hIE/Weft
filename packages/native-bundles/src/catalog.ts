@@ -1,13 +1,16 @@
 import {applyEntryPatches, type PatchOptions} from '@deepseek-ai/cordis-plugin-include';
 import type {EntryOptions} from '@deepseek-ai/cordis-plugin-loader';
 import type {AgentRevision} from '../../control-plane/src/contracts.ts';
-import type {BundleInfo} from '@deepseek-ai/dsh-plugin-manager/types';
+import type {BundleInfo, PluginInfo, PluginEntryId} from '@deepseek-ai/dsh-plugin-manager/types';
 import definitions from '../../../.generated/official-optional-bundles.json';
+import metadata from '../../../.generated/plugin-meta.json';
 
 export const TEAM_BUNDLE = '@deepseek-ai/dsh-experimental-agent-team-profile';
 export const TEAM_CLIENT = '@deepseek-ai/dsh-experimental-client-ui-agent-team';
 export const optionalBundles = definitions;
 export interface BundleState {name: string; version: string; digest: string; enabled: boolean}
+const entryId = (name: string, id: string): PluginEntryId => `official-bundle:${name}:${id}` as PluginEntryId;
+const metaOf = (name: string) => (metadata.packages as Record<string, {title?: Record<string, string>; description?: Record<string, string>}>)[name];
 
 /** Exact shipped code only; a version or source outside this catalog cannot acquire trust. */
 export function shippedBundle(spec: string) {
@@ -43,12 +46,26 @@ export function optionalBundleInfo(states: readonly BundleState[]): BundleInfo[]
     const state = states.find(row => row.name === bundle.name);
     const inserts = bundle.patch.flatMap(row => 'insert' in row ? row.insert : []);
     return {name: bundle.name, version: bundle.version, description: bundle.description,
-      meta: {title: {en: 'Agent Teams', zh: '智能体团队'}}, official: true,
+      ...(metaOf(bundle.name) ? {meta: metaOf(bundle.name)!} : {}), official: true,
       availability: state ? 'profile' : 'missing', installed: Boolean(state), enabled: state?.enabled ?? false,
       installTarget: {spec: `${bundle.name}@${bundle.version}`, version: bundle.version}, optional: false, removable: Boolean(state),
-      rows: inserts.map(row => ({rowId: row.id, moduleName: row.name})),
+      rows: inserts.map(row => ({rowId: row.id, moduleName: row.name,
+        ...(metaOf(row.name) ? {meta: metaOf(row.name)!} : {}),
+        ...(state ? {entryId: entryId(bundle.name, row.id)} : {})})),
       overrides: bundle.patch.flatMap(row => 'id' in row ? [row.id] : []),
       ...(state && (state.digest !== bundle.digest || state.version !== bundle.version) ? {error: {code: 'incompatible-version' as const, diagnostic: 'Reinstall the version included in this deployment.'}} : {}),
     };
   });
+}
+
+/** Declared environment wiring, not fabricated live Fiber observations. */
+export function optionalBundlePlugins(states: readonly BundleState[]): PluginInfo[] {
+  return optionalBundleInfo(states).filter(bundle => bundle.installed).flatMap(bundle => bundle.rows.map(row => ({
+    entryId: entryId(bundle.name, row.rowId), moduleName: row.moduleName,
+    enabled: bundle.enabled, fiberPhase: null, readOnlyReason: 'management-required' as const,
+    meta: {...row.meta, description: {
+      en: 'Controlled by the official bundle. Applies to new Sessions; refresh to update browser plugins. Live Session state is not observed here.',
+      zh: '由官方组合包控制，应用于新会话；浏览器插件需刷新。此处不表示会话实时运行状态。',
+    }},
+  })));
 }

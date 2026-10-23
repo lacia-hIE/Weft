@@ -80,7 +80,7 @@ import {readNativePresets, type CompositionEndpoint} from '../../native-composit
 import {profileDefinitions} from '../../harness-profile/src/index.ts';
 import {manageNativePlugins} from '../../native-composition/src/manager.ts';
 import {OfficialBundleRegistry} from '../../native-bundles/src/registry.ts';
-import {composeBundleProfile, TEAM_CLIENT, TEAM_BUNDLE} from '../../native-bundles/src/catalog.ts';
+import {composeBundleProfile, optionalBundleInfo, optionalBundlePlugins, TEAM_CLIENT, TEAM_BUNDLE} from '../../native-bundles/src/catalog.ts';
 import {PackageInstaller} from '../../package-install/src/host.ts';
 import {mountWorkspace} from '../../workspace/src/provider.ts';
 import { ModelConfigurationError, type ModelEnvironment } from '../../model-provider/src/index.ts';
@@ -391,9 +391,9 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
       const volume = {...scope, workspaceId: 'default'};
       read = readNativePresets(profiles, defaultId, endpoint, args, ctx => mountWorkspace(ctx, {scope: volume, transport: this.env.WORKSPACES.getByName(workspaceAddress(volume)), cwd: '/workspace', fileTools: false}), enablement, this.ctx.storage).then(async response => {
         const result = await response.json() as {value: unknown};
-        if (endpoint === 'pluginManager/listBundles') result.value = [...result.value as unknown[], ...packages.bundles(), ...this.officialBundles().bundles()];
-        if (endpoint === 'pluginManager/listPlugins') result.value = [...result.value as unknown[], ...packages.plugins()];
-        if (endpoint === 'pluginInventory/list') {const inventory = result.value as {entries: unknown[]}; inventory.entries.push(...packages.plugins());}
+        if (endpoint === 'pluginManager/listBundles') result.value = [...result.value as unknown[], ...packages.bundles(), ...optionalBundleInfo(bundleStates)];
+        if (endpoint === 'pluginManager/listPlugins') result.value = [...result.value as unknown[], ...packages.plugins(), ...optionalBundlePlugins(bundleStates)];
+        if (endpoint === 'pluginInventory/list') {const inventory = result.value as {entries: unknown[]}; inventory.entries.push(...packages.plugins(), ...optionalBundlePlugins(bundleStates));}
         return JSON.stringify(result);
       });
       const reads = this.presetReads;
@@ -424,6 +424,9 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
     let args: Record<string, unknown>;
     try {args = method.input({strict: true}).create().parse(raw) as Record<string, unknown>;}
     catch {throw new RemoteError('gateway/bad-request', 'Invalid plugin management arguments', {});}
+    if (endpoint === 'pluginManager/setPluginEnabled' && optionalBundlePlugins(this.officialBundles().list()).some(row => row.entryId === args.id)) {
+      return Response.json({value: {changed: false, application: 'failed', stage: 'enable', target: args.id, error: {code: 'management-required'}}});
+    }
     // Trusted shipped bundle operations are admitted before the external npm
     // path, so even a public package with a familiar name cannot replace code.
     if (endpoint === 'pluginManager/inspect') {

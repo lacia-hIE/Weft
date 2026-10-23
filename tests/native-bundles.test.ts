@@ -13,7 +13,7 @@ const client = '@deepseek-ai/dsh-experimental-client-ui-agent-team';
 test('official patch installs real Team tools, persists roster/tasks, restores peer inboxes and preserves frozen Sessions', {timeout: 180000}, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'weft-teams-'));
   const model = nativeTeamModel();
-  const options = {browser: true, bindings: {MODEL_BACKEND: 'deepseek', DEEPSEEK_API_KEY: 'team-fixture', DEEPSEEK_BASE_URL: 'https://team-model.test/anthropic'}, outbound: model.outbound};
+  const options = {bindings: {MODEL_BACKEND: 'deepseek', DEEPSEEK_API_KEY: 'team-fixture', DEEPSEEK_BASE_URL: 'https://team-model.test/anthropic'}, outbound: model.outbound};
   let runtime = createRuntime(directory, options);
   const api = nativeClient(() => runtime);
   const other = nativeClient(() => runtime, 'default', 'beta');
@@ -44,6 +44,10 @@ test('official patch installs real Team tools, persists roster/tasks, restores p
     assert.equal(install.application, 'applied'); assert.equal(install.enabled, true);
     assert.equal((await boot()).entries.some(row => row.id === client), true);
     assert.equal((await other.call<BundleInfo[]>('pluginManager/listBundles', {})).find(row => row.name === bundle)?.installed, false);
+    const inventory = await api.call<{entries: {moduleName: string; enabled: boolean; fiberPhase: unknown}[]}>('pluginInventory/list', {});
+    const declared = inventory.entries.filter(row => row.moduleName.startsWith('@deepseek-ai/dsh-experimental-'));
+    assert.equal(declared.length, 3);
+    assert.ok(declared.every(row => row.enabled && row.fiberPhase === null));
     const presets = await api.call<unknown>('agentPresets/list', {});
     assert.doesNotMatch(JSON.stringify(presets), /waiting for agentTeams|Preset services require isolate realms/);
     await api.call('session/create', {request: {sessionId: 'team-lead', agentPreset: 'standard'}});
