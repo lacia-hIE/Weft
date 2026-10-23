@@ -8,7 +8,7 @@ export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     if (new URL(request.url).pathname !== '/_test/javascript') return worker.fetch(request, env, ctx);
     const {scope, addressScope = scope, owner, operation} = await request.json() as {scope: WorkspaceScope; addressScope?: WorkspaceScope; owner: string; operation: JavaScriptRequest};
-    try {return Response.json(await env.WORKSPACES.getByName(workspaceAddress(addressScope)).javascript(scope, owner, operation));}
+    try {return await env.WORKSPACES.getByName(workspaceAddress(addressScope)).javascript(scope, owner, operation);}
     catch (error) {return Response.json({error: error instanceof Error ? error.message : String(error)}, {status: 400});}
   },
 };

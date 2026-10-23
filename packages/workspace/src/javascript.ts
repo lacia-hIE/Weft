@@ -1,16 +1,17 @@
 import {WorkerJavaScriptBackend} from '@cloudflare/computer/backends/worker-javascript';
-import type {WorkspaceRuntime, WorkspaceRuntimeValue, WorkspaceRegisteredBackend, WorkspaceRuntimePendingCall} from '@cloudflare/computer';
+import {Workspace, type WorkspaceRuntimeValue, type WorkspaceObserver, type WorkspaceRuntimePendingCall} from '@cloudflare/computer';
+import {createHash} from 'node:crypto';
 import {z} from 'zod';
 import {workspacePath} from './protocol.ts';
 
 export const javascriptRequest = z.discriminatedUnion('operation', [
-  z.object({operation: z.literal('start'), source: z.string().min(1).max(262144), input: z.json().optional(), cwd: z.string(), writable: z.boolean().default(false), timeoutMs: z.number().int().min(1).max(600000).default(120000)}).strict(),
+  z.object({operation: z.literal('start'), source: z.string().min(1).max(262144), input: z.json().optional(), cwd: z.string(), root: z.string().default('/workspace'), writable: z.boolean().default(false), timeoutMs: z.number().int().min(1).max(600000).default(120000)}).strict(),
   z.object({operation: z.enum(['status', 'cancel']), id: z.uuid()}).strict(),
   z.object({operation: z.literal('answer'), id: z.uuid(), callId: z.string().min(1).max(256), approved: z.boolean()}).strict(),
 ]);
-export type JavaScriptRequest = z.infer<typeof javascriptRequest>;
-interface Job {id: string; owner: string; backend: string; cwd: string; created_at: number}
-export interface JavaScriptStatus {
+export type JavaScriptRequest = z.input<typeof javascriptRequest>;
+type Job = {id: string; owner: string; backend: string; cwd: string; root: string; writable: number; created_at: number; state: string};
+export type JavaScriptStatus = {
   id: string; status: 'running' | 'waiting' | 'completed' | 'failed' | 'cancelled';
   stdout: string; stderr: string; value?: WorkspaceRuntimeValue; exitCode?: number;
   pending: {callId: string; reason: string; since: number}[];
@@ -18,11 +19,16 @@ export interface JavaScriptStatus {
 
 /** Native replay journals stay in the WorkspaceDO; Agent lifetimes never own these tasks. */
 export class WorkspaceJavaScript {
-  readonly backends: WorkspaceRegisteredBackend[];
-  constructor(private readonly storage: DurableObjectStorage, loader: WorkerLoader | undefined) {
-    storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_javascript_jobs (id TEXT PRIMARY KEY, owner TEXT NOT NULL, backend TEXT NOT NULL, cwd TEXT NOT NULL, created_at INTEGER NOT NULL)');
-    this.backends = loader ? [false, true].map(writable => new WorkerJavaScriptBackend({
-      loader, id: writable ? 'weft-javascript-write' : 'weft-javascript-read', root: '/workspace', access: writable ? 'read-write' : 'read',
+  private readonly computers = new Map<string, Workspace>();
+  constructor(private readonly storage: DurableObjectStorage, private readonly loader: WorkerLoader | undefined, private readonly observer: WorkspaceObserver) {
+    storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_javascript_jobs (id TEXT PRIMARY KEY, owner TEXT NOT NULL, backend TEXT NOT NULL, cwd TEXT NOT NULL, root TEXT NOT NULL, writable INTEGER NOT NULL, created_at INTEGER NOT NULL, state TEXT NOT NULL)');
+  }
+  private runtime(job: Pick<Job, 'backend' | 'root' | 'writable'>): Workspace['runtime'] {
+    const cached = this.computers.get(job.backend);
+    if (cached) return cached.runtime;
+    if (!this.loader) throw new Error('This deployment has no JavaScript Worker Loader');
+    const backend = new WorkerJavaScriptBackend({
+      loader: this.loader, id: job.backend, root: job.root, access: job.writable ? 'read-write' : 'read',
       onInterrupt: 'replay', maxCpuMs: 30000, defaultTimeoutMs: 120000, maxTimeoutMs: 600000,
       maxResultBytes: 4194304, maxStdioBytes: 1048576, maxSourceBytes: 262144,
       maxRetainedExecutions: 256, retentionMs: 86400000, globalOutbound: null,
@@ -30,42 +36,56 @@ export class WorkspaceJavaScript {
         const text = z.string().trim().min(1).max(4000).parse(reason);
         return context.interrupt({reason: text});
       }}},
-    })) : [];
+    });
+    const computer = new Workspace({storage: this.storage, backends: [backend], observer: this.observer, output: false});
+    this.computers.set(job.backend, computer);
+    return computer.runtime;
   }
   private owned(owner: string, id: string): Job {
     const job = this.storage.sql.exec<Job>('SELECT * FROM weft_javascript_jobs WHERE id=? AND owner=?', id, owner).toArray()[0];
     if (!job) throw new Error('JavaScript task not found in this Session');
     return job;
   }
-  private async pending(runtime: WorkspaceRuntime, job: Job): Promise<WorkspaceRuntimePendingCall[]> {
+  private async pending(runtime: Workspace['runtime'], job: Job): Promise<WorkspaceRuntimePendingCall[]> {
     return (await runtime.pending()).filter(call => call.id === job.id && call.backend === job.backend);
   }
-  async call(runtime: WorkspaceRuntime, owner: string, raw: JavaScriptRequest): Promise<JavaScriptStatus> {
+  async call(owner: string, raw: unknown): Promise<JavaScriptStatus> {
     const request = javascriptRequest.parse(raw);
-    if (!this.backends.length) throw new Error('This deployment has no JavaScript Worker Loader');
+    if (!this.loader) throw new Error('This deployment has no JavaScript Worker Loader');
     if (request.operation === 'start') {
       const cwd = workspacePath(request.cwd);
-      // Completed executions expire with the native journal. Never discard a waiting task's owner.
+      // Bound history without removing the identity of a running or waiting task.
+      this.storage.sql.exec("DELETE FROM weft_javascript_jobs WHERE id IN (SELECT id FROM weft_javascript_jobs WHERE state IN ('completed','failed','cancelled') ORDER BY created_at DESC LIMIT -1 OFFSET 100)");
       if (this.storage.sql.exec<{n: number}>('SELECT COUNT(*) AS n FROM weft_javascript_jobs').one().n >= 256) throw new Error('JavaScript task capacity reached; finish or cancel old tasks first');
-      const id = crypto.randomUUID(), backend = request.writable ? 'weft-javascript-write' : 'weft-javascript-read';
-      this.storage.sql.exec('INSERT INTO weft_javascript_jobs VALUES (?,?,?,?,?)', id, owner, backend, cwd, Date.now());
+      const root = request.writable ? workspacePath(request.root) : '/workspace';
+      const id = crypto.randomUUID(), backend = 'weft-javascript-'+(request.writable ? 'write-' : 'read-')+createHash('sha256').update(root).digest('hex').slice(0, 12);
+      this.storage.sql.exec('INSERT INTO weft_javascript_jobs VALUES (?,?,?,?,?,?,?,?)', id, owner, backend, cwd, root, Number(request.writable), Date.now(), 'running');
+      const runtime = this.runtime({backend, root, writable: Number(request.writable)});
       try {
         const handle = await runtime.exec(request.source, {id, backend, cwd, encoding: 'utf8', timeoutMs: request.timeoutMs, ...(request.input === undefined ? {} : {input: request.input}), onInterrupt: 'replay', output: false});
         handle[Symbol.dispose]();
       } catch (error) {this.storage.sql.exec('DELETE FROM weft_javascript_jobs WHERE id=?', id); throw error;}
       await this.storage.sync();
-      return this.status(runtime, this.owned(owner, id));
+      return this.status(this.owned(owner, id));
     }
     const job = this.owned(owner, request.id);
+    const runtime = this.runtime(job);
     if (request.operation === 'cancel') await runtime.killExec(job.id, {backend: job.backend});
     if (request.operation === 'answer') {
       if (!(await this.pending(runtime, job)).some(call => call.callId === request.callId)) throw new Error('JavaScript approval is no longer waiting');
       await runtime.respond(job.id, request.callId, {approved: request.approved}, {backend: job.backend});
     }
     await this.storage.sync();
-    return this.status(runtime, job);
+    return this.status(job);
   }
-  private async status(runtime: WorkspaceRuntime, job: Job): Promise<JavaScriptStatus> {
+  async revokeWrites(owner: string): Promise<void> {
+    for (const job of this.storage.sql.exec<Job>("SELECT * FROM weft_javascript_jobs WHERE owner=? AND writable=1 AND state IN ('running','waiting')", owner).toArray()) {
+      await this.runtime(job).killExec(job.id, {backend: job.backend});
+      this.storage.sql.exec("UPDATE weft_javascript_jobs SET state='cancelled' WHERE id=?", job.id);
+    }
+  }
+  private async status(job: Job): Promise<JavaScriptStatus> {
+    const runtime = this.runtime(job);
     const handle = await runtime.getExec(job.id, {backend: job.backend, encoding: 'utf8', resume: 'full', output: false});
     const reader = handle.getReader();
     const snapshot: JavaScriptStatus = {id: job.id, status: 'running', stdout: '', stderr: '', pending: []};
@@ -84,11 +104,12 @@ export class WorkspaceJavaScript {
           break;
         }
       }
-    } finally {clearTimeout(timer); await reader.cancel(); handle[Symbol.dispose]();}
+    } finally {clearTimeout(timer); await reader.cancel(); reader.releaseLock();}
     if (snapshot.status === 'running') {
       snapshot.pending = (await this.pending(runtime, job)).map(call => ({callId: call.callId, reason: z.object({reason: z.string()}).parse(call.payload).reason, since: call.since}));
       if (snapshot.pending.length) snapshot.status = 'waiting';
     }
+    this.storage.sql.exec('UPDATE weft_javascript_jobs SET state=? WHERE id=?', snapshot.status, job.id);
     return snapshot;
   }
 }

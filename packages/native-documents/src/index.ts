@@ -25,7 +25,7 @@ export function mountWorkerDocuments(ctx: Context, ai: Pick<Ai, 'toMarkdown'> | 
         outputPath = workspacePath(output_path, cwd);
         if (!outputPath.endsWith('.md')) throw new Error('output_path must name a Markdown .md file');
         const destination = await ctx.fs.resolve(outputPath);
-        await ctx.fs.writeText(destination, result.markdown, {kind: 'createIfAbsent'}, exec.signal, exec.sandboxPolicy ?? ctx.sandboxPolicy.resolve());
+        await ctx.fs.writeText(destination, result.markdown, {kind: 'createIfAbsent'}, exec.signal, ctx.sandboxPolicy.resolve(exec.agent ? {session: exec.agent.session} : {}));
       }
       return {...result, markdown: result.markdown.slice(0, 20000), truncated: result.markdown.length > 20000, ...(outputPath ? {outputPath} : {})};
     },

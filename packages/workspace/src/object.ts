@@ -2,7 +2,7 @@ import {createHash} from 'node:crypto';
 import { DurableObject } from 'cloudflare:workers';
 import { FsError } from '@deepseek-ai/dsh-fs';
 import { WorkerShellBackend } from '@cloudflare/computer/backends/worker-shell';
-import {WorkspaceJavaScript, type JavaScriptRequest} from './javascript.ts';
+import {WorkspaceJavaScript} from './javascript.ts';
 import curlCommands from '@cloudflare/computer/shell/curl';
 import { LegacyContainerBackend } from '@cloudflare/computer/backends/container-legacy';
 import { CONTAINER_EGRESS_ADDRESS, CONTAINER_HOSTS, CONTAINER_TOUCH_MS, remoteContainerHost, type ContainerHostActivity } from './container-host.ts';
@@ -53,7 +53,6 @@ export class WorkspaceDO extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.admission = new ContainerAdmission(ctx.storage.sql);
-    this.javascriptTasks = new WorkspaceJavaScript(ctx.storage, env.LOADER);
     // Shell commands run in just-bash inside a Dynamic Worker whose filesystem calls come back
     // here through `WorkspaceServiceProxy`; public egress serves its curl command.
     const shell = env.LOADER ? new WorkerShellBackend({
@@ -83,20 +82,27 @@ export class WorkspaceDO extends DurableObject<Env> {
       this.containerConnection = connection;
       return connection;
     }} : undefined;
-    const backends = [...[shell, backend].filter(backend => backend !== undefined), ...this.javascriptTasks.backends];
-    this.files = new WorkspaceStore(ctx.storage, shell ? {backends, observer: shellPolicy(changes => {
+    const backends = [shell, backend].filter(backend => backend !== undefined);
+    const observer = shellPolicy(changes => {
       this.files.externalChanges(changes);
       for (const change of changes) this.invalidate(change.path);
-    }, () => [...this.sandboxes.values()])} : undefined);
+    }, () => [...this.sandboxes.values()]);
+    this.files = new WorkspaceStore(ctx.storage, shell ? {backends, observer} : undefined);
+    this.javascriptTasks = new WorkspaceJavaScript(ctx.storage, env.LOADER, observer);
   }
   /** The Workspace RPC surface for this object's own shell Dynamic Worker (via `WorkspaceServiceProxy`). */
   __getWorkspaceStub() { return this.files.stub(); }
 
-  async javascript(input: WorkspaceScope, owner: string, request: JavaScriptRequest) {
+  async javascript(input: WorkspaceScope, owner: string, request: unknown): Promise<Response> {
     const scope = workspaceScopeSchema.parse(input);
     if (!this.ctx.id.equals(this.env.WORKSPACES.idFromName(workspaceAddress(scope)))) throw new Error('Workspace scope mismatch');
     if (!/^[a-zA-Z0-9_-]{1,80}$/.test(owner)) throw new Error('Invalid Session owner');
-    return this.javascriptTasks.call(this.files.runtime, owner, request);
+    return Response.json(await this.javascriptTasks.call(owner, request));
+  }
+  async revokeJavaScriptWrites(input: WorkspaceScope, owner: string): Promise<void> {
+    const scope = workspaceScopeSchema.parse(input);
+    if (!this.ctx.id.equals(this.env.WORKSPACES.idFromName(workspaceAddress(scope)))) throw new Error('Workspace scope mismatch');
+    await this.javascriptTasks.revokeWrites(owner);
   }
 
   /** computerd's session upgrade from this workspace's container. */
