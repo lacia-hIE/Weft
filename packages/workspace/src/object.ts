@@ -91,7 +91,7 @@ export class WorkspaceDO extends DurableObject<Env> {
       for (const change of changes) this.invalidate(change.path);
     }, () => [...this.sandboxes.values()]);
     this.files = new WorkspaceStore(ctx.storage, shell ? {backends, observer} : undefined);
-    this.javascriptTasks = new WorkspaceJavaScript(ctx.storage, env.LOADER, observer);
+    this.javascriptTasks = new WorkspaceJavaScript(ctx.storage, env.LOADER, observer, () => ctx.storage.setAlarm(Date.now() + 30000));
     this.documents = new WorkerDocuments(env.AI, new SQLiteDocumentCache(ctx.storage.sql));
   }
   /** The Workspace RPC surface for this object's own shell Dynamic Worker (via `WorkspaceServiceProxy`). */

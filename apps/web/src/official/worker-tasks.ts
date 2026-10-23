@@ -15,7 +15,7 @@ interface Owner {sessionId: string; t: Translate}
 interface ToolOwner extends Owner {phase: string; block: {content?: {type: string; text?: string}[]; call?: {argsRaw?: string}; argsRaw?: string; isError?: boolean}}
 const unfinished = (task: JavaScriptStatus) => task.status === 'running' || task.status === 'waiting';
 const section: React.CSSProperties = {display: 'grid', gap: 8, padding: '12px 0', borderBottom: '0.5px solid var(--dsw-alias-border-l3)', color: 'var(--dsw-alias-label-secondary)'};
-const outputStyle: React.CSSProperties = {margin: 0, padding: 10, maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontSize: 12, background: 'var(--dsw-alias-background-secondary)', borderRadius: 8};
+const outputStyle: React.CSSProperties = {margin: 0, padding: 10, maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontSize: 12, background: 'var(--dsw-alias-markdown-code-block)', borderRadius: 8};
 
 export const name = 'weft-worker-tasks';
 export const inject = ['slots', 'locale'];
@@ -117,7 +117,7 @@ function TaskToolCard({sessionId, block, phase, t}: ToolOwner): React.ReactNode 
   return React.createElement('div', {'data-tool': 'javascript_task'},
     React.createElement(DisclosureRow, {title: t('task'), icon: React.createElement(IconCodeOutlineRegular, {size: 14}), open, expandable: true, expandOnRowClick: true, keepContentWhenOpen: true,
       running: !task && phase !== 'result', onToggle: () => setOpen(value => !value),
-      collapsedContent: React.createElement('span', {role: 'status'}, task ? t(task.status) : block.isError ? t('failed') : t(phase === 'preparing' ? 'preparing' : 'title')),
+      collapsedContent: React.createElement('span', {role: 'status', style: {marginLeft: 8}}, task ? t(task.status) : block.isError ? t('failed') : t(phase === 'preparing' ? 'preparing' : 'title')),
       headerAccessory: React.createElement(TaskCatalog, {sessionId, t}),
       children: React.createElement('div', {style: section},
         live.error ? React.createElement('p', {role: 'alert'}, t('error')) : null,

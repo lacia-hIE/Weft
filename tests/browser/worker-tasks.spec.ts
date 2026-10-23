@@ -12,6 +12,7 @@ test('native Worker task cards and catalog recover after reload and cancel the r
   await compose(page, 'WEFT_DURABLE_TASK_FIXTURE');
   await page.getByRole('button', {name: 'Send message', exact: true}).click();
   await page.getByRole('button', {name: /^Completed in /}).click({timeout: 30_000});
+  await page.getByRole('button', {name: 'Called tools', exact: true}).click();
   const card = page.locator('[data-tool="javascript_task"]');
   await expect(card.getByRole('status')).toHaveText('Awaiting approval', {timeout: 30_000});
   await card.getByRole('button', {name: 'JavaScript task', exact: false}).first().click();

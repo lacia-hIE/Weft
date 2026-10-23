@@ -29,7 +29,7 @@ const missing = (error: unknown) => /not found|no such execution|unknown executi
 export class WorkspaceJavaScript {
   private readonly computers = new Map<string, Workspace>();
   private readonly connections = new Map<string, WorkspaceModuleBackendHandle>();
-  constructor(private readonly storage: DurableObjectStorage, private readonly loader: WorkerLoader | undefined, private readonly observer: WorkspaceObserver) {
+  constructor(private readonly storage: DurableObjectStorage, private readonly loader: WorkerLoader | undefined, private readonly observer: WorkspaceObserver, private readonly wake: () => Promise<void>) {
     storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_javascript_jobs (id TEXT PRIMARY KEY, owner TEXT NOT NULL, backend TEXT NOT NULL, cwd TEXT NOT NULL, root TEXT NOT NULL, writable INTEGER NOT NULL, created_at INTEGER NOT NULL, state TEXT NOT NULL)');
     const columns = new Set(storage.sql.exec<{name: string}>('PRAGMA table_info(weft_javascript_jobs)').toArray().map(row => row.name));
     if (!columns.has('expires_at')) {storage.sql.exec('ALTER TABLE weft_javascript_jobs ADD COLUMN expires_at INTEGER NOT NULL DEFAULT 0'); storage.sql.exec('UPDATE weft_javascript_jobs SET expires_at=created_at+?', TASK_TTL);}
@@ -110,6 +110,7 @@ export class WorkspaceJavaScript {
       this.storage.sql.exec('INSERT INTO weft_javascript_jobs (id,owner,backend,cwd,root,writable,created_at,state,expires_at) VALUES (?,?,?,?,?,?,?,?,?)', id, owner, backend, cwd, root, Number(request.writable), now, 'running', now + TASK_TTL);
       const runtime = this.runtime({backend, root, writable: Number(request.writable)});
       try {
+        await this.wake();
         const handle = await runtime.exec(request.source, {id, backend, cwd, encoding: 'utf8', timeoutMs: request.timeoutMs, ...(request.input === undefined ? {} : {input: request.input}), onInterrupt: 'replay', output: false});
         handle[Symbol.dispose]();
       } catch (error) {this.storage.sql.exec('DELETE FROM weft_javascript_jobs WHERE id=?', id); throw error;}
@@ -122,8 +123,10 @@ export class WorkspaceJavaScript {
     if (request.operation === 'cancel') {await this.cancel(job); return this.status(this.owned(owner, job.id));}
     if (request.operation === 'answer') {
       if (!(await this.pending(runtime, job)).some(call => call.callId === request.callId)) throw new Error('JavaScript approval is no longer waiting');
-      await runtime.respond(job.id, request.callId, {approved: request.approved}, {backend: job.backend});
       job.expires_at = job.created_at + TASK_TTL;
+      this.storage.sql.exec("UPDATE weft_javascript_jobs SET state='running',expires_at=? WHERE id=?", job.expires_at, job.id);
+      await this.wake();
+      await runtime.respond(job.id, request.callId, {approved: request.approved}, {backend: job.backend});
     }
     await this.storage.sync();
     return this.status(job);
@@ -149,6 +152,9 @@ export class WorkspaceJavaScript {
   }
   private async cancel(job: Job): Promise<void> {
     if (!active(job.state)) return;
+    job.expires_at = job.created_at + TASK_TTL;
+    this.storage.sql.exec("UPDATE weft_javascript_jobs SET state='running',expires_at=? WHERE id=?", job.expires_at, job.id);
+    await this.wake();
     try {await this.runtime(job).killExec(job.id, {backend: job.backend});}
     catch (error) {
       if (!missing(error)) throw error;
