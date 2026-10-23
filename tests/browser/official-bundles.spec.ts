@@ -27,6 +27,7 @@ test('official Team bundle card installs, selects its browser module and persist
   // New session is the draft composer; the original header belongs to a real conversation.
   await compose(page, 'Verify the official Team panel');
   await page.getByRole('button', {name: 'Send message', exact: true}).click();
+  await page.getByRole('treeitem').filter({hasText: 'Verify the official Team panel'}).click({timeout: 45000});
   const teamAction = page.getByRole('button', {name: 'Agent Team', exact: true});
   await teamAction.click({timeout: 45000});
   const teamPanel = page.getByRole('dialog', {name: 'Agent Team', exact: true});
