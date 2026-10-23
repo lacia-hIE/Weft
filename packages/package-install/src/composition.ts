@@ -31,7 +31,9 @@ export function composeInstalledBundle(rows: Record<string, unknown>[], modules:
     const privateContext = ctx.isolate('loader');
     const fiber = privateContext.plugin(BundleLoader, {baseUrl: 'https://installed.invalid/'});
     await fiber.await();
-    const loader = privateContext.loader;
+    // The service belongs to the Loader's own fiber. Its parent does not inject
+    // this newly provided service and Cordis correctly rejects parent.loader.
+    const loader = fiber.ctx.loader;
     for (const row of rows) await loader.create(structuredClone(row) as unknown as EntryOptions);
     const visit = async (entries: Iterable<ReturnType<typeof loader.resolve>>): Promise<void> => {
       for (const entry of entries) {
