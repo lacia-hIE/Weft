@@ -28,6 +28,7 @@ export function apply(ctx: TasksContext): void {
   ctx.effect(() => ctx.locale.register(NS, {zh, en}), 'weft.worker-tasks: dictionaries');
   let cards: {dispose(): Promise<void>} | undefined;
   let closed = false, revision = 0;
+  let transition = Promise.resolve();
   const reconcile = async () => {
     const current = ++revision;
     try {
@@ -35,15 +36,23 @@ export function apply(ctx: TasksContext): void {
       if (!response.ok) return;
       const settings = await response.json() as WorkerPluginSettings;
       if (closed || current !== revision) return;
-      const enabled = settings.bundles.javascript && settings.cards.enabled;
-      if (enabled && !cards) cards = ctx.plugin(TaskCards);
-      else if (!enabled && cards) {const old = cards; cards = undefined; await old.dispose();}
+      transition = transition.then(async () => {
+        if (closed || current !== revision) return;
+        const enabled = settings.bundles.javascript && settings.cards.enabled;
+        if (enabled && !cards) cards = ctx.plugin(TaskCards);
+        else if (!enabled && cards) {await cards.dispose(); cards = undefined;}
+      });
+      await transition;
     } catch { /* Keep the last known UI on a transient connection failure. */ }
   };
   ctx.remote.$on('settings/document-updated', () => {void reconcile();});
   ctx.remote.$on('plugin-manager/changed', () => {void reconcile();});
   ctx.on('connection/reset', () => {void reconcile();});
-  ctx.effect(() => () => {closed = true; revision++; for (const store of stores.values()) store.stop(); stores.clear();}, 'weft.worker-tasks: lifetime');
+  ctx.effect(() => {
+    const visible = () => {for (const {store} of stores.values()) store.refresh(false);};
+    document.addEventListener('visibilitychange', visible);
+    return () => {closed = true; revision++; document.removeEventListener('visibilitychange', visible); for (const {store} of stores.values()) store.stop(); stores.clear();};
+  }, 'weft.worker-tasks: lifetime');
   void reconcile();
   ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register({name: 'conversation.session.header.utilities', id: 'weft-worker-tasks', order: -6, locale: NS}, TaskCatalog));
 }
@@ -63,22 +72,21 @@ async function request(sessionId: string, operation: 'list' | 'status' | 'cancel
   return await response.json() as JavaScriptList | JavaScriptStatus;
 }
 
-const stores = new Map<string, WorkerTaskStore>();
+const stores = new Map<string, {store: WorkerTaskStore; consumers: number}>();
 function useTasks(sessionId: string, enabled: boolean, id?: string, details = false) {
   const key = location.pathname+':'+sessionId;
-  const store = React.useMemo(() => {
-    let store = stores.get(key);
-    if (!store) {store = new WorkerTaskStore(sessionId, request, () => document.hidden, () => {}); stores.set(key, store);}
-    return store;
+  const record = React.useMemo(() => {
+    let record = stores.get(key);
+    if (!record) {record = {store: new WorkerTaskStore(sessionId, request, () => document.hidden, () => {}), consumers: 0}; stores.set(key, record);}
+    return record;
   }, [key, sessionId]);
+  const {store} = record;
   const subscribe = React.useCallback((listener: () => void) => enabled ? store.subscribe(listener, id, details) : () => {}, [store, enabled, id, details]);
   const state = React.useSyncExternalStore(subscribe, store.getSnapshot);
   React.useEffect(() => {
-    if (!enabled) return;
-    const visible = () => store.refresh(false);
-    document.addEventListener('visibilitychange', visible);
-    return () => document.removeEventListener('visibilitychange', visible);
-  }, [store, enabled]);
+    record.consumers++; stores.set(key, record);
+    return () => {if (--record.consumers === 0) {store.stop(); if (stores.get(key) === record) stores.delete(key);}};
+  }, [key, record, store]);
   return {...state, refresh: () => store.refresh(), cancel: store.cancel};
 }
 
@@ -86,7 +94,7 @@ function CatalogTask({sessionId, task, t, cancel, busy}: Owner & {task: JavaScri
   const [open, setOpen] = React.useState(false);
   const state = useTasks(sessionId, open, task.id, true);
   return React.createElement('section', {style: section, 'data-task-id': task.id},
-    React.createElement(DisclosureRow, {title: task.id, open, expandable: true, expandOnRowClick: true, keepContentWhenOpen: true,
+    React.createElement(DisclosureRow, {title: task.id, icon: React.createElement(IconCodeOutlineRegular, {size: 14}), open, expandable: true, expandOnRowClick: true, keepContentWhenOpen: true,
       onToggle: () => setOpen(value => !value), collapsedContent: React.createElement('span', {role: 'status'}, t(task.status)),
       headerAccessory: unfinished(task) ? React.createElement(Button, {variant: 'outline', size: 'sm', disabled: busy, onClick: () => {void cancel(task.id);}}, t('cancel')) : null,
       children: state.details.has(task.id) ? React.createElement(TaskDetails, {task: state.details.get(task.id)!, t}) : React.createElement('p', {role: state.error ? 'alert' : 'status'}, t(state.error ? 'error' : 'loading'))}));

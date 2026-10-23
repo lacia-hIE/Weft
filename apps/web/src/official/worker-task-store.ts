@@ -25,7 +25,7 @@ export class WorkerTaskStore {
     else if (details && id && !this.snapshot.details.has(id)) this.refresh(false);
     return () => {
       this.subscribers.delete(listener);
-      if (!this.subscribers.size) {this.stop(); this.idle();}
+      if (!this.subscribers.size) {this.stop(); this.snapshot = {...this.snapshot, details: new Map()}; this.idle();}
     };
   }
   stop() {this.generation++; this.abort?.abort(); this.abort = undefined; clearTimeout(this.timer); this.timer = undefined;}

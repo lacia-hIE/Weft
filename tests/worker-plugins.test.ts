@@ -7,6 +7,7 @@ import {createRuntime, tenantId, url} from './helpers/miniflare.ts';
 import {nativeClient} from './helpers/native.ts';
 import {nativeFixtureResponse} from './helpers/native-plugin-model.ts';
 import type {BundleInfo, ChangeResult, PluginInfo} from '@deepseek-ai/dsh-plugin-manager/types';
+import type {V4FetchHandler} from 'miniflare';
 
 test('Worker bundles use native patches, isolate settings, and unload/reload tools in a live Session', {timeout: 120000}, async () => {
   for (const kind of ['javascript', 'documents']) {
@@ -17,11 +18,12 @@ test('Worker bundles use native patches, isolate settings, and unload/reload too
   }
   const observations: string[][] = [];
   const directory = await mkdtemp(join(tmpdir(), 'weft-worker-plugins-'));
-  const options = {browser: true, bindings: {MODEL_BACKEND: 'deepseek', DEEPSEEK_API_KEY: 'plugin-test', DEEPSEEK_BASE_URL: 'https://worker-plugins.test/anthropic'}, outbound: async (request: Request) => {
+  const outbound: V4FetchHandler = async request => {
     const body = await request.json() as {tools?: {name: string}[]};
     observations.push((body.tools ?? []).map(tool => tool.name));
     return nativeFixtureResponse();
-  }};
+  };
+  const options = {browser: true, bindings: {MODEL_BACKEND: 'deepseek', DEEPSEEK_API_KEY: 'plugin-test', DEEPSEEK_BASE_URL: 'https://worker-plugins.test/anthropic'}, outbound};
   let runtime = createRuntime(directory, options);
   const api = nativeClient(() => runtime), other = nativeClient(() => runtime, 'other');
   const run = async () => {
