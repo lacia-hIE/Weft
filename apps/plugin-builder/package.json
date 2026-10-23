@@ -1,1 +1,1 @@
-{"name":"weft-plugin-builder","private":true,"type":"module","dependencies":{"esbuild":"0.28.2"}}
+{"name":"weft-plugin-builder","private":true,"type":"module","dependencies":{"esbuild":"0.28.2","js-yaml":"^4.3.2"}}

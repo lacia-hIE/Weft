@@ -81,6 +81,9 @@ import {profileDefinitions} from '../../harness-profile/src/index.ts';
 import {manageNativePlugins} from '../../native-composition/src/manager.ts';
 import {OfficialBundleRegistry} from '../../native-bundles/src/registry.ts';
 import {availableBundleStates, composeBundleProfile, optionalBundleInfo, optionalBundlePlugins, TEAM_CLIENT, TEAM_BUNDLE} from '../../native-bundles/src/catalog.ts';
+import {Context} from '@deepseek-ai/cordis';
+import {NativePluginPlatform} from '../../native-plugins/src/platform.ts';
+import {permissionSchema} from '../../package-install/src/contracts.ts';
 import {PackageInstaller} from '../../package-install/src/host.ts';
 import {mountWorkspace} from '../../workspace/src/provider.ts';
 import { ModelConfigurationError, type ModelEnvironment } from '../../model-provider/src/index.ts';
@@ -346,6 +349,13 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
         if (!exported.PluginBuilderDO) throw new Error('Plugin builder is unavailable');
         return exported.PluginBuilderDO.getByName(this.ctx.id.toString()).build(input);
       },
+      validate: async artifact => {
+        if (!artifact.host) return;
+        const context = new Context(), platform = new NativePluginPlatform(this.ctx, (this.env as TenantEnvironment & {LOADER?: WorkerLoader}).LOADER, scope);
+        const runId = 'bundle-inspect-'+crypto.randomUUID();
+        try {await platform.evaluate(context, 'inspect:'+artifact.name, runId, '', () => () => {}, {module: artifact.host, services: ['fs','tools','timer']});}
+        finally {await platform.release(runId); await context.fiber.dispose();}
+      },
       changed: async () => {this.presetReads.clear(); await this.nativeEvent(scope, 'plugin-manager/changed', [{reason: 'install'}]);},
       revoke: async name => {
         const sessions = await this.sessionIndex(scope);
@@ -366,12 +376,12 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
     const request = z.discriminatedUnion('operation', [
       z.object({operation: z.literal('list')}).strict(),
       z.object({operation: z.literal('install'), spec: z.string().max(250), requestId: z.string().max(100)}).strict(),
-      z.object({operation: z.literal('approve'), name: z.string().max(214), digest: z.string().regex(/^[a-f0-9]{64}$/)}).strict(),
+      z.object({operation: z.literal('approve'), name: z.string().max(214), digest: z.string().regex(/^[a-f0-9]{64}$/), permissions: permissionSchema.optional()}).strict(),
       z.object({operation: z.literal('review'), name: z.string().max(214), digest: z.string().regex(/^[a-f0-9]{64}$/)}).strict(),
     ]).parse(raw);
     const packages = this.packages(scope);
     if (request.operation === 'install') return Response.json(await packages.start(request.spec, request.requestId), {status: 202});
-    if (request.operation === 'approve') {await packages.approve(request.name, request.digest); return Response.json({ok: true});}
+    if (request.operation === 'approve') {await packages.approve(request.name, request.digest, request.permissions); return Response.json({ok: true});}
     if (request.operation === 'review') return Response.json(await packages.artifact(request.name, request.digest, false));
     return Response.json(packages.list());
   }
@@ -467,7 +477,7 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
         const job = await packages.start(String(args.spec), options.requestId ?? crypto.randomUUID());
         const result = await packages.wait(job.id);
         return Response.json({value: {changed: result?.phase === 'review', application: result?.phase === 'review' ? 'applied' : 'failed', stage: 'install', target: args.spec,
-          ...(result?.phase === 'review' ? {warnings: ['Installed disabled. Review the exact artifact and permissions in Package installations to activate.']} : {error: {code: 'operation-error', diagnostic: result?.error ?? 'Installation did not complete'}})}});
+          ...(result?.phase === 'review' ? {warnings: ['Installed disabled. Review the patch, exact artifact and capabilities on this bundle’s detail page to activate.']} : {error: {code: 'operation-error', diagnostic: result?.error ?? 'Installation did not complete'}})}});
       } catch (error) {return Response.json({value: {changed: false, application: 'failed', stage: 'install', target: args.spec, error: {code: 'operation-error', diagnostic: error instanceof Error ? error.message : String(error)}}});}
     }
     const response = await manageNativePlugins({

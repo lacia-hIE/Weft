@@ -34,7 +34,7 @@
 - 执行：Host 模块沿用现有动态 Cordis 插件的路径，在隔离的 Dynamic Worker facet 中运行，只能通过既有 RPC 访问 Harness；Client 模块经私有 UI 资产路径加载。审批沿用现有“精确版本审批”，审批对象是包名、版本与 integrity。
 - 兼容性：打包阶段检查对 `child_process`、原生扩展、`node:fs` 写入等的依赖；不满足 Dynamic Worker 能力的包在安装前拒绝，并在市场页面显示原因。
 
-当前落地：独立离线构建容器、私有 R2 产物、EnvironmentDO 安装与审批记录、受限 ESM Host facet 和 Client 加载器已接通。第一版通过 weft.plugin ABI 明确兼容性，不承诺任意 npm 或原版 bundle 可运行；不支持安装脚本、私有源、Git 和本地路径。市场 Discover 页仍按原版实验 bundle 的启用规则处理。
+当前落地：独立离线构建容器、私有 R2 产物、EnvironmentDO 安装与审批记录、受限 ESM Host facet 和 Client 加载器已接通。安装使用原版 dsh.bundle.patch 和标准 Cordis 导出，保留隔离构建与精确审批；不承诺所有依赖 Node 或未桥接服务的插件可运行；不支持安装脚本、私有源、Git 和本地路径。市场 Discover 页仍按原版实验 bundle 的启用规则处理。
 
 验证：索引阶段用 `https://` 夹具索引测试 `search` 分页、缓存与错误；安装阶段测试 integrity 不符、不兼容包拒绝、审批后 Host 在 facet 中运行、重建后恢复。
 

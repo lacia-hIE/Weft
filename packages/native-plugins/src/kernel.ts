@@ -1,4 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
+import * as cordis from '@deepseek-ai/cordis';
+import {composeInstalledBundle} from '../../package-install/src/composition.ts';
 import { Context, Inject, type Fiber, type Plugin } from '@deepseek-ai/cordis';
 import Timer from '@deepseek-ai/cordis-plugin-timer';
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt';
@@ -31,6 +33,7 @@ export class PluginFacet extends DurableObject<KernelEnv> {
     private preparing: Promise<void> | undefined;
     private starting: Promise<void> | undefined;
     private stopped = false;
+    private bundle = false;
     private readonly handlers = new Map<string, (args: unknown) => Promise<unknown>>();
     private readonly operations = new Map<string, AbortController>();
     private readonly cancelled = new Set<string>();
@@ -54,6 +57,8 @@ export class PluginFacet extends DurableObject<KernelEnv> {
                         return result;
                     }])));
             const harness = {
+                cordis, tools: {defineTool: sandboxDefineTool},
+                compose: (rows: Record<string, unknown>[], modules: Record<string, unknown>) => {this.bundle = true; return composeInstalledBundle(rows, modules, plugin => this.guard(plugin));},
                 defineTool: sandboxDefineTool, registerTool: sandboxRegisterTool,
                 handle: (method: unknown, fn: unknown) => {
                     const handler = normalizeHandler(method, fn);
@@ -80,9 +85,16 @@ export class PluginFacet extends DurableObject<KernelEnv> {
         await this.prepare();
         await (this.starting ??= (async () => {
             const plugin = this.plugin!;
-            const provided = new Set<string>(this.env.ALLOWED ?? ['tools', 'timer', 'fs']);
-            // systemPrompt exists only to support the isolated ToolRuntime. Exposing
-            // it would silently modify a local prompt instead of the owning Agent.
+            const fiber = this.fiber = this.root!.plugin(this.bundle ? plugin : this.guard(plugin));
+            await fiber.await();
+            const missing = Object.keys(fiber.inject).filter(name => this.root!.get(name) === undefined);
+            if (missing.length)
+                throw new Error('Dynamic Host services are not bridged: ' + missing.join(', '));
+        })());
+        return this.metadata();
+    }
+    private guard(plugin: Plugin): Plugin {
+        const provided = new Set<string>(this.env.ALLOWED ?? ['tools', 'timer', 'fs']);
             const facade = (ctx: Context) => new Proxy(ctx, {
                 get(target, key) {
                     if (typeof key === 'string' && ['tools', 'timer', 'fs'].includes(key) && !provided.has(key))
@@ -100,14 +112,8 @@ export class PluginFacet extends DurableObject<KernelEnv> {
                     return Reflect.get(target, key);
                 }
             });
-            const isolated: Plugin.Object = { ...plugin, inject: plugin.inject!, apply: (ctx, config) => typeof plugin === 'function' ? Reflect.apply(plugin, undefined, [facade(ctx), config]) : plugin.apply(facade(ctx), config) };
-            const fiber = this.fiber = this.root!.plugin(guardedPlugin(isolated, error => { throw error; }));
-            await fiber.await();
-            const missing = Object.keys(fiber.inject).filter(name => this.root!.get(name) === undefined);
-            if (missing.length)
-                throw new Error('Dynamic Host services are not bridged: ' + missing.join(', '));
-        })());
-        return this.metadata();
+        const isolated: Plugin.Object = {...plugin, ...(plugin.inject === undefined ? {} : {inject: plugin.inject}), apply: (ctx, config) => typeof plugin === 'function' ? Reflect.apply(plugin, undefined, [facade(ctx), config]) : plugin.apply(facade(ctx), config)};
+        return guardedPlugin(isolated, error => {throw error;});
     }
     async metadata() {
         await this.prepare();

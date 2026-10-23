@@ -15,18 +15,21 @@ export function archiveFiles(files: Record<string, string>): Buffer {
   }
   return gzipSync(Buffer.concat([...blocks, Buffer.alloc(1024)]));
 }
-export function packageFixture(options: {name?: string; version?: string; files?: Record<string, string>; declaration?: object; dependencies?: Record<string, string>; scripts?: Record<string, string>} = {}) {
+export function packageFixture(options: {name?: string; version?: string; files?: Record<string, string>; patch?: object[]; client?: boolean; dependencies?: Record<string, string>; scripts?: Record<string, string>} = {}) {
   const name = options.name ?? '@weft-fixture/counter', version = options.version ?? '1.2.3';
-  const declarationRaw = options.declaration ?? {abi: 'weft-plugin-v1', host: './host.js', client: './client.js', permissions: {files: 'write', tools: false, timer: false, client: true}};
-  const manifest = {name, version, description: 'Fixture package', weft: {plugin: declarationRaw}, ...(options.dependencies ? {dependencies: options.dependencies} : {}), ...(options.scripts ? {scripts: options.scripts} : {})};
-  const bytes = archiveFiles({'package.json': JSON.stringify(manifest),
-    'host.js': 'export default sdk=>({inject:["fs"],apply(ctx){ctx.effect(()=>sdk.handle("save",async value=>{const target=await ctx.fs.resolve("/workspace/package-result.txt");await ctx.fs.writeText(target,String(value));return {saved:true}}))}});',
-    'client.js': 'import React from "react";export default sdk=>({inject:["slots"],apply(ctx){ctx.slots.register({name:"conversation.session.header.utilities",id:"package-fixture"},()=>React.createElement("button",{onClick:()=>sdk.host.call("save","client")},"Package save"))}});',
+  const declarationRaw = {patch: './cordis.patch.yml'};
+  const patch = options.patch ?? [{insert: [{id: 'counter', name, config: {filename: '/workspace/package-result.txt', value: 'original'}}]}, {id: 'counter', config: {filename: '/workspace/package-result.txt', value: 'from-patch'}}];
+  const manifest = {name, version, description: 'Fixture package', main: './host.js', exports: {'.': './host.js', './client': './client.js'},
+    dsh: {bundle: declarationRaw, ...(options.client === false ? {} : {client: {platform: 'web'}})},
+    ...(options.dependencies ? {dependencies: options.dependencies} : {}), ...(options.scripts ? {scripts: options.scripts} : {})};
+  const bytes = archiveFiles({'package.json': JSON.stringify(manifest), 'cordis.patch.yml': JSON.stringify(patch),
+    'host.js': `import {defineTool} from '@deepseek-ai/dsh-tools';export const inject=['fs','tools'];export const Config=value=>value;export function apply(ctx,config){ctx.tools.register(defineTool({name:'package_save',description:'Save a value from the native bundle configuration',parameters:{},output:{schema:{type:'json'},render:()=>[]},execute:async()=>{const target=await ctx.fs.resolve(config.filename);await ctx.fs.writeText(target,config.value);return {saved:true,value:config.value}}}))}`,
+    'client.js': 'import React from "react";export const inject=["slots"];export function apply(ctx){ctx.slots.register({name:"conversation.session.header.utilities",id:"package-fixture"},()=>React.createElement("button",null,"Package active"))}',
     ...options.files,
   });
   const tarball = `https://registry.npmjs.org/${name}/-/counter-${version}.tgz`;
   const integrity = 'sha512-' + createHash('sha512').update(bytes).digest('base64');
   const lock = [{name, version, integrity, tarball}];
   return {name, version, manifest: {...manifest, dist: {tarball, integrity}}, bytes,
-    input: {abi: 'weft-plugin-v1', name, version, declarationRaw, declaration: declarationSchema.parse(declarationRaw), lock, packages: [{name, version, bytes: bytes.toString('base64')}]}};
+    input: {name, version, declarationRaw, declaration: declarationSchema.parse(declarationRaw), lock, packages: [{name, version, bytes: bytes.toString('base64')}]}};
 }

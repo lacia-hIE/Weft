@@ -6,94 +6,75 @@ import {join} from 'node:path';
 import {Response} from 'miniflare';
 import {buildPackage} from '../apps/plugin-builder/server.mjs';
 import {packageFixture} from './helpers/package-fixture.ts';
+import {packageModel} from './helpers/package-model.ts';
 import {createRuntime, tenantId, url} from './helpers/miniflare.ts';
 import {nativeClient} from './helpers/native.ts';
-import type {InstallJob, Installation, Artifact} from '../packages/package-install/src/contracts.ts';
+import type {Installation, Artifact} from '../packages/package-install/src/contracts.ts';
 import {artifactKey} from '../packages/package-install/src/contracts.ts';
 
-test('package installation reviews exact artifacts, runs isolated Host modules and survives restart with immediate revocation', {timeout: 120_000}, async () => {
-  const fixture = packageFixture(); let builds = 0;
-  const directory = await mkdtemp(join(tmpdir(), 'weft-packages-'));
-  const options: NonNullable<Parameters<typeof createRuntime>[1]> = {packages: true,
-    outbound: async request => {
-      const address = new URL(request.url);
-      if (address.href === fixture.manifest.dist.tarball) return new Response(fixture.bytes, {headers: {'content-type': 'application/octet-stream'}});
-      if (decodeURIComponent(address.pathname) === `/${fixture.name}/${fixture.version}`) return Response.json(fixture.manifest);
-      return new Response('not found', {status: 404});
-    },
-    packageBuilder: async request => {builds++; return Response.json(await buildPackage(JSON.parse(await request.text())));},
+test('original bundle installs through native manager, applies patches, runs standard tools and restores with exact approval', {timeout: 150000}, async () => {
+  const fixture = packageFixture(), model = packageModel(); let builds=0;
+  const directory = await mkdtemp(join(tmpdir(),'weft-native-bundle-'));
+  const options: NonNullable<Parameters<typeof createRuntime>[1]> = {packages:true,
+    bindings:{MODEL_BACKEND:'deepseek',DEEPSEEK_API_KEY:'package-fixture',DEEPSEEK_BASE_URL:'https://package-model.test/anthropic'},
+    outbound:async (request, mf) => {
+      if (new URL(request.url).hostname==='package-model.test') return model.outbound(request,mf);
+      return request.url===fixture.manifest.dist.tarball ? new Response(fixture.bytes) : Response.json(fixture.manifest);
+    }, packageBuilder:async request=>{builds++;return Response.json(await buildPackage(JSON.parse(await request.text())));},
   };
-  let runtime = createRuntime(directory, options); const api = nativeClient(() => runtime);
-  const base = `/v1/tenants/${tenantId('alpha')}/environments/default/native`;
-  const call = async <T>(body?: object) => {
-    const response = await runtime.dispatchFetch(url('alpha', base+'/package-installations'), body ? {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify(body)} : {});
-    assert.ok(response.ok, await response.clone().text()); return response.json() as Promise<T>;
+  let runtime=createRuntime(directory,options); const api=nativeClient(()=>runtime);
+  const base=`/v1/tenants/${tenantId('alpha')}/environments/default`;
+  const operation=async (body?:object)=>runtime.dispatchFetch(url('alpha',base+'/native/package-installations'),body?{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}:{});
+  const installed=async()=> (await (await operation()).json() as {installations:Installation[]}).installations[0]!;
+  const run=async(sessionId:string)=>{
+    const follow=await api.follow(sessionId);await follow.next();
+    try {await api.call('session/prompt',{request:{sessionId,requestId:crypto.randomUUID(),mode:'queue',content:[{type:'text',text:'SAVE_PACKAGE '+crypto.randomUUID()}]}});for(;;){const frame=await follow.next();if(frame.type==='event'&&frame.event.type==='turn/end')break;}}
+    finally{await follow.close();}
   };
-  const list = () => call<{installations: Installation[]; jobs: InstallJob[]}>();
   try {
-    assert.equal((await list()).installations.length, 0);
-    const id = crypto.randomUUID(); await call({operation: 'install', spec: `${fixture.name}@${fixture.version}`, requestId: id});
-    for (let attempt = 0; attempt < 200; attempt++) {const job = (await list()).jobs.find(row => row.id === id); if (job?.phase === 'review' || job?.phase === 'failed') break; await new Promise(resolve => setTimeout(resolve, 25));}
-    const state = await list(); assert.equal(state.jobs[0]?.phase, 'review', JSON.stringify(state.jobs));
-    const row = state.installations[0]!; assert.equal(row.approved, false); assert.equal(row.enabled, false);
-    const moduleUrl = base+`/package-assets/${row.digest}/client.js?name=${encodeURIComponent(row.name)}`;
-    assert.equal((await runtime.dispatchFetch(url('alpha', moduleUrl))).status, 409);
-    const artifact = await call<Artifact>({operation: 'review', name: row.name, digest: row.digest}); assert.deepEqual(artifact.lock, fixture.input.lock);
-    assert.equal((await runtime.dispatchFetch(url('alpha', base+'/package-installations'), {method: 'POST', headers: {'content-type': 'application/json', origin: 'https://evil.test'}, body: JSON.stringify({operation: 'approve', name: row.name, digest: row.digest})})).status, 403);
-    await call({operation: 'approve', name: row.name, digest: row.digest});
-    assert.equal((await runtime.dispatchFetch(url('alpha', moduleUrl))).status, 200);
-    const betaPath = moduleUrl.replace(tenantId('alpha'), tenantId('beta'));
-    assert.equal((await runtime.dispatchFetch(url('beta', betaPath))).status, 409);
-    const bundles = await api.call<{name: string; enabled: boolean}[]>('pluginManager/listBundles', {});
-    assert.equal(bundles.find(value => value.name === row.name)?.enabled, true);
-    await api.call('session/create', {request: {sessionId: 'package-session'}});
-    const invoke = () => runtime.dispatchFetch(url('alpha', base+'/package-invoke'), {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({sessionId: 'package-session', name: row.name, digest: row.digest, method: 'save', args: 'from-package'})});
-    let result = await invoke(); assert.equal(result.status, 200, await result.clone().text()); assert.deepEqual(await result.json(), {value: {saved: true}});
-    await runtime.dispose(); runtime = createRuntime(directory, options);
-    assert.equal((await list()).installations[0]?.approved, true);
-    result = await invoke(); assert.equal(result.status, 200, await result.clone().text());
-    await call({operation: 'install', spec: `${fixture.name}@${fixture.version}`, requestId: id}); assert.equal(builds, 1, 'durable request receipt deduplicates rebuilds');
-    const disabled = await api.call<{application: string}>('pluginManager/setBundleEnabled', {name: row.name, enabled: false}); assert.equal(disabled.application, 'applied');
-    assert.equal((await invoke()).status, 409); assert.equal((await runtime.dispatchFetch(url('alpha', moduleUrl))).status, 409);
-    await api.call('pluginManager/removeBundle', {name: row.name}); assert.equal((await list()).installations.length, 0);
-  } finally {await runtime.dispose(); await rm(directory, {recursive: true, force: true});}
+    const receipt=crypto.randomUUID();
+    const result=await api.call<{application:string}>('pluginManager/installBundle',{spec:`${fixture.name}@${fixture.version}`,options:{requestId:receipt}});
+    assert.equal(result.application,'applied'); const row=await installed();assert.equal(row.approved,false);
+    const asset=base+`/native/package-assets/${row.digest}/client.js?name=${encodeURIComponent(row.name)}`;
+    assert.equal((await runtime.dispatchFetch(url('alpha',asset))).status,409);
+    const artifact=await (await operation({operation:'review',name:row.name,digest:row.digest})).json() as Artifact;
+    assert.deepEqual(artifact.lock,fixture.input.lock);assert.equal((artifact.rows[0]?.config as {value:string}).value,'from-patch');
+    assert.equal((await operation({operation:'approve',name:row.name,digest:'0'.repeat(64)})).status,409);
+    assert.equal((await runtime.dispatchFetch(url('alpha',base+'/native/package-installations'),{method:'POST',headers:{'content-type':'application/json',origin:'https://evil.test'},body:JSON.stringify({operation:'approve',name:row.name,digest:row.digest})})).status,403);
+    assert.equal((await operation({operation:'approve',name:row.name,digest:row.digest})).status,200);
+    assert.equal((await runtime.dispatchFetch(url('alpha',asset))).status,200);
+    assert.equal((await runtime.dispatchFetch(url('beta',asset.replace(tenantId('alpha'),tenantId('beta'))))).status,409);
+    await api.call('session/create',{request:{sessionId:'native-package'}});await run('native-package');
+    let file=await runtime.dispatchFetch(url('alpha',base+'/workspaces/default/files?path=/workspace/package-result.txt'));
+    assert.equal(file.status,200,JSON.stringify(model.observations));assert.match(await file.text(),/from-patch/);
+    await runtime.dispose();runtime=createRuntime(directory,options);
+    await run('native-package');assert.equal((await installed()).approved,true);
+    await operation({operation:'install',spec:`${fixture.name}@${fixture.version}`,requestId:receipt});assert.equal(builds,1);
+    await api.call('pluginManager/setBundleEnabled',{name:row.name,enabled:false});assert.equal((await runtime.dispatchFetch(url('alpha',asset))).status,409);
+    await api.call('pluginManager/removeBundle',{name:row.name});assert.equal((await installed()),undefined);
+  } finally {await runtime.dispose();await rm(directory,{recursive:true,force:true});}
 });
 
-test('installed read-only packages cannot write, stale approval is refused and private registries never fall back publicly', {timeout: 120_000}, async () => {
-  const fixture = packageFixture({declaration: {abi: 'weft-plugin-v1', host: './host.js', permissions: {files: 'read'}}, files: {
-    'host.js': `export default sdk=>({inject:['fs'],apply(ctx){
-      let denied=false;try{ctx.tools.register(sdk.defineTool({name:'unapproved_tool',description:'Forbidden',parameters:{},output:{schema:{type:'json'},render:()=>[]},execute:async()=>null}))}catch{denied=true}
-      ctx.effect(()=>sdk.handle('permissionStatus',async()=>({denied})));
-      ctx.effect(()=>sdk.handle('save',async value=>{const target=await ctx.fs.resolve('/workspace/package-result.txt');await ctx.fs.writeText(target,String(value));return null}));
-    }})`,
-  }});
-  let downloads = 0;
-  const runtime = createRuntime(undefined, {packages: true, browser: true,
-    outbound: async request => {
-      downloads++;
-      return request.url === fixture.manifest.dist.tarball ? new Response(fixture.bytes) : Response.json(fixture.manifest);
-    }, packageBuilder: async request => Response.json(await buildPackage(JSON.parse(await request.text()))),
+test('native bundle approval limits writes, rejects unsupported services and keeps optional failures isolated', {timeout:150000},async()=>{
+  const fixture=packageFixture({client:false}),model=packageModel();let downloads=0;
+  const runtime=createRuntime(undefined,{packages:true,browser:true,
+    bindings:{MODEL_BACKEND:'deepseek',DEEPSEEK_API_KEY:'package-fixture',DEEPSEEK_BASE_URL:'https://package-model.test/anthropic'},
+    outbound:async(request,mf)=>{
+      if(new URL(request.url).hostname==='package-model.test')return model.outbound(request,mf);
+      downloads++;return request.url===fixture.manifest.dist.tarball?new Response(fixture.bytes):Response.json(fixture.manifest);
+    },packageBuilder:async request=>Response.json(await buildPackage(JSON.parse(await request.text()))),
   });
-  const api = nativeClient(() => runtime), base = `/v1/tenants/${tenantId('alpha')}/environments/default/native`;
-  try {
-    const refused = await api.call<{status: string}>('pluginManager/inspect', {spec: '@private/plugin@1.0.0', options: {registry: 'https://private.test'}});
-    assert.equal(refused.status, 'refused'); assert.equal(downloads, 0);
-    const installed = await api.call<{application: string}>('pluginManager/installBundle', {spec: `${fixture.name}@${fixture.version}`});
-    assert.equal(installed.application, 'applied');
-    const get = async () => (await (await runtime.dispatchFetch(url('alpha', base+'/package-installations'))).json() as {installations: Installation[]}).installations[0]!;
-    const row = await get(); assert.equal(row.approved, false);
-    const approve = (digest: string) => runtime.dispatchFetch(url('alpha', base+'/package-installations'), {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({operation: 'approve', name: row.name, digest})});
-    assert.equal((await approve('0'.repeat(64))).status, 409); assert.equal((await get()).approved, false);
-    assert.equal((await approve(row.digest)).status, 200);
-    await api.call('session/create', {request: {sessionId: 'readonly-package'}});
-    const status = await runtime.dispatchFetch(url('alpha', base+'/package-invoke'), {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({sessionId: 'readonly-package', name: row.name, digest: row.digest, method: 'permissionStatus', args: null})});
-    assert.equal(status.status, 200, await status.clone().text()); assert.deepEqual(await status.json(), {value: {denied: true}});
-    const response = await runtime.dispatchFetch(url('alpha', base+'/package-invoke'), {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({sessionId: 'readonly-package', name: row.name, digest: row.digest, method: 'save', args: 'denied'})});
-    assert.equal(response.status, 409); assert.match(await response.text(), /permission denied/);
-    const bucket = await runtime.getR2Bucket('PLUGIN_ARTIFACTS', 'alpha');
-    await bucket.delete(artifactKey({tenantId: tenantId('alpha'), environmentId: 'default'}, row.digest));
-    await api.call('session/create', {request: {sessionId: 'missing-package-artifact'}});
-    const commands = await api.call<unknown[]>('commands/list', {agentId: 'missing-package-artifact'});
-    assert.ok(commands.length > 0, 'a missing optional package artifact does not prevent a new Session from opening');
-  } finally {await runtime.dispose();}
+  const api=nativeClient(()=>runtime),base=`/v1/tenants/${tenantId('alpha')}/environments/default/native`;
+  try{
+    assert.equal((await api.call<{status:string}>('pluginManager/inspect',{spec:'@private/plugin@1.0.0',options:{registry:'https://private.test'}})).status,'refused');assert.equal(downloads,0);
+    const result=await api.call<{application:string}>('pluginManager/installBundle',{spec:`${fixture.name}@${fixture.version}`});assert.equal(result.application,'applied');
+    const row=(await(await runtime.dispatchFetch(url('alpha',base+'/package-installations'))).json() as {installations:Installation[]}).installations[0]!;
+    const approved=await runtime.dispatchFetch(url('alpha',base+'/package-installations'),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({operation:'approve',name:row.name,digest:row.digest,permissions:{files:'read',tools:true,timer:false,client:false}})});assert.equal(approved.status,200);
+    await api.call('session/create',{request:{sessionId:'readonly-package'}});
+    const follow=await api.follow('readonly-package');await follow.next();await api.call('session/prompt',{request:{sessionId:'readonly-package',requestId:crypto.randomUUID(),mode:'queue',content:[{type:'text',text:'SAVE_PACKAGE_READONLY'}]}});
+    for(;;){const frame=await follow.next();if(frame.type==='event'&&frame.event.type==='turn/end')break;}await follow.close();
+    assert.ok(model.observations.some(body=>body.includes('permission denied')),JSON.stringify(model.observations));
+    const bucket=await runtime.getR2Bucket('PLUGIN_ARTIFACTS','alpha');await bucket.delete(artifactKey({tenantId:tenantId('alpha'),environmentId:'default'},row.digest));
+    await api.call('session/create',{request:{sessionId:'missing-artifact'}});assert.ok((await api.call<unknown[]>('commands/list',{agentId:'missing-artifact'})).length>0);
+  }finally{await runtime.dispose();}
 });

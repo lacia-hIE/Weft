@@ -712,14 +712,6 @@ export class SessionDO extends DurableObject<Env> {
     this.assertScope(input);
     await this.installedPackages?.stop(z.string().max(214).parse(name));
   }
-  async nativeInvokePackage(input: SessionScope, name: string, digest: string, method: string, args: unknown): Promise<unknown> {
-    const scope = this.assertScope(input);
-    // The current declaration is checked again even if an older browser retained the module.
-    await controlFor(this.env, controlScope(scope.tenantId, scope.environmentId)).nativePackageArtifact(controlScope(scope.tenantId, scope.environmentId), name, digest);
-    await this.getNativeHost(scope);
-    if (!this.installedPackages) throw new Error('Package runtime is unavailable');
-    return this.installedPackages.invoke(name, digest, method, args);
-  }
   /** Schedule reminders wake the native root; the original runtime delivers what is due. */
   override async alarm(): Promise<void> {
     const row = this.ctx.storage.sql.exec<{name: string}>("SELECT name FROM sqlite_master WHERE type='table' AND name='weft_alarm_scope'").toArray().length

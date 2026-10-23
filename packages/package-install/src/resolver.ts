@@ -1,10 +1,11 @@
+import sharedVersions from '../../../.generated/package-platform-versions.json';
 import {maxSatisfying, valid, validRange, satisfies} from 'semver';
 import {declarationSchema, exactSpec, type Declaration, type PackageLock} from './contracts.ts';
 
 interface Manifest {
   name: string; version: string; description?: string;
   dist: {tarball: string; integrity: string}; dependencies?: Record<string, string>;
-  peerDependencies?: Record<string, string>; scripts?: Record<string, string>; weft?: {plugin?: unknown};
+  peerDependencies?: Record<string, string>; scripts?: Record<string, string>; dsh?: {bundle?: unknown};
 }
 export interface ResolvedPackage {manifest: Manifest; declaration: Declaration; lock: PackageLock; packages: {name: string; version: string; bytes: string}[]}
 const REGISTRY = 'https://registry.npmjs.org';
@@ -34,9 +35,21 @@ async function json(address: string, signal: AbortSignal): Promise<unknown> {
 }
 export async function inspectPackage(spec: string, signal: AbortSignal): Promise<{manifest: Manifest; declaration: Declaration}> {
   const match = exactSpec.exec(spec);
-  if (!match || !valid(match[2]!)) throw new Error('Use an exact public npm version, for example @scope/plugin@1.2.3');
-  const manifest = metadata(await json(`${REGISTRY}/${encodeURIComponent(match[1]!)}/${match[2]}`, signal), match[1]!, match[2]!);
-  const declaration = declarationSchema.parse(manifest.weft?.plugin);
+  const bare = /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/.test(spec);
+  if ((!match || !valid(match[2]!)) && !bare) throw new Error('Use a public npm package name or exact public npm version, for example @scope/plugin@1.2.3');
+  const name = match?.[1] ?? spec;
+  let version = match?.[2], value: unknown;
+  if (version) value = await json(`${REGISTRY}/${encodeURIComponent(name)}/${version}`, signal);
+  else {
+    const packument = await json(`${REGISTRY}/${encodeURIComponent(name)}`, signal) as {'dist-tags'?: {latest?: string}; versions?: Record<string, unknown>};
+    version = packument['dist-tags']?.latest;
+    if (!version || !valid(version)) throw new Error('Registry has no exact latest release');
+    value = packument.versions?.[version];
+  }
+  const manifest = metadata(value, name, version);
+  const parsed = declarationSchema.safeParse(manifest.dsh?.bundle);
+  if (!parsed.success) throw new Error('Package must declare the original dsh.bundle.patch');
+  const declaration = parsed.data;
   return {manifest, declaration};
 }
 /** Registry access is confined to the supervisor; the build receives verified archives and has no network. */
@@ -48,7 +61,8 @@ export async function resolvePackage(spec: string, signal: AbortSignal): Promise
     const item = queue[index]!;
     for (const [name, range] of Object.entries(item.dependencies ?? {})) {
       if (!/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/.test(name) || !validRange(range)) throw new Error(`${name}: only registry semver dependencies are supported`);
-      if (name === 'react') {if (!satisfies('18.3.1', range)) throw new Error('Plugin requires a different React version than the host'); continue;}
+      const shared = (sharedVersions as Record<string, string>)[name];
+      if (shared) {if (!satisfies(shared, range)) throw new Error(`Plugin requires a different platform version: ${name}@${range}`); continue;}
       const existing = selected.get(name);
       if (existing) {if (!satisfies(existing.version, range)) throw new Error(`Dependency version conflict: ${name}`); continue;}
       if (selected.size >= 32) throw new Error('A plugin may have at most 32 packages in v1');
@@ -60,7 +74,8 @@ export async function resolvePackage(spec: string, signal: AbortSignal): Promise
     }
   }
   for (const item of selected.values()) for (const [name, range] of Object.entries(item.peerDependencies ?? {})) {
-    if (name === 'react' && validRange(range) && satisfies('18.3.1', range)) continue;
+    const shared = (sharedVersions as Record<string, string>)[name];
+    if (shared && validRange(range) && satisfies(shared, range)) continue;
     const peer = selected.get(name);
     if (!peer || !validRange(range) || !satisfies(peer.version, range)) throw new Error(`Unsatisfied peer dependency: ${name}@${range}`);
   }

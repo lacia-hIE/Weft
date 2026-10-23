@@ -5,6 +5,7 @@ import {inspectPackage, resolvePackage} from './resolver.ts';
 interface Owner {
   state: DurableObjectState; scope: {tenantId: string; environmentId?: string}; bucket: R2Bucket | undefined;
   build(input: string): Promise<Response>;
+  validate(artifact: Artifact): Promise<void>;
   changed(): Promise<void>;
   revoke(name: string, digest: string): Promise<void>;
 }
@@ -53,18 +54,17 @@ export class PackageInstaller {
       const resolved = await resolvePackage(job.spec, AbortSignal.timeout(90_000));
       if (this.registry.get(resolved.manifest.name)) throw new Error('Already installed; uninstall before installing another version in v1');
       job = {...job, phase: 'building'}; this.registry.saveJob(job); await this.owner.state.storage.sync();
-      const response = await this.owner.build(JSON.stringify({abi: 'weft-plugin-v1', name: resolved.manifest.name, version: resolved.manifest.version,
-        declaration: resolved.declaration, declarationRaw: resolved.manifest.weft!.plugin, lock: resolved.lock, packages: resolved.packages}));
+      const response = await this.owner.build(JSON.stringify({name: resolved.manifest.name, version: resolved.manifest.version,
+        declaration: resolved.declaration, declarationRaw: resolved.manifest.dsh!.bundle, lock: resolved.lock, packages: resolved.packages}));
       const raw = await response.json() as {error?: string};
       if (!response.ok) throw new Error(raw.error ?? 'Plugin build failed');
       const artifact = artifactSchema.parse(raw);
-      if (artifact.name !== resolved.manifest.name || artifact.version !== resolved.manifest.version || JSON.stringify(artifact.lock) !== JSON.stringify(resolved.lock)
-        || JSON.stringify(artifact.permissions) !== JSON.stringify(resolved.declaration.permissions)
-        || Boolean(artifact.host) !== Boolean(resolved.declaration.host) || Boolean(artifact.client) !== Boolean(resolved.declaration.client)) throw new Error('Build output differs from the resolved package');
+      if (artifact.name !== resolved.manifest.name || artifact.version !== resolved.manifest.version || JSON.stringify(artifact.lock) !== JSON.stringify(resolved.lock)) throw new Error('Build output differs from the resolved package');
+      await this.owner.validate(artifact);
       const body = JSON.stringify(artifact), digest = await sha256(body);
       await this.owner.bucket!.put(artifactKey(this.owner.scope, digest), body, {httpMetadata: {contentType: 'application/json'}});
       const installed: Installation = {name: artifact.name, version: artifact.version, description: artifact.description,
-        digest, permissions: artifact.permissions, enabled: false, approved: false, installedAt: Date.now()};
+        digest, patch: artifact.patch, rows: artifact.rows, permissions: artifact.permissions, enabled: false, approved: false, installedAt: Date.now()};
       this.owner.state.storage.transactionSync(() => {this.registry.save(installed); this.registry.saveJob({...job, phase: 'review', digest});});
     } catch (error) {
       this.registry.saveJob({...job, phase: 'failed', error: (error instanceof Error ? error.message : String(error)).slice(0, 4000)});
@@ -82,11 +82,12 @@ export class PackageInstaller {
     if (await sha256(text) !== digest) throw new Error('Package artifact integrity mismatch');
     return artifactSchema.parse(JSON.parse(text));
   }
-  async approve(name: string, digest: string): Promise<void> {
-    await this.artifact(name, digest, false);
+  async approve(name: string, digest: string, grants?: Installation['permissions']): Promise<void> {
+    const artifact = await this.artifact(name, digest, false);
+    if (grants && ((grants.files === 'write' && artifact.permissions.files !== 'write') || (grants.files !== 'none' && artifact.permissions.files === 'none') || ['tools', 'timer', 'client'].some(key => grants[key as 'tools'] && !artifact.permissions[key as 'tools']))) throw new Error('Approval exceeds bundle capability limits');
     const row = this.registry.get(name);
     if (!row || row.digest !== digest) throw new Error('Approval is stale');
-    this.registry.save({...row, approved: true, enabled: true});
+    this.registry.save({...row, ...(grants ? {permissions: grants} : {}), approved: true, enabled: true});
     await this.owner.state.storage.sync(); await this.owner.changed();
   }
   async enabled(name: string, enabled: boolean): Promise<boolean> {

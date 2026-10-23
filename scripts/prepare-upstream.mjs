@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import yaml from 'js-yaml';
 import { resolve, relative } from 'node:path';
 import ts from 'typescript';
+import {build as bundleSource} from 'esbuild';
 import {createHash} from 'node:crypto';
 
 const root = resolve(import.meta.dirname, '..');
@@ -164,3 +165,16 @@ const optionalBundles = ['agent-team-profile'].map(id => {
     upstream: actual, digest: createHash('sha256').update(actual).update('\0').update(source).digest('hex'), patch};
 });
 writeFileSync(resolve(output, 'official-optional-bundles.json'), JSON.stringify(optionalBundles, null, 2) + '\n');
+
+// Versions whose module identity is owned by the running platform.
+const packagePlatformVersions = {react: '18.3.1'};
+for (const [name, path] of Object.entries({
+  '@deepseek-ai/cordis': 'vendor/cordis/package.json',
+  '@deepseek-ai/dsh-tools': 'packages/core/tools/package.json',
+})) packagePlatformVersions[name] = JSON.parse(readFileSync(resolve(checkout, path), 'utf8')).version;
+writeFileSync(resolve(output, 'package-platform-versions.json'), JSON.stringify(packagePlatformVersions) + '\n');
+
+// The compiler consumes the exact upstream patch implementation, with no user code execution.
+await bundleSource({stdin: {contents: "export {applyEntryPatches} from '@deepseek-ai/cordis-plugin-include'", resolveDir: root},
+  outfile: resolve(root, 'apps/plugin-builder/patch.mjs'), bundle: true, platform: 'node', format: 'esm',
+  tsconfig: resolve(output, 'upstream.source.tsconfig.json'), logLevel: 'error'});

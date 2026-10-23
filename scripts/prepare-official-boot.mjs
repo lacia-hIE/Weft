@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { cpSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync, existsSync, copyFileSync } from 'node:fs';
 import { relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import {nativeCompositionPlatform} from './native-composition-platform.mjs';
 import { officialPlatformModules, officialUiRoster } from './official-ui-roster.mjs';
 
 const root = resolve(import.meta.dirname, '..');
@@ -22,13 +23,13 @@ for (const row of roster) for (const request of [...row.inject ?? [], ...row.ext
 const unsorted = [];
 // Weft contributes an ordinary native module, never a replacement workbench.
 const environmentId = '@weft/harness-environment';
-const environmentModule = await build({entryPoints: [resolve(root, 'apps/web/src/official/environment-plugin.ts')], bundle: true, platform: 'browser', format: 'cjs', target: 'es2022', minify: true, write: false, external: ['react', '@deepseek-ai/dsh-client-ui-primitives']});
+const environmentModule = await build({entryPoints: [resolve(root, 'apps/web/src/official/environment-plugin.ts')], bundle: true, platform: 'browser', format: 'cjs', target: 'es2022', minify: true, write: false, external: ['react', '@deepseek-ai/cordis', '@deepseek-ai/dsh-client-ui-primitives'], tsconfig: resolve(root, '.generated/upstream.source.tsconfig.json'), plugins: [nativeCompositionPlatform]});
 const environmentFactory = `globalThis.__ModuleLoader__.load({id:${JSON.stringify(environmentId)},factory(require){const module={exports:{}};const exports=module.exports;${environmentModule.outputFiles[0].text}\nconst published={...module.exports};Object.defineProperty(published,Symbol.toStringTag,{value:'Module'});return published;}});`;
 const environmentDirectory = resolve(output, 'harness', environmentId);
 mkdirSync(environmentDirectory, {recursive: true});
 writeFileSync(resolve(environmentDirectory, 'client.js'), environmentFactory);
 const environmentRev = digest(environmentFactory);
-unsorted.push({id: environmentId, url: `/harness/??${environmentId}/client.js&rev=${environmentRev}`, rev: environmentRev, external: ['react', '@deepseek-ai/dsh-client-ui-primitives'], inject: ['@deepseek-ai/dsh-cordis-client-runner', '@deepseek-ai/dsh-api-remotes', '@deepseek-ai/dsh-client-ui-renderer', '@deepseek-ai/dsh-client-ui-sidebar', '@deepseek-ai/dsh-client-ui-settings', '@deepseek-ai/dsh-client-ui-plugin-manager']});
+unsorted.push({id: environmentId, url: `/harness/??${environmentId}/client.js&rev=${environmentRev}`, rev: environmentRev, external: ['react', '@deepseek-ai/cordis', '@deepseek-ai/dsh-client-ui-primitives'], tsconfig: resolve(root, '.generated/upstream.source.tsconfig.json'), plugins: [nativeCompositionPlatform], inject: ['@deepseek-ai/dsh-cordis-client-runner', '@deepseek-ai/dsh-api-remotes', '@deepseek-ai/dsh-client-ui-renderer', '@deepseek-ai/dsh-client-ui-sidebar', '@deepseek-ai/dsh-client-ui-settings', '@deepseek-ai/dsh-client-ui-plugin-manager']});
 for (const row of roster) {
   const directory = resolve(root, '.generated/official-ui', relative(source.directory, row.directory));
   const primary = ['client.js', 'client.browser.js'].find(file => existsSync(resolve(directory, file)));

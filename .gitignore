@@ -10,3 +10,6 @@ test-results/
 playwright-report/
 # Upstream is fetched and verified by npm run upstream:prepare.
 deepseek-harness/
+
+# Trusted upstream patch engine generated only by the CI build.
+apps/plugin-builder/patch.mjs

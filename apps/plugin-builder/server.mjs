@@ -5,6 +5,8 @@ import {tmpdir} from 'node:os';
 import {gunzipSync} from 'node:zlib';
 import {timingSafeEqual} from 'node:crypto';
 import {build} from 'esbuild';
+import yaml from 'js-yaml';
+import {applyEntryPatches} from './patch.mjs';
 import {pathToFileURL} from 'node:url';
 
 const MAX_BODY = 18 * 1024 * 1024;
@@ -49,7 +51,7 @@ function entryPath(value) {
 }
 const reactExports = ['Children', 'Component', 'Fragment', 'Profiler', 'PureComponent', 'StrictMode', 'Suspense', 'cloneElement', 'createContext', 'createElement', 'createFactory', 'createRef', 'forwardRef', 'isValidElement', 'lazy', 'memo', 'startTransition', 'useCallback', 'useContext', 'useDebugValue', 'useDeferredValue', 'useEffect', 'useId', 'useImperativeHandle', 'useInsertionEffect', 'useLayoutEffect', 'useMemo', 'useReducer', 'useRef', 'useState', 'useSyncExternalStore', 'useTransition', 'version'];
 export async function buildPackage(input) {
-  if (!input || input.abi !== 'weft-plugin-v1' || !Array.isArray(input.packages) || input.packages.length > 32 || !safeName.test(input.name)) throw new Error('Invalid build request');
+  if (!input || !Array.isArray(input.packages) || input.packages.length > 32 || !safeName.test(input.name)) throw new Error('Invalid build request');
   const root = await mkdtemp(join(tmpdir(), 'weft-plugin-'));
   try {
     const modules = join(root, 'node_modules'); const budget = {bytes: 0, files: 0};
@@ -70,33 +72,89 @@ export async function buildPackage(input) {
     }
     const packageRoot = join(modules, input.name);
     const manifest = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8'));
-    if (manifest.version !== input.version || canonical(manifest.weft?.plugin) !== canonical(input.declarationRaw)) throw new Error('Plugin declaration changed between registry and archive');
-    const declaration = input.declaration;
-    const result = {abi: input.abi, name: input.name, version: input.version, description: String(manifest.description ?? '').slice(0, 2000), permissions: declaration.permissions, lock: input.lock};
-    for (const half of ['host', 'client']) {
-      if (!declaration[half]) continue;
-      const output = await build({
-        entryPoints: [join(packageRoot, entryPath(declaration[half]))], absWorkingDir: root,
-        bundle: true, write: false, format: 'iife', globalName: '__weft_package',
-        outdir: join(root, 'output'), platform: 'browser', target: 'es2022', minify: true,
-        conditions: [half === 'host' ? 'workerd' : 'browser', 'import'], logLevel: 'silent',
-        plugins: [{name: 'reviewed-sdk', setup(builder) {
-          builder.onLoad({filter: /.*/, namespace: 'file'}, async args => {
-            const path = await realpath(args.path);
-            if (!path.startsWith(root + '/')) return {errors: [{text: 'Plugin import escaped the build root'}]};
-            return undefined;
-          });
-          builder.onResolve({filter: /^(?:node:|cloudflare:|https?:|data:)/}, args => ({errors: [{text: `Unsupported import: ${args.path}`}]}));
-          builder.onResolve({filter: /^react$/}, () => half === 'client' ? {path: 'react', namespace: 'weft-sdk'} : {errors: [{text: 'React is only supported in Client modules'}]});
-          builder.onLoad({filter: /.*/, namespace: 'weft-sdk'}, () => ({contents: 'export default __weft_sdk.React;' + reactExports.map(name => `export const ${name}=__weft_sdk.React.${name};`).join('')}));
-        }}],
-      });
-      const js = output.outputFiles.find(file => file.path.endsWith('.js'))?.text;
-      const css = output.outputFiles.find(file => file.path.endsWith('.css'))?.text;
-      if (!js || Buffer.byteLength(js) > 1024 * 1024) throw new Error('Compiled plugin exceeds 1 MiB');
-      if (css) throw new Error('CSS imports are not supported in v1; use a Client effect to own inline styles');
-      result[half] = `export default async function(__weft_sdk){${js}\nif(typeof __weft_package.default!=="function")throw new Error("Plugin entry must export a default factory(sdk)");return await __weft_package.default(__weft_sdk);}`;
+    if (manifest.version !== input.version || canonical(manifest.dsh?.bundle) !== canonical(input.declarationRaw)) throw new Error('Bundle declaration changed between registry and archive');
+    const paths = typeof manifest.dsh?.bundle?.patch === 'string' ? [manifest.dsh.bundle.patch] : manifest.dsh?.bundle?.patch;
+    if (!Array.isArray(paths) || !paths.length || paths.length > 16) throw new Error('Package must declare dsh.bundle.patch');
+    const patch = [];
+    let nodes=0;const seen=new Set();
+    const safeJson = (value,depth=0) => {
+      if (++nodes>8192 || depth>32) throw new Error('Bundle patch nesting exceeds limits');
+      if (!value || typeof value !== 'object') return;
+      if (seen.has(value)) throw new Error('YAML aliases and cycles are unsupported');seen.add(value);
+      for (const [key, child] of Object.entries(value)) {
+        if (['__jsExpr', '__proto__', 'prototype', 'constructor'].includes(key)) throw new Error('Configuration expressions and unsafe keys are unsupported');
+        safeJson(child,depth+1);
+      }
+    };
+    for (const path of paths) {
+      const source = await readFile(join(packageRoot, entryPath(path)), 'utf8');
+      if (Buffer.byteLength(source) > 65536) throw new Error('Bundle patch exceeds 64 KiB');
+      const layer = yaml.load(source, {schema: yaml.JSON_SCHEMA, maxAliasCount: 0});
+      if (!Array.isArray(layer)) throw new Error('Bundle patch must be an entry patch list');
+      safeJson(layer); patch.push(...layer);
     }
+    if (patch.length > 128 || Buffer.byteLength(JSON.stringify(patch)) > 262144) throw new Error('Bundle patch exceeds limits');
+    for (const operation of patch) {
+      if (!operation || typeof operation !== 'object' || Array.isArray(operation)) throw new Error('Invalid bundle patch operation');
+      if (Object.keys(operation).some(key => !['id','insert','name','config','group','disabled','inject','intercept','isolate'].includes(key))) throw new Error('Unsupported bundle patch operation');
+    }
+    const rows = applyEntryPatches([], patch, (message, ...args) => {throw new Error('Bundle patch targets an unavailable entry: '+message+' '+args.join(' '));});
+    const leaves = [], ids = new Set();
+    const walk = (rows, off = false, depth = 0) => {
+      if (!Array.isArray(rows) || depth > 8) throw new Error('Invalid bundle group');
+      for (const row of rows) {
+        if (!row || typeof row.id !== 'string' || !/^[a-zA-Z0-9_-]{1,80}$/.test(row.id) || ids.has(row.id) || ids.size >= 64) throw new Error('Invalid, duplicate or excessive bundle entry ids');
+        ids.add(row.id);
+        if (row.disabled !== undefined && typeof row.disabled !== 'boolean') throw new Error('Bundle disabled must be a literal boolean');
+        const disabled = off || row.disabled === true;
+        if (row.group) {if (row.name !== 'group' && row.name !== 'cordis:group' && row.name !== '@deepseek-ai/cordis-plugin-group') throw new Error('Unsupported group module'); walk(row.config, disabled, depth+1);}
+        else if (!disabled) {
+          if (typeof row.name !== 'string' || !/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*(?:\/[a-zA-Z0-9._/-]+)?$/.test(row.name) || row.name.split('/').includes('..')) throw new Error('Bundle entries must name installed package exports');
+          const parts = row.name.split('/'), packageName = parts[0].startsWith('@') ? parts.slice(0,2).join('/') : parts[0];
+          if (!names.has(packageName)) throw new Error('Bundle module is outside its locked dependencies: '+row.name);
+          leaves.push({...row, packageName});
+        }
+      }
+    };
+    walk(rows);
+    const result = {name: input.name, version: input.version, description: String(manifest.description ?? '').slice(0,2000), patch, rows, lock: input.lock,
+      permissions: {files: leaves.length ? 'write' : 'none', tools: leaves.length > 0, timer: leaves.length > 0, client: false}};
+    const cordisExports = ['Context','Service','Inject','Logger'];
+    const compile = async (half, selected) => {
+      if (!selected.length) return;
+      const imports = selected.map((row,i) => `import * as m${i} from ${JSON.stringify(half === 'client' ? row.packageName+'/client' : row.name)};`).join('\n');
+      const table = selected.map((row,i) => `${JSON.stringify(row.name)}:m${i}`).join(',');
+      const output = await build({stdin: {contents: imports+`\nexport const modules={${table}};`, resolveDir: root}, absWorkingDir: root,
+        bundle: true, write: false, format: 'iife', globalName: '__bundle', outdir: join(root,'output'), platform: 'browser', target: 'es2022', minify: true,
+        conditions: [half === 'host' ? 'workerd' : 'browser','import'], logLevel: 'silent', plugins: [{name: 'native-platform', setup(builder) {
+          builder.onLoad({filter: /.*/, namespace: 'file'}, async args => {const path=await realpath(args.path);if (!path.startsWith(root+'/')) return {errors:[{text:'Plugin import escaped build root'}]};});
+          builder.onResolve({filter: /^(?:node:|cloudflare:|https?:|data:)/}, args=>({errors:[{text:'Unsupported import: '+args.path}]}));
+          builder.onResolve({filter: /^(?:react|@deepseek-ai\/cordis|@deepseek-ai\/dsh-tools)$/}, args=>({path: args.path, namespace:'native-platform'}));
+          builder.onLoad({filter: /.*/, namespace:'native-platform'}, args => {
+            if (args.path==='react') return half==='client' ? {contents:'export default __runtime.React;'+reactExports.map(name=>`export const ${name}=__runtime.React.${name};`).join('')} : {errors:[{text:'React requires a Client entry'}]};
+            const exports=args.path==='@deepseek-ai/cordis' ? cordisExports : ['defineTool'];
+            const namespace=args.path==='@deepseek-ai/cordis' ? 'cordis' : 'tools';
+            return {contents:exports.map(name=>`export const ${name}=__runtime.${namespace}.${name};`).join('')};
+          });
+        }}]});
+      const js=output.outputFiles.find(file=>file.path.endsWith('.js'))?.text;
+      if (!js || Buffer.byteLength(js)>1048576) throw new Error('Compiled bundle exceeds 1 MiB');
+      if (output.outputFiles.some(file=>file.path.endsWith('.css'))) throw new Error('CSS imports require an unsupported Client asset loader');
+      const selection = new Set(selected.map(row=>row.name));
+      const selectRows = list => list.filter(row=>row.group || selection.has(row.name)).map(row=>row.group ? {...row, config:selectRows(row.config)} : row);
+      result[half]=`export default async function(__runtime){${js}\nreturn __runtime.compose(${JSON.stringify(selectRows(rows))},__bundle.modules);}`;
+    };
+    const clients=[];
+    for (const row of leaves) {
+      const pkg=JSON.parse(await readFile(join(modules,row.packageName,'package.json'),'utf8'));
+      if (pkg.dsh?.client) {
+        if (pkg.dsh.client.platform!=='web') throw new Error('Only Web Client modules are supported');
+        clients.push(row);
+      }
+    }
+    await compile('host', leaves);
+    await compile('client', clients);
+    result.permissions.client=Boolean(result.client);
     return result;
   } finally {await rm(root, {recursive: true, force: true});}
 }

@@ -5,6 +5,7 @@ import {resolve} from 'node:path';
 const root = resolve(import.meta.dirname, '..'), directory = resolve(root, 'apps/plugin-builder');
 const hash = createHash('sha256');
 for (const name of ['Dockerfile', 'package.json', 'package-lock.json', 'server.mjs']) hash.update(name).update(readFileSync(resolve(directory, name)));
+for (const path of ['upstream.lock.json', 'scripts/prepare-upstream.mjs']) hash.update(path).update(readFileSync(resolve(root, path)));
 const tag = hash.digest('hex').slice(0, 12), image = `weft-plugin-builder:${tag}`;
 if (process.argv.includes('--tag')) {console.log(image); process.exit(0);}
 if (process.argv.includes('--local')) {execFileSync('docker', ['build', '--platform', 'linux/amd64', '-t', image, directory], {stdio: 'inherit'}); process.exit(0);}

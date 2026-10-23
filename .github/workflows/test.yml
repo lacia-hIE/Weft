@@ -28,6 +28,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: npm run upstream:prepare
       - name: Build the offline compiler image
         run: node scripts/plugin-builder.mjs --local
       - name: Verify real offline compilation
@@ -57,7 +58,7 @@ jobs:
       - run: npm run build
       - run: npx tsc --noEmit
       - name: Pack test inputs
-        run: tar -czf build.tgz dist $(find .generated -maxdepth 1 -type f)
+        run: tar -czf build.tgz dist apps/plugin-builder/patch.mjs $(find .generated -maxdepth 1 -type f)
       - uses: actions/upload-artifact@v4
         with:
           name: build

@@ -4,7 +4,6 @@ import type {Artifact, Installation} from './contracts.ts';
 
 interface Active {
   installation: Installation; runId: string; fiber?: Fiber;
-  handlers: Map<string, (args: unknown) => Promise<unknown>>;
 }
 /** Per-Session activations; declarations, grants and module authority remain in EnvironmentDO. */
 export class InstalledPackageRuntime {
@@ -26,19 +25,14 @@ export class InstalledPackageRuntime {
       for (const installation of selected) {
         if (this.active.has(installation.name) || this.failed.get(installation.name) === installation.digest) continue;
         const runId = 'installed-' + crypto.randomUUID();
-        const row: Active = {installation, runId, handlers: new Map()};
+        const row: Active = {installation, runId};
         this.active.set(installation.name, row);
         try {
           const artifact = await this.source.artifact(installation.name, installation.digest);
           if (artifact.host) {
             const p = installation.permissions;
             const services = [...(p.files !== 'none' ? ['fs'] : []), ...(p.tools ? ['tools'] : []), ...(p.timer ? ['timer'] : [])];
-            const plugin = await this.platform.evaluate(this.ctx, `installed:${installation.name}`, runId, '', (method, fn) => {
-              if (typeof method !== 'string' || typeof fn !== 'function') throw new Error('Invalid installed handler');
-              const handler = fn as (args: unknown) => Promise<unknown>;
-              row.handlers.set(method, handler);
-              return () => {if (row.handlers.get(method) === handler) row.handlers.delete(method);};
-            }, {module: artifact.host, services});
+            const plugin = await this.platform.evaluate(this.ctx, `installed:${installation.name}`, runId, '', () => {throw new Error('Bundle handlers use native Cordis services');}, {module: artifact.host, services});
             row.fiber = this.ctx.plugin(plugin as Plugin);
             await row.fiber.await();
           }
@@ -59,17 +53,10 @@ export class InstalledPackageRuntime {
   private async stopNow(name: string): Promise<void> {
     const row = this.active.get(name); if (!row) return;
     this.active.delete(name);
-    await row.fiber?.dispose(); await this.platform.release(row.runId); row.handlers.clear();
+    await row.fiber?.dispose(); await this.platform.release(row.runId);
   }
   permission(pluginId: string, runId: string): Installation | undefined {
     const name = pluginId.startsWith('installed:') ? pluginId.slice('installed:'.length) : '';
     const row = this.active.get(name); return row?.runId === runId ? row.installation : undefined;
-  }
-  async invoke(name: string, digest: string, method: string, args: unknown): Promise<unknown> {
-    await this.reconcile();
-    const row = this.active.get(name);
-    if (!row || row.installation.digest !== digest) throw new Error('Installed package is not active');
-    const fn = row.handlers.get(method); if (!fn) throw new Error('Installed package handler is unavailable');
-    return fn(args);
   }
 }

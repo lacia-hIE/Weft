@@ -1,32 +1,37 @@
-# 插件包安装第一版
+# 原版插件包安装
 
-入口为官方 Plugins 页的 Package installations（插件包安装），并接入原版 `pluginManager/inspect`、`installBundle`、清单、条目/组合包启停和卸载。安装默认保持停用；查看实际构建代码、依赖锁与权限后，以精确 SHA-256 批准并启用。Host 在各会话下轮运行前装配，Client 经原版环境扩展加载。内置必要包的保护保持。
-
-本版支持公开 npm 的精确版本和最多 32 个包的无冲突依赖图；每个环境最多安装 16 个包。依赖图、tarball 地址及 SHA-512 全部固定并校验。每个压缩包最多 4 MiB，合计 12 MiB；解包合计 64 MiB、4096 文件；每半编译产物最多 1 MiB。超限、不支持的依赖协议、不满足的 peer、链接/特殊 tar 条目和安装脚本均明确拒绝。固定部署版本的官方 `dsh.bundle.patch` 走独立的[官方组合包](official-bundles.md)链路。不支持 Git、本地目录、私有源、原生扩展、任意原版 bundle patch、CSS/静态资源导入或直接 Node 宿主服务；没有伪装成全部 dsh 插件兼容。
-
-兼容包在 package.json 声明：
+统一入口为官方 Plugins 页的“添加插件”。公开 npm 的包名会解析并锁定确切版本，也可直接指定精确版本。包必须使用原版 `package.json.dsh.bundle.patch`；不要求任何 Weft 专用声明或 factory 导出。构建完成后保持停用，在该包自己的详情页审核原始 patch、依赖锁、构建代码和 SHA-256，选择允许的能力并批准启用。重复的“插件包安装”页面已经移除。
 
 ```json
 {
-  "name": "my-weft-plugin",
+  "name": "my-dsh-plugin",
   "version": "1.0.0",
-  "weft": {
-    "plugin": {
-      "abi": "weft-plugin-v1",
-      "host": "./host.js",
-      "client": "./client.js",
-      "permissions": {"files": "read", "tools": false, "timer": false, "client": true}
-    }
-  }
+  "main": "./index.js",
+  "dsh": {"bundle": {"patch": "./cordis.patch.yml"}}
 }
 ```
 
-Host 和 Client 均为 ESM，默认导出 `factory(sdk)`，返回 Cordis 插件对象。Host sdk 提供既有 defineTool/registerTool/handle；可声明的服务只有已授权的 fs/tools/timer。文件方法沿用 FsTarget 异步契约；files=read 不能 writeText/editText。无直接网络、宿主凭据或进程能力。Client sdk 提供共享 React 和 `host.call(method,args)`；`import React from 'react'` 使用宿主版本。Client 在工作台浏览器执行，不是另一个安全隔离区，批准面板明确提示这一点。
+```yaml
+- insert:
+    - id: my-plugin
+      name: my-dsh-plugin
+      config:
+        message: hello
+- id: my-plugin
+  config:
+    message: configured
+```
 
-构建在独立 Node/esbuild 容器执行，关闭公网出口，不挂载工作区，不传模型、R2 或 registry 凭据；只接收 Worker 校验过的 archives。包代码在构建期间不执行，路径解包和模块加载限制在临时构建根下。运行时模块作为真正 ESM 送入 Dynamic Worker facet，不塞入 Creator 的 64 KiB 函数体源码记录；两者复用工具与能力桥接。
+`index.js` 使用标准 Cordis `apply(ctx, config)`、对象或 class 导出；保留原版 `Config` 和 `inject`。Host 不需要接收私有 SDK。Client 使用原版 `dsh.client.platform=web` 与 `exports["./client"]`，也直接导出 Cordis 插件。React 与 Cordis 使用平台实例。
 
-EnvironmentDO SQLite 保存安装声明和任务，私有 R2 保存带摘要的不可变产物。审批前与每次读取验证摘要；资产入口沿用 Access、tenant/environment 和已批准启用状态检查。请求 ID 持久去重，DO alarm 恢复未完成构建。断开浏览器不会取消任务。停止/卸载先持久撤销，再清理已有会话，不启动冷 Agent；旧浏览器调用与文件能力再次校验声明。卸载不删除用户工作区数据。卸载清理无引用的构建产物，任务元数据保留用于请求去重；中断上传的孤立产物自动回收和版本更新不在本版。
+构建器从已验证的归档读取一个 patch 文件或按顺序读取 patch 文件列表，以固定上游的真正 `applyEntryPatches` 处理插入、组和配置覆盖。启用的条目必须来自本包及锁定依赖。覆盖本包之前插入的行有效；第三方包对其他宿主配置的修改明确拒绝，不能跨隔离边界停用或重配基础服务。已经适配的官方组合包仍走[官方组合包](official-bundles.md)的可信预编译路径。
 
-测试只在 ci 分支运行：真实无网络 Docker 编译；workerd/R2/真实 facet 的安装、审批、调用、重建恢复、租户隔离和撤销；官方页面的安装审批控件。构建平台原生 Container API 的云端启动仍需部署后验收，GitHub Docker 不替代 Cloudflare VM。
+Host 与 Client 使用真正 Cordis Loader，并隔离自己的 loader 服务。Host 在 Dynamic Worker facet 执行；Supervisor 不执行包代码。安装先在无工作区、无凭据、无网络的 facet 中检查标准导出和服务依赖，缺少的宿主服务明确报错。当前桥接 fs、tools、timer；授权上限来自平台能力，并不是包自报权限。审核页面可收紧文件、工具、计时器和 Client 授权，拒绝越权授予。文件写入逐次校验环境中当前的授权；停用先持久撤销，再释放已有实例。
 
-`node scripts/plugin-builder.mjs --local` 仅在 CI 构建镜像；成功任务导出镜像 artifact。发布时加载该镜像并执行 `--publish`，不在本地重新构建。生产增加 PLUGIN_ARTIFACTS R2 和独立 PluginBuilderDO 容器应用。
+Client 在工作台页面执行，具有页面代码的信任级别；用户在详情页明确批准后才加载。批准前和每次读取均验证精确产物摘要。Client 通过同一套原版生命周期加载、刷新恢复和停用卸载。它不获得自定义 Host RPC；需要更多原版宿主服务的插件必须继续适配。
+
+公开 npm 元数据与归档只由 Supervisor 下载并校验 SHA-512。32 个无冲突依赖、16 个环境安装；归档单个 4 MiB、合计 12 MiB；解包 64 MiB、4096 文件；patch 最多 16 个文件、128 条操作、64 个条目；每半编译代码最多 1 MiB。拒绝安装脚本、私有源、Git/本地路径、原生扩展、Node 内置导入、CSS/静态资源依赖、YAML 表达式、别名/循环和配置越界。原版包格式已经接通，不表示所有依赖 Node 或未桥接服务的原版插件都能运行。
+
+EnvironmentDO 保存安装选择和持久任务，私有 R2 保存不可变产物。请求 ID 去重、Alarm 重建恢复、审批摘要、跨租户隔离、停用撤销及不删除工作区数据保持。旧的专用格式不再接收，需要以原版包重装。
+
+构建、类型检查、真实无网络 Docker 编译、workerd/R2/真实 facet 工具执行、原版详情页审核与 Client 生命周期测试仅在 ci 分支运行。生产使用 CI 导出的已测构建器镜像，不在本地重新构建。

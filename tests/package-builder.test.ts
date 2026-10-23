@@ -7,13 +7,20 @@ import {packageFixture, archiveFiles} from './helpers/package-fixture.ts';
 test('offline builder compiles ESM packages, shares browser React and refuses unsupported imports and escaped files', async () => {
   const fixture = packageFixture();
   const artifact = await buildPackage(fixture.input);
-  assert.match(artifact.host!, /export default async/); assert.match(artifact.client!, /__weft_sdk\.React/);
+  assert.match(artifact.host!, /export default async/); assert.match(artifact.client!, /__runtime\.React/);
   assert.deepEqual(artifact.lock, fixture.input.lock);
-  assert.deepEqual(artifact.permissions, fixture.input.declaration.permissions);
+  assert.equal(artifact.rows[0]?.config && (artifact.rows[0].config as {value: string}).value, 'from-patch');
+  assert.equal(artifact.permissions.client, true);
   for (const source of ['import fs from "node:fs";export default ()=>fs', 'import value from "/etc/passwd";export default ()=>value', 'import native from "missing-native-addon";export default ()=>native']) {
     const bad = packageFixture({files: {'host.js': source}});
     await assert.rejects(buildPackage(bad.input));
   }
+  const expression = packageFixture({files: {'cordis.patch.yml': '- insert: !!js process.exit()'}});
+  await assert.rejects(buildPackage(expression.input));
+  const outside = packageFixture({patch: [{id: 'tool-bash', disabled: true}]});
+  await assert.rejects(buildPackage(outside.input), /unavailable entry/);
+  const untrusted = packageFixture({files: {'package.json': JSON.stringify({name: fixture.name, version: fixture.version, weft: {plugin: {}}})}});
+  await assert.rejects(buildPackage(untrusted.input), /declaration/);
   const tampered = structuredClone(fixture.input); tampered.packages[0]!.bytes = archiveFiles({'../escape': 'bad'}).toString('base64');
   await assert.rejects(buildPackage(tampered), /path|integrity/i);
   const mismatch = structuredClone(fixture.input); mismatch.lock[0]!.integrity = 'sha512-invalid';

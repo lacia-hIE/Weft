@@ -22,9 +22,9 @@ export class PackageRegistry {
     name: row.name, version: row.version, description: row.description, official: false,
     availability: 'profile', source: `${row.name}@${row.version}`, installed: true,
     enabled: row.enabled && row.approved, optional: false, removable: true,
-    rows: [{rowId: entryId(row.name), moduleName: row.name, entryId: entryId(row.name)}], overrides: [],
-    ...(!row.approved ? {error: {code: 'stale-approval' as const, diagnostic: 'Built and installed; review the exact artifact and permissions in Package installations before enabling.'}} : {}),
+    rows: row.rows.filter(item => !item.group).map(item => ({rowId: String(item.id), moduleName: String(item.name), entryId: entryId(row.name)})), overrides: row.patch.filter(item => item.id && !item.insert).map(item => String(item.id)),
+    ...(!row.approved ? {error: {code: 'stale-approval' as const, diagnostic: 'Built and installed; review this bundle’s patch, exact artifact and capabilities on its detail page before enabling.'}} : {}),
   }));}
-  plugins(): PluginInfo[] {return this.list().map(row => ({entryId: entryId(row.name) as never, patchId: entryId(row.name), moduleName: row.name,
+  plugins(): PluginInfo[] {return this.list().map(row => ({entryId: entryId(row.name) as never, readOnlyReason: 'management-required', moduleName: row.name,
     enabled: row.enabled && row.approved, fiberPhase: null, meta: {title: row.name, description: row.description}}));}
 }
