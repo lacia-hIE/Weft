@@ -19,7 +19,7 @@ export function namesOfficialBundle(spec: string): boolean {
 
 /** Apply the upstream patch, then separate root services and browser rows from preset tools. */
 export function composeBundleProfile(profile: AgentRevision, states: readonly BundleState[]): AgentRevision {
-  let rows: EntryOptions[] = profile.spec.plugins.map(row => ({...structuredClone(row), name: 'cordis:'+row.id}));
+  let rows: EntryOptions[] = profile.spec.plugins.map(row => ({id: row.id, config: structuredClone(row.config), name: 'cordis:'+row.id, ...(row.disabled === undefined ? {} : {disabled: row.disabled})}));
   for (const state of states.filter(row => row.enabled)) {
     const bundle = shippedBundle(state.name);
     if (!bundle || bundle.version !== state.version || bundle.digest !== state.digest) throw new Error('Official bundle version unavailable; reinstall the deployment version');

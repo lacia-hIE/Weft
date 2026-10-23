@@ -428,7 +428,11 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
     // path, so even a public package with a familiar name cannot replace code.
     if (endpoint === 'pluginManager/inspect') {
       const inspection = this.officialBundles().inspect(String(args.spec));
-      if (inspection) return Response.json({value: inspection});
+      if (inspection) {
+        const registry = (args.options as {registry?: string | null} | undefined)?.registry;
+        return Response.json({value: registry != null && registry.replace(/\/$/, '') !== 'https://registry.npmjs.org'
+          ? {status: 'refused', problem: 'invalid-spec', reason: 'Official prebuilt bundles cannot be replaced from a custom registry.'} : inspection});
+      }
     }
     if (['pluginManager/installBundle', 'pluginManager/setBundleEnabled', 'pluginManager/removeBundle'].includes(endpoint)) {
       const result = await this.configWrites.run(() => this.officialBundles().change(endpoint, args));

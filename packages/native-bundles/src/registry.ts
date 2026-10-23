@@ -34,7 +34,7 @@ export class OfficialBundleRegistry {
     }
     if (endpoint.endsWith('setBundleEnabled') && !old) return fail('Install the official bundle first.');
     const options = (args.options ?? {}) as {enabled?: boolean; registry?: string | null; approvedBuilds?: string[]};
-    if (options.registry != null || options.approvedBuilds?.length) return fail('Prebuilt official bundles do not use alternate registries or install scripts.');
+    if (options.registry != null && options.registry.replace(/\/$/, '') !== 'https://registry.npmjs.org' || options.approvedBuilds?.length) return fail('Prebuilt official bundles do not use alternate registries or install scripts.');
     const next: BundleState = {name: bundle.name, version: bundle.version, digest: bundle.digest,
       enabled: endpoint.endsWith('installBundle') ? options.enabled !== false : args.enabled === true};
     const changed = JSON.stringify(old) !== JSON.stringify(next);
