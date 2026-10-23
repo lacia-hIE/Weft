@@ -65,5 +65,14 @@ export default async () => {
     assert.equal(state.status, 'failed');
     const escaped = await call({operation: 'start', source: `import fs from 'node:fs/promises'; export default () => fs.writeFile('/workspace/outside-project.txt', 'bad');`, cwd: '/workspace', root: '/workspace/project', writable: true, timeoutMs: 3000});
     assert.equal(escaped.status, 400, 'a task cannot start outside its approved project root');
+    for (const [source, cwd, root] of [
+      [`import fs from 'node:fs/promises'; export default () => fs.writeFile('/workspace/outside-project.txt', 'bad');`, '/workspace/project', '/workspace/project'],
+      [`import fs from 'node:fs/promises'; export default () => fs.mkdir('/workspace/.weft/private-task', {recursive:true});`, '/workspace', '/workspace'],
+    ]) {
+      let result = await call({operation: 'start', source: source!, cwd: cwd!, root: root!, writable: true, timeoutMs: 3000});
+      assert.equal(result.status, 200, JSON.stringify(result.value));
+      for (let i = 0; result.value.status === 'running' && i < 40; i++) result = await call({operation: 'status', id: result.value.id});
+      assert.equal(result.value.status, 'failed', 'writable tasks still enforce their project and private-file boundaries');
+    }
   } finally {await runtime.dispose(); await rm(directory, {recursive: true, force: true});}
 });
