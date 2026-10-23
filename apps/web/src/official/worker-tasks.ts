@@ -1,9 +1,8 @@
 import React from 'react';
-import {Button, DisclosureRow, IconCodeOutlineRegular, Modal} from '@deepseek-ai/dsh-client-ui-primitives';
+import {Button, DisclosureRow, IconPlayOutlineRegular, IconChecklistOutlineRegular, Modal} from '@deepseek-ai/dsh-client-ui-primitives';
 import type {JavaScriptStatus, JavaScriptList, JavaScriptSummary} from '../../../../packages/workspace/src/javascript.ts';
 
 import {WorkerTaskStore, unfinished} from './worker-task-store.ts';
-import type {WorkerPluginSettings} from '../../../../packages/worker-plugins/src/catalog.ts';
 
 const NS = 'weft.worker-tasks';
 const zh = {title: 'Worker 任务', task: 'JavaScript 任务', loading: '读取任务中…', empty: '此会话还没有 Worker 任务。', refresh: '刷新任务', cancel: '取消任务', cancelAll: '取消所有未结束任务', close: '关闭', running: '运行中', waiting: '等待审批', completed: '已完成', failed: '失败', cancelled: '已取消', expired: '已过期', preparing: '正在准备', error: '读取或取消任务失败，请刷新重试。', truncated: '输出已截断；较大的结果请保存为工作区文件。', expiry: '过期时间', details: '查看任务详情', approval: '请通过会话中的原版审批卡片答复。', output: '任务输出'};
@@ -12,9 +11,6 @@ type Translate = (key: keyof typeof zh) => string;
 interface TasksContext {
   slots: {inject(name: string, callback: () => unknown): unknown; register<Props extends object>(spec: object, component: (props: Props) => React.ReactNode): unknown};
   locale: {register(ns: string, dictionaries: object): () => void};
-  plugin(plugin: object): {dispose(): Promise<void>};
-  remote: {$on(name: string, callback: () => void): unknown};
-  on(name: string, callback: () => void): unknown;
   effect(callback: () => unknown, label: string): unknown;
 }
 interface Owner {sessionId: string; t: Translate}
@@ -23,42 +19,20 @@ const section: React.CSSProperties = {display: 'grid', gap: 8, padding: '12px 0'
 const outputStyle: React.CSSProperties = {margin: 0, padding: 10, maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontSize: 12, background: 'var(--dsw-alias-markdown-code-block)', borderRadius: 8};
 
 export const name = '@weft/worker-task-management';
-export const inject = ['slots', 'locale', 'remote'];
+export const inject = ['slots', 'locale'];
 export function apply(ctx: TasksContext): void {
   ctx.effect(() => ctx.locale.register(NS, {zh, en}), 'weft.worker-tasks: dictionaries');
-  let cards: {dispose(): Promise<void>} | undefined;
-  let closed = false, revision = 0;
-  let transition = Promise.resolve();
-  const reconcile = async () => {
-    const current = ++revision;
-    try {
-      const response = await fetch('worker-plugins');
-      if (!response.ok) return;
-      const settings = await response.json() as WorkerPluginSettings;
-      if (closed || current !== revision) return;
-      transition = transition.then(async () => {
-        if (closed || current !== revision) return;
-        const enabled = settings.bundles.javascript && settings.cards.enabled;
-        if (enabled && !cards) cards = ctx.plugin(TaskCards);
-        else if (!enabled && cards) {await cards.dispose(); cards = undefined;}
-      });
-      await transition;
-    } catch { /* Keep the last known UI on a transient connection failure. */ }
-  };
-  ctx.remote.$on('settings/document-updated', () => {void reconcile();});
-  ctx.remote.$on('plugin-manager/changed', () => {void reconcile();});
-  ctx.on('connection/reset', () => {void reconcile();});
   ctx.effect(() => {
     const visible = () => {for (const {store} of stores.values()) store.refresh(false);};
     document.addEventListener('visibilitychange', visible);
-    return () => {closed = true; revision++; document.removeEventListener('visibilitychange', visible); for (const {store} of stores.values()) store.stop(); stores.clear();};
+    return () => {document.removeEventListener('visibilitychange', visible); for (const {store} of stores.values()) store.stop(); stores.clear();};
   }, 'weft.worker-tasks: lifetime');
-  void reconcile();
   ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register({name: 'conversation.session.header.utilities', id: 'weft-worker-tasks', order: -6, locale: NS}, TaskCatalog));
 }
 
-const TaskCards = {name: '@weft/worker-task-cards', inject: ['slots'], apply(ctx: TasksContext) {
-  ctx.slots.inject('tool.call.toolview', () => ctx.slots.register({name: 'tool.call.toolview', key: 'javascript_task', locale: NS}, TaskToolCard));
+export const TaskCards = {name: '@weft/worker-task-cards', inject: ['slots', 'locale'], apply(ctx: TasksContext) {
+  ctx.effect(() => ctx.locale.register(NS+'.cards', {zh, en}), 'weft.task-cards: dictionaries');
+  ctx.slots.inject('tool.call.toolview', () => ctx.slots.register({name: 'tool.call.toolview', key: 'javascript_task', locale: NS+'.cards'}, TaskToolCard));
 }};
 
 async function request(sessionId: string, operation: 'list' | 'status' | 'cancel' | 'cancelAll', id?: string, signal?: AbortSignal): Promise<JavaScriptList | JavaScriptStatus> {
@@ -94,7 +68,7 @@ function CatalogTask({sessionId, task, t, cancel, busy}: Owner & {task: JavaScri
   const [open, setOpen] = React.useState(false);
   const state = useTasks(sessionId, open, task.id, true);
   return React.createElement('section', {style: section, 'data-task-id': task.id},
-    React.createElement(DisclosureRow, {title: task.id.slice(0, 8), icon: React.createElement(IconCodeOutlineRegular, {size: 14}), open, expandable: true, expandOnRowClick: true, keepContentWhenOpen: true,
+    React.createElement(DisclosureRow, {title: task.id.slice(0, 8), icon: React.createElement(IconPlayOutlineRegular, {size: 14}), open, expandable: true, expandOnRowClick: true, keepContentWhenOpen: true,
       onToggle: () => setOpen(value => !value), collapsedContent: React.createElement('span', {role: 'status', style: {marginLeft: 8}}, t(task.status)),
       headerAccessory: unfinished(task) ? React.createElement(Button, {variant: 'outline', size: 'sm', style: {whiteSpace: 'nowrap', flexShrink: 0}, disabled: busy, onClick: () => {void cancel(task.id);}}, t('cancel')) : null,
       children: state.details.has(task.id) ? React.createElement(TaskDetails, {task: state.details.get(task.id)!, t}) : React.createElement('p', {role: state.error ? 'alert' : 'status'}, t(state.error ? 'error' : 'loading'))}));
@@ -115,7 +89,7 @@ function TaskCatalog({sessionId, t}: Owner): React.ReactNode {
   const [open, setOpen] = React.useState(false);
   const state = useTasks(sessionId, open);
   return React.createElement(React.Fragment, null,
-    React.createElement(Button, {variant: 'toolbar', size: 'sm', title: t('title'), 'aria-label': t('title'), onClick: () => setOpen(true), icon: React.createElement(IconCodeOutlineRegular, {size: 16})}),
+    React.createElement(Button, {variant: 'toolbar', size: 'sm', title: t('title'), 'aria-label': t('title'), onClick: () => setOpen(true), icon: React.createElement(IconChecklistOutlineRegular, {size: 16})}),
     React.createElement(Modal, {open, onClose: () => setOpen(false), title: t('title'), closeLabel: t('close'), children:
       React.createElement('div', {style: {display: 'grid', gap: 12}},
         React.createElement('div', {style: {display: 'flex', flexWrap: 'wrap', gap: 8}},
@@ -138,7 +112,7 @@ function TaskToolCard({sessionId, block, phase, t}: ToolOwner): React.ReactNode 
   const detail = recorded ? live.details.get(recorded.id) : undefined;
   const task = live.value?.tasks.find(task => task.id === recorded?.id) ?? recorded;
   return React.createElement('div', {'data-tool': 'javascript_task', 'data-worker-task-card': true},
-    React.createElement(DisclosureRow, {title: t('task'), icon: React.createElement(IconCodeOutlineRegular, {size: 14}), open, expandable: true, expandOnRowClick: true, keepContentWhenOpen: true,
+    React.createElement(DisclosureRow, {title: t('task'), icon: React.createElement(IconPlayOutlineRegular, {size: 14}), open, expandable: true, expandOnRowClick: true, keepContentWhenOpen: true,
       running: !task && phase !== 'result', onToggle: () => setOpen(value => !value),
       collapsedContent: React.createElement('span', {role: 'status', style: {marginLeft: 8}}, task ? t(task.status) : block.isError ? t('failed') : t(phase === 'preparing' ? 'preparing' : 'title')),
       headerAccessory: React.createElement(TaskCatalog, {sessionId, t}),

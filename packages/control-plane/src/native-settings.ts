@@ -23,7 +23,8 @@ import { profileSettingRows } from '../../native-profile/src/settings-rows.ts';
 import YAML from 'yaml';
 import { Config as PiAiConfig } from '@deepseek-ai/dsh-llm-pi-ai';
 import {MANAGEABLE_PROFILE_ROWS, isManageableProfileRow, type ProfileEnablement} from '../../harness-profile/src/management.ts';
-import {workerNamespaces, BUNDLES, JS, DOCS, CARDS, type WorkerPluginSettings} from '../../worker-plugins/src/catalog.ts';
+import {environmentPlugins} from '../../native-composition/src/extensions.ts';
+import type {Enablement} from '../../plugin-registry/src/types.ts';
 
 export const PROFILE_PLUGINS_NAMESPACE = 'weft-plugin-enablement';
 const ProfilePluginsConfig = z.object(Object.fromEntries(MANAGEABLE_PROFILE_ROWS.map(id => [id, z.boolean().default(true).volatile()])));
@@ -119,7 +120,7 @@ export class NativeSettings {
   constructor(storage: DurableObjectStorage, private readonly host: NativeSettingsHost, private readonly documents: D1SettingsDocuments) {
     this.credentials = new DurableCredentials(new Context(), storage, (event, ref) => host.changed(event, [ref]));
     this.namespaces = [
-      ...workerNamespaces.map(row => ({...row, base: () => ({}), autoGenerate: false, validate: () => {}})),
+      ...environmentPlugins.namespaces.map(row => ({...row, base: () => structuredClone(row.base), autoGenerate: false, validate: () => {}})),
       {id: MODEL_NAMESPACE, schema: DeepSeekConfig, base: () => host.providerBase(), autoGenerate: false, validate: value => {
         const options = resolveAdapterOptions(value as DeepSeekOptions);
         if (new URL(options.baseURL).protocol !== 'https:') throw new Error('Provider endpoint must use HTTPS');
@@ -269,13 +270,11 @@ export class NativeSettings {
     await this.write(MARKET_NAMESPACE, undefined, user => ({...user, indexes}));
   }
   profileEnablement(): ProfileEnablement {return this.value(PROFILE_PLUGINS_NAMESPACE) as ProfileEnablement;}
-  workerPlugins(): WorkerPluginSettings {
-    return {bundles: this.value(BUNDLES), javascript: this.value(JS), documents: this.value(DOCS), cards: this.value(CARDS)} as unknown as WorkerPluginSettings;
-  }
-  async setWorkerPluginEnabled(id: string, enabled: boolean, key = 'enabled'): Promise<boolean> {
-    if (![JS, DOCS, CARDS].includes(id) && !(id === BUNDLES && ['javascript', 'documents'].includes(key))) throw new Error('Unknown Worker plugin');
+  pluginPlan() {return environmentPlugins.plan(id => this.value(id));}
+  async setPluginEnabled(control: Enablement, enabled: boolean): Promise<boolean> {
+    if (!environmentPlugins.accepts(control)) throw new Error('Unknown plugin enablement control');
     let changed = false;
-    await this.write(id, undefined, user => {changed = (user[key] !== false) !== enabled; return {...user, [key]: enabled};});
+    await this.write(control.namespace, undefined, user => {changed = (user[control.key] ?? control.defaultEnabled ?? true) !== enabled; return {...user, [control.key]: enabled};});
     return changed;
   }
   /** Serialize each patch against the latest document so concurrent switches cannot lose another row's change. */

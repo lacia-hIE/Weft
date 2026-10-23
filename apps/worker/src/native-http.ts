@@ -72,13 +72,6 @@ async function cachedRoot(owner: ControlScope, control: ReturnType<typeof contro
 
 export async function handleNativeRequest(request: Request, env: Env, principal: Principal, environmentId?: string): Promise<Response | undefined> {
   const pathname = new URL(request.url).pathname;
-  const workerPlugins = /^\/v1\/tenants\/([^/]+)\/native\/worker-plugins$/.exec(pathname);
-  if (workerPlugins) {
-    if (workerPlugins[1] !== principal.tenantId) throw new HttpError(403, 'Tenant access denied');
-    if (request.method !== 'GET') return new Response(null, {status: 405, headers: {allow: 'GET'}});
-    const owner = controlScope(principal.tenantId, environmentId);
-    return Response.json(await controlFor(env, owner).nativeWorkerPlugins(owner), {headers: {'cache-control': 'private, no-store'}});
-  }
   const javascript = /^\/v1\/tenants\/([^/]+)\/native\/javascript-tasks$/.exec(pathname);
   if (javascript) {
     if (javascript[1] !== principal.tenantId) throw new HttpError(403, 'Tenant access denied');

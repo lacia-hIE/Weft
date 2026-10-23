@@ -55,9 +55,8 @@ test('Worker bundles use native patches, isolate settings, and unload/reload too
     await api.call('pluginManager/setBundleEnabled', {name: '@weft/worker-javascript', enabled: true});
     tools = await run(); assert.ok(tools.includes('javascript_task')); assert.ok(tools.includes('document_to_markdown'));
     await runtime.dispose(); runtime = createRuntime(directory, options);
-    const config = await runtime.dispatchFetch(url('alpha', `/v1/tenants/${tenantId('alpha')}/environments/default/native/worker-plugins`));
-    assert.equal(config.headers.get('cache-control'), 'private, no-store');
-    assert.equal((await config.json() as {documents: {maxInputMiB: number}}).documents.maxInputMiB, 2);
+    const config = await api.call<import('@deepseek-ai/dsh-settings/types').SettingsDescribeValue>('settings/describe', {});
+    assert.equal((config.namespaces.find(row => row.ns === 'weft-documents')!.value as {maxInputMiB: number}).maxInputMiB, 2);
     assert.equal((await api.call<ChangeResult>('pluginManager/removeBundle', {name: '@weft/worker-documents'})).error?.code, 'not-removable');
   } finally {await runtime.dispose(); await rm(directory, {recursive: true, force: true});}
 });

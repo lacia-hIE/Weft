@@ -6,6 +6,8 @@ Weft 使用 `@cloudflare/computer` 0.7.0 和显式安装的 `just-bash`。长任
 
 这些是 Weft 提供的原生 Cordis 插件，使用原版 `package.json → dsh.bundle.patch` 和 entry patch 语义。JSON 是原版支持的 patch 文件格式；没有另造安装协议，也不标注为上游官方插件。
 
+预置扩展由[统一插件目录与生命周期协调器](plugin-composition.md)装配。任务管理入口使用原版任务清单图标，单个任务使用运行图标；主题、按钮和展开行沿用 DSH 组件。
+
 在原版插件管理页中，两个预置组合包默认启用，可按环境独立开关：
 
 | 组合包 | 插件条目 | 原版配置表单 |

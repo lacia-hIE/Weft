@@ -6,6 +6,8 @@ test('native Worker task cards and catalog recover after reload and cancel the r
   const environment = 'worker-tasks-'+crypto.randomUUID().slice(0, 8);
   expect((await request.post(`/v1/tenants/${me.tenantId}/environments`, {data: {id: environment, name: environment}})).status()).toBe(201);
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
+  const pluginConfigRequests: string[] = [];
+  page.on('request', request => {if (new URL(request.url()).pathname.endsWith('/worker-plugins')) pluginConfigRequests.push(request.url());});
   const native = async (method: string, args: object) => {
     const response = await request.post(`/v1/tenants/${me.tenantId}/environments/${environment}/native/api/${method}`, {data: {type: 'client-request', rpcId: crypto.randomUUID(), method, payload: {args}}});
     expect(response.status()).toBe(200);
@@ -48,4 +50,5 @@ test('native Worker task cards and catalog recover after reload and cancel the r
   await page.getByRole('button', {name: 'Worker tasks', exact: true}).first().click({timeout: 45_000});
   await expect(page.getByRole('dialog', {name: 'Worker tasks', exact: true}).getByRole('status')).toHaveText('Cancelled');
   expect(errors).toEqual([]);
+  expect(pluginConfigRequests).toEqual([]);
 });

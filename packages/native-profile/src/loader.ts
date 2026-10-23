@@ -5,6 +5,7 @@ import { enabledEntries } from '../../harness-profile/src/official.ts';
 import { LOADED, type ProfilePhase } from '../../harness-profile/src/overlay.ts';
 import { PRESET_PENDING } from '../../harness-profile/src/presets.ts';
 import {isManageableProfileRow, MANAGEABLE_PROFILE_ROWS, type ProfileEnablement} from '../../harness-profile/src/management.ts';
+import {updateLoaderEntry} from '../../plugin-registry/src/host.ts';
 
 /** The base URL of prebuilt rows; nothing is fetched from it. */
 const PREBUILT_BASE = 'https://weft.invalid/prebuilt/';
@@ -13,6 +14,7 @@ const PREBUILT_BASE = 'https://weft.invalid/prebuilt/';
 export class WorkerdLoader extends Loader {
   override write(): void { /* The environment owns immutable profile snapshots. */ }
   override import(name: string): unknown {
+    if (Object.hasOwn(this.builtins, name)) return this.builtins[name];
     if (name.startsWith('cordis:') && Object.hasOwn(this.builtins, name.slice(7))) return this.builtins[name.slice(7)];
     if (Object.hasOwn(officialModules, name)) return officialModules[name];
     const pending = name.startsWith('cordis:') ? PRESET_PENDING[name.slice(7)] : undefined;
@@ -76,8 +78,7 @@ export async function reconcileProfileEnablement(ctx: Context, applied: ProfileE
   const ids = new Set([...ctx.loader.entries()].map(entry => entry.options.id));
   for (const id of MANAGEABLE_PROFILE_ROWS) {
     if ((applied[id] !== false) === (next[id] !== false) || !ids.has(id)) continue;
-    await ctx.loader.update(id, {disabled: next[id] === false});
-    if (next[id] !== false) await ctx.loader.resolve(id).fiber?.await();
+    await updateLoaderEntry(ctx.loader, {...ctx.loader.resolve(id).options, disabled: next[id] === false});
   }
   return structuredClone(next);
 }
@@ -92,7 +93,7 @@ export async function reconcileProfileOverrides(ctx: Context, applied: ProfileOv
   const rows = new Map(enabledEntries().map(entry => [entry.id, entry]));
   for (const id of new Set([...Object.keys(applied), ...Object.keys(next)])) {
     if (JSON.stringify(applied[id]) === JSON.stringify(next[id]) || ![...ctx.loader.entries()].some(entry => entry.options.id === id)) continue;
-    await ctx.loader.update(id, {config: structuredClone(next[id] ?? (rows.get(id)?.config as Record<string, unknown> | undefined) ?? {})});
+    await updateLoaderEntry(ctx.loader, {...ctx.loader.resolve(id).options, config: structuredClone(next[id] ?? (rows.get(id)?.config as Record<string, unknown> | undefined) ?? {})});
   }
   return structuredClone(next);
 }

@@ -2,7 +2,7 @@ import React from 'react';
 import { fileAddressFor } from '@deepseek-ai/dsh-util-workspace-path';
 import * as WorkspaceRuntimeSettings from './workspace-runtime-settings.ts';
 import * as InstalledBundles from './installed-bundles.ts';
-import * as WorkerTasks from './worker-tasks.ts';
+import * as EnvironmentPlugins from './plugin-lifecycle.ts';
 interface InventoryRow {
     pluginId: string;
     agentId: string;
@@ -105,7 +105,7 @@ function mount(ctx: ClientContext): void {
     // The workspace runtime page waits for the Settings forms service on its own.
     ctx.plugin(WorkspaceRuntimeSettings);
     ctx.plugin(InstalledBundles);
-    ctx.plugin(WorkerTasks);
+    ctx.plugin(EnvironmentPlugins);
     ctx.on('connection/reset', recover);
     ctx.remote.$on('cordis/dynamic-package', recover);
     recover();
