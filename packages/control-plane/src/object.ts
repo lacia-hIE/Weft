@@ -1009,7 +1009,7 @@ export function controlScope(
 ): ControlScope {
   return {tenantId, environmentId: environmentId ?? 'default'};
 }
-export function controlFor(env: TenantEnvironment, scope: ControlScope) {
+export function controlFor(env: HarnessEnvironment, scope: ControlScope) {
   return env.ENVIRONMENTS.getByName(environmentAddress(scope));
 }
 

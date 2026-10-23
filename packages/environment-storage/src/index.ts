@@ -70,7 +70,7 @@ export class DurableAgentRevisions<T extends {revision: number}> {
   }
 }
 
-export interface WorkspaceRow { id: string; path: string; document: string }
+export type WorkspaceRow = { id: string; path: string; document: string };
 export interface WorkspaceTransaction {
   state(): string;
   storeState(document: string): void;
