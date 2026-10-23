@@ -9,6 +9,7 @@ interface Active {
 /** Per-Session activations; declarations, grants and module authority remain in EnvironmentDO. */
 export class InstalledPackageRuntime {
   private readonly active = new Map<string, Active>();
+  private readonly failed = new Map<string, string>();
   private readonly platform: NativePluginPlatform;
   private tail: Promise<unknown> = Promise.resolve();
   constructor(private readonly ctx: Context, state: DurableObjectState, loader: WorkerLoader | undefined, scope: object,
@@ -20,14 +21,15 @@ export class InstalledPackageRuntime {
   reconcile(): Promise<void> {
     const operation = this.tail.catch(() => {}).then(async () => {
       const selected = (await this.source.list()).filter(row => row.enabled && row.approved);
+      for (const name of this.failed.keys()) if (!selected.some(row => row.name === name && row.digest === this.failed.get(name))) this.failed.delete(name);
       for (const [name, row] of this.active) if (!selected.some(next => next.name === name && next.digest === row.installation.digest)) await this.stopNow(name);
       for (const installation of selected) {
-        if (this.active.has(installation.name)) continue;
-        const artifact = await this.source.artifact(installation.name, installation.digest);
+        if (this.active.has(installation.name) || this.failed.get(installation.name) === installation.digest) continue;
         const runId = 'installed-' + crypto.randomUUID();
         const row: Active = {installation, runId, handlers: new Map()};
         this.active.set(installation.name, row);
         try {
+          const artifact = await this.source.artifact(installation.name, installation.digest);
           if (artifact.host) {
             const p = installation.permissions;
             const services = [...(p.files !== 'none' ? ['fs'] : []), ...(p.tools ? ['tools'] : []), ...(p.timer ? ['timer'] : [])];
@@ -42,6 +44,7 @@ export class InstalledPackageRuntime {
           }
         } catch (error) {
           await this.stopNow(installation.name);
+          this.failed.set(installation.name, installation.digest);
           // A broken optional package must not make a Session or its built-in tools unavailable.
           console.warn('weft.package.activation.failed', {name: installation.name, message: error instanceof Error ? error.message : String(error)});
         }
@@ -50,7 +53,7 @@ export class InstalledPackageRuntime {
     this.tail = operation; return operation;
   }
   async stop(name: string): Promise<void> {
-    const next = this.tail.catch(() => {}).then(() => this.stopNow(name));
+    const next = this.tail.catch(() => {}).then(async () => {this.failed.delete(name); await this.stopNow(name);});
     this.tail = next; await next;
   }
   private async stopNow(name: string): Promise<void> {

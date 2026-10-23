@@ -9,6 +9,7 @@ import {packageFixture} from './helpers/package-fixture.ts';
 import {createRuntime, tenantId, url} from './helpers/miniflare.ts';
 import {nativeClient} from './helpers/native.ts';
 import type {InstallJob, Installation, Artifact} from '../packages/package-install/src/contracts.ts';
+import {artifactKey} from '../packages/package-install/src/contracts.ts';
 
 test('package installation reviews exact artifacts, runs isolated Host modules and survives restart with immediate revocation', {timeout: 120_000}, async () => {
   const fixture = packageFixture(); let builds = 0;
@@ -89,5 +90,10 @@ test('installed read-only packages cannot write, stale approval is refused and p
     assert.equal(status.status, 200, await status.clone().text()); assert.deepEqual(await status.json(), {value: {denied: true}});
     const response = await runtime.dispatchFetch(url('alpha', base+'/package-invoke'), {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({sessionId: 'readonly-package', name: row.name, digest: row.digest, method: 'save', args: 'denied'})});
     assert.equal(response.status, 409); assert.match(await response.text(), /permission denied/);
+    const bucket = await runtime.getR2Bucket('PLUGIN_ARTIFACTS', 'alpha');
+    await bucket.delete(artifactKey({tenantId: tenantId('alpha'), environmentId: 'default'}, row.digest));
+    await api.call('session/create', {request: {sessionId: 'missing-package-artifact'}});
+    const commands = await api.call<unknown[]>('commands/list', {agentId: 'missing-package-artifact'});
+    assert.ok(commands.length > 0, 'a missing optional package artifact does not prevent a new Session from opening');
   } finally {await runtime.dispose();}
 });
