@@ -470,10 +470,12 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
     if (fixedBundle && ['pluginManager/setBundleEnabled', 'pluginManager/removeBundle'].includes(endpoint) || fixedPlugin && endpoint === 'pluginManager/setPluginEnabled') return Response.json({value: {changed: false, application: 'failed', stage: endpoint.endsWith('removeBundle') ? 'remove' : 'enable', target: args.id ?? args.name, error: {code: 'management-required'}}});
     const workerBundle = workerBundles.find(row => args.name === row.manifest.name);
     if (endpoint === 'pluginManager/setBundleEnabled' && workerBundle || endpoint === 'pluginManager/setPluginEnabled' && [JS, DOCS, CARDS].includes(String(args.id))) {
-      const changed = await this.configWrites.run(() => workerBundle
+      // NativeSettings already serializes the D1 write on configWrites.
+      // Re-entering that same queue here would wait on this operation forever.
+      const changed = await (workerBundle
         ? this.settings(scope).setWorkerPluginEnabled(BUNDLES, args.enabled === true, workerBundle.key)
         : this.settings(scope).setWorkerPluginEnabled(String(args.id), args.enabled === true));
-      if (changed) {this.presetReads.clear(); await this.nativeEvent(scope, 'plugin-manager/changed', [{reason: 'enable'}]);}
+      if (changed) {this.presetReads.clear(); await this.renderSettingsDocument(scope); await this.nativeEvent(scope, 'plugin-manager/changed', [{reason: 'enable'}]);}
       return Response.json({value: {changed, application: 'applied', stage: 'enable', target: args.id ?? args.name, enabled: args.enabled, warnings: ['Tools update before the next turn; existing tasks remain manageable.']}});
     }
     if (workerBundle && endpoint === 'pluginManager/removeBundle') return Response.json({value: {changed: false, application: 'failed', stage: 'remove', target: args.name, error: {code: 'not-removable'}}});
