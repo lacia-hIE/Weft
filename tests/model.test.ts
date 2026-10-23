@@ -182,7 +182,9 @@ function stalled(): V4FetchHandler {
 }
 
 test('idle timeout and whole-turn deadline release the session queue', async () => {
-  for (const [overrides, code] of [[{ MODEL_IDLE_TIMEOUT_MS: '50' }, 'TIMEOUT'], [{ MODEL_IDLE_TIMEOUT_MS: '60000', MODEL_TURN_TIMEOUT_MS: '100' }, 'TURN_TIMEOUT']] as const) {
+  // The stalled provider never finishes, so a sub-millisecond scheduling race
+  // is unnecessary. Leave a healthy fragmented response enough time on shared CI runners.
+  for (const [overrides, code] of [[{ MODEL_IDLE_TIMEOUT_MS: '1000' }, 'TIMEOUT'], [{ MODEL_IDLE_TIMEOUT_MS: '60000', MODEL_TURN_TIMEOUT_MS: '2000' }, 'TURN_TIMEOUT']] as const) {
     let count = 0;
     const hang = stalled();
     const runtime = createRuntime(undefined, { bindings: { ...bindings, ...overrides }, outbound: async (request, miniflare) => ++count === 1 ? hang(request, miniflare) : streamResponse(textPrefix + textSuffix) });
@@ -190,7 +192,8 @@ test('idle timeout and whole-turn deadline release the session queue', async () 
       const response = await send(runtime, 'alpha', 'timeout', 'hang');
       assert.equal(response.status, 504, await response.clone().text());
       assert.equal((await response.json() as { code: string }).code, code);
-      assert.equal((await send(runtime, 'alpha', 'timeout', 'continue')).status, 200);
+      const continued = await send(runtime, 'alpha', 'timeout', 'continue');
+      assert.equal(continued.status, 200, await continued.clone().text());
     } finally { await runtime.dispose(); }
   }
 });
