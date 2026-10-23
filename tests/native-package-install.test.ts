@@ -57,3 +57,29 @@ test('package installation reviews exact artifacts, runs isolated Host modules a
     await api.call('pluginManager/removeBundle', {name: row.name}); assert.equal((await list()).installations.length, 0);
   } finally {await runtime.dispose(); await rm(directory, {recursive: true, force: true});}
 });
+
+test('installed read-only packages cannot write, stale approval is refused and private registries never fall back publicly', {timeout: 120_000}, async () => {
+  const fixture = packageFixture({declaration: {abi: 'weft-plugin-v1', host: './host.js', permissions: {files: 'read'}}});
+  let downloads = 0;
+  const runtime = createRuntime(undefined, {packages: true, browser: true,
+    outbound: async request => {
+      downloads++;
+      return request.url === fixture.manifest.dist.tarball ? new Response(fixture.bytes) : Response.json(fixture.manifest);
+    }, packageBuilder: async request => Response.json(await buildPackage(JSON.parse(await request.text()))),
+  });
+  const api = nativeClient(() => runtime), base = `/v1/tenants/${tenantId('alpha')}/environments/default/native`;
+  try {
+    const refused = await api.call<{status: string}>('pluginManager/inspect', {spec: '@private/plugin@1.0.0', options: {registry: 'https://private.test'}});
+    assert.equal(refused.status, 'refused'); assert.equal(downloads, 0);
+    const installed = await api.call<{application: string}>('pluginManager/installBundle', {spec: `${fixture.name}@${fixture.version}`});
+    assert.equal(installed.application, 'applied');
+    const get = async () => (await (await runtime.dispatchFetch(url('alpha', base+'/package-installations'))).json() as {installations: Installation[]}).installations[0]!;
+    const row = await get(); assert.equal(row.approved, false);
+    const approve = (digest: string) => runtime.dispatchFetch(url('alpha', base+'/package-installations'), {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({operation: 'approve', name: row.name, digest})});
+    assert.equal((await approve('0'.repeat(64))).status, 409); assert.equal((await get()).approved, false);
+    assert.equal((await approve(row.digest)).status, 200);
+    await api.call('session/create', {request: {sessionId: 'readonly-package'}});
+    const response = await runtime.dispatchFetch(url('alpha', base+'/package-invoke'), {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({sessionId: 'readonly-package', name: row.name, digest: row.digest, method: 'save', args: 'denied'})});
+    assert.equal(response.status, 409); assert.match(await response.text(), /permission denied/);
+  } finally {await runtime.dispose();}
+});

@@ -87,7 +87,7 @@ import { DATA_LAYOUT_VERSION } from '../../tenant/src/layout.ts';
 import { NativePluginCatalog } from './native-plugins.ts';
 import {NativeSessionSearch} from '../../native-query/src/host.ts';
 import {mapConcurrent} from '../../native-query/src/concurrent.ts';
-import {remoteErrorOf} from '@deepseek-ai/dsh-typert-protocol';
+import {RemoteError, remoteErrorOf} from '@deepseek-ai/dsh-typert-protocol';
 
 declare const WEFT_VALIDATION_BUILD: boolean;
 
@@ -412,7 +412,9 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
     const packages = this.packages(scope);
     const method = (await import('../../../.generated/official-remotes/packages/boot/plugin-manager/typert.remote-client.js')).default.methods[endpoint as 'pluginManager/installBundle'];
     if (!method) throw new Error('Unknown package operation');
-    const args = method.input({strict: true}).create().parse(raw) as Record<string, unknown>;
+    let args: Record<string, unknown>;
+    try {args = method.input({strict: true}).create().parse(raw) as Record<string, unknown>;}
+    catch {throw new RemoteError('gateway/bad-request', 'Invalid plugin management arguments', {});}
     const name = typeof args.name === 'string' ? args.name : typeof args.id === 'string' && args.id.startsWith('installed:') ? args.id.slice('installed:'.length) : undefined;
     if (name && packages.registry.get(name) && ['pluginManager/setPluginEnabled', 'pluginManager/setBundleEnabled', 'pluginManager/removeBundle'].includes(endpoint)) {
       try {
@@ -422,10 +424,15 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
         return Response.json({value: {changed, application: 'applied', stage: 'enable', target: args.id ?? name, enabled, warnings: ['Host activation applies before the next turn.']}});
       } catch (error) {return Response.json({value: {changed: false, application: 'failed', stage: 'enable', target: name, error: {code: 'operation-error', diagnostic: error instanceof Error ? error.message : String(error)}}});}
     }
-    if (endpoint === 'pluginManager/inspect') return Response.json({value: await packages.inspect(String(args.spec))});
+    const options = (args.options ?? {}) as {requestId?: string; registry?: string | null; approvedBuilds?: string[]};
+    const unsupportedRegistry = options.registry != null && options.registry.replace(/\/$/, '') !== 'https://registry.npmjs.org';
+    if (endpoint === 'pluginManager/registries') return Response.json({value: {registry: 'https://registry.npmjs.org/', fallbackRegistries: [], resolved: 'https://registry.npmjs.org/'}});
+    if (endpoint === 'pluginManager/inspect') return Response.json({value: unsupportedRegistry
+      ? {status: 'refused', problem: 'invalid-spec', reason: 'Only the public npm registry is supported in v1; private registries are never retried publicly.'}
+      : await packages.inspect(String(args.spec))});
     if (endpoint === 'pluginManager/installBundle') {
       try {
-        const options = (args.options ?? {}) as {requestId?: string};
+        if (unsupportedRegistry || options.approvedBuilds?.length) throw new Error('Custom registries and dependency build scripts are unsupported in v1');
         const job = await packages.start(String(args.spec), options.requestId ?? crypto.randomUUID());
         const result = await packages.wait(job.id);
         return Response.json({value: {changed: result?.phase === 'review', application: result?.phase === 'review' ? 'applied' : 'failed', stage: 'install', target: args.spec,

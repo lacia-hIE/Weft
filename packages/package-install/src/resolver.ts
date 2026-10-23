@@ -8,7 +8,6 @@ interface Manifest {
 }
 export interface ResolvedPackage {manifest: Manifest; declaration: Declaration; lock: PackageLock; packages: {name: string; version: string; bytes: string}[]}
 const REGISTRY = 'https://registry.npmjs.org';
-const enc = new TextEncoder();
 export async function limitedBytes(response: Response, max: number): Promise<Uint8Array> {
   if (!response.ok) throw new Error(`Package download failed (HTTP ${response.status})`);
   if (Number(response.headers.get('content-length') ?? 0) > max) throw new Error('Package download exceeds the size limit');
@@ -31,7 +30,7 @@ function metadata(value: unknown, name: string, version: string): Manifest {
   return item;
 }
 async function json(address: string, signal: AbortSignal): Promise<unknown> {
-  return JSON.parse(new TextDecoder().decode(await limitedBytes(await fetch(address, {redirect: 'error', signal}), 4 * 1024 * 1024)));
+  return JSON.parse(new TextDecoder().decode(await limitedBytes(await fetch(address, {redirect: 'manual', signal}), 4 * 1024 * 1024)));
 }
 export async function inspectPackage(spec: string, signal: AbortSignal): Promise<{manifest: Manifest; declaration: Declaration}> {
   const match = exactSpec.exec(spec);
@@ -49,6 +48,7 @@ export async function resolvePackage(spec: string, signal: AbortSignal): Promise
     const item = queue[index]!;
     for (const [name, range] of Object.entries(item.dependencies ?? {})) {
       if (!/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/.test(name) || !validRange(range)) throw new Error(`${name}: only registry semver dependencies are supported`);
+      if (name === 'react') {if (!satisfies('18.3.1', range)) throw new Error('Plugin requires a different React version than the host'); continue;}
       const existing = selected.get(name);
       if (existing) {if (!satisfies(existing.version, range)) throw new Error(`Dependency version conflict: ${name}`); continue;}
       if (selected.size >= 32) throw new Error('A plugin may have at most 32 packages in v1');
@@ -60,13 +60,14 @@ export async function resolvePackage(spec: string, signal: AbortSignal): Promise
     }
   }
   for (const item of selected.values()) for (const [name, range] of Object.entries(item.peerDependencies ?? {})) {
+    if (name === 'react' && validRange(range) && satisfies('18.3.1', range)) continue;
     const peer = selected.get(name);
     if (!peer || !validRange(range) || !satisfies(peer.version, range)) throw new Error(`Unsatisfied peer dependency: ${name}@${range}`);
   }
   const lock: PackageLock = []; const packages: ResolvedPackage['packages'] = []; let total = 0;
   for (const item of [...selected.values()].sort((a, b) => a.name.localeCompare(b.name))) {
     signal.throwIfAborted();
-    const bytes = await limitedBytes(await fetch(item.dist.tarball, {redirect: 'error', signal}), 4 * 1024 * 1024);
+    const bytes = await limitedBytes(await fetch(item.dist.tarball, {redirect: 'manual', signal}), 4 * 1024 * 1024);
     total += bytes.length; if (total > 12 * 1024 * 1024) throw new Error('Plugin archives exceed the combined 12 MiB limit');
     const integrity = 'sha512-' + base64(new Uint8Array(await crypto.subtle.digest('SHA-512', bytes as BufferSource)));
     if (integrity !== item.dist.integrity) throw new Error(`Package integrity mismatch: ${item.name}@${item.version}`);
