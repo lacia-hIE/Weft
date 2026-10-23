@@ -1,6 +1,9 @@
 import React from 'react';
 import {Button, DisclosureRow, IconCodeOutlineRegular, Modal} from '@deepseek-ai/dsh-client-ui-primitives';
-import type {JavaScriptStatus, JavaScriptList} from '../../../../packages/workspace/src/javascript.ts';
+import type {JavaScriptStatus, JavaScriptList, JavaScriptSummary} from '../../../../packages/workspace/src/javascript.ts';
+
+import {WorkerTaskStore, unfinished} from './worker-task-store.ts';
+import type {WorkerPluginSettings} from '../../../../packages/worker-plugins/src/catalog.ts';
 
 const NS = 'weft.worker-tasks';
 const zh = {title: 'Worker 任务', task: 'JavaScript 任务', loading: '读取任务中…', empty: '此会话还没有 Worker 任务。', refresh: '刷新任务', cancel: '取消任务', cancelAll: '取消所有未结束任务', close: '关闭', running: '运行中', waiting: '等待审批', completed: '已完成', failed: '失败', cancelled: '已取消', expired: '已过期', preparing: '正在准备', error: '读取或取消任务失败，请刷新重试。', truncated: '输出已截断；较大的结果请保存为工作区文件。', expiry: '过期时间', details: '查看任务详情', approval: '请通过会话中的原版审批卡片答复。', output: '任务输出'};
@@ -9,23 +12,47 @@ type Translate = (key: keyof typeof zh) => string;
 interface TasksContext {
   slots: {inject(name: string, callback: () => unknown): unknown; register<Props extends object>(spec: object, component: (props: Props) => React.ReactNode): unknown};
   locale: {register(ns: string, dictionaries: object): () => void};
+  plugin(plugin: object): {dispose(): Promise<void>};
+  remote: {$on(name: string, callback: () => void): unknown};
+  on(name: string, callback: () => void): unknown;
   effect(callback: () => unknown, label: string): unknown;
 }
 interface Owner {sessionId: string; t: Translate}
 interface ToolOwner extends Owner {phase: string; block: {content?: {type: string; text?: string}[]; call?: {argsRaw?: string}; argsRaw?: string; isError?: boolean}}
-const unfinished = (task: JavaScriptStatus) => task.status === 'running' || task.status === 'waiting';
 const section: React.CSSProperties = {display: 'grid', gap: 8, padding: '12px 0', borderBottom: '0.5px solid var(--dsw-alias-border-l3)', color: 'var(--dsw-alias-label-secondary)'};
 const outputStyle: React.CSSProperties = {margin: 0, padding: 10, maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontSize: 12, background: 'var(--dsw-alias-markdown-code-block)', borderRadius: 8};
 
-export const name = 'weft-worker-tasks';
-export const inject = ['slots', 'locale'];
+export const name = '@weft/worker-task-management';
+export const inject = ['slots', 'locale', 'remote'];
 export function apply(ctx: TasksContext): void {
   ctx.effect(() => ctx.locale.register(NS, {zh, en}), 'weft.worker-tasks: dictionaries');
-  ctx.slots.inject('tool.call.toolview', () => ctx.slots.register({name: 'tool.call.toolview', key: 'javascript_task', locale: NS}, TaskToolCard));
+  let cards: {dispose(): Promise<void>} | undefined;
+  let closed = false, revision = 0;
+  const reconcile = async () => {
+    const current = ++revision;
+    try {
+      const response = await fetch('worker-plugins');
+      if (!response.ok) return;
+      const settings = await response.json() as WorkerPluginSettings;
+      if (closed || current !== revision) return;
+      const enabled = settings.bundles.javascript && settings.cards.enabled;
+      if (enabled && !cards) cards = ctx.plugin(TaskCards);
+      else if (!enabled && cards) {const old = cards; cards = undefined; await old.dispose();}
+    } catch { /* Keep the last known UI on a transient connection failure. */ }
+  };
+  ctx.remote.$on('settings/document-updated', () => {void reconcile();});
+  ctx.remote.$on('plugin-manager/changed', () => {void reconcile();});
+  ctx.on('connection/reset', () => {void reconcile();});
+  ctx.effect(() => () => {closed = true; revision++; for (const store of stores.values()) store.stop(); stores.clear();}, 'weft.worker-tasks: lifetime');
+  void reconcile();
   ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register({name: 'conversation.session.header.utilities', id: 'weft-worker-tasks', order: -6, locale: NS}, TaskCatalog));
 }
 
-async function request(sessionId: string, operation: 'list' | 'status' | 'cancel' | 'cancelAll', id?: string, signal?: AbortSignal): Promise<JavaScriptList> {
+const TaskCards = {name: '@weft/worker-task-cards', inject: ['slots'], apply(ctx: TasksContext) {
+  ctx.slots.inject('tool.call.toolview', () => ctx.slots.register({name: 'tool.call.toolview', key: 'javascript_task', locale: NS}, TaskToolCard));
+}};
+
+async function request(sessionId: string, operation: 'list' | 'status' | 'cancel' | 'cancelAll', id?: string, signal?: AbortSignal): Promise<JavaScriptList | JavaScriptStatus> {
   const mutation = operation === 'cancel' || operation === 'cancelAll';
   const query = new URLSearchParams({sessionId, ...(id ? {id} : {})});
   const response = await fetch(mutation ? 'javascript-tasks' : 'javascript-tasks?'+query, {
@@ -33,45 +60,36 @@ async function request(sessionId: string, operation: 'list' | 'status' | 'cancel
     ...(mutation ? {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({sessionId, operation, ...(id ? {id} : {})})} : {}),
   });
   if (!response.ok) throw new Error('Task request failed');
-  const value = await response.json() as JavaScriptList | JavaScriptStatus;
-  return 'tasks' in value ? value : {tasks: [value]};
+  return await response.json() as JavaScriptList | JavaScriptStatus;
 }
 
-/** No polling while closed or hidden; one awaited read precedes each timer. */
-function useTasks(sessionId: string, enabled: boolean, id?: string) {
-  const owner = sessionId+':'+(id ?? '*');
-  const [snapshot, setSnapshot] = React.useState<{owner: string; value: JavaScriptList}>();
-  const value = snapshot?.owner === owner ? snapshot.value : undefined;
-  const [error, setError] = React.useState(false);
-  const [mutationError, setMutationError] = React.useState(false);
-  const [busy, setBusy] = React.useState(false);
-  const [revision, refresh] = React.useReducer((n: number) => n + 1, 0);
-  React.useEffect(() => {setError(false); setMutationError(false);}, [sessionId, id]);
+const stores = new Map<string, WorkerTaskStore>();
+function useTasks(sessionId: string, enabled: boolean, id?: string, details = false) {
+  const key = location.pathname+':'+sessionId;
+  const store = React.useMemo(() => {
+    let store = stores.get(key);
+    if (!store) {store = new WorkerTaskStore(sessionId, request, () => document.hidden, () => {}); stores.set(key, store);}
+    return store;
+  }, [key, sessionId]);
+  const subscribe = React.useCallback((listener: () => void) => enabled ? store.subscribe(listener, id, details) : () => {}, [store, enabled, id, details]);
+  const state = React.useSyncExternalStore(subscribe, store.getSnapshot);
   React.useEffect(() => {
-    if (!enabled || busy) return;
-    const abort = new AbortController();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const read = async () => {
-      if (document.hidden || abort.signal.aborted) return;
-      try {
-        const next = await request(sessionId, id ? 'status' : 'list', id, abort.signal);
-        if (abort.signal.aborted) return;
-        setSnapshot({owner, value: next}); setError(false);
-        if (next.tasks.some(unfinished)) timer = setTimeout(() => {void read();}, next.tasks.some(task => task.status === 'running') ? 3000 : 15000);
-      } catch {if (!abort.signal.aborted) setError(true);}
-    };
-    const visible = () => {clearTimeout(timer); abort.abort(); refresh();};
+    if (!enabled) return;
+    const visible = () => store.refresh(false);
     document.addEventListener('visibilitychange', visible);
-    void read();
-    return () => {abort.abort(); clearTimeout(timer); document.removeEventListener('visibilitychange', visible);};
-  }, [sessionId, enabled, id, revision, busy]);
-  const cancel = async (task?: string) => {
-    setBusy(true); setMutationError(false);
-    try {setSnapshot({owner, value: await request(sessionId, task ? 'cancel' : 'cancelAll', task)});}
-    catch {setMutationError(true);}
-    finally {setBusy(false); refresh();}
-  };
-  return {value, error: error || mutationError, busy, refresh: () => {setMutationError(false); refresh();}, cancel};
+    return () => document.removeEventListener('visibilitychange', visible);
+  }, [store, enabled]);
+  return {...state, refresh: () => store.refresh(), cancel: store.cancel};
+}
+
+function CatalogTask({sessionId, task, t, cancel, busy}: Owner & {task: JavaScriptSummary; cancel(id: string): Promise<void>; busy: boolean}): React.ReactNode {
+  const [open, setOpen] = React.useState(false);
+  const state = useTasks(sessionId, open, task.id, true);
+  return React.createElement('section', {style: section, 'data-task-id': task.id},
+    React.createElement(DisclosureRow, {title: task.id, open, expandable: true, expandOnRowClick: true, keepContentWhenOpen: true,
+      onToggle: () => setOpen(value => !value), collapsedContent: React.createElement('span', {role: 'status'}, t(task.status)),
+      headerAccessory: unfinished(task) ? React.createElement(Button, {variant: 'outline', size: 'sm', disabled: busy, onClick: () => {void cancel(task.id);}}, t('cancel')) : null,
+      children: state.details.has(task.id) ? React.createElement(TaskDetails, {task: state.details.get(task.id)!, t}) : React.createElement('p', {role: state.error ? 'alert' : 'status'}, t(state.error ? 'error' : 'loading'))}));
 }
 
 function TaskDetails({task, t}: {task: JavaScriptStatus; t: Translate}): React.ReactNode {
@@ -98,11 +116,7 @@ function TaskCatalog({sessionId, t}: Owner): React.ReactNode {
         state.error ? React.createElement('p', {role: 'alert'}, t('error')) : null,
         !state.value && !state.error ? React.createElement('p', {role: 'status'}, t('loading')) : null,
         state.value?.tasks.length === 0 ? React.createElement('p', null, t('empty')) : null,
-        React.createElement('div', {style: {maxHeight: '60vh', overflow: 'auto'}}, ...state.value?.tasks.map(task => React.createElement('section', {key: task.id, style: section, 'data-task-id': task.id},
-          React.createElement('div', {style: {display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8}},
-            React.createElement('span', {role: 'status'}, t(task.status)),
-            unfinished(task) ? React.createElement(Button, {variant: 'outline', size: 'sm', disabled: state.busy, onClick: () => {void state.cancel(task.id);}}, t('cancel')) : null),
-          React.createElement(TaskDetails, {task, t}))) ?? []))}));
+        React.createElement('div', {style: {maxHeight: '60vh', overflow: 'auto'}}, ...state.value?.tasks.map(task => React.createElement(CatalogTask, {key: task.id, sessionId, task, t, cancel: state.cancel, busy: state.busy})) ?? []))}));
 }
 
 function TaskToolCard({sessionId, block, phase, t}: ToolOwner): React.ReactNode {
@@ -112,7 +126,8 @@ function TaskToolCard({sessionId, block, phase, t}: ToolOwner): React.ReactNode 
     if (item.type !== 'text' || !item.text) continue;
     try {const value = JSON.parse(item.text) as JavaScriptStatus; if (typeof value.id === 'string' && typeof value.status === 'string' && Array.isArray(value.pending)) recorded = value;} catch {}
   }
-  const live = useTasks(sessionId, recorded !== undefined && (open || unfinished(recorded)), recorded?.id);
+  const live = useTasks(sessionId, recorded !== undefined && (open || unfinished(recorded)), recorded?.id, open);
+  const detail = recorded ? live.details.get(recorded.id) : undefined;
   const task = live.value?.tasks.find(task => task.id === recorded?.id) ?? recorded;
   return React.createElement('div', {'data-tool': 'javascript_task'},
     React.createElement(DisclosureRow, {title: t('task'), icon: React.createElement(IconCodeOutlineRegular, {size: 14}), open, expandable: true, expandOnRowClick: true, keepContentWhenOpen: true,
@@ -121,7 +136,7 @@ function TaskToolCard({sessionId, block, phase, t}: ToolOwner): React.ReactNode 
       headerAccessory: React.createElement(TaskCatalog, {sessionId, t}),
       children: React.createElement('div', {style: section},
         live.error ? React.createElement('p', {role: 'alert'}, t('error')) : null,
-        task ? React.createElement(TaskDetails, {task, t}) : null,
+        open && detail ? React.createElement(TaskDetails, {task: detail, t}) : open && recorded ? React.createElement('p', {role: live.error ? 'alert' : 'status'}, t(live.error ? 'error' : 'loading')) : null,
         React.createElement('div', {style: {display: 'flex', gap: 8}},
           React.createElement(Button, {variant: 'outline', size: 'sm', disabled: live.busy || !recorded, onClick: live.refresh}, t('refresh')),
           task && unfinished(task) ? React.createElement(Button, {variant: 'outline', size: 'sm', disabled: live.busy, onClick: () => {void live.cancel(task.id);}}, t('cancel')) : null))}));

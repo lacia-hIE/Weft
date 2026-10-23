@@ -1,0 +1,14 @@
+[
+  {
+    "insert": [
+      {
+        "id": "weft-javascript",
+        "name": "@weft/worker-javascript-tool"
+      },
+      {
+        "id": "weft-task-cards",
+        "name": "@weft/worker-task-cards"
+      }
+    ]
+  }
+]

@@ -31,8 +31,7 @@ import AgentLoop from '@deepseek-ai/dsh-agent-loop';
 import {updateVolatile} from '@deepseek-ai/cosmokit';
 import {mountNativeAttachments} from '../../../packages/native-attachments/src/index.ts';
 import {mountSessionExport} from '../../../packages/harness-runtime/src/session-export.ts';
-import {mountComputerJavaScript} from '../../../packages/native-computer/src/index.ts';
-import {mountWorkerDocuments} from '../../../packages/native-documents/src/index.ts';
+import {mountWorkerPlugins} from '../../../packages/worker-plugins/src/runtime.ts';
 import {mountOfficialTeam} from '../../../packages/native-bundles/src/runtime.ts';
 import {mountNativeSubagents, type SubagentLimits} from '../../../packages/native-subagents/src/index.ts';
 import SessionFileReferences from '@weft/upstream/packages/api/session-controller/src/file-references.ts';
@@ -85,6 +84,7 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
   let composition: Context | undefined;
   let refreshSubagents: ((limits: SubagentLimits) => void) | undefined;
   let reconcileChanges: (() => Promise<void>) | undefined;
+  let reconcileWorkerPlugins: Awaited<ReturnType<typeof mountWorkerPlugins>> | undefined;
   let runtimeChoice: WorkspaceRuntimeChoice | undefined;
   const options: RuntimeOptions = {
     sessionId: scope.sessionId,
@@ -123,6 +123,7 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
         if (boundary?.openTurnStartSeq == null || profileEnablementTurn !== boundary.lastTurn) {
           profileEnablementTurn = boundary?.openTurnStartSeq != null ? boundary.lastTurn : undefined;
           profileEnablement = await reconcileProfileEnablement(world, profileEnablement, context.profileEnablement);
+          await reconcileWorkerPlugins?.(context.workerPlugins);
         }
       }
       await runtimeChoice?.reconcile();
@@ -187,8 +188,7 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
         }
         if (presentation) await mountNativeAttachments(ctx, {storage, scope: workspace, sessionId: scope.sessionId, transport: env.WORKSPACES.getByName(workspaceAddress(workspace)), ...(env.IMAGES ? {images: env.IMAGES} : {})});
         if (presentation) await mountSessionExport(ctx);
-        if (presentation) mountComputerJavaScript(ctx, workspace, env.WORKSPACES.getByName(workspaceAddress(workspace)));
-        if (presentation) mountWorkerDocuments(ctx, workspace, env.WORKSPACES.getByName(workspaceAddress(workspace)));
+        if (presentation) reconcileWorkerPlugins = await mountWorkerPlugins(ctx, workspace, env.WORKSPACES.getByName(workspaceAddress(workspace)), () => control.nativeWorkerPlugins(owner), context.workerPlugins);
         // Change summaries come from git snapshots in the workspace container, so they follow the environment's shell.
         if (presentation) {
           reconcileChanges = mountWorkspaceChanges(ctx, () => runtimeChoice?.container() === true);

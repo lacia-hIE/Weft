@@ -1,0 +1,4 @@
+[{"insert": [
+  {"id": "weft-task-sandbox", "name": "@weft/worker-task-sandbox"},
+  {"id": "weft-task-management", "name": "@weft/worker-task-management"}
+]}]

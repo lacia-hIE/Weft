@@ -8,7 +8,7 @@ import type {WorkspaceScope} from '../../workspace/src/protocol.ts';
 export interface DocumentTransport {convertDocument(scope: WorkspaceScope, name: string, bytes: ArrayBuffer): Promise<Response>}
 
 /** Original filesystem and tool seams keep tenant access, sandbox policy and normal tool presentation. */
-export function mountWorkerDocuments(ctx: Context, scope: WorkspaceScope, transport: DocumentTransport): void {
+export function mountWorkerDocuments(ctx: Context, scope: WorkspaceScope, transport: DocumentTransport, options: {maxInputMiB: number; previewCharacters: number} = {maxInputMiB: 10, previewCharacters: 20000}): void {
   ctx.tools.register(defineTool({
     name: 'document_to_markdown',
     description: 'Read a workspace Office document, PDF, image, HTML or other supported file as Markdown using Cloudflare Workers AI, without a container or Office CLI. PPTX extracts slide text in the Worker before conversion; images and layout are not preserved. Other formats follow the live Cloudflare supported formats. Maximum input 10 MiB, Markdown output 256 KiB. Optional output_path saves a new .md file without overwriting an existing file. Use present to show that file. This extracts content; it does not render Office files to PDF or edit the source document.',
@@ -18,7 +18,7 @@ export function mountWorkerDocuments(ctx: Context, scope: WorkspaceScope, transp
       const cwd = exec.agent ? ctx.workingDirectory.get(exec.agent.session) : ctx.workingDirectory.defaultDirectory;
       const path = workspacePath(file_path, cwd);
       const target = await ctx.fs.resolve(path);
-      const bytes = await ctx.fs.readBytes(target, exec.signal, MAX_DOCUMENT_BYTES);
+      const bytes = await ctx.fs.readBytes(target, exec.signal, Math.min(MAX_DOCUMENT_BYTES, options.maxInputMiB * 1048576));
       exec.signal.throwIfAborted();
       const response = await transport.convertDocument(scope, posix.basename(path), new Uint8Array(bytes).buffer);
       const payload = await response.json() as DocumentResult & {cache: string; error?: {code: string; message: string; retryable: boolean}};
@@ -32,7 +32,7 @@ export function mountWorkerDocuments(ctx: Context, scope: WorkspaceScope, transp
         const destination = await ctx.fs.resolve(outputPath);
         await ctx.fs.writeText(destination, result.markdown, {kind: 'createIfAbsent'}, exec.signal, ctx.sandboxPolicy.resolve(exec.agent ? {session: exec.agent.session} : {}));
       }
-      return {...result, markdown: result.markdown.slice(0, 20000), truncated: result.markdown.length > 20000, ...(outputPath ? {outputPath} : {})};
+      return {...result, markdown: result.markdown.slice(0, options.previewCharacters), truncated: result.markdown.length > options.previewCharacters, ...(outputPath ? {outputPath} : {})};
     },
   }));
 }

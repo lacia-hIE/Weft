@@ -64,6 +64,7 @@ export interface NativeSessionContext {
   profileEnablement: import('../../harness-profile/src/management.ts').ProfileEnablement;
   /** Where the environment's workspace commands run. */
   workspaceRuntime: {shell: WorkspaceShell; containerInstance: ContainerInstance};
+  workerPlugins: import('../../worker-plugins/src/catalog.ts').WorkerPluginSettings;
 }
 import { NativeWorkspaces } from './native-workspaces.ts';
 import type { WorkspaceDO } from '../../workspace/src/object.ts';
@@ -81,6 +82,7 @@ import {profileDefinitions} from '../../harness-profile/src/index.ts';
 import {manageNativePlugins} from '../../native-composition/src/manager.ts';
 import {OfficialBundleRegistry} from '../../native-bundles/src/registry.ts';
 import {availableBundleStates, composeBundleProfile, optionalBundleInfo, optionalBundlePlugins, TEAM_CLIENT, TEAM_BUNDLE} from '../../native-bundles/src/catalog.ts';
+import {workerBundleInfo, workerPluginInfo, workerBundles, BUNDLES, JS, DOCS, CARDS} from '../../worker-plugins/src/catalog.ts';
 import {Context} from '@deepseek-ai/cordis';
 import {NativePluginPlatform} from '../../native-plugins/src/platform.ts';
 import {permissionSchema} from '../../package-install/src/contracts.ts';
@@ -312,10 +314,16 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
       profileOverrides: settings.profileOverrides(),
       profileEnablement: settings.profileEnablement(),
       workspaceRuntime: settings.value(WORKSPACE_RUNTIME_NAMESPACE) as NativeSessionContext['workspaceRuntime'],
+      workerPlugins: settings.workerPlugins(),
     };
     return Response.json(context);
   }
   /** The environment's configuration of official profile rows, by row id. */
+  async nativeWorkerPlugins(scope: ControlScope) {
+    this.scope(scope);
+    await this.syncSettingsDocument(scope);
+    return this.settings(scope).workerPlugins();
+  }
   async nativeProfileOverrides(scope: ControlScope): Promise<Record<string, Record<string, unknown>>> {
     await this.syncSettingsDocument(scope);
     return this.settings(scope).profileOverrides();
@@ -410,8 +418,9 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
     // so users can uninstall or reinstall it. Session admission stays strict.
     const profiles = (await this.state(scope)).agents.map(profile => composeBundleProfile(profile, availableBundleStates(bundleStates)));
     const enablement = this.settings(scope).profileEnablement();
+    const workerPlugins = this.settings(scope).workerPlugins();
     const packages = this.packages(scope).registry;
-    const version = JSON.stringify([defaultId, profiles.map(profile => [profile.spec.id, profile.revision]), enablement, packages.list(), bundleStates]);
+    const version = JSON.stringify([defaultId, profiles.map(profile => [profile.spec.id, profile.revision]), enablement, packages.list(), bundleStates, workerPlugins]);
     if (version !== this.presetReadsVersion) {this.presetReads = new Map(); this.presetReadsVersion = version;}
     const key = JSON.stringify([endpoint, args]);
     let read = this.presetReads.get(key);
@@ -419,9 +428,9 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
       const volume = {...scope, workspaceId: 'default'};
       read = readNativePresets(profiles, defaultId, endpoint, args, ctx => mountWorkspace(ctx, {scope: volume, transport: this.env.WORKSPACES.getByName(workspaceAddress(volume)), cwd: '/workspace', fileTools: false}), enablement, this.ctx.storage).then(async response => {
         const result = await response.json() as {value: unknown};
-        if (endpoint === 'pluginManager/listBundles') result.value = [...result.value as unknown[], ...packages.bundles(), ...optionalBundleInfo(bundleStates)];
-        if (endpoint === 'pluginManager/listPlugins') result.value = [...result.value as unknown[], ...packages.plugins(), ...optionalBundlePlugins(bundleStates)];
-        if (endpoint === 'pluginInventory/list') {const inventory = result.value as {entries: unknown[]}; inventory.entries.push(...packages.plugins(), ...optionalBundlePlugins(bundleStates));}
+        if (endpoint === 'pluginManager/listBundles') result.value = [...result.value as unknown[], ...packages.bundles(), ...optionalBundleInfo(bundleStates), ...workerBundleInfo(workerPlugins)];
+        if (endpoint === 'pluginManager/listPlugins') result.value = [...result.value as unknown[], ...packages.plugins(), ...optionalBundlePlugins(bundleStates), ...workerPluginInfo(workerPlugins)];
+        if (endpoint === 'pluginInventory/list') {const inventory = result.value as {entries: unknown[]}; inventory.entries.push(...packages.plugins(), ...optionalBundlePlugins(bundleStates), ...workerPluginInfo(workerPlugins));}
         return JSON.stringify(result);
       });
       const reads = this.presetReads;
@@ -452,6 +461,15 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
     let args: Record<string, unknown>;
     try {args = method.input({strict: true}).create().parse(raw) as Record<string, unknown>;}
     catch {throw new RemoteError('gateway/bad-request', 'Invalid plugin management arguments', {});}
+    const workerBundle = workerBundles.find(row => args.name === row.manifest.name);
+    if (endpoint === 'pluginManager/setBundleEnabled' && workerBundle || endpoint === 'pluginManager/setPluginEnabled' && [JS, DOCS, CARDS].includes(String(args.id))) {
+      const changed = await this.configWrites.run(() => workerBundle
+        ? this.settings(scope).setWorkerPluginEnabled(BUNDLES, args.enabled === true, workerBundle.key)
+        : this.settings(scope).setWorkerPluginEnabled(String(args.id), args.enabled === true));
+      if (changed) {this.presetReads.clear(); await this.nativeEvent(scope, 'plugin-manager/changed', [{reason: 'enable'}]);}
+      return Response.json({value: {changed, application: 'applied', stage: 'enable', target: args.id ?? args.name, enabled: args.enabled, warnings: ['Tools update before the next turn; existing tasks remain manageable.']}});
+    }
+    if (workerBundle && endpoint === 'pluginManager/removeBundle') return Response.json({value: {changed: false, application: 'failed', stage: 'remove', target: args.name, error: {code: 'not-removable'}}});
     if (endpoint === 'pluginManager/setPluginEnabled' && optionalBundlePlugins(this.officialBundles().list()).some(row => row.entryId === args.id)) {
       return Response.json({value: {changed: false, application: 'failed', stage: 'enable', target: args.id, error: {code: 'management-required'}}});
     }

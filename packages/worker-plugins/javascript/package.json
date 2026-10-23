@@ -1,0 +1,11 @@
+{
+  "name": "@weft/worker-javascript",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Worker javascript integration for DeepSeek Harness",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.json"
+    }
+  }
+}

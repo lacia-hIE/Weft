@@ -20,7 +20,9 @@ export type JavaScriptStatus = {
   error?: {code: string; message: string; retryable: boolean};
 }
 
-export type JavaScriptList = {tasks: JavaScriptStatus[]};
+export type JavaScriptSummary = Omit<JavaScriptStatus, 'stdout' | 'stderr' | 'value'>;
+export type JavaScriptList = {tasks: JavaScriptSummary[]};
+const summary = ({stdout: _stdout, stderr: _stderr, value: _value, ...state}: JavaScriptStatus): JavaScriptSummary => state;
 const TASK_TTL = 86400000, APPROVAL_TTL = 3600000, HISTORY_TTL = 7 * TASK_TTL;
 const active = (state: string) => state === 'running' || state === 'waiting';
 const missing = (error: unknown) => /not found|no such execution|unknown execution|does not exist/i.test(error instanceof Error ? error.message : String(error));
@@ -34,6 +36,10 @@ export class WorkspaceJavaScript {
     const columns = new Set(storage.sql.exec<{name: string}>('PRAGMA table_info(weft_javascript_jobs)').toArray().map(row => row.name));
     if (!columns.has('expires_at')) {storage.sql.exec('ALTER TABLE weft_javascript_jobs ADD COLUMN expires_at INTEGER NOT NULL DEFAULT 0'); storage.sql.exec('UPDATE weft_javascript_jobs SET expires_at=created_at+?', TASK_TTL);}
     if (!columns.has('snapshot')) storage.sql.exec('ALTER TABLE weft_javascript_jobs ADD COLUMN snapshot TEXT');
+    if (!columns.has('summary')) {
+      storage.sql.exec('ALTER TABLE weft_javascript_jobs ADD COLUMN summary TEXT');
+      storage.sql.exec("UPDATE weft_javascript_jobs SET summary=json_remove(snapshot, '$.stdout', '$.stderr', '$.value') WHERE snapshot IS NOT NULL");
+    }
     storage.sql.exec('CREATE INDEX IF NOT EXISTS weft_javascript_owner ON weft_javascript_jobs(owner, created_at)');
   }
   private runtime(job: Pick<Job, 'backend' | 'root' | 'writable'>): Workspace['runtime'] {
@@ -83,14 +89,16 @@ export class WorkspaceJavaScript {
     const request = javascriptRequest.parse(raw);
     await this.cleanup();
     if (request.operation === 'list' || request.operation === 'cancelAll') {
-      const tasks: JavaScriptStatus[] = [];
-      for (const job of this.storage.sql.exec<Job>("SELECT * FROM weft_javascript_jobs WHERE owner=? ORDER BY CASE WHEN state IN ('running','waiting') THEN 0 ELSE 1 END, created_at DESC LIMIT 256", owner).toArray()) {
+      const tasks: JavaScriptSummary[] = [];
+      // Waiting and ended jobs need only their persisted summary. In particular,
+      // listing a hundred retained jobs never reads a hundred execution outputs.
+      for (const job of this.storage.sql.exec<Job>("SELECT id,owner,backend,cwd,root,writable,created_at,state,expires_at,summary AS snapshot FROM weft_javascript_jobs WHERE owner=? ORDER BY CASE WHEN state IN ('running','waiting') THEN 0 ELSE 1 END, created_at DESC LIMIT 256", owner).toArray()) {
         if (request.operation === 'cancelAll' && active(job.state)) await this.cancel(job);
-        const snapshot = {...await this.status(this.owned(owner, job.id))};
-        if (snapshot.stdout.length > 4096 || snapshot.stderr.length > 4096) snapshot.outputTruncated = true;
-        snapshot.stdout = snapshot.stdout.slice(-4096); snapshot.stderr = snapshot.stderr.slice(-4096);
-        if (snapshot.value !== undefined && JSON.stringify(snapshot.value).length > 4096) {delete snapshot.value; snapshot.outputTruncated = true;}
-        tasks.push(snapshot);
+        if (request.operation === 'cancelAll') {
+          const current = this.owned(owner, job.id);
+          tasks.push(summary(await this.status(current)));
+        } else if (job.state === 'running' || !job.snapshot) tasks.push(summary(await this.status(this.owned(owner, job.id))));
+        else tasks.push(JSON.parse(job.snapshot) as JavaScriptSummary);
       }
       return {tasks};
     }
@@ -144,7 +152,7 @@ export class WorkspaceJavaScript {
       snapshot.stdout = snapshot.stdout.slice(-49152); snapshot.stderr = snapshot.stderr.slice(-16384); snapshot.outputTruncated = true;
     }
     if (snapshot.value !== undefined && JSON.stringify(snapshot.value).length > 65536) {delete snapshot.value; snapshot.outputTruncated = true;}
-    this.storage.sql.exec('UPDATE weft_javascript_jobs SET state=?,expires_at=?,snapshot=? WHERE id=?', snapshot.status, job.expires_at, JSON.stringify(snapshot), job.id);
+    this.storage.sql.exec('UPDATE weft_javascript_jobs SET state=?,expires_at=?,snapshot=?,summary=? WHERE id=?', snapshot.status, job.expires_at, JSON.stringify(snapshot), JSON.stringify(summary(snapshot)), job.id);
     return snapshot;
   }
   private receipt(job: Job): JavaScriptStatus {

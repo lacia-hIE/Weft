@@ -1,0 +1,10 @@
+[
+  {
+    "insert": [
+      {
+        "id": "weft-documents",
+        "name": "@weft/worker-documents-tool"
+      }
+    ]
+  }
+]

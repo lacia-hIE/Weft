@@ -37,7 +37,9 @@ test('task catalog survives cold hosts, expires approvals and lost logs, isolate
     assert.equal((await call<JavaScriptList>({operation: 'list'})).tasks.find(task => task.id === first.id)?.status, 'waiting');
     const catalog = await runtime.dispatchFetch(url('alpha', base+'?sessionId=lifecycle'));
     assert.equal(catalog.status, 200); assert.equal(catalog.headers.get('cache-control'), 'private, no-store');
-    assert.equal((await catalog.json() as JavaScriptList).tasks[0]?.id, first.id);
+    const summary = (await catalog.json() as JavaScriptList).tasks[0]!;
+    assert.equal(summary.id, first.id);
+    for (const key of ['stdout', 'stderr', 'value']) assert.equal(Object.hasOwn(summary, key), false);
     assert.equal((await runtime.dispatchFetch(url('alpha', base+'?sessionId=foreign'))).status, 404);
     assert.equal((await runtime.dispatchFetch(url('alpha', base), {method: 'POST', headers: {origin: 'https://evil.test', 'content-type': 'application/json'}, body: JSON.stringify({sessionId: 'lifecycle', operation: 'cancelAll'})})).status, 403);
     await maintain(first.id, 'expire');

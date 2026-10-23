@@ -1,0 +1,11 @@
+{
+  "name": "@weft/worker-documents",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Worker documents integration for DeepSeek Harness",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.json"
+    }
+  }
+}
