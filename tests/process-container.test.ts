@@ -99,7 +99,9 @@ test('real processes, PTYs, sandbox, reconnect and durable file synchronization'
     });
 
     await t.test('real PTY: persistent shell, Python input, resize, foreground signal and detach', async () => {
-      const {pid} = await api.start('terminal', base(['/bin/bash', '--noprofile', '--norc', '-i'], 'pty'));assert.ok(pid > 0);
+      await api.start('terminal-project', base(['/bin/mkdir', '-p', '/workspace/terminal-project']));
+      assert.equal((await drain('terminal-project')).outcome.exitCode, 0);
+      const {pid} = await api.start('terminal', {...base(['/bin/bash', '--noprofile', '--norc', '-i'], 'pty'), cwd: '/workspace/terminal-project'});assert.ok(pid > 0);
       let offsets = zero(), screen = '', sequence = 0;
       const until = async (pattern: RegExp) => {
         const deadline = Date.now() + 10_000;
@@ -108,7 +110,8 @@ test('real processes, PTYs, sandbox, reconnect and durable file synchronization'
       };
       const type = (data: string) => api.write('terminal', ++sequence, 'stdin', bytes(data), false);
       await until(/bash.*# /);
-      await type("export PROBE=kept; mkdir -p pty-sub; cd pty-sub; printf 'STATE:%s:%s\\n' \"$PROBE\" \"$PWD\"\r");await until(/STATE:kept:\/workspace\/pty-sub\r\n/);
+      await type('pwd\r');await until(/\/workspace\/terminal-project\r\n/);
+      await type("export PROBE=kept; mkdir -p pty-sub; cd pty-sub; printf 'STATE:%s:%s\\n' \"$PROBE\" \"$PWD\"\r");await until(/STATE:kept:\/workspace\/terminal-project\/pty-sub\r\n/);
       await api.resize('terminal', 103, 37);await type('stty size\r');await until(/37 103\r\n/);
       await type("python3 -c 'import os; print(\"TTY:\",os.isatty(0),flush=True); print(\"INPUT:\"+input(),flush=True)'\r");await until(/TTY: True\r\n/);
       await type('hello\r');await until(/INPUT:hello\r\n/);

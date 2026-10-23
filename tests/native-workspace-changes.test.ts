@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -10,7 +10,7 @@ import { nativeChangesPlatform } from '../scripts/native-changes-platform.mjs';
 
 const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-c', 'user.email=t@example.com', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...args], {cwd, encoding: 'utf8'});
 
-test('the official change recorder snapshots and compares a turn through the workspace container', {timeout: 120_000}, async () => {
+test('the official change recorder compares a nested project without including sibling workspace changes', {timeout: 120_000}, async () => {
   const scratch = await mkdtemp(join(tmpdir(), 'weft-changes-'));
   try {
     // The bundle reads its attribution version from an adjacent package manifest, as the Worker build inlines it.
@@ -21,7 +21,12 @@ test('the official change recorder snapshots and compares a turn through the wor
       tsconfig: '.generated/upstream.source.tsconfig.json', plugins: [nativeChangesPlatform], logLevel: 'error',
     });
     const host = await import(pathToFileURL(bundle).href) as typeof import('./fixtures/workspace-changes-host.ts');
-    const cwd = join(scratch, 'repo');
+    const projects = join(scratch, 'projects');
+    await mkdir(projects);
+    const sibling = join(projects, 'other-project');
+    await mkdir(sibling);
+    await writeFile(join(sibling, 'a.txt'), 'other project bytes\n');
+    const cwd = join(projects, 'repo');
     git(scratch, 'init', '-q', '-b', 'main', cwd);
     await writeFile(join(cwd, 'a.txt'), 'l1\nl2\nl3\n');
     await writeFile(join(cwd, '.gitignore'), '.env\n');
@@ -36,6 +41,7 @@ test('the official change recorder snapshots and compares a turn through the wor
     await host.mutate(ctx, session, 1, 'edit', {file_path: 'a.txt'}, 'a.txt', () => writeFile(join(cwd, 'a.txt'), 'l1\nl2 model\nl3\nl4\n'));
     await host.mutate(ctx, session, 1, 'write', {file_path: '.env'}, '.env', () => writeFile(join(cwd, '.env'), 'A=1\n'));
     await writeFile(join(cwd, 'new.txt'), 'n1\nn2\n');
+    await writeFile(join(sibling, 'a.txt'), 'unrelated sibling edit\n');
     host.endTurn(session, 1);
     await host.settle(ctx, session);
 

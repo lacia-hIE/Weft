@@ -95,6 +95,10 @@ export function officialUiRoster(upstreamDirectory, {profile = 'all'} = {}) {
     }
   };
   collect(patch);
+  // The Node profile's directory-picker-auto selects its Client at runtime.
+  // Weft serves browse/create through NativeWorkspaces, so compose the original
+  // browse Client explicitly into both builds and the Web Boot Graph.
+  names.add('@deepseek-ai/dsh-client-ui-directory-picker-browse');
   // Build optional official Clients too. The authenticated environment Boot
   // endpoint selects whether to activate them; static assets alone grant nothing.
   names.add('@deepseek-ai/dsh-experimental-client-ui-agent-team');
