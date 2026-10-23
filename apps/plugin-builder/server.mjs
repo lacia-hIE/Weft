@@ -142,14 +142,14 @@ export async function buildPackage(input) {
       if (output.outputFiles.some(file=>file.path.endsWith('.css'))) throw new Error('CSS imports require an unsupported Client asset loader');
       const selection = new Set(selected.map(row=>row.name));
       const selectRows = list => list.filter(row=>row.group || selection.has(row.name)).map(row=>row.group ? {...row, config:selectRows(row.config)} : row);
-      result[half]=`export default async function(__runtime){${js}\nreturn __runtime.compose(${JSON.stringify(selectRows(rows))},__bundle.modules);}`;
+      result[half]=`export default async function(__runtime){${js}\nreturn __runtime.compose(${JSON.stringify(half==='client' ? selected.map((row,i)=>({id:'client-'+i,name:row.name,config:{}})) : selectRows(rows))},__bundle.modules);}`;
     };
     const clients=[];
     for (const row of leaves) {
       const pkg=JSON.parse(await readFile(join(modules,row.packageName,'package.json'),'utf8'));
       if (pkg.dsh?.client) {
         if (pkg.dsh.client.platform!=='web') throw new Error('Only Web Client modules are supported');
-        clients.push(row);
+        if (!clients.some(client=>client.packageName===row.packageName)) clients.push({...row,name:row.packageName});
       }
     }
     await compile('host', leaves);

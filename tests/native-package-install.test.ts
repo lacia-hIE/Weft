@@ -13,7 +13,7 @@ import type {Installation, Artifact} from '../packages/package-install/src/contr
 import {artifactKey} from '../packages/package-install/src/contracts.ts';
 
 test('original bundle installs through native manager, applies patches, runs standard tools and restores with exact approval', {timeout: 150000}, async () => {
-  const fixture = packageFixture(), model = packageModel(); let builds=0;
+  const fixture = packageFixture({files: {'host.js': `import {defineTool} from '@deepseek-ai/dsh-tools';export default class Counter {static inject=['fs','tools'];static Config=value=>value;constructor(ctx,config){ctx.tools.register(defineTool({name:'package_save',description:'Save bundle configuration',parameters:{},output:{schema:{type:'json'},render:()=>[]},execute:async()=>{const target=await ctx.fs.resolve(config.filename);await ctx.fs.writeText(target,config.value);return {saved:true}}}))}}`}}), model = packageModel(); let builds=0;
   const directory = await mkdtemp(join(tmpdir(),'weft-native-bundle-'));
   const options: NonNullable<Parameters<typeof createRuntime>[1]> = {packages:true,
     bindings:{MODEL_BACKEND:'deepseek',DEEPSEEK_API_KEY:'package-fixture',DEEPSEEK_BASE_URL:'https://package-model.test/anthropic'},
