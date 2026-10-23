@@ -30,9 +30,84 @@ Weft 适合希望自行托管 Web 编程助手、通过浏览器访问远程工�
 | Cordis 插件 | 从 npm 安装原版 bundle，或在创造模式下由 Agent 编写插件，审核后加载 |
 | 用户隔离 | 使用 Cloudflare Access 身份，将数据与运行权限限定在所属用户和环境 |
 
+## 如何把本地环境搬到 Cloudflare
+
+本地 DSH 的服务依赖宿主进程、磁盘、配置文件、系统工具和桌面身份。Weft 按原版 Harness / Cordis 的服务接口替换这些依赖：Agent Loop 与 UI 继续使用原版实现，存储、执行和身份认证交给对应的 Cloudflare 组件。
+
+### 本地依赖与云端组件的对应关系
+
+| 本地依赖 | Cloudflare 组件 | Weft 如何接入 |
+| --- | --- | --- |
+| 本地 HTTP 服务与 API 入口 | Workers | 主 Worker 验证身份、处理 HTTP / SSE / WebSocket，并把请求转到所属环境和会话 |
+| 本地 Web 静态文件服务 | [Workers Static Assets](https://developers.cloudflare.com/workers/static-assets/) + Service Binding | 原版 UI 构建为静态资源，由私有 UI Worker 提供；浏览器经主 Worker 认证后访问 |
+| 宿主进程中的 Agent 与服务实例 | [Durable Objects](https://developers.cloudflare.com/durable-objects/) | 环境和会话各有自己的对象，装配原版服务、协调状态和并发操作 |
+| 会话 JSONL、插件状态文件与本地凭据存储 | DO SQLite | 用原版持久化接口读写会话事件、插件状态与环境凭据；凭据只通过所属环境的服务解析 |
+| 环境目录、设置文件与预设版本记录 | [D1](https://developers.cloudflare.com/d1/) | `CONFIG_DB` 保存环境、设置、Agent 预设版本与工作区注册表；配置文件由同一套设置服务校验和读写 |
+| 工作区磁盘与文件系统 API | DO SQLite + `@cloudflare/computer` | WorkspaceDO 保存虚拟文件系统；原版文件工具通过 FileSystem 适配器读写，容器通过 computerd / FUSE 使用同一文件卷 |
+| bash、git、Node.js、Python 与 PTY | [Cloudflare Containers](https://developers.cloudflare.com/containers/) | Linux 容器提供真实进程与终端，WorkspaceDO 协调文件同步，独立的容器宿主 DO 管理实例生命周期 |
+| 运行时生成代码与外部 Host 插件执行 | [Dynamic Workers](https://developers.cloudflare.com/dynamic-workers/) / Worker Loader | 按需加载代码；外部 Host 插件在隔离 DO facet 中执行，通过受限桥接调用已授权服务 |
+| npm 插件本地编译与产物目录 | 独立构建容器 + [私有 R2](https://developers.cloudflare.com/r2/) | 下载并锁定包与依赖后离线编译；R2 保存不可变产物，EnvironmentDO 保存安装、审批和启停记录 |
+| 本地图片解码、缩放与编码库 | [Cloudflare Images binding](https://developers.cloudflare.com/images/optimization/binding/) | 读取真实图片信息，生成满足模型尺寸与字节预算的版本；图片文件保存在工作区存储中 |
+| 常驻进程中的提醒计时器 | Durable Object Alarms | 保存原版 Schedule 任务，并以最近到期时间设置 Alarm，唤醒会话服务交付提醒 |
+| 本机用户与 Web 登录入口 | [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/choose-application-type/) | Access 执行访问策略，主 Worker 校验身份并派生租户，再按环境和会话校验访问范围 |
+
+这些替换集中在本仓库的适配层。原版工具仍调用 FileSystem、Subprocess、SessionPersistence 等接口；Weft 将这些调用转到云端存储或容器，保留原版的工具协议、配置校验和组件生命周期。
+
+Worker 的 `nodejs_compat` 提供部分 Node API 兼容能力，运行约束仍由 Workers 决定。依赖系统进程的工作负载放进容器，需要宿主服务的插件通过适配与授权接入；插件兼容范围见[原版插件安装](docs/validation/package-installation.md)。
+
+### 请求和数据如何流动
+
+```mermaid
+flowchart LR
+    Browser[浏览器] --> Access[Cloudflare Access]
+    Access --> Worker[主 Worker]
+    Worker -->|Service Binding| UI[私有 UI Worker / Static Assets]
+    Worker --> Environment[TenantDO / EnvironmentDO]
+    Environment --> Settings[D1 配置与注册表]
+    Environment --> Session[SessionDO / 原版 Agent Loop]
+    Session --> Model[用户配置的模型 API]
+    Session --> Workspace[WorkspaceDO / Computer 文件卷]
+    Workspace --> Shell[Dynamic Worker / 轻量 shell]
+    Workspace <-->|computerd / FUSE 同步| Container[Linux 容器 / 进程与 PTY]
+    Session --> Plugins[Worker Loader / 隔离 Host facet]
+    Plugins -->|授权文件调用| Workspace
+    Session --> Images[Images / 图片处理]
+    Environment --> Builder[插件构建容器]
+    Builder --> Artifacts[私有 R2 / 编译产物]
+```
+
+以“修改项目并运行构建”为例：
+
+1. 用户通过 Access 登录，主 Worker 将提示词路由到所属环境的 SessionDO。
+2. SessionDO 装配原版 Agent 服务，从持久记录读取会话、配置与预设，再调用用户配置的模型 API。
+3. 模型调用文件工具时，FileSystem 适配器访问 WorkspaceDO，更新持久文件内容和版本。
+4. 需要 `npm install` 或构建时，命令在 Linux 容器中执行。容器挂载同一工作区，运行期间及确认进程退出前同步文件变更。
+5. 工具结果和会话事件按原版协议保存并流式返回页面。容器关闭后，后续启动可重新挂载源码；已有进程和终端状态不会恢复。
+
+### 状态保存在哪里
+
+| 存储位置 | 当前保存的数据 | 生命周期 |
+| --- | --- | --- |
+| D1 | 环境注册、环境设置、Agent 预设版本、工作区路径与会话归属 | 独立于 Worker 和容器运行实例 |
+| SessionDO SQLite | 会话头、事件日志、原版服务状态、动态插件定义和运行记录 | 对象重建后从持久记录恢复 |
+| EnvironmentDO SQLite | 模型凭据、会话索引、插件安装与审批记录等环境私有状态 | 由所属环境持有，凭据不写入 D1 |
+| WorkspaceDO SQLite / Computer | 源码、`.git`、工作区文件、附件及图片衍生版本 | 独立于 Linux 容器；文件内容与版本由工作区服务管理 |
+| 私有 R2 | 已构建 npm 插件包的不可变代码与审核产物 | 按安装记录和产物摘要读取 |
+| 容器本地磁盘 | `node_modules`、`.venv`、常见缓存与临时文件 | 容器替换后需要重建 |
+
+D1 适合查询和版本化配置；DO SQLite 让运行状态与拥有它的对象放在一起；R2 承载编译产物。当前项目的持久工作区使用 Computer 的 DO 存储后端，源码和 `.git` 保存在 WorkspaceDO 中。
+
+DO 的内存实例也可能重建。Weft 持久保存的是会话、配置和服务记录；正在执行的 Linux 进程、PTY 与普通 JavaScript 内存变量不属于这些持久记录。
+
+### 用户、环境、工作区和会话
+
+Access 身份对应用户租户；每个租户可创建多个环境。环境拥有独立的配置、凭据、插件、会话索引和文件卷。官方 Web 接入中，同一环境的项目目录与会话共享默认文件卷和所选规格的工作区容器。
+
+工作区记录指定项目路径，会话以该路径作为 `cwd`。子目录用于组织项目与会话；同一环境中的目录共享访问范围，需要独立配置和运行资源时应创建不同环境。不同浏览器会话也不各自分配一台长期在线的机器。
+
 ## 命令在哪里运行
 
-工作区支持两种后端，环境设置提供三种选择：
+工作区支持两种执行后端，环境设置提供三种选择：
 
 | 模式 | 行为 | 适用场景 |
 | --- | --- | --- |
@@ -40,33 +115,11 @@ Weft 适合希望自行托管 Web 编程助手、通过浏览器访问远程工�
 | 仅 Worker | 使用轻量 shell，不启动 Linux 容器 | 文件处理与 Worker shell 已支持的命令 |
 | 始终容器 | 命令和终端使用真实 Linux 进程 / PTY | Git 项目、依赖安装、构建与交互程序 |
 
-Worker shell 没有 git、Node.js 或 Python。容器需要启动时间，空闲后会休眠；下一次容器命令可重新启动。运行位置可以在 **Plugins → 工作区运行环境** 中配置。
+Worker shell 在 Dynamic Worker 中解释支持的命令，文件操作回到 WorkspaceDO；它没有 git、Node.js 或 Python。Linux 容器负责系统工具、依赖安装和交互进程，镜像内包含对应运行时。
 
-源码和 `.git` 持久保存。容器内的 `node_modules`、`.venv` 和常见缓存保存在容器本地，容器替换后需要按锁文件重建。
+在 **Plugins → 工作区运行环境** 中选择执行模式和容器规格。容器按需启动，空闲 10 分钟后休眠；源码和 `.git` 持久保存，容器本地依赖与缓存需要在替换实例后按锁文件重建。计算实例的休眠与工作区数据的保留分别管理。
 
-## 架构概览
-
-```mermaid
-flowchart LR
-    Browser[浏览器] --> Access[Cloudflare Access]
-    Access --> Worker[主 Worker]
-    Worker --> UI[私有 Web UI 资源 Worker]
-    Worker --> Environment[环境与会话 Durable Objects]
-    Environment --> Agent[原版 Harness Agent Loop]
-    Environment --> Settings[D1 设置 / 环境凭据]
-    Agent --> Workspace[持久工作区]
-    Workspace --> Shell[Worker shell]
-    Workspace --> Container[Linux 容器 / PTY]
-    Environment --> Builder[插件隔离编译 / 私有 R2 产物]
-    Agent --> Plugins[隔离 Host 插件]
-```
-
-- **Workers** 处理请求、认证和平台接入，原版界面由私有资源 Worker 提供。
-- **Durable Objects** 持有环境与会话的运行上下文，使用 SQLite 保存会话和工作区状态。
-- **Containers** 执行 Linux 命令、进程与终端；插件编译使用单独的容器。
-- **Dynamic Worker facets** 执行 Host 插件，通过授权的桥接服务访问工作区。
-
-模型凭据由用户保存在所属环境中，应用不提供平台共享密钥回退。
+模型推理由用户配置的提供商 API 完成，凭据在所属环境的 **Settings → Models** 中保存。Cloudflare 负责应用运行与图片处理等平台能力，当前项目不接入 Workers AI 推理。
 
 ## 快速开始
 
@@ -146,6 +199,10 @@ Weft 保留原版交互与插件声明，但运行能力取决于 Cloudflare 宿
 | `apps/workspace-container` | Linux 进程、PTY 与工作区同步 |
 | `apps/plugin-builder` | 插件隔离编译容器 |
 | `packages` | Harness 与 Cloudflare 平台适配模块 |
+| `packages/session-persistence-do` | 原版会话持久化接口到 DO SQLite 的适配 |
+| `packages/config-store`、`packages/control-plane` | D1 配置仓储、环境服务与凭据存储 |
+| `packages/workspace` | Computer 文件卷、FileSystem / Subprocess 适配与容器生命周期 |
+| `packages/native-plugins`、`packages/package-install` | Dynamic Worker 插件执行、npm 安装与 R2 产物管理 |
 | `migrations` | D1 版本迁移 |
 | `scripts`、`tests` | 上游准备、构建发布与行为回归 |
 
