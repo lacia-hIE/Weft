@@ -65,7 +65,7 @@ export class DurableAgentRevisions<T extends {revision: number}> {
     return this.storage.sql.exec<{count: number}>('SELECT COUNT(DISTINCT agent_id) AS count FROM weft_agent_revisions').one().count;
   }
 
-  async publish(agentId: string, value: T): Promise<boolean> {
+  publish(agentId: string, value: T): boolean {
     // rowsWritten also counts index writes; RETURNING observes actual insertion.
     return this.storage.sql.exec('INSERT INTO weft_agent_revisions VALUES (?,?,?) ON CONFLICT DO NOTHING RETURNING revision', agentId, value.revision, JSON.stringify(value)).toArray().length === 1;
   }

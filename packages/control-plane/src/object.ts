@@ -761,9 +761,12 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
         Object.assign(spec, current);
       }
       const revision = (latest?.revision ?? 0) + 1;
-      if (await agents.publish(definition.id, {revision, publishedAt: new Date().toISOString(), upstream: upstream.commit, spec})) {
-        this.ctx.storage.sql.exec('INSERT INTO official_preset_seeds VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision', definition.id, revision);
-      }
+      // The seed and its ownership marker must survive or roll back together.
+      this.ctx.storage.transactionSync(() => {
+        if (agents.publish(definition.id, {revision, publishedAt: new Date().toISOString(), upstream: upstream.commit, spec})) {
+          this.ctx.storage.sql.exec('INSERT INTO official_preset_seeds VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision', definition.id, revision);
+        }
+      });
     }
   }
 
