@@ -1,5 +1,5 @@
 import {test, expect} from '@playwright/test';
-import {compose} from './compose.ts';
+import {sendPrompt} from './compose.ts';
 
 test('official Team bundle card installs, selects its browser module and persists enablement', async ({page, request}) => {
   const {tenantId} = await (await request.get('/v1/me')).json();
@@ -25,8 +25,7 @@ test('official Team bundle card installs, selects its browser module and persist
   await page.reload();
   await page.getByRole('button', {name: 'New session', exact: true}).first().click({timeout: 45000});
   // New session is the draft composer; the original header belongs to a real conversation.
-  await compose(page, 'Verify the official Team panel');
-  await page.getByRole('button', {name: 'Send message', exact: true}).click();
+  await sendPrompt(page, 'Verify the official Team panel');
   await page.getByRole('treeitem').filter({hasText: 'Verify the official Team panel'}).click({timeout: 45000});
   const teamAction = page.getByRole('button', {name: 'Agent Team', exact: true});
   await teamAction.click({timeout: 45000});
