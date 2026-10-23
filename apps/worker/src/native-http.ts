@@ -79,7 +79,7 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
         if (request.method !== 'GET') return new Response(null, {status: 405});
         const name = new URL(request.url).searchParams.get('name');
         if (!name || name.length > 214) throw new HttpError(400, 'Package name required');
-        const artifact = await (await control.nativePackageArtifact(owner, name, packages[3]!)).json() as Artifact;
+        const artifact = await (await control.nativePackageArtifact(owner, name, packages[3]!, true)).json() as Artifact;
         if (!artifact.client) throw new HttpError(404, 'Package has no Client module');
         return new Response(artifact.client, {headers: {'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'private, no-store', 'x-content-type-options': 'nosniff'}});
       }

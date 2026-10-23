@@ -371,7 +371,11 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
     });
   }
   async nativePackageList(scope: ControlScope): Promise<Response> {return Response.json(this.packages(scope).list(), {headers: {'cache-control': 'private, no-store'}});}
-  async nativePackageArtifact(scope: ControlScope, name: string, digest: string): Promise<Response> {return Response.json(await this.packages(scope).artifact(name, digest));}
+  async nativePackageArtifact(scope: ControlScope, name: string, digest: string, client = false): Promise<Response> {
+    const packages = this.packages(scope);
+    if (client && !packages.registry.get(name)?.permissions.client) throw new Error('Client module permission is not granted');
+    return Response.json(await packages.artifact(name, digest));
+  }
   async nativePackageOperation(scope: ControlScope, raw: unknown): Promise<Response> {
     const request = z.discriminatedUnion('operation', [
       z.object({operation: z.literal('list')}).strict(),

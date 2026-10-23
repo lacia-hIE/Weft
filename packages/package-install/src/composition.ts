@@ -1,4 +1,4 @@
-import {Context, Inject, type Plugin} from '@deepseek-ai/cordis';
+import {Context, Inject, isConstructor, symbols, type Plugin} from '@deepseek-ai/cordis';
 import Loader, {Group, type EntryOptions} from '@deepseek-ai/cordis-plugin-loader';
 
 /** Standard Cordis exports, including class plugins, retain their native Config/inject metadata. */
@@ -7,8 +7,14 @@ export function standardPlugin(namespace: unknown): Plugin {
   const plugin = module.default ?? namespace;
   if (typeof plugin === 'function') {
     const meta = plugin as unknown as {inject?: object; Config?: unknown};
-    return {name: plugin.name, ...(meta.inject === undefined ? {} : {inject: meta.inject}), ...(meta.Config === undefined ? {} : {Config: meta.Config}), apply: (ctx: Context, config: unknown) =>
-      /^class\b/.test(Function.prototype.toString.call(plugin)) ? Reflect.construct(plugin, [ctx, config]) : Reflect.apply(plugin, undefined, [ctx, config])} as Plugin;
+    return {name: plugin.name, ...(meta.inject === undefined ? {} : {inject: meta.inject}), ...(meta.Config === undefined ? {} : {Config: meta.Config}), apply: (ctx: Context, config: unknown) => {
+      if (!isConstructor(plugin)) return Reflect.apply(plugin, undefined, [ctx, config]);
+      // Mirror Cordis Fiber's constructor lifecycle. The instance is not an
+      // effect; only the native initialization hook may return a disposer.
+      const instance = Reflect.construct(plugin, [ctx, config]);
+      for (const hook of instance?.[symbols.initHooks] ?? []) hook();
+      return instance?.[symbols.init]?.();
+    }} as Plugin;
   }
   if (!plugin || typeof plugin !== 'object' || !('apply' in plugin) || typeof plugin.apply !== 'function') throw new Error('Bundle module must export a standard Cordis plugin');
   return plugin as Plugin;
