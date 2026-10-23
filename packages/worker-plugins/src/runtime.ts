@@ -40,7 +40,7 @@ async function loadWorkerPlugins(ctx: Context, scope: WorkspaceScope, transport:
     }, {global: true});
   }};
   const modules: Record<string, Plugin> = {
-    [JS]: {name: '@weft/worker-javascript-tool', Config: JavaScriptConfig, inject: ['tools', 'sandboxPolicy', 'workingDirectory'], apply: (child: Context, config: ReturnType<typeof JavaScriptConfig>) => mountComputerJavaScript(child, scope, guarded, {
+    [JS]: {name: '@weft/worker-javascript-tool', Config: JavaScriptConfig, inject: ['tools', 'sandboxPolicy', 'workingDirectory', 'approval'], apply: (child: Context, config: ReturnType<typeof JavaScriptConfig>) => mountComputerJavaScript(child, scope, guarded, {
       get defaultTimeoutMs() {return config.defaultTimeoutMs.get();}, get allowWritable() {return config.allowWritable.get();},
     })},
     [DOCS]: {name: '@weft/worker-documents-tool', Config: DocumentsConfig, inject: ['tools', 'fs', 'workingDirectory', 'sandboxPolicy'], apply: (child: Context, config: ReturnType<typeof DocumentsConfig>) => mountWorkerDocuments(child, scope, guarded, {
