@@ -21,7 +21,7 @@ test('legacy installation records remain removable and cannot reuse approvals or
     assert.equal(row.enabled,false);
     assert.equal(row.approved,false);
     assert.deepEqual(registry.get(native.name),native);
-    assert.match(registry.bundles().find(bundle=>bundle.name===legacy.name)!.error!.diagnostic,/reinstall/);
+    assert.match(registry.bundles().find(bundle=>bundle.name===legacy.name)!.error!.diagnostic ?? '',/reinstall/);
     assert.equal(registry.plugins().find(plugin=>plugin.moduleName===legacy.name)!.enabled,false);
     registry.remove(legacy.name);
     assert.equal(registry.get(legacy.name),undefined);

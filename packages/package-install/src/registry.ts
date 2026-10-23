@@ -12,7 +12,7 @@ export class PackageRegistry {
     const value = JSON.parse(row.document) as Installation;
     // Keep pre-native records removable without treating their old approval as
     // authority for the new format, or breaking the entire Plugins catalogue.
-    return Array.isArray(value.patch) && Array.isArray(value.rows) ? value : {...value, patch: [], rows: [], enabled: false, approved: false, needsReinstall: true};
+    return Array.isArray(value.patch) && Array.isArray(value.rows) ? value : {...value, patch: [], rows: [], enabled: false, approved: false, needsReinstall: true as const};
   });}
   get(name: string): Installation | undefined {return this.list().find(row => row.name === name);}
   save(value: Installation): void {this.storage.sql.exec('INSERT INTO weft_installed_packages VALUES (?,?) ON CONFLICT(name) DO UPDATE SET document=excluded.document', value.name, JSON.stringify(value));}
