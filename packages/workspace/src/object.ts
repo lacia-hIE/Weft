@@ -3,6 +3,8 @@ import { DurableObject } from 'cloudflare:workers';
 import { FsError } from '@deepseek-ai/dsh-fs';
 import { WorkerShellBackend } from '@cloudflare/computer/backends/worker-shell';
 import {WorkspaceJavaScript} from './javascript.ts';
+import {WorkerDocuments, DocumentConversionError, MAX_DOCUMENT_BYTES} from '../../native-documents/src/converter.ts';
+import {SQLiteDocumentCache} from '../../native-documents/src/cache.ts';
 import curlCommands from '@cloudflare/computer/shell/curl';
 import { LegacyContainerBackend } from '@cloudflare/computer/backends/container-legacy';
 import { CONTAINER_EGRESS_ADDRESS, CONTAINER_HOSTS, CONTAINER_TOUCH_MS, remoteContainerHost, type ContainerHostActivity } from './container-host.ts';
@@ -21,7 +23,7 @@ import {attachmentOperationSchema, ATTACHMENT_ROOT, UPLOAD_CHUNK_BYTES} from '..
 import type {ImageVariantRecord} from '../../native-attachments/src/image-variants.ts';
 import {storedFilePath} from '../../../.generated/official-file-reference.ts';
 
-interface Env { WORKSPACES: DurableObjectNamespace<WorkspaceDO>; SESSIONS: DurableObjectNamespace<SessionDO>; LOADER?: WorkerLoader }
+interface Env { WORKSPACES: DurableObjectNamespace<WorkspaceDO>; SESSIONS: DurableObjectNamespace<SessionDO>; LOADER?: WorkerLoader; AI?: Ai }
 
 /** The selector of the container backend, beside Computer's default `worker-shell`. */
 export const CONTAINER_SHELL = 'container-shell';
@@ -33,6 +35,7 @@ const DEFAULT_INSTANCE: ContainerInstance = 'basic';
 /** No unscoped Computer stub is exposed to clients or model tools. */
 export class WorkspaceDO extends DurableObject<Env> {
   private readonly javascriptTasks: WorkspaceJavaScript;
+  private readonly documents: WorkerDocuments;
   private readonly files: WorkspaceStore;
   /**
    * The workspace's Linux container, where the deployment provides one; its
@@ -89,6 +92,7 @@ export class WorkspaceDO extends DurableObject<Env> {
     }, () => [...this.sandboxes.values()]);
     this.files = new WorkspaceStore(ctx.storage, shell ? {backends, observer} : undefined);
     this.javascriptTasks = new WorkspaceJavaScript(ctx.storage, env.LOADER, observer);
+    this.documents = new WorkerDocuments(env.AI, new SQLiteDocumentCache(ctx.storage.sql));
   }
   /** The Workspace RPC surface for this object's own shell Dynamic Worker (via `WorkspaceServiceProxy`). */
   __getWorkspaceStub() { return this.files.stub(); }
@@ -98,17 +102,33 @@ export class WorkspaceDO extends DurableObject<Env> {
     if (!this.ctx.id.equals(this.env.WORKSPACES.idFromName(workspaceAddress(scope)))) throw new Error('Workspace scope mismatch');
     if (!/^[a-zA-Z0-9_-]{1,80}$/.test(owner)) throw new Error('Invalid Session owner');
     const status = await this.javascriptTasks.call(owner, request);
-    if (this.javascriptTasks.hasRunning()) await this.ctx.storage.setAlarm(Date.now() + 30000);
+    await this.scheduleJavaScriptAlarm();
     return Response.json(status);
   }
   override async alarm(): Promise<void> {
     await this.javascriptTasks.recover();
-    if (this.javascriptTasks.hasRunning()) await this.ctx.storage.setAlarm(Date.now() + 30000);
+    await this.scheduleJavaScriptAlarm();
+  }
+  private async scheduleJavaScriptAlarm(): Promise<void> {
+    const next = this.javascriptTasks.nextAlarm();
+    if (next === undefined) await this.ctx.storage.deleteAlarm();
+    else await this.ctx.storage.setAlarm(next);
+  }
+  async convertDocument(input: WorkspaceScope, name: string, bytes: ArrayBuffer): Promise<Response> {
+    const scope = workspaceScopeSchema.parse(input);
+    if (!this.ctx.id.equals(this.env.WORKSPACES.idFromName(workspaceAddress(scope)))) throw new Error('Workspace scope mismatch');
+    if (!name || name.length > 255 || /[\/\\\0]/.test(name) || bytes.byteLength > MAX_DOCUMENT_BYTES) return Response.json({error: {code: 'DOCUMENT_INVALID', message: 'Invalid document input', retryable: false}}, {status: 400});
+    try {return Response.json(await this.documents.convert(name, new Uint8Array(bytes)));}
+    catch (error) {
+      const failure = error instanceof DocumentConversionError ? error : new DocumentConversionError('DOCUMENT_SERVICE_ERROR', 'Document conversion failed. Retry shortly.', true);
+      return Response.json({error: {code: failure.code, message: failure.message, retryable: failure.retryable}}, {status: failure.retryable ? 503 : 422});
+    }
   }
   async revokeJavaScriptWrites(input: WorkspaceScope, owner: string): Promise<void> {
     const scope = workspaceScopeSchema.parse(input);
     if (!this.ctx.id.equals(this.env.WORKSPACES.idFromName(workspaceAddress(scope)))) throw new Error('Workspace scope mismatch');
     await this.javascriptTasks.revokeWrites(owner);
+    await this.scheduleJavaScriptAlarm();
   }
 
   /** computerd's session upgrade from this workspace's container. */

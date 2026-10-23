@@ -1,0 +1,34 @@
+import {test, expect} from '@playwright/test';
+import {compose} from './compose.ts';
+
+test('native Worker task cards and catalog recover after reload and cancel the real waiting task', async ({page, request}, testInfo) => {
+  const me = await (await request.get('/v1/me')).json() as {tenantId: string};
+  const environment = 'worker-tasks-'+crypto.randomUUID().slice(0, 8);
+  expect((await request.post(`/v1/tenants/${me.tenantId}/environments`, {data: {id: environment, name: environment}})).status()).toBe(201);
+  const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
+  await page.goto('/agents/'+environment);
+  await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
+  await expect(page.getByRole('button', {name: 'Select model, current scripted', exact: true})).toBeVisible({timeout: 45_000});
+  await compose(page, 'WEFT_DURABLE_TASK_FIXTURE');
+  await page.getByRole('button', {name: 'Send message', exact: true}).click();
+  const card = page.locator('[data-tool="javascript_task"]');
+  await expect(card.getByRole('status')).toHaveText('Awaiting approval', {timeout: 30_000});
+  await card.getByRole('button', {name: 'JavaScript task', exact: false}).first().click();
+  await expect(card.getByText('Keep the browser fixture task waiting', {exact: true})).toBeVisible();
+  await page.reload();
+  await page.getByRole('button', {name: 'Worker tasks', exact: true}).first().click({timeout: 45_000});
+  const dialog = page.getByRole('dialog', {name: 'Worker tasks', exact: true});
+  await expect(dialog.getByRole('status')).toHaveText('Awaiting approval');
+  await expect(dialog.getByText('Keep the browser fixture task waiting', {exact: true})).toBeVisible();
+  await page.screenshot({path: testInfo.outputPath('worker-task-catalog.png')});
+  await dialog.getByRole('button', {name: 'Cancel task', exact: true}).click();
+  await expect(dialog.getByRole('status')).toHaveText('Cancelled');
+  await dialog.getByRole('button', {name: 'Refresh tasks', exact: true}).click();
+  await expect(dialog.getByRole('status')).toHaveText('Cancelled');
+  await expect(dialog.getByRole('button', {name: 'Cancel all unfinished tasks', exact: true})).toBeDisabled();
+  await dialog.getByRole('button', {name: 'Close', exact: true}).click();
+  await page.reload();
+  await page.getByRole('button', {name: 'Worker tasks', exact: true}).first().click({timeout: 45_000});
+  await expect(page.getByRole('dialog', {name: 'Worker tasks', exact: true}).getByRole('status')).toHaveText('Cancelled');
+  expect(errors).toEqual([]);
+});

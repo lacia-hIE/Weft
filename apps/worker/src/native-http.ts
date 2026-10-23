@@ -37,6 +37,7 @@ import { sessionAddress, scopeSchema, type Principal } from '../../../packages/t
 import type { Env } from './index.ts';
 import { assertSameOrigin, HttpError, readJson } from './http.ts';
 import {workspaceAddress} from '../../../packages/workspace/src/protocol.ts';
+import {javascriptRequest} from '../../../packages/workspace/src/javascript.ts';
 declare const WEFT_VALIDATION_BUILD: boolean;
 
 import { ModelConfigurationError } from '../../../packages/model-provider/src/index.ts';
@@ -71,6 +72,28 @@ async function cachedRoot(owner: ControlScope, control: ReturnType<typeof contro
 
 export async function handleNativeRequest(request: Request, env: Env, principal: Principal, environmentId?: string): Promise<Response | undefined> {
   const pathname = new URL(request.url).pathname;
+  const javascript = /^\/v1\/tenants\/([^/]+)\/native\/javascript-tasks$/.exec(pathname);
+  if (javascript) {
+    if (javascript[1] !== principal.tenantId) throw new HttpError(403, 'Tenant access denied');
+    if (!['GET', 'POST'].includes(request.method)) return new Response(null, {status: 405, headers: {allow: 'GET, POST'}});
+    const headers = {'cache-control': 'private, no-store'};
+    if (request.method === 'POST') assertSameOrigin(request);
+    const url = new URL(request.url);
+    const input = z.object({sessionId: z.string().min(1).max(80), operation: z.enum(['list', 'status', 'cancel', 'cancelAll']), id: z.uuid().optional()}).strict().safeParse(request.method === 'GET'
+      ? {sessionId: url.searchParams.get('sessionId'), operation: url.searchParams.has('id') ? 'status' : 'list', ...(url.searchParams.has('id') ? {id: url.searchParams.get('id')} : {})}
+      : await readJson(request, 4096));
+    if (!input.success || (request.method === 'POST' && !['cancel', 'cancelAll'].includes(input.data.operation))) return Response.json({error: 'Invalid task request'}, {status: 400, headers});
+    const owner = controlScope(principal.tenantId, environmentId), control = controlFor(env, owner);
+    const root = await cachedRoot(owner, control, input.data.sessionId);
+    if (!root) return Response.json({error: 'Session not found'}, {status: 404, headers});
+    const operation = javascriptRequest.safeParse({operation: input.data.operation, ...(input.data.id ? {id: input.data.id} : {})});
+    if (!operation.success) return Response.json({error: 'Invalid task operation'}, {status: 400, headers});
+    const scope = {...owner, workspaceId: 'default'};
+    try {
+      const response = await env.WORKSPACES.getByName(workspaceAddress(scope)).javascript(scope, input.data.sessionId, operation.data);
+      return new Response(response.body, {status: response.status, headers: {...headers, 'content-type': 'application/json'}});
+    } catch {return Response.json({error: 'Task is unavailable in this Session'}, {status: 404, headers});}
+  }
   const packages = /^\/v1\/tenants\/([^/]+)\/native\/(package-installations|package-assets\/([a-f0-9]{64})\/client\.js)$/.exec(pathname);
   if (packages) {
     if (packages[1] !== principal.tenantId) throw new HttpError(403, 'Tenant access denied');

@@ -60,6 +60,7 @@ import {authenticateAccessAssertion, AccessAssertionUnavailable} from '../../../
 import {subagentRemote, type SubagentEndpoint} from '../../../packages/native-subagents/src/protocol.ts';
 import {nativeSessionList} from '../../../packages/harness-runtime/src/session-list.ts';
 import process from 'node:process';
+import type {JavaScriptList} from '../../../packages/workspace/src/javascript.ts';
 
 // Every environment volume is rooted at /workspace (the Remote Events host home),
 // so the Harness and shared agent homes resolve inside the environment's own filesystem.
@@ -242,13 +243,23 @@ export class SessionDO extends DurableObject<Env> {
     const scope = this.assertScope(input);
     const reader = await this.getReader();
     const ctx = this.nativeHost?.ctx ?? reader.activeRuntime()?.ctx ?? reader.ctx;
-    return Response.json(await ctx.waterfall('workspace/session-activity', {sessionId: SessionId(scope.sessionId)}, () => Promise.resolve([])));
+    const rest = await ctx.waterfall('workspace/session-activity', {sessionId: SessionId(scope.sessionId)}, () => Promise.resolve([]));
+    const volume = {tenantId: scope.tenantId, ...(scope.environmentId ? {environmentId: scope.environmentId} : {}), workspaceId: 'default'};
+    const owners = [scope.sessionId, ...(await nativeSessionList(ctx).list()).filter(row => row.origin === 'subagent').map(row => row.sessionId)];
+    const tasks = (await Promise.all([...new Set(owners)].map(async owner => {
+      const value = await (await this.env.WORKSPACES.getByName(workspaceAddress(volume)).javascript(volume, owner, {operation: 'list'})).json() as JavaScriptList;
+      return value.tasks.filter(task => task.status === 'running' || task.status === 'waiting');
+    }))).flat();
+    return Response.json(tasks.length ? [...rest, {kind: 'job', items: tasks.map(task => ({id: task.id, label: 'Worker JavaScript'}))}] : rest);
   }
   async nativeWorkspaceStop(input: SessionScope): Promise<void> {
     const scope = this.assertScope(input);
     const reader = await this.getReader();
     const ctx = this.nativeHost?.ctx ?? reader.activeRuntime()?.ctx ?? reader.ctx;
     await ctx.parallel('workspace/session-stop', {sessionId: SessionId(scope.sessionId)});
+    const volume = {tenantId: scope.tenantId, ...(scope.environmentId ? {environmentId: scope.environmentId} : {}), workspaceId: 'default'};
+    const owners = [scope.sessionId, ...(await nativeSessionList(ctx).list()).filter(row => row.origin === 'subagent').map(row => row.sessionId)];
+    await Promise.all([...new Set(owners)].map(owner => this.env.WORKSPACES.getByName(workspaceAddress(volume)).javascript(volume, owner, {operation: 'cancelAll'})));
     await ctx.sessionPersistence.flush();
   }
   /** Stop live container handles without opening a cold Agent or changing schedules. */

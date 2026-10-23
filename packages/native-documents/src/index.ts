@@ -2,11 +2,13 @@ import type {Context} from '@deepseek-ai/cordis';
 import {defineTool} from '@deepseek-ai/dsh-tools';
 import {posix} from 'node:path';
 import {workspacePath} from '../../workspace/src/protocol.ts';
-import {WorkerDocuments, MAX_DOCUMENT_BYTES} from './converter.ts';
+import {MAX_DOCUMENT_BYTES, type DocumentResult} from './converter.ts';
+import type {WorkspaceScope} from '../../workspace/src/protocol.ts';
+
+export interface DocumentTransport {convertDocument(scope: WorkspaceScope, name: string, bytes: ArrayBuffer): Promise<Response>}
 
 /** Original filesystem and tool seams keep tenant access, sandbox policy and normal tool presentation. */
-export function mountWorkerDocuments(ctx: Context, ai: Pick<Ai, 'toMarkdown'> | undefined): void {
-  const documents = new WorkerDocuments(ai);
+export function mountWorkerDocuments(ctx: Context, scope: WorkspaceScope, transport: DocumentTransport): void {
   ctx.tools.register(defineTool({
     name: 'document_to_markdown',
     description: 'Read a workspace Office document, PDF, image, HTML or other supported file as Markdown using Cloudflare Workers AI, without a container or Office CLI. PPTX extracts slide text in the Worker before conversion; images and layout are not preserved. Other formats follow the live Cloudflare supported formats. Maximum input 10 MiB, Markdown output 256 KiB. Optional output_path saves a new .md file without overwriting an existing file. Use present to show that file. This extracts content; it does not render Office files to PDF or edit the source document.',
@@ -18,7 +20,10 @@ export function mountWorkerDocuments(ctx: Context, ai: Pick<Ai, 'toMarkdown'> | 
       const target = await ctx.fs.resolve(path);
       const bytes = await ctx.fs.readBytes(target, exec.signal, MAX_DOCUMENT_BYTES);
       exec.signal.throwIfAborted();
-      const result = await documents.convert(posix.basename(path), bytes);
+      const response = await transport.convertDocument(scope, posix.basename(path), new Uint8Array(bytes).buffer);
+      const payload = await response.json() as DocumentResult & {cache: string; error?: {code: string; message: string; retryable: boolean}};
+      if (!response.ok || payload.error) throw new Error(payload.error ? `[${payload.error.code}] ${payload.error.message}${payload.error.retryable ? ' This operation can be retried.' : ''}` : 'Document conversion failed');
+      const result = payload;
       exec.signal.throwIfAborted();
       let outputPath: string | undefined;
       if (output_path !== undefined) {

@@ -188,7 +188,7 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
         if (presentation) await mountNativeAttachments(ctx, {storage, scope: workspace, sessionId: scope.sessionId, transport: env.WORKSPACES.getByName(workspaceAddress(workspace)), ...(env.IMAGES ? {images: env.IMAGES} : {})});
         if (presentation) await mountSessionExport(ctx);
         if (presentation) mountComputerJavaScript(ctx, workspace, env.WORKSPACES.getByName(workspaceAddress(workspace)));
-        if (presentation) mountWorkerDocuments(ctx, env.AI);
+        if (presentation) mountWorkerDocuments(ctx, workspace, env.WORKSPACES.getByName(workspaceAddress(workspace)));
         // Change summaries come from git snapshots in the workspace container, so they follow the environment's shell.
         if (presentation) {
           reconcileChanges = mountWorkspaceChanges(ctx, () => runtimeChoice?.container() === true);

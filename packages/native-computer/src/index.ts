@@ -1,6 +1,6 @@
 import type {Context} from '@deepseek-ai/cordis';
 import {defineTool} from '@deepseek-ai/dsh-tools';
-import {javascriptRequest, type JavaScriptRequest, type JavaScriptStatus} from '../../workspace/src/javascript.ts';
+import {javascriptRequest, type JavaScriptRequest, type JavaScriptStatus, type JavaScriptList} from '../../workspace/src/javascript.ts';
 import type {WorkspaceScope} from '../../workspace/src/protocol.ts';
 
 export interface JavaScriptTransport {
@@ -13,16 +13,16 @@ export function mountComputerJavaScript(ctx: Context, scope: WorkspaceScope, tra
   const call = async (owner: string, request: JavaScriptRequest) => {
     const response = await transport.javascript(scope, owner, request);
     if (!response.ok) throw new Error('JavaScript task request failed');
-    return await response.json() as JavaScriptStatus;
+    return await response.json() as JavaScriptStatus | JavaScriptList;
   };
   ctx.on('session/event', async (session, event) => {
     if (event.type === 'sandbox/mode' && event.data.mode === 'read-only') await transport.revokeJavaScriptWrites(scope, session.id);
   }, {global: true});
   ctx.tools.register(defineTool({
     name: 'javascript_task',
-    description: 'Start or manage a durable JavaScript task in a Worker without a container. Source must be an ES module exporting a default function(input). Read workspace files with node:fs/promises. Network access is disabled. Tasks replay after host restarts; use status to reconnect. Default access is read-only. writable follows the calling Session sandbox and its original project root; changing the Session to read-only cancels writable tasks. For a durable approval checkpoint import {request} from "ws:approval" and await request("reason"); it returns {approved} without widening file access. Use approve with the exact pending callId to ask the user through the native approval UI. A task may outlive this Agent turn. Use run_code for normal tool orchestration; run_code can call this tool through tools.javascript_task.',
+    description: 'Start or manage a durable JavaScript task in a Worker without a container. Use list to discover this Session\'s tasks after reconnecting, status to query, cancel or cancelAll to stop. Source must be an ES module exporting a default function(input). Read workspace files with node:fs/promises. Network access is disabled. Tasks replay after host restarts. Default access is read-only. writable follows the calling Session sandbox and its original project root; changing the Session to read-only cancels writable tasks. For a durable approval checkpoint import {request} from "ws:approval" and await request("reason"); it returns {approved} without widening file access. Use approve with the exact pending callId to ask the user through the native approval UI. Approval expires after one hour; tasks and output expire after 24 hours. Retained output/results are bounded and outputTruncated reports truncation; save large results to workspace files. A task may outlive this Agent turn. Use run_code for normal tool orchestration; run_code can call this tool through tools.javascript_task.',
     parameters: {
-      operation: {type: 'string', enum: ['start', 'status', 'approve', 'cancel'], required: true},
+      operation: {type: 'string', enum: ['start', 'list', 'status', 'approve', 'cancel', 'cancelAll'], required: true},
       source: {type: 'string'}, input: {type: 'json'}, id: {type: 'string'}, callId: {type: 'string'},
       writable: {type: 'boolean'}, timeoutMs: {type: 'number'},
     },
@@ -35,6 +35,7 @@ export function mountComputerJavaScript(ctx: Context, scope: WorkspaceScope, tra
       if (args.operation === 'approve') {
         if (!args.id || !args.callId) throw new Error('Task id and pending callId are required');
         const state = await call(owner, {operation: 'status', id: args.id});
+        if ('tasks' in state) throw new Error('Invalid task status');
         const pending = state.pending.find(call => call.callId === args.callId);
         if (!pending) throw new Error('JavaScript approval is no longer waiting');
         const outcome = await ctx.approval.request({agent, toolName: 'javascript_task', callId: exec.callId, reason: pending.reason, signal: exec.signal});
@@ -45,7 +46,7 @@ export function mountComputerJavaScript(ctx: Context, scope: WorkspaceScope, tra
           if (policy.mode === 'read-only') throw new Error('Writable JavaScript tasks are forbidden by the read-only sandbox');
         }
         request = javascriptRequest.parse({operation: 'start', source: args.source, ...(args.input === undefined ? {} : {input: args.input}), cwd: ctx.workingDirectory.get(agent.session), root: policy.mode === 'danger-full-access' ? '/workspace' : policy.workspaceRoot, writable: args.writable ?? false, timeoutMs: args.timeoutMs ?? 120000});
-      } else request = javascriptRequest.parse({operation: args.operation, id: args.id});
+      } else request = javascriptRequest.parse({operation: args.operation, ...(['list', 'cancelAll'].includes(args.operation) ? {} : {id: args.id})});
       exec.signal.throwIfAborted();
       return {...await call(owner, request)};
     },

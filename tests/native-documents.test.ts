@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {zipSync, strToU8} from 'fflate';
-import {WorkerDocuments, presentationHtml, MAX_DOCUMENT_BYTES} from '../packages/native-documents/src/converter.ts';
+import {WorkerDocuments, DocumentConversionError, presentationHtml, MAX_DOCUMENT_BYTES, type DocumentResult} from '../packages/native-documents/src/converter.ts';
+import {mkdtemp, rm} from 'node:fs/promises';
+import {join} from 'node:path';
+import {tmpdir} from 'node:os';
 import {createRuntime, tenantId, url} from './helpers/miniflare.ts';
 import {nativeClient} from './helpers/native.ts';
 import {nativeFixtureResponse} from './helpers/native-plugin-model.ts';
@@ -33,6 +36,49 @@ test('PPTX slide text is extracted in numeric slide order inside the Worker with
   assert.ok(html.indexOf('Second') < html.indexOf('Tenth'));
   assert.doesNotMatch(html, /not slide text/);
   assert.throws(() => presentationHtml(zipSync({'ppt/slides/slide1.xml': new Uint8Array(17 * 1024 * 1024)})), /extraction limit/);
+});
+
+test('document conversions coalesce, persist across converters, do not cache failures, and release timed-out work', async () => {
+  const rows = new Map<string, DocumentResult>();
+  const cache = {get: (key: string) => rows.get(key), put: (key: string, value: DocumentResult) => {rows.set(key, value);}};
+  let calls = 0, release: (() => void) | undefined;
+  const barrier = new Promise<void>(resolve => {release = resolve;});
+  const ai = {toMarkdown(file?: MarkdownDocument) {
+    if (!file) return {supported: async () => [{extension: 'html', mimeType: 'text/html'}]};
+    calls++; return barrier.then(() => ({format: 'markdown', data: '# Shared', mimeType: 'text/html', tokens: 2}));
+  }} as unknown as Ai;
+  const bytes = new TextEncoder().encode('hello');
+  const documents = new WorkerDocuments(ai, cache);
+  const a = documents.convert('a.html', bytes), b = documents.convert('a.html', bytes);
+  release!();
+  assert.deepEqual((await Promise.all([a, b])).map(value => value.cache), ['miss', 'shared']); assert.equal(calls, 1);
+  assert.equal((await new WorkerDocuments(ai, cache).convert('a.html', bytes)).cache, 'hit'); assert.equal(calls, 1);
+  const broken = {toMarkdown(file?: MarkdownDocument) {return file ? Promise.resolve({format: 'error', error: 'Encrypted document'}) : {supported: async () => [{extension: 'pdf', mimeType: 'application/pdf'}]};}} as unknown as Ai;
+  await assert.rejects(new WorkerDocuments(broken, cache).convert('encrypted.pdf', bytes), error => error instanceof DocumentConversionError && error.code === 'DOCUMENT_CONVERSION_FAILED' && !error.retryable && error.message.includes('Encrypted'));
+  const hanging = {toMarkdown: () => ({supported: () => new Promise(() => {})})} as unknown as Ai;
+  const timed = new WorkerDocuments(hanging, cache, 5);
+  await assert.rejects(timed.convert('timeout.html', bytes), error => error instanceof DocumentConversionError && error.code === 'DOCUMENT_TIMEOUT' && error.retryable);
+  await assert.rejects(timed.convert('timeout.html', bytes), error => error instanceof DocumentConversionError && error.code === 'DOCUMENT_TIMEOUT');
+  assert.equal(rows.size, 1);
+});
+
+test('document SQLite cache survives a cold WorkspaceDO and never shares entries across tenants or environments', {timeout: 90000}, async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'weft-doc-cache-'));
+  const options = {browser: true, scriptPath: 'dist/documents-worker.js'};
+  let runtime = createRuntime(directory, options);
+  const scope = {tenantId: tenantId('alpha'), environmentId: 'default', workspaceId: 'default'};
+  const convert = async (target = scope) => {
+    const response = await runtime.dispatchFetch(url('alpha', '/_test/documents'), {method: 'POST', body: JSON.stringify({scope: target, name: 'cache.html', content: '<h1>Persistent conversion</h1>'})});
+    assert.equal(response.status, 200, await response.clone().text());
+    return await response.json() as DocumentResult & {cache: string};
+  };
+  try {
+    assert.equal((await convert()).cache, 'miss');
+    await runtime.dispose(); runtime = createRuntime(directory, options);
+    const restored = await convert(); assert.equal(restored.cache, 'hit'); assert.match(restored.markdown, /Persistent conversion/);
+    assert.equal((await convert({...scope, environmentId: 'other'})).cache, 'miss');
+    assert.equal((await convert({...scope, tenantId: tenantId('beta')})).cache, 'miss');
+  } finally {await runtime.dispose(); await rm(directory, {recursive: true, force: true});}
 });
 
 test('native document tool runs in Worker-only mode, saves Markdown and refuses output overwrites', {timeout: 90000}, async () => {
