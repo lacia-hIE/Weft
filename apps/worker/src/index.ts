@@ -25,6 +25,7 @@ import {openPermissionWorld} from '../../../packages/native-environment/src/perm
 import {readScheduleCatalog, drainDueReminders} from '../../../packages/native-schedule/src/index.ts';
 import questionRemote from '../../../.generated/official-remotes/packages/interaction/user-questions/typert.remote-client.js';
 import {FILE_UPLOAD_PATH} from '@weft/upstream/packages/client/file-upload/src/protocol.ts';
+import {SESSION_LOG_EXPORT_PATH} from '@deepseek-ai/dsh-session-log-export';
 import {CHANGED_FILES_PATH, CHANGES_DIFF_PATH} from '@weft/upstream/packages/client/ui-deliverables/src/changes.ts';
 import { workspaceIdSchema, workspaceAddress, workspacePath } from '../../../packages/workspace/src/protocol.ts';
 export { WorkspaceDO, TenantDO, EnvironmentDO };
@@ -790,6 +791,14 @@ export class SessionDO extends DurableObject<Env> {
   /** Internal binding transport; external requests are authenticated by the entry Worker. */
   override async fetch(request: Request): Promise<Response> {
     const pathname = new URL(request.url).pathname;
+    if (pathname === SESSION_LOG_EXPORT_PATH) {
+      this.assertScope(scopeSchema.parse(JSON.parse(request.headers.get('x-weft-session-scope') ?? 'null')));
+      if (request.method !== 'GET' && request.method !== 'HEAD') return new Response(null, {status: 405, headers: {allow: 'GET, HEAD'}});
+      const id = new URL(request.url).searchParams.get('sessionId');
+      if (!id || !readSessionMetadata(this.ctx.storage, SessionId(id))) return new Response(null, {status: 404});
+      // Export from the read world. Resuming an Agent here could replay pending input.
+      return (await this.getReader()).ctx.weftConnectionRoutes.dispatch(request);
+    }
     if (pathname === FILE_UPLOAD_PATH || pathname === CHANGED_FILES_PATH || pathname === CHANGES_DIFF_PATH) {
       const scope = this.assertScope(scopeSchema.parse(JSON.parse(request.headers.get('x-weft-session-scope') ?? 'null')));
       if (new URL(request.url).searchParams.get('sessionId') !== scope.sessionId) throw new RemoteError('gateway/bad-request', 'Session route scope mismatch', {});

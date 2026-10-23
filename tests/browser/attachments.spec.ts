@@ -1,7 +1,8 @@
 import {test, expect} from '@playwright/test';
 import {compose} from './compose.ts';
 import {createHash} from 'node:crypto';
-import {writeFile} from 'node:fs/promises';
+import {writeFile, readFile} from 'node:fs/promises';
+import {unzipSync, strFromU8} from 'fflate';
 
 test('the original composer uploads a file before the first prompt and restores its native attachment after refresh', async ({page, request}, testInfo) => {
   const me = await (await request.get('/v1/me')).json() as {tenantId: string};
@@ -33,4 +34,21 @@ test('the original composer uploads a file before the first prompt and restores 
   const events = await (await request.get(base+'/sessions/'+sessionId+'/events')).json();
   expect(JSON.stringify(events)).toContain('sha256:'+createHash('sha256').update(bytes).digest('hex'));
   expect(JSON.stringify(events)).not.toContain('WEFT_NATIVE_UPLOADED_INVOICE');
+  const head = page.waitForResponse(response => response.url().includes('/native/api/session.export?') && response.request().method() === 'HEAD');
+  const downloading = page.waitForEvent('download');
+  await page.getByRole('button', {name: 'More actions', exact: true}).click();
+  await page.getByRole('menuitem', {name: 'Download session log', exact: true}).click();
+  expect((await head).status()).toBe(200);
+  const download = await downloading;
+  expect(download.suggestedFilename()).toBe(`dsh-session-${sessionId}.zip`);
+  const archivePath = testInfo.outputPath('session-export.zip');
+  await download.saveAs(archivePath);
+  expect(await download.failure()).toBeNull();
+  const archive = unzipSync(await readFile(archivePath));
+  const log = Object.keys(archive).find(path => /^session(?:\.v\d+)?\.jsonl$/.test(path));
+  expect(log).toBeTruthy();
+  expect(strFromU8(archive[log!]!)).toContain('Use this uploaded invoice');
+  const attachment = Object.keys(archive).find(path => path.startsWith('files/') && path.endsWith('/browser-invoice.txt'));
+  expect(attachment).toBeTruthy();
+  expect(Buffer.from(archive[attachment!]!)).toEqual(bytes);
 });

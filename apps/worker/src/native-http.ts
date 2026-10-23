@@ -25,6 +25,7 @@ import permissionRemote from '../../../.generated/official-remotes/packages/inte
 import {remoteAgentId} from '../../../packages/harness-runtime/src/remote-dispatch.ts';
 import questionRemote from '../../../.generated/official-remotes/packages/interaction/user-questions/typert.remote-client.js';
 import {FILE_UPLOAD_PATH} from '@weft/upstream/packages/client/file-upload/src/protocol.ts';
+import {SESSION_LOG_EXPORT_PATH} from '@deepseek-ai/dsh-session-log-export';
 import {CHANGED_FILES_PATH, CHANGES_DIFF_PATH, CHANGES_OPEN_PATH} from '@weft/upstream/packages/client/ui-deliverables/src/changes.ts';
 import {PRESENT_HOST_PATH, PRESENT_OPEN_PATH} from '@weft/upstream/packages/client/ui-deliverables/src/presented.ts';
 import type { NativePluginEndpoint } from '../../../packages/native-plugins/src/host.ts';
@@ -106,6 +107,27 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
     const owner = controlScope(principal.tenantId, environmentId);
     const sessions = (await controlFor(env, owner).sessionIndex(owner)).filter(record => record.workspaceId === scope.workspaceId).map(record => record.id);
     return stub.stopContainer(scope, sessions);
+  }
+  const sessionExport = /^\/v1\/tenants\/([^/]+)\/native\/api\/session\.export$/.exec(pathname);
+  if (sessionExport) {
+    if (sessionExport[1] !== principal.tenantId) throw new HttpError(403, 'Tenant access denied');
+    const headers = {'cache-control': 'private, no-store', 'x-content-type-options': 'nosniff'};
+    if (request.method !== 'GET' && request.method !== 'HEAD') return new Response(null, {status: 405, headers: {...headers, allow: 'GET, HEAD'}});
+    const url = new URL(request.url);
+    const parsed = scopeSchema.safeParse({tenantId: principal.tenantId, sessionId: url.searchParams.get('sessionId'), ...(environmentId ? {environmentId} : {})});
+    const descendants = url.searchParams.get('includeDescendants');
+    if (!parsed.success || (descendants !== null && descendants !== 'true' && descendants !== 'false')) return new Response(request.method === 'HEAD' ? null : 'Invalid export query', {status: 400, headers});
+    const owner = controlScope(principal.tenantId, environmentId);
+    const root = await cachedRoot(owner, controlFor(env, owner), parsed.data.sessionId);
+    if (!root) return new Response(request.method === 'HEAD' ? null : 'Session not found', {status: 404, headers});
+    const scope = {...parsed.data, sessionId: root};
+    url.pathname = SESSION_LOG_EXPORT_PATH;
+    const response = await env.SESSIONS.getByName(sessionAddress(scope)).fetch(new Request(url, {
+      method: request.method, headers: {'x-weft-session-scope': JSON.stringify(scope)}, signal: request.signal,
+    }));
+    const responseHeaders = new Headers(response.headers);
+    for (const [name, value] of Object.entries(headers)) responseHeaders.set(name, value);
+    return new Response(response.body, {status: response.status, headers: responseHeaders});
   }
   const upload = /^\/v1\/tenants\/([^/]+)\/native\/api\/session\/uploadFileBinary$/.exec(pathname);
   if (upload) {

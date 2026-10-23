@@ -30,6 +30,7 @@ import type {Context} from '@deepseek-ai/cordis';
 import AgentLoop from '@deepseek-ai/dsh-agent-loop';
 import {updateVolatile} from '@deepseek-ai/cosmokit';
 import {mountNativeAttachments} from '../../../packages/native-attachments/src/index.ts';
+import {mountSessionExport} from '../../../packages/harness-runtime/src/session-export.ts';
 import {mountOfficialTeam} from '../../../packages/native-bundles/src/runtime.ts';
 import {mountNativeSubagents, type SubagentLimits} from '../../../packages/native-subagents/src/index.ts';
 import SessionFileReferences from '@weft/upstream/packages/api/session-controller/src/file-references.ts';
@@ -183,6 +184,7 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
           await choice.reconcile();
         }
         if (presentation) await mountNativeAttachments(ctx, {storage, scope: workspace, sessionId: scope.sessionId, transport: env.WORKSPACES.getByName(workspaceAddress(workspace)), ...(env.IMAGES ? {images: env.IMAGES} : {})});
+        if (presentation) await mountSessionExport(ctx);
         // Change summaries come from git snapshots in the workspace container, so they follow the environment's shell.
         if (presentation) {
           reconcileChanges = mountWorkspaceChanges(ctx, () => runtimeChoice?.container() === true);

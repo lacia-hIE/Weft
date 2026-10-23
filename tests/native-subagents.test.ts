@@ -7,6 +7,8 @@ import type {SessionFollowFrame} from '@deepseek-ai/dsh-api-session-controller/t
 import {createRuntime, tenantId, url} from './helpers/miniflare.ts';
 import {nativeClient} from './helpers/native.ts';
 import {nativeSubagentModel} from './helpers/native-subagent-model.ts';
+import {unzipSync, strFromU8} from 'fflate';
+import {SESSION_LOG_FILENAME} from '@deepseek-ai/dsh-session-log-export';
 
 test('native delegation owns real child logs, live history, browser continuation and cold recovery', {timeout: 120000}, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'weft-subagents-'));
@@ -61,6 +63,21 @@ test('native delegation owns real child logs, live history, browser continuation
     const roots = await api.call<{items: {sessionId: string; agentAvailable: boolean; origin?: string}[]}>('session/list', {_request: {}});
     assert.deepEqual(roots.items.filter(item => item.origin !== 'subagent').map(item => item.sessionId).sort(), ['parent', 'unrelated']);
     assert.ok(roots.items.some(item => item.sessionId === childId && item.origin === 'subagent')); assert.ok(roots.items.every(item => !item.agentAvailable));
+    const exported = async (sessionId: string, includeDescendants: boolean) => {
+      const query = new URLSearchParams({sessionId, includeDescendants: String(includeDescendants)});
+      const response = await runtime.dispatchFetch(url('alpha', `/v1/tenants/${tenantId('alpha')}/environments/default/native/api/session.export?${query}`));
+      assert.equal(response.status, 200);
+      return unzipSync(new Uint8Array(await response.arrayBuffer()));
+    };
+    const tree = await exported('parent', true);
+    assert.deepEqual(Object.keys(tree).sort(), [SESSION_LOG_FILENAME, `subagents/${childId}/${SESSION_LOG_FILENAME}`].sort());
+    assert.match(strFromU8(tree[`subagents/${childId}/${SESSION_LOG_FILENAME}`]!), /CHILD_FOLLOW_REPLY/);
+    assert.deepEqual(Object.keys(await exported('parent', false)), [SESSION_LOG_FILENAME]);
+    const childOnly = await exported(childId, true);
+    assert.deepEqual(Object.keys(childOnly), [SESSION_LOG_FILENAME]);
+    assert.match(strFromU8(childOnly[SESSION_LOG_FILENAME]!), /CHILD_FOLLOW_REPLY/);
+    assert.doesNotMatch(strFromU8(childOnly[SESSION_LOG_FILENAME]!), /PARENT_TASK/);
+    assert.ok((await api.call<{items: {agentAvailable: boolean}[]}>('session/list', {_request: {}})).items.every(item => !item.agentAvailable));
     await api.call('subagents/prompt', {request: {parentSessionId: 'parent', childSessionId: childId, mode: 'continuable', delivery: 'queue', requestId: 'child-after-restart', content: [{type: 'text', text: 'CHILD_FOLLOW_BETA after restart'}]}});
     for (;;) {const frame = await child.next(); if (frame.type === 'event' && frame.event.type === 'turn/end') break;}
     assert.ok(provider.observations.filter(entry => entry.child).length >= 3);

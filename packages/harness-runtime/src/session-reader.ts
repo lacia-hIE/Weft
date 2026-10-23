@@ -28,6 +28,9 @@ import {ComputerFileSystem} from '../../workspace/src/provider.ts';
 import type {WorkspaceScope, WorkspaceTransport} from '../../workspace/src/protocol.ts';
 import {ComputerAttachmentStore, type AttachmentTransport} from '../../native-attachments/src/store.ts';
 import {nativeSessionList} from './session-list.ts';
+import Commands from '@deepseek-ai/dsh-commands';
+import {AuthenticatedFetchRoutes} from '../../native-attachments/src/routes.ts';
+import {mountSessionExport} from './session-export.ts';
 
 /** Reuse native cold-read, projections, pagination, follow and assistant continuity. */
 export async function createSessionReader(storage: DurableObjectStorage, promoteRoot?: (sessionId: SessionId) => void) {
@@ -46,6 +49,11 @@ export async function createSessionReader(storage: DurableObjectStorage, promote
       const sessions = super.list();
       const seen = new Set(sessions.map(session => session.id));
       return [...sessions, ...(active?.ctx.sessions.list() ?? []).filter(session => !seen.has(session.id))];
+    }
+    override flush(session: Session): Promise<boolean> {
+      return active?.ctx.sessions.get(session.id) === session
+        ? active.ctx.sessions.flush(session)
+        : super.flush(session);
     }
   }
   try {
@@ -91,6 +99,9 @@ export async function createSessionReader(storage: DurableObjectStorage, promote
           await ctx.plugin(WorkingDirectory, {defaultDirectory: config.cwd});
           await ctx.plugin(Subagents, {});
           await ctx.plugin(ComputerAttachmentStore, {scope: config.scope, sessionId: config.sessionId, transport: config.attachmentTransport, ...(config.images ? {images: config.images} : {})});
+          await ctx.plugin(Commands);
+          await ctx.plugin(AuthenticatedFetchRoutes);
+          await mountSessionExport(ctx);
           nativeSessionList(ctx);
         })();
       },
