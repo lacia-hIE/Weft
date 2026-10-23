@@ -1,4 +1,6 @@
 import {test, expect} from '@playwright/test';
+import {buildPackage} from '../../apps/plugin-builder/server.mjs';
+import {packageFixture} from '../helpers/package-fixture.ts';
 
 test('official Plugins page reviews an exact package artifact before enabling it', async ({page, request}) => {
   const me = await (await request.get('/v1/me')).json() as {tenantId: string};
@@ -34,4 +36,28 @@ test('official Plugins page reviews an exact package artifact before enabling it
   await page.getByRole('button', {name: 'Plugins', exact: true}).click({timeout: 45_000});
   await page.getByRole('button', {name: 'View Package installations', exact: true}).click();
   await expect(page.getByText('Enabled', {exact: true})).toBeVisible();
+});
+
+test('compiled Client modules share React, restore after refresh and dispose when their declaration is revoked', async ({page, request}) => {
+  const fixture = packageFixture({declaration: {abi: 'weft-plugin-v1', client: './client.js', permissions: {client: true}}, files: {
+    'client.js': `import React from 'react';export default sdk=>{if(React!==sdk.React)throw new Error('React was duplicated');return {apply(ctx){ctx.effect(()=>{const button=document.createElement('button');button.textContent='Installed client active';document.body.append(button);return()=>button.remove()})}}}`,
+  }});
+  const artifact = await buildPackage(fixture.input);
+  const me = await (await request.get('/v1/me')).json() as {tenantId: string};
+  const environment = 'client-package-'+crypto.randomUUID().slice(0, 8);
+  const base = `/v1/tenants/${me.tenantId}/environments/${environment}`;
+  expect((await request.post(`/v1/tenants/${me.tenantId}/environments`, {data: {id: environment, name: environment}})).status()).toBe(201);
+  let enabled = true;
+  await page.route('**/native/package-installations', route => route.fulfill({json: {available: true, jobs: [], installations: [{name: fixture.name, version: fixture.version, digest: 'b'.repeat(64), permissions: artifact.permissions, approved: true, enabled, description: '', installedAt: 1}]}}));
+  await page.route('**/native/package-assets/**', route => route.fulfill({contentType: 'text/javascript', body: artifact.client!}));
+  await page.goto('/agents/'+environment);
+  await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
+  await expect(page.getByRole('button', {name: 'Installed client active', exact: true})).toBeVisible({timeout: 45_000});
+  await page.reload();
+  await expect(page.getByRole('button', {name: 'Installed client active', exact: true})).toBeVisible({timeout: 45_000});
+  enabled = false;
+  const method = 'pluginManager/setPluginEnabled';
+  const response = await request.post(base+'/native/api/'+method, {data: {type: 'client-request', rpcId: crypto.randomUUID(), method, payload: {args: {id: 'command-feedback', enabled: false}}}});
+  expect((await response.json()).result.ok).toBe(true);
+  await expect(page.getByRole('button', {name: 'Installed client active', exact: true})).toHaveCount(0);
 });

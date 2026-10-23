@@ -59,7 +59,13 @@ test('package installation reviews exact artifacts, runs isolated Host modules a
 });
 
 test('installed read-only packages cannot write, stale approval is refused and private registries never fall back publicly', {timeout: 120_000}, async () => {
-  const fixture = packageFixture({declaration: {abi: 'weft-plugin-v1', host: './host.js', permissions: {files: 'read'}}});
+  const fixture = packageFixture({declaration: {abi: 'weft-plugin-v1', host: './host.js', permissions: {files: 'read'}}, files: {
+    'host.js': `export default sdk=>({inject:['fs'],apply(ctx){
+      let denied=false;try{ctx.tools.register(sdk.defineTool({name:'unapproved_tool',description:'Forbidden',parameters:{},output:{schema:{type:'json'},render:()=>[]},execute:async()=>null}))}catch{denied=true}
+      ctx.effect(()=>sdk.handle('permissionStatus',async()=>({denied})));
+      ctx.effect(()=>sdk.handle('save',async value=>{const target=await ctx.fs.resolve('/workspace/package-result.txt');await ctx.fs.writeText(target,String(value));return null}));
+    }})`,
+  }});
   let downloads = 0;
   const runtime = createRuntime(undefined, {packages: true, browser: true,
     outbound: async request => {
@@ -79,6 +85,8 @@ test('installed read-only packages cannot write, stale approval is refused and p
     assert.equal((await approve('0'.repeat(64))).status, 409); assert.equal((await get()).approved, false);
     assert.equal((await approve(row.digest)).status, 200);
     await api.call('session/create', {request: {sessionId: 'readonly-package'}});
+    const status = await runtime.dispatchFetch(url('alpha', base+'/package-invoke'), {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({sessionId: 'readonly-package', name: row.name, digest: row.digest, method: 'permissionStatus', args: null})});
+    assert.equal(status.status, 200, await status.clone().text()); assert.deepEqual(await status.json(), {value: {denied: true}});
     const response = await runtime.dispatchFetch(url('alpha', base+'/package-invoke'), {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({sessionId: 'readonly-package', name: row.name, digest: row.digest, method: 'save', args: 'denied'})});
     assert.equal(response.status, 409); assert.match(await response.text(), /permission denied/);
   } finally {await runtime.dispose();}

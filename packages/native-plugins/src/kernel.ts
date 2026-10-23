@@ -85,6 +85,8 @@ export class PluginFacet extends DurableObject<KernelEnv> {
             // it would silently modify a local prompt instead of the owning Agent.
             const facade = (ctx: Context) => new Proxy(ctx, {
                 get(target, key) {
+                    if (typeof key === 'string' && ['tools', 'timer', 'fs'].includes(key) && !provided.has(key))
+                        throw new Error(`Plugin permission denied: ${key}`);
                     if (key === 'get')
                         return (name: string) => provided.has(name) ? target.get(name) : undefined;
                     if (key === 'provide')

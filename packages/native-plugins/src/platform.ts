@@ -75,6 +75,8 @@ export class NativePluginPlatform {
                 dispose: () => void;
             }>();
             const sync = (metadata: Metadata) => {
+                if (installed && !installed.services.includes('tools') && metadata.tools.length)
+                    throw new Error('Plugin permission denied: tools');
                 for (const [method, dispose] of handlers)
                     if (!metadata.handlers.includes(method)) {
                         dispose();

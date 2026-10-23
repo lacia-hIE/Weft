@@ -12,8 +12,8 @@ test('package resolution locks transitive dependencies and rejects integrity, re
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
       assert.equal(init?.redirect, 'manual');
       const address = String(input);
-      if (address === root.manifest.dist.tarball) return new Response(corrupt ? new Uint8Array([1, 2]) : root.bytes);
-      if (address === dependency.manifest.dist.tarball) return new Response(dependency.bytes);
+      if (address === root.manifest.dist.tarball) return new Response(corrupt ? new Uint8Array([1, 2]) : new Uint8Array(root.bytes));
+      if (address === dependency.manifest.dist.tarball) return new Response(new Uint8Array(dependency.bytes));
       if (decodeURIComponent(new URL(address).pathname) === '/fixture-dependency') return Response.json({versions: {'1.0.2': dependency.manifest}});
       return Response.json(root.manifest);
     }) as typeof fetch;

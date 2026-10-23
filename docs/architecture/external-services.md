@@ -1,6 +1,6 @@
 # 外部服务设计：Office 转 PDF、插件市场与平台账号
 
-状态：插件市场的索引读取已实现；Office 转 PDF、插件安装与平台账号仍是设计，对应调用返回明确拒绝（见 [原版交互服务](../validation/native-interaction.md#已知限制)）。
+状态：插件市场索引读取及兼容包安装第一版已实现，安装边界与验证见 [插件包安装第一版](../validation/package-installation.md)。Office 转 PDF 和平台账号仍是设计，对应调用返回明确拒绝。
 
 三项能力在 workerd 中不能直接运行，原因各不相同：Office 转 PDF 需要 LibreOffice 进程；插件安装需要解析、打包并执行第三方 npm 代码；平台账号登录需要平台接受 Weft 的回调地址。下面的方案都保留原版服务与官方 UI，只替换无法在 Worker 中运行的那一层；外部组件缺失时仍返回原来的明确拒绝。
 
@@ -34,7 +34,7 @@
 - 执行：Host 模块沿用现有动态 Cordis 插件的路径，在隔离的 Dynamic Worker facet 中运行，只能通过既有 RPC 访问 Harness；Client 模块经私有 UI 资产路径加载。审批沿用现有“精确版本审批”，审批对象是包名、版本与 integrity。
 - 兼容性：打包阶段检查对 `child_process`、原生扩展、`node:fs` 写入等的依赖；不满足 Dynamic Worker 能力的包在安装前拒绝，并在市场页面显示原因。
 
-分阶段：索引读取已接通，安装继续返回明确拒绝；下一步接通打包容器与安装，并在允许启用可选 bundle 后显示 Discover 页。
+当前落地：独立离线构建容器、私有 R2 产物、EnvironmentDO 安装与审批记录、受限 ESM Host facet 和 Client 加载器已接通。第一版通过 weft.plugin ABI 明确兼容性，不承诺任意 npm 或原版 bundle 可运行；不支持安装脚本、私有源、Git 和本地路径。市场 Discover 页仍按原版实验 bundle 的启用规则处理。
 
 验证：索引阶段用 `https://` 夹具索引测试 `search` 分页、缓存与错误；安装阶段测试 integrity 不符、不兼容包拒绝、审批后 Host 在 facet 中运行、重建后恢复。
 
