@@ -318,12 +318,13 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
     };
     return Response.json(context);
   }
-  /** The environment's configuration of official profile rows, by row id. */
+  /** Private RPC: the environment's declarative plugin composition. */
   async nativePluginPlan(scope: ControlScope) {
     this.scope(scope);
     await this.syncSettingsDocument(scope);
     return Response.json(this.settings(scope).pluginPlan());
   }
+  /** The environment's configuration of official profile rows, by row id. */
   async nativeProfileOverrides(scope: ControlScope): Promise<Record<string, Record<string, unknown>>> {
     await this.syncSettingsDocument(scope);
     return this.settings(scope).profileOverrides();

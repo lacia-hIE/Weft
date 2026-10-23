@@ -161,6 +161,13 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Use Ubuntu archive for browser dependencies
+        run: |
+          for apt_source in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+            if [ -f "$apt_source" ]; then
+              sudo sed -i 's|azure.archive.ubuntu.com|archive.ubuntu.com|g' "$apt_source"
+            fi
+          done
       - run: npx playwright install --with-deps chromium
       - uses: actions/download-artifact@v4
         with:
