@@ -3,7 +3,7 @@
 # computerd mounts the workspace volume at /workspace over FUSE and serves the
 # Durable Object's sync and exec sessions; its version must match the
 # @cloudflare/computer package (scripts/workspace-container.mjs checks it).
-FROM ghcr.io/cloudflare/computer-computerd-linux-x64:0.5.1 AS computerd
+FROM ghcr.io/cloudflare/computer-computerd-linux-x64:0.7.0 AS computerd
 
 FROM debian:stable-slim
 

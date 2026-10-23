@@ -37,6 +37,7 @@ test('PTC mode runs TypeScript programs in Dynamic Workers against the session t
     {code: 'await new Promise(resolve => setTimeout(resolve, 10_000));', timeoutMs: 500},
     {code: 'const response = await fetch("https://example.com/");\nreturn response.status;'},
     {code: 'return () => 1;'},
+    {code: 'let task = await tools.javascript_task({operation: "start", source: "export default () => 42"}); while (task.status === "running") task = await tools.javascript_task({operation: "status", id: task.id}); return {worker: task.value};'},
   ];
   const runtime = createRuntime(undefined, {browser: true, bindings: {MODEL_BACKEND: 'deepseek', DEEPSEEK_API_KEY: 'ptc-fixture', DEEPSEEK_BASE_URL: 'https://ptc-model.test/anthropic'}, outbound: ptcModel(programs, requests).outbound});
   const api = nativeClient(() => runtime);
@@ -61,6 +62,7 @@ test('PTC mode runs TypeScript programs in Dynamic Workers against the session t
     assert.match(texts[4]!, /timeout/);
     assert.doesNotMatch(texts[5]!, /200/);
     assert.match(texts[6]!, /invalid-output/);
+    assert.match(texts[7]!, /worker\\": 42/);
   } finally {
     await runtime.dispose();
   }

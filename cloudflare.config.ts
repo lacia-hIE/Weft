@@ -36,6 +36,7 @@ export default defineConfig({
       UI: bindings.worker({ worker: uiWorker }),
       LOADER: bindings.workerLoader(),
       IMAGES: bindings.images(),
+      AI: bindings.ai(),
       PLUGIN_ARTIFACTS: bindings.r2({name: deployment.artifactBucketName}),
       SESSIONS: bindings.durableObject({ worker: deployment.workerName, exportName: 'SessionDO' }),
       WORKSPACES: bindings.durableObject({ worker: deployment.workerName, exportName: 'WorkspaceDO' }),

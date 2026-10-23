@@ -69,6 +69,7 @@ process.env.DSH_AGENTS_HOME ??= '/workspace/.agents';
 export interface Env extends ModelEnvironment {
   LOADER?: WorkerLoader;
   IMAGES?: ImagesBinding;
+  AI?: Ai;
   UI: Fetcher;
   SESSIONS: DurableObjectNamespace<SessionDO>;
   WORKSPACES: DurableObjectNamespace<WorkspaceDO>;
