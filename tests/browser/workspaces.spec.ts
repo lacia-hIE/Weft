@@ -1,4 +1,4 @@
-import {test, expect, type APIRequestContext, type Page} from '@playwright/test';
+import {test, expect, type APIRequestContext, type Locator, type Page} from '@playwright/test';
 import {compose} from './compose.ts';
 
 async function environment(page: Page, request: APIRequestContext) {
@@ -20,6 +20,17 @@ async function environment(page: Page, request: APIRequestContext) {
   return {me, base, rpc, write};
 }
 
+async function openProject(page: Page, dialog: Locator) {
+  // Adopting a folder closes the picker before its new blank Session has
+  // finished opening. Wait for that Session's composer before typing a draft.
+  const opening = page.waitForResponse(response => response.request().method() === 'POST' && new URL(response.url()).pathname.endsWith('/native/api/session/create'));
+  await dialog.getByRole('button', {name: 'Open', exact: true}).click();
+  const body = await (await opening).json();
+  expect(body.result.ok, JSON.stringify(body)).toBe(true);
+  await expect(page.locator('[data-conversation-content]')).toHaveAttribute('data-conversation-session', body.result.value.sessionId);
+  await expect(dialog).toHaveCount(0);
+}
+
 test('the native directory browser adds an existing project and restores its Session and Files sidebar after reload', async ({page, request}, testInfo) => {
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
@@ -37,9 +48,8 @@ test('the native directory browser adds an existing project and restores its Ses
   await dialog.getByRole('button', {name: 'project-a', exact: true}).click();
   await expect(dialog.getByRole('button', {name: 'Open', exact: true})).toBeEnabled();
   await page.screenshot({path: testInfo.outputPath('workspace-directory-browser.png')});
-  await dialog.getByRole('button', {name: 'Open', exact: true}).click();
-  await expect(dialog).toHaveCount(0);
-  await expect(page.getByRole('button', {name: 'New session in project-a', exact: true})).toBeVisible();
+  await openProject(page, dialog);
+  await expect(page.getByRole('button', {name: 'Choose workspace', exact: true})).toContainText('project-a');
   await compose(page, 'Work in project A');
   await page.getByRole('button', {name: 'Send message', exact: true}).click();
   await expect(page.getByText('Tenant: '+me.tenantId, {exact: true})).toBeVisible({timeout: 30_000});
@@ -57,8 +67,12 @@ test('the native directory browser adds an existing project and restores its Ses
   await expect(page.locator('[data-files-path="/workspace/project-b/sibling.txt"]')).toHaveCount(0);
   await page.reload();
   await expect(page.getByText('PROJECT_A_FILE', {exact: true})).toBeVisible({timeout: 45_000});
-  await expect(page.getByRole('button', {name: 'New session in project-a', exact: true})).toBeVisible();
+  await page.getByRole('treeitem', {name: 'project-a', exact: true}).hover();
+  const opening = page.waitForResponse(response => response.request().method() === 'POST' && new URL(response.url()).pathname.endsWith('/native/api/session/create'));
   await page.getByRole('button', {name: 'New session in project-a', exact: true}).click();
+  const created = await (await opening).json();
+  expect(created.result.ok, JSON.stringify(created)).toBe(true);
+  await expect(page.locator('[data-conversation-content]')).toHaveAttribute('data-conversation-session', created.result.value.sessionId);
   await compose(page, 'Another session in project A');
   await page.getByRole('button', {name: 'Send message', exact: true}).click();
   await expect(page.getByText('Tenant: '+me.tenantId, {exact: true})).toBeVisible({timeout: 30_000});
@@ -102,8 +116,7 @@ test('the native picker creates a folder, rejects an unreadable path and starts 
   await expect(dialog.getByRole('alert')).toHaveCount(0);
   await expect(dialog.getByRole('button', {name: 'Open', exact: true})).toBeEnabled();
   await page.screenshot({path: testInfo.outputPath('workspace-typed-directory.png')});
-  await dialog.getByRole('button', {name: 'Open', exact: true}).click();
-  await expect(dialog).toHaveCount(0);
+  await openProject(page, dialog);
   await compose(page, 'Use the newly created project');
   await page.getByRole('button', {name: 'Send message', exact: true}).click();
   await expect(page.getByText('Tenant: '+me.tenantId, {exact: true})).toBeVisible({timeout: 30_000});
@@ -124,7 +137,7 @@ test('the native picker creates a folder, rejects an unreadable path and starts 
   expect((await request.get(base+'/workspaces/default/files?path=/workspace/terminal.txt')).status()).toBe(404);
 
   await page.reload();
-  await expect(page.getByRole('button', {name: 'New session in created-project', exact: true})).toBeVisible({timeout: 45_000});
+  await expect(page.getByRole('treeitem', {name: 'created-project', exact: true})).toBeVisible({timeout: 45_000});
   await add.click();
   await expect(dialog).toBeVisible();
   await page.keyboard.press('Escape');
