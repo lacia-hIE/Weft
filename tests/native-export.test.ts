@@ -4,13 +4,15 @@ import {mkdtemp, rm} from 'node:fs/promises';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {unzipSync, strFromU8} from 'fflate';
-import {SESSION_LOG_FILENAME} from '@deepseek-ai/dsh-session-log-export';
+import {SESSION_FORMAT_VERSION} from '@deepseek-ai/dsh-session/types';
+import {sessionFormatLogFilename} from '@weft/upstream/packages/session/session-format/src/filename.ts';
 import type {SessionListValue} from '@deepseek-ai/dsh-api-session-controller/types';
 import type {FileUploadValue} from '@deepseek-ai/dsh-client-file-upload/types';
 import {createRuntime, tenantId, url} from './helpers/miniflare.ts';
 import {nativeClient} from './helpers/native.ts';
 
 const base = (environment = 'default') => `/v1/tenants/${tenantId('alpha')}/environments/${environment}`;
+const SESSION_LOG_FILENAME = sessionFormatLogFilename(SESSION_FORMAT_VERSION);
 const endpoint = (sessionId: string, environment = 'default') => base(environment)+'/native/api/session.export?'+new URLSearchParams({sessionId, includeDescendants: 'true'});
 
 test('native HEAD and streamed GET export original logs and referenced files without activating a cold Agent', {timeout: 90_000}, async () => {
@@ -40,6 +42,11 @@ test('native HEAD and streamed GET export original logs and referenced files wit
   };
   try {
     await api.call('session/create', {request: {sessionId: 'exported'}});
+    const commands = await api.call<{name: string}[]>('commands/list', {agentId: 'exported'});
+    assert.ok(commands.some(command => command.name === 'export'));
+    const execute = (line: string) => api.call<{result: {kind: string}}>('commands/execute', {agentId: 'exported', line, submittedAttachments: []});
+    assert.equal((await execute('/export')).result.kind, 'success');
+    assert.equal((await execute('/export /workspace/log.zip')).result.kind, 'error');
     const receipt = await api.call<FileUploadValue>('fileUploads/upload', {agentId: 'exported', request: {name: 'invoice.bin', data: Buffer.from(data).toString('base64')}});
     await api.call('session/prompt', {request: {sessionId: 'exported', requestId: crypto.randomUUID(), mode: 'queue', content: [{type: 'text', text: 'EXPORT_REAL_PROMPT'}, {type: 'file', receiptId: receipt.receiptId}]}});
     await (await runtime.dispatchFetch(url('alpha', base()+'/sessions/exported/events'))).json();
@@ -73,7 +80,7 @@ test('native export rejects unsupported methods and invalid queries and isolates
       assert.equal((await runtime.dispatchFetch(url('beta', endpoint('same')), {method})).status, 403);
       assert.equal((await runtime.dispatchFetch(url('anonymous', endpoint('same')), {method})).status, 401);
       assert.equal((await runtime.dispatchFetch(url('alpha', endpoint('missing')), {method})).status, 404);
-      for (const query of ['', '?sessionId=../escape', '?sessionId=same&includeDescendants=yes']) {
+      for (const query of ['', '?sessionId=../escape', '?sessionId=same&includeDescendants=yes', '?sessionId=same&sessionId=missing', '?sessionId=same&includeDescendants=true&includeDescendants=false']) {
         const response = await runtime.dispatchFetch(url('alpha', base()+'/native/api/session.export'+query), {method});
         assert.equal(response.status, 400);
         if (method === 'HEAD') assert.equal((await response.arrayBuffer()).byteLength, 0);

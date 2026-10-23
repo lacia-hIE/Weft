@@ -8,7 +8,10 @@ import {createRuntime, tenantId, url} from './helpers/miniflare.ts';
 import {nativeClient} from './helpers/native.ts';
 import {nativeSubagentModel} from './helpers/native-subagent-model.ts';
 import {unzipSync, strFromU8} from 'fflate';
-import {SESSION_LOG_FILENAME} from '@deepseek-ai/dsh-session-log-export';
+import {SESSION_FORMAT_VERSION} from '@deepseek-ai/dsh-session/types';
+import {sessionFormatLogFilename} from '@weft/upstream/packages/session/session-format/src/filename.ts';
+
+const SESSION_LOG_FILENAME = sessionFormatLogFilename(SESSION_FORMAT_VERSION);
 
 test('native delegation owns real child logs, live history, browser continuation and cold recovery', {timeout: 120000}, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'weft-subagents-'));

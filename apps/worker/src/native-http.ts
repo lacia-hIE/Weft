@@ -116,7 +116,7 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
     const url = new URL(request.url);
     const parsed = scopeSchema.safeParse({tenantId: principal.tenantId, sessionId: url.searchParams.get('sessionId'), ...(environmentId ? {environmentId} : {})});
     const descendants = url.searchParams.get('includeDescendants');
-    if (!parsed.success || (descendants !== null && descendants !== 'true' && descendants !== 'false')) return new Response(request.method === 'HEAD' ? null : 'Invalid export query', {status: 400, headers});
+    if (!parsed.success || url.searchParams.getAll('sessionId').length !== 1 || url.searchParams.getAll('includeDescendants').length > 1 || (descendants !== null && descendants !== 'true' && descendants !== 'false')) return new Response(request.method === 'HEAD' ? null : 'Invalid export query', {status: 400, headers});
     const owner = controlScope(principal.tenantId, environmentId);
     const root = await cachedRoot(owner, controlFor(env, owner), parsed.data.sessionId);
     if (!root) return new Response(request.method === 'HEAD' ? null : 'Session not found', {status: 404, headers});
