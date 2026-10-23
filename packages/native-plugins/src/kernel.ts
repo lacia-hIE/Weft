@@ -10,6 +10,7 @@ import factory from 'weft:plugin-factory';
 import { nativePluginFsMethods } from './protocol.ts';
 import { snapshotJsonValue } from '@deepseek-ai/dsh-util-values';
 interface KernelEnv {
+    ALLOWED?: string[];
     HOST?: {
         callFs(method: string, args: unknown[]): Promise<unknown>;
     };
@@ -70,7 +71,7 @@ export class PluginFacet extends DurableObject<KernelEnv> {
     async describe() {
         await this.prepare();
         const plugin = this.plugin!;
-        const unsupported = Object.keys(Inject.resolve(plugin.inject)).filter(name => !['tools', 'timer', 'fs'].includes(name));
+        const unsupported = Object.keys(Inject.resolve(plugin.inject)).filter(name => !(this.env.ALLOWED ?? ['tools', 'timer', 'fs']).includes(name));
         if (unsupported.length)
             throw new Error('Services are not bridged in workerd Host plugins: ' + unsupported.join(', '));
         return wire({ name: typeof plugin === 'object' && 'name' in plugin ? String(plugin.name) : 'dynamic-host', inject: { ...Inject.resolve(plugin.inject) }, handlers: [...this.handlers.keys()] });
@@ -79,7 +80,7 @@ export class PluginFacet extends DurableObject<KernelEnv> {
         await this.prepare();
         await (this.starting ??= (async () => {
             const plugin = this.plugin!;
-            const provided = new Set<string>(['tools', 'timer', 'fs']);
+            const provided = new Set<string>(this.env.ALLOWED ?? ['tools', 'timer', 'fs']);
             // systemPrompt exists only to support the isolated ToolRuntime. Exposing
             // it would silently modify a local prompt instead of the owning Agent.
             const facade = (ctx: Context) => new Proxy(ctx, {

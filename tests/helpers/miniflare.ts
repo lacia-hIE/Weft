@@ -94,6 +94,8 @@ export function createRuntime(
     images?: boolean;
     scriptPath?: string;
     configureModel?: boolean;
+    packages?: boolean;
+    packageBuilder?: V4FetchHandler;
   } = {},
 ): Miniflare {
   const profiles = [
@@ -136,7 +138,8 @@ export function createRuntime(
         .filter((profile) => !model.browser || profile.name === "alpha")
         .map((profile) => ({
           name: profile.name,
-          serviceBindings: { UI: "assets" },
+          serviceBindings: { UI: "assets", ...(model.packageBuilder ? {PLUGIN_BUILDER: model.packageBuilder} : {}) },
+          ...(model.packages ? {r2Buckets: {PLUGIN_ARTIFACTS: 'weft-plugin-artifacts'}} : {}),
           routes: [`${profile.name}.local/*`],
           modules: true,
           scriptPath: resolve(model.scriptPath ?? "dist/test-worker.js"),

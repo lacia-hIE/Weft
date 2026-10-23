@@ -46,7 +46,7 @@ export class NativePluginPlatform {
             clearTimeout(timer);
         }
     }
-    async evaluate(ctx: Context, pluginId: string, runId: string, source: string, handle: (method: unknown, fn: unknown) => () => void): Promise<Plugin> {
+    async evaluate(ctx: Context, pluginId: string, runId: string, source: string, handle: (method: unknown, fn: unknown) => () => void, installed?: {module: string; services: string[]}): Promise<Plugin> {
         if (!this.loader)
             throw new Error('Dynamic Workers loader is not configured');
         const name = 'harness-plugin:' + pluginId;
@@ -54,14 +54,14 @@ export class NativePluginPlatform {
             if (previous.name === name) {
                 await this.release(id);
             }
-        const factory = `export default async function(harness){\n${source}\n}`;
+        const factory = installed?.module ?? `export default async function(harness){\n${source}\n}`;
         const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify([this.scope, pluginId, runId, kernelModule, factory])));
         const codeId = 'weft-native-host:' + Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
         const capability = this.capability?.(pluginId, runId);
         const worker = this.loader.get(codeId, () => ({
             compatibilityDate: '2026-07-30', compatibilityFlags: ['nodejs_compat'], mainModule: 'kernel.js',
             modules: { 'kernel.js': kernelModule, 'weft:plugin-factory': { js: factory } },
-            env: capability ? { HOST: capability } : {}, globalOutbound: null,
+            env: {...(capability ? {HOST: capability} : {}), ...(installed ? {ALLOWED: installed.services} : {})}, globalOutbound: null,
             limits: { cpuMs: 100, subRequests: 64 },
         }));
         const facet = this.state.facets.get(name, () => ({ class: worker.getDurableObjectClass('PluginFacet') })) as unknown as FacetApi;

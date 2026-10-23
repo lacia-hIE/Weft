@@ -17,6 +17,7 @@ import { execFileSync } from 'node:child_process';
 
 // The deployed configuration must name the image built from the current workspace container Dockerfile.
 execFileSync(process.execPath, [resolve('scripts/workspace-container.mjs'), '--check'], {stdio: 'inherit'});
+execFileSync(process.execPath, [resolve('scripts/plugin-builder.mjs'), '--check'], {stdio: 'inherit'});
 import {officialProfilePlugin} from './official-profile.mjs';
 
 const officialModules = await officialProfilePlugin();

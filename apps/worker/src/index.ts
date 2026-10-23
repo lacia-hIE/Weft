@@ -31,6 +31,8 @@ export { WorkspaceDO, TenantDO, EnvironmentDO };
 // The shell Dynamic Worker reaches its own WorkspaceDO through this entrypoint (ctx.exports).
 export { WorkspaceServiceProxy, WorkspaceProxy } from '@cloudflare/computer';
 export { WorkspaceContainerBasicDO, WorkspaceContainerStandard1DO, WorkspaceContainerStandard2DO } from '../../../packages/workspace/src/container-host.ts';
+export {PluginBuilderDO} from '../../../packages/package-install/src/builder.ts';
+import {InstalledPackageRuntime} from '../../../packages/package-install/src/runtime.ts';
 import { z } from 'zod';
 import { Context } from '@deepseek-ai/cordis';
 import { createUserMessage } from '@deepseek-ai/dsh-llm';
@@ -148,6 +150,7 @@ export class SessionDO extends DurableObject<Env> {
   private tail: Promise<void> = Promise.resolve();
   private readonly requests = new Map<string, AbortController>();
   private nativeHost: NativeSessionHost | undefined;
+  private installedPackages: InstalledPackageRuntime | undefined;
   private nativeHostPromise: Promise<NativeSessionHost> | undefined;
   private getNativeHost(scope: SessionScope): Promise<NativeSessionHost> {
     if (this.nativeHostPromise) return this.nativeHostPromise;
@@ -160,12 +163,19 @@ export class SessionDO extends DurableObject<Env> {
       const runtime = await sessionRuntime(this.env, this.ctx.storage, scope, profile, stored.workspace_id, profile.spec.persona, true, await this.getReader(), {}, this.nativeCwd(scope.sessionId), false);
       const owner = controlScope(scope.tenantId, scope.environmentId);
       const pluginsReady = Promise.withResolvers<void>();
+      let packageTurn: string | undefined;
       void pluginsReady.promise.catch(() => {});
       const host = await NativeSessionHost.open({...runtime.options, onEvent: (event, session) => {
         runtime.options.onEvent?.(event, session);
         // Titles can commit after the turn (the first-prompt LLM title row); list summaries follow them.
         if (event.type === 'session/title') this.ctx.waitUntil(this.publishNativeSummary(scope).catch(() => { /* The next turn or rename republishes. */ }));
-      }, beforeAssembly: async () => {await pluginsReady.promise; await runtime.options.beforeAssembly?.();}, mountTools: async ctx => {
+      }, beforeAssembly: async () => {
+        await pluginsReady.promise; await runtime.options.beforeAssembly?.();
+        const live = this.nativeHost;
+        const boundary = live?.ctx.sessionProjections.stateOf(live.agent.session, 'turnBoundary');
+        const turn = String(boundary?.openTurnStartSeq ?? 'idle');
+        if (turn !== packageTurn) {await this.installedPackages?.reconcile(); packageTurn = turn;}
+      }, mountTools: async ctx => {
         await runtime.options.mountTools?.(ctx);
         await NativePlugins.mount(ctx, {
           state: this.ctx, ...(this.env.LOADER ? {loader: this.env.LOADER} : {}), scope, allowAuthoring: profile.spec.allowClientPlugins,
@@ -177,13 +187,21 @@ export class SessionDO extends DurableObject<Env> {
           event: (name, args) => controlFor(this.env, owner).nativePluginEvent(owner, scope.sessionId, name, args),
           manifest: async () => (await (await controlFor(this.env, owner).nativePluginManifest(owner)).json() as {value: unknown}).value,
         });
+        this.installedPackages = new InstalledPackageRuntime(ctx, this.ctx, this.env.LOADER, scope, {
+          list: async () => (await controlFor(this.env, owner).nativePackageList(owner)).installations,
+          artifact: (name, digest) => controlFor(this.env, owner).nativePackageArtifact(owner, name, digest),
+          capability: (pluginId, runId) => {
+            const exported = this.ctx.exports as unknown as {PluginCapabilities(options: {props: {scope: SessionScope; pluginId: string; runId: string}}): Fetcher};
+            return exported.PluginCapabilities({props: {scope, pluginId, runId}});
+          },
+        });
       }}, runtime.turnTimeoutMs, {
         waitUntil: promise => {this.ctx.waitUntil(promise);},
         changed: () => this.publishNativeSummary(scope),
         failed: (failure, sessionId) => controlFor(this.env, owner).nativeEvent(owner, 'api-session/error', [sessionId ?? scope.sessionId, failure.message]),
       });
       this.nativeHost = host;
-      try {await nativePlugins(host.ctx)!.restore(host.agent); pluginsReady.resolve();}
+      try {await nativePlugins(host.ctx)!.restore(host.agent); await this.installedPackages?.reconcile(); pluginsReady.resolve();}
       catch (error) {pluginsReady.reject(error); this.nativeHost = undefined; await host.dispose(); throw error;}
       return host;
     });
@@ -688,6 +706,18 @@ export class SessionDO extends DurableObject<Env> {
     const host = await this.getNativeHost(scope);
     return nativePlugins(host.ctx)!.invoke(endpoint, raw, host.agent);
   }
+  async nativeStopPackage(input: SessionScope, name: string): Promise<void> {
+    this.assertScope(input);
+    await this.installedPackages?.stop(z.string().max(214).parse(name));
+  }
+  async nativeInvokePackage(input: SessionScope, name: string, digest: string, method: string, args: unknown): Promise<unknown> {
+    const scope = this.assertScope(input);
+    // The current declaration is checked again even if an older browser retained the module.
+    await controlFor(this.env, controlScope(scope.tenantId, scope.environmentId)).nativePackageArtifact(controlScope(scope.tenantId, scope.environmentId), name, digest);
+    await this.getNativeHost(scope);
+    if (!this.installedPackages) throw new Error('Package runtime is unavailable');
+    return this.installedPackages.invoke(name, digest, method, args);
+  }
   /** Schedule reminders wake the native root; the original runtime delivers what is due. */
   override async alarm(): Promise<void> {
     const row = this.ctx.storage.sql.exec<{name: string}>("SELECT name FROM sqlite_master WHERE type='table' AND name='weft_alarm_scope'").toArray().length
@@ -747,7 +777,13 @@ export class SessionDO extends DurableObject<Env> {
   async nativePluginFs(input: SessionScope, pluginId: string, runId: string, method: string, args: unknown[]): Promise<unknown> {
     const scope = this.assertScope(input);
     const host = this.nativeHost ?? await this.getNativeHost(scope);
-    if (!nativePlugins(host.ctx)?.hasRun(pluginId, runId)) throw new Error('Plugin activation no longer owns this capability');
+    const installation = this.installedPackages?.permission(pluginId, runId);
+    if (installation) {
+      const owner = controlScope(scope.tenantId, scope.environmentId);
+      const current = (await controlFor(this.env, owner).nativePackageList(owner)).installations.find(row => row.name === installation.name);
+      if (!current?.enabled || !current.approved || current.digest !== installation.digest) throw new Error('Package capability was revoked');
+      if (installation.permissions.files === 'none' || (installation.permissions.files === 'read' && ['writeText', 'editText'].includes(method))) throw new Error('Package filesystem permission denied');
+    } else if (!nativePlugins(host.ctx)?.hasRun(pluginId, runId)) throw new Error('Plugin activation no longer owns this capability');
     if (!(nativePluginFsMethods as readonly string[]).includes(method)) throw new Error('Filesystem method is not bridged');
     const fs = host.ctx.get('fs');
     if (!fs) throw new Error('No filesystem is mounted');

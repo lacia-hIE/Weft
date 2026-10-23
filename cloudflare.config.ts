@@ -1,5 +1,6 @@
 import { bindings, defineConfig, defineContainer, defineWorker, exports } from 'cf/config';
 import workspaceImage from './apps/workspace-container/image.json' with { type: 'json' };
+import pluginBuilderImage from './apps/plugin-builder/image.json' with {type: 'json'};
 
 const accessAudience = 'a9f868c801ff9618d72eb834aeddbd37b2778f5ce054fef65c14168619d462b9';
 // Each workspace's Linux container, started by its WorkspaceDO when an environment runs commands there
@@ -8,10 +9,11 @@ const workspaceContainer = (size: 'basic' | 'standard-1' | 'standard-2', maxInst
   name: `weft-workspace-shell-${size}`, image: { reference: workspaceImage.reference }, instanceType: size, maxInstances, observability: { logs: { enabled: true } },
 });
 const workspaceContainers = { basic: workspaceContainer('basic', 10), standard1: workspaceContainer('standard-1', 5), standard2: workspaceContainer('standard-2', 3) };
+const pluginBuilder = defineContainer({name: 'weft-plugin-builder', image: {reference: pluginBuilderImage.reference}, instanceType: 'basic', maxInstances: 2, observability: {logs: {enabled: true}}});
 const uiWorker = defineWorker({ name:'weft-ui-assets',entrypoint:'./dist/assets-worker.js',compatibilityDate:'2026-07-30',workersDev:false,previewUrls:false });
 
 export default defineConfig({
-  containers: Object.values(workspaceContainers),
+  containers: [...Object.values(workspaceContainers), pluginBuilder],
   worker: {
     name: 'weft-kernel-validation',
     entrypoint: './dist/worker.js',
@@ -33,6 +35,7 @@ export default defineConfig({
       UI: bindings.worker({ worker: uiWorker }),
       LOADER: bindings.workerLoader(),
       IMAGES: bindings.images(),
+      PLUGIN_ARTIFACTS: bindings.r2({name: 'weft-plugin-artifacts'}),
       SESSIONS: bindings.durableObject({ worker: 'weft-kernel-validation', exportName: 'SessionDO' }),
       WORKSPACES: bindings.durableObject({ worker: 'weft-kernel-validation', exportName: 'WorkspaceDO' }),
       ENVIRONMENTS: bindings.durableObject({ worker: 'weft-kernel-validation', exportName: 'EnvironmentDO' }),
@@ -43,6 +46,7 @@ export default defineConfig({
     },
     exports: {
       PluginCapabilities: exports.worker(),
+      PluginBuilderDO: exports.durableObject({storage: 'sqlite', container: pluginBuilder}),
       SessionDO: exports.durableObject({ storage: 'sqlite' }),
       WorkspaceDO: exports.durableObject({ storage: 'sqlite' }),
       // Host each workspace's container by size; unbound, because a bound Durable Object cannot host one (see container-host.ts).

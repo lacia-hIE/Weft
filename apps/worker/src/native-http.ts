@@ -69,6 +69,34 @@ async function cachedRoot(owner: ControlScope, control: ReturnType<typeof contro
 
 export async function handleNativeRequest(request: Request, env: Env, principal: Principal, environmentId?: string): Promise<Response | undefined> {
   const pathname = new URL(request.url).pathname;
+  const packages = /^\/v1\/tenants\/([^/]+)\/native\/(package-installations|package-invoke|package-assets\/([a-f0-9]{64})\/client\.js)$/.exec(pathname);
+  if (packages) {
+    if (packages[1] !== principal.tenantId) throw new HttpError(403, 'Tenant access denied');
+    const owner = controlScope(principal.tenantId, environmentId), control = controlFor(env, owner);
+    try {
+      if (packages[2]?.startsWith('package-assets/')) {
+        if (request.method !== 'GET') return new Response(null, {status: 405});
+        const name = new URL(request.url).searchParams.get('name');
+        if (!name || name.length > 214) throw new HttpError(400, 'Package name required');
+        const artifact = await control.nativePackageArtifact(owner, name, packages[3]!);
+        if (!artifact.client) throw new HttpError(404, 'Package has no Client module');
+        return new Response(artifact.client, {headers: {'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'private, no-store', 'x-content-type-options': 'nosniff'}});
+      }
+      if (request.method === 'GET' && packages[2] === 'package-installations') return Response.json(await control.nativePackageList(owner), {headers: {'cache-control': 'private, no-store'}});
+      if (request.method !== 'POST') return new Response(null, {status: 405});
+      assertSameOrigin(request);
+      const raw = await readJson(request, 1024 * 1024);
+      if (packages[2] === 'package-installations') return await control.nativePackageOperation(owner, raw);
+      const args = z.object({sessionId: z.string(), name: z.string().max(214), digest: z.string().regex(/^[a-f0-9]{64}$/), method: z.string().max(100), args: z.json()}).strict().parse(raw);
+      const root = await cachedRoot(owner, control, args.sessionId);
+      if (!root) throw new HttpError(404, 'Session not found');
+      const scope = scopeSchema.parse({...owner, sessionId: root});
+      return Response.json({value: await env.SESSIONS.getByName(sessionAddress(scope)).nativeInvokePackage(scope, args.name, args.digest, args.method, args.args)}, {headers: {'cache-control': 'private, no-store'}});
+    } catch (error) {
+      if (error instanceof HttpError) throw error;
+      return Response.json({error: error instanceof Error ? error.message : String(error)}, {status: 409, headers: {'cache-control': 'private, no-store'}});
+    }
+  }
   const container = /^\/v1\/tenants\/([^/]+)\/native\/workspace-container$/.exec(pathname);
   if (container) {
     if (container[1] !== principal.tenantId) throw new HttpError(403, 'Tenant access denied');

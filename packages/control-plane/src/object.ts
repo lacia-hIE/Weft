@@ -79,6 +79,7 @@ import { NativeSettings, PRESET_NAMESPACE, LOOP_NAMESPACE, SUBAGENT_NAMESPACE, P
 import {readNativePresets, type CompositionEndpoint} from '../../native-composition/src/profile-host.ts';
 import {profileDefinitions} from '../../harness-profile/src/index.ts';
 import {manageNativePlugins} from '../../native-composition/src/manager.ts';
+import {PackageInstaller} from '../../package-install/src/host.ts';
 import {mountWorkspace} from '../../workspace/src/provider.ts';
 import { ModelConfigurationError, type ModelEnvironment } from '../../model-provider/src/index.ts';
 import {SqliteModelUploadIndex, type ModelUploadOperation} from '../../model-provider/src/files-protocol.ts';
@@ -91,6 +92,8 @@ import {remoteErrorOf} from '@deepseek-ai/dsh-typert-protocol';
 declare const WEFT_VALIDATION_BUILD: boolean;
 
 export interface TenantEnvironment extends ModelEnvironment {
+  PLUGIN_ARTIFACTS?: R2Bucket;
+  PLUGIN_BUILDER?: Fetcher;
   TENANTS: DurableObjectNamespace<TenantDO>;
   ENVIRONMENTS: DurableObjectNamespace<EnvironmentDO>;
   WORKSPACES: DurableObjectNamespace<WorkspaceDO>;
@@ -325,18 +328,65 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
    */
   private presetReads = new Map<string, Promise<string>>();
   private presetReadsVersion = '';
+  private packageInstaller: PackageInstaller | undefined;
+  private packages(scope: ControlScope): PackageInstaller {
+    this.scope(scope);
+    return this.packageInstaller ??= new PackageInstaller({state: this.ctx, scope, bucket: this.env.PLUGIN_ARTIFACTS,
+      build: async input => {
+        if (this.env.PLUGIN_BUILDER) return this.env.PLUGIN_BUILDER.fetch('http://builder/build', {method: 'POST', body: input});
+        const exported = this.ctx.exports as unknown as {PluginBuilderDO?: DurableObjectNamespace<import('../../package-install/src/builder.ts').PluginBuilderDO>};
+        if (!exported.PluginBuilderDO) throw new Error('Plugin builder is unavailable');
+        return exported.PluginBuilderDO.getByName(this.ctx.id.toString()).build(input);
+      },
+      changed: async () => {this.presetReads.clear(); await this.nativeEvent(scope, 'plugin-manager/changed', [{reason: 'install'}]);},
+      revoke: async name => {
+        const sessions = await this.sessionIndex(scope);
+        for (let offset = 0; offset < sessions.length; offset += 8) {
+          const settled = await Promise.allSettled(sessions.slice(offset, offset + 8).map(row => {
+            const address = {...scope, sessionId: row.id};
+            return this.env.SESSIONS.getByName(sessionAddress(address)).nativeStopPackage(address, name);
+          }));
+          const failure = settled.find(row => row.status === 'rejected');
+          if (failure?.status === 'rejected') throw failure.reason;
+        }
+      },
+    });
+  }
+  async nativePackageList(scope: ControlScope) {return this.packages(scope).list();}
+  async nativePackageArtifact(scope: ControlScope, name: string, digest: string) {return this.packages(scope).artifact(name, digest);}
+  async nativePackageOperation(scope: ControlScope, raw: unknown): Promise<Response> {
+    const request = z.discriminatedUnion('operation', [
+      z.object({operation: z.literal('list')}).strict(),
+      z.object({operation: z.literal('install'), spec: z.string().max(250), requestId: z.string().max(100)}).strict(),
+      z.object({operation: z.literal('approve'), name: z.string().max(214), digest: z.string().regex(/^[a-f0-9]{64}$/)}).strict(),
+      z.object({operation: z.literal('review'), name: z.string().max(214), digest: z.string().regex(/^[a-f0-9]{64}$/)}).strict(),
+    ]).parse(raw);
+    const packages = this.packages(scope);
+    if (request.operation === 'install') return Response.json(await packages.start(request.spec, request.requestId), {status: 202});
+    if (request.operation === 'approve') {await packages.approve(request.name, request.digest); return Response.json({ok: true});}
+    if (request.operation === 'review') return Response.json(await packages.artifact(request.name, request.digest, false));
+    return Response.json(packages.list());
+  }
+  override async alarm(): Promise<void> {await this.packages(environmentScopeOf(this.ctx.id.name)).recover();}
   async nativePreset(scope: ControlScope, endpoint: CompositionEndpoint, args: unknown): Promise<Response> {
     await this.syncSettingsDocument(scope);
     const defaultId = await this.nativePresetDefault(scope);
     const profiles = (await this.state(scope)).agents;
     const enablement = this.settings(scope).profileEnablement();
-    const version = JSON.stringify([defaultId, profiles.map(profile => [profile.spec.id, profile.revision]), enablement]);
+    const packages = this.packages(scope).registry;
+    const version = JSON.stringify([defaultId, profiles.map(profile => [profile.spec.id, profile.revision]), enablement, packages.list()]);
     if (version !== this.presetReadsVersion) {this.presetReads = new Map(); this.presetReadsVersion = version;}
     const key = JSON.stringify([endpoint, args]);
     let read = this.presetReads.get(key);
     if (!read) {
       const volume = {...scope, workspaceId: 'default'};
-      read = readNativePresets(profiles, defaultId, endpoint, args, ctx => mountWorkspace(ctx, {scope: volume, transport: this.env.WORKSPACES.getByName(workspaceAddress(volume)), cwd: '/workspace', fileTools: false}), enablement).then(response => response.text());
+      read = readNativePresets(profiles, defaultId, endpoint, args, ctx => mountWorkspace(ctx, {scope: volume, transport: this.env.WORKSPACES.getByName(workspaceAddress(volume)), cwd: '/workspace', fileTools: false}), enablement).then(async response => {
+        const result = await response.json() as {value: unknown};
+        if (endpoint === 'pluginManager/listBundles') result.value = [...result.value as unknown[], ...packages.bundles()];
+        if (endpoint === 'pluginManager/listPlugins') result.value = [...result.value as unknown[], ...packages.plugins()];
+        if (endpoint === 'pluginInventory/list') {const inventory = result.value as {entries: unknown[]}; inventory.entries.push(...packages.plugins());}
+        return JSON.stringify(result);
+      });
       const reads = this.presetReads;
       reads.set(key, read);
       // A failed composition is not remembered; the next read composes again.
@@ -359,6 +409,29 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
   async nativeManagePlugins(scope: ControlScope, endpoint: string, raw: unknown): Promise<Response> {
     this.scope(scope); this.ensureDefault(); this.ensureNativePresets();
     await this.syncSettingsDocument(scope);
+    const packages = this.packages(scope);
+    const method = (await import('../../../.generated/official-remotes/packages/boot/plugin-manager/typert.remote-client.js')).default.methods[endpoint as 'pluginManager/installBundle'];
+    if (!method) throw new Error('Unknown package operation');
+    const args = method.input({strict: true}).create().parse(raw) as Record<string, unknown>;
+    const name = typeof args.name === 'string' ? args.name : typeof args.id === 'string' && args.id.startsWith('installed:') ? args.id.slice('installed:'.length) : undefined;
+    if (name && packages.registry.get(name) && ['pluginManager/setPluginEnabled', 'pluginManager/setBundleEnabled', 'pluginManager/removeBundle'].includes(endpoint)) {
+      try {
+        if (endpoint === 'pluginManager/removeBundle') {await packages.remove(name); return Response.json({value: {changed: true, application: 'applied', stage: 'remove', target: name}});}
+        const enabled = z.boolean().parse(args.enabled);
+        const changed = await packages.enabled(name, enabled);
+        return Response.json({value: {changed, application: 'applied', stage: 'enable', target: args.id ?? name, enabled, warnings: ['Host activation applies before the next turn.']}});
+      } catch (error) {return Response.json({value: {changed: false, application: 'failed', stage: 'enable', target: name, error: {code: 'operation-error', diagnostic: error instanceof Error ? error.message : String(error)}}});}
+    }
+    if (endpoint === 'pluginManager/inspect') return Response.json({value: await packages.inspect(String(args.spec))});
+    if (endpoint === 'pluginManager/installBundle') {
+      try {
+        const options = (args.options ?? {}) as {requestId?: string};
+        const job = await packages.start(String(args.spec), options.requestId ?? crypto.randomUUID());
+        const result = await packages.wait(job.id);
+        return Response.json({value: {changed: result?.phase === 'review', application: result?.phase === 'review' ? 'applied' : 'failed', stage: 'install', target: args.spec,
+          ...(result?.phase === 'review' ? {warnings: ['Installed disabled. Review the exact artifact and permissions in Package installations to activate.']} : {error: {code: 'operation-error', diagnostic: result?.error ?? 'Installation did not complete'}})}});
+      } catch (error) {return Response.json({value: {changed: false, application: 'failed', stage: 'install', target: args.spec, error: {code: 'operation-error', diagnostic: error instanceof Error ? error.message : String(error)}}});}
+    }
     const response = await manageNativePlugins({
       profiles: async () => (await this.state(scope)).agents,
       defaultPreset: () => this.nativePresetDefault(scope),

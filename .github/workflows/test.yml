@@ -17,6 +17,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  plugin-builder:
+    name: Plugin package builder
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Build the offline compiler image
+        run: node scripts/plugin-builder.mjs --local
+      - name: Verify real offline compilation
+        run: WEFT_BUILDER_IMAGE=$(node scripts/plugin-builder.mjs --tag) npx tsx --test tests/package-builder.test.ts
+      - name: Export the verified image for publication
+        run: docker save $(node scripts/plugin-builder.mjs --tag) | gzip > plugin-builder-image.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plugin-builder-image
+          path: plugin-builder-image.tar.gz
+          retention-days: 1
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 20
