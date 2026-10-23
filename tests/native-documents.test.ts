@@ -46,7 +46,7 @@ test('native document tool runs in Worker-only mode, saves Markdown and refuses 
   const base = `/v1/tenants/${tenantId('alpha')}/environments/default`;
   try {
     await api.call('session/create', {request: {sessionId: 'documents'}});
-    const response = await runtime.dispatchFetch(url('alpha', base+'/workspaces/default/files'), {method: 'PUT', body: JSON.stringify({path: '/workspace/report.html', content: '<h1>OFFICE_WORKER_CONTENT</h1>', expectedVersion: null})});
+    const response = await runtime.dispatchFetch(url('alpha', base+'/workspaces/default/files'), {method: 'PUT', headers: {'content-type': 'application/json'}, body: JSON.stringify({path: '/workspace/report.html', content: '<h1>OFFICE_WORKER_CONTENT</h1>', expectedVersion: null})});
     assert.equal(response.status, 200);
     const follow = await api.follow('documents'); await follow.next();
     await api.call('session/prompt', {request: {sessionId: 'documents', requestId: crypto.randomUUID(), mode: 'queue', content: [{type: 'text', text: 'Convert the Office report'}]}});

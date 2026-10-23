@@ -27,6 +27,7 @@ Weft 适合希望自行托管 Web 编程助手、通过浏览器访问远程工�
 | 原版 Agent 能力 | 标准、PTC、极简与创造预设，以及命令、Plan、Goal、Skills 和子 Agent 等服务 |
 | Linux 工作区 | 在容器中使用 git、Node.js、Python、真实进程与 PTY 交互终端 |
 | 文件与附件 | 读写和搜索工作区，上传文件、处理图片并查看会话附件 |
+| Worker 数据与文档处理 | 可恢复的 JavaScript 任务、原版审批流程，以及通过 Cloudflare Workers AI 将 Office、PDF、图片等内容提取为 Markdown |
 | Cordis 插件 | 从 npm 安装原版 bundle，或在创造模式下由 Agent 编写插件，审核后加载 |
 | 用户隔离 | 使用 Cloudflare Access 身份，将数据与运行权限限定在所属用户和环境 |
 
@@ -48,6 +49,7 @@ Weft 适合希望自行托管 Web 编程助手、通过浏览器访问远程工�
 | 运行时生成代码与外部 Host 插件执行 | [Dynamic Workers](https://developers.cloudflare.com/dynamic-workers/) / Worker Loader | 按需加载代码；外部 Host 插件在隔离 DO facet 中执行，通过受限桥接调用已授权服务 |
 | npm 插件本地编译与产物目录 | 独立构建容器 + [私有 R2](https://developers.cloudflare.com/r2/) | 下载并锁定包与依赖后离线编译；R2 保存不可变产物，EnvironmentDO 保存安装、审批和启停记录 |
 | 本地图片解码、缩放与编码库 | [Cloudflare Images binding](https://developers.cloudflare.com/images/optimization/binding/) | 读取真实图片信息，生成满足模型尺寸与字节预算的版本；图片文件保存在工作区存储中 |
+| Office 文档提取 CLI | [Workers AI Markdown Conversion](https://developers.cloudflare.com/workers-ai/features/markdown-conversion/) | Worker 读取原始文件并调用 `AI.toMarkdown`，可将结果保存为新的 `.md` 文件；PPTX 文字先在 Worker 中提取 |
 | 常驻进程中的提醒计时器 | Durable Object Alarms | 保存原版 Schedule 任务，并以最近到期时间设置 Alarm，唤醒会话服务交付提醒 |
 | 本机用户与 Web 登录入口 | [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/choose-application-type/) | Access 执行访问策略，主 Worker 校验身份并派生租户，再按环境和会话校验访问范围 |
 
@@ -121,7 +123,7 @@ Worker shell 在 Dynamic Worker 中解释支持的命令，文件操作回到 Wo
 
 在 **Plugins → 工作区运行环境** 中选择执行模式和容器规格。容器按需启动，空闲 10 分钟后休眠；源码和 `.git` 持久保存，容器本地依赖与缓存需要在替换实例后按锁文件重建。计算实例的休眠与工作区数据的保留分别管理。
 
-模型推理由用户配置的提供商 API 完成，凭据在所属环境的 **Settings → Models** 中保存。Cloudflare 负责应用运行与图片处理等平台能力，当前项目不接入 Workers AI 推理。
+模型推理由用户配置的提供商 API 完成，凭据在所属环境的 **Settings → Models** 中保存。Cloudflare Images 负责图片处理，Workers AI 的 `AI` binding 用于文档转 Markdown。可恢复 JavaScript 任务通过 `javascript_task` 使用，Code Mode 也可调用；任务恢复、审批和文档格式边界见[Worker 任务与文档提取](docs/architecture/worker-tasks-and-documents.md)。
 
 ## 快速开始
 

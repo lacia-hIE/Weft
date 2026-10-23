@@ -63,5 +63,7 @@ export default async () => {
     let state = readonly.value;
     for (let i = 0; state.status === 'running' && i < 40; i++) state = (await call({operation: 'status', id: state.id})).value;
     assert.equal(state.status, 'failed');
+    const escaped = await call({operation: 'start', source: `import fs from 'node:fs/promises'; export default () => fs.writeFile('/workspace/outside-project.txt', 'bad');`, cwd: '/workspace', root: '/workspace/project', writable: true, timeoutMs: 3000});
+    assert.equal(escaped.status, 400, 'a task cannot start outside its approved project root');
   } finally {await runtime.dispose(); await rm(directory, {recursive: true, force: true});}
 });

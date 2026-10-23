@@ -2,6 +2,8 @@
 
 状态：插件市场索引读取及兼容包安装第一版已实现，安装边界与验证见 [插件包安装第一版](../validation/package-installation.md)。Office 转 PDF 和平台账号仍是设计，对应调用返回明确拒绝。
 
+Office、PDF 和图片的 **内容提取为 Markdown** 已直接使用 Worker 的 Cloudflare `AI.toMarkdown` binding 实现，无需 Office CLI；PPTX 先提取幻灯片文字。使用方法与格式边界见 [Worker 任务与文档提取](worker-tasks-and-documents.md)。下文的 Office 转 PDF 仍专指保真 PDF 预览。
+
 三项能力在 workerd 中不能直接运行，原因各不相同：Office 转 PDF 需要 LibreOffice 进程；插件安装需要解析、打包并执行第三方 npm 代码；平台账号登录需要平台接受 Weft 的回调地址。下面的方案都保留原版服务与官方 UI，只替换无法在 Worker 中运行的那一层；外部组件缺失时仍返回原来的明确拒绝。
 
 ## Office 转 PDF

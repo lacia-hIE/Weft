@@ -1,6 +1,6 @@
 # 部署到 Cloudflare
 
-本文面向独立部署者。使用仓库锁定的 `cf`、Node.js 22.19+ 与 npm；命令通过 `npx cf` 调用已安装版本。Cloudflare 账号需具备项目使用的 Workers、SQLite Durable Objects、D1、R2、Worker Loader、Images 和 Containers 能力。认证通过 Cloudflare Access 配置，模型凭据由用户在每个环境的 Settings → Models 保存。
+本文面向独立部署者。使用仓库锁定的 `cf`、Node.js 22.19+ 与 npm；命令通过 `npx cf` 调用已安装版本。Cloudflare 账号需具备项目使用的 Workers、SQLite Durable Objects、D1、R2、Worker Loader、Images、Workers AI 和 Containers 能力。`AI` binding 专用于文档转 Markdown，不替代用户的模型提供商配置。认证通过 Cloudflare Access 配置，模型凭据由用户在每个环境的 Settings → Models 保存。
 
 ## 1. 准备账号、域名和 Access
 

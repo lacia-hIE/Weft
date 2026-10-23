@@ -1,5 +1,5 @@
 import {WorkerJavaScriptBackend} from '@cloudflare/computer/backends/worker-javascript';
-import {Workspace, type WorkspaceRuntimeValue, type WorkspaceObserver, type WorkspaceRuntimePendingCall} from '@cloudflare/computer';
+import {Workspace, type WorkspaceRuntimeValue, type WorkspaceObserver, type WorkspaceRuntimePendingCall, type WorkspaceModuleBackendHandle, type WorkspaceModuleBackend} from '@cloudflare/computer';
 import {createHash} from 'node:crypto';
 import {z} from 'zod';
 import {workspacePath} from './protocol.ts';
@@ -20,6 +20,7 @@ export type JavaScriptStatus = {
 /** Native replay journals stay in the WorkspaceDO; Agent lifetimes never own these tasks. */
 export class WorkspaceJavaScript {
   private readonly computers = new Map<string, Workspace>();
+  private readonly connections = new Map<string, WorkspaceModuleBackendHandle>();
   constructor(private readonly storage: DurableObjectStorage, private readonly loader: WorkerLoader | undefined, private readonly observer: WorkspaceObserver) {
     storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_javascript_jobs (id TEXT PRIMARY KEY, owner TEXT NOT NULL, backend TEXT NOT NULL, cwd TEXT NOT NULL, root TEXT NOT NULL, writable INTEGER NOT NULL, created_at INTEGER NOT NULL, state TEXT NOT NULL)');
   }
@@ -37,7 +38,15 @@ export class WorkspaceJavaScript {
         return context.interrupt({reason: text});
       }}},
     });
-    const computer = new Workspace({storage: this.storage, backends: [backend], observer: this.observer, output: false});
+    const connected: WorkspaceModuleBackend = {
+      id: backend.id, type: backend.type, protocol: 'module', callable: true, description: backend.description,
+      connect: async host => {
+        const handle = await backend.connect(host);
+        this.connections.set(job.backend, handle);
+        return handle;
+      },
+    };
+    const computer = new Workspace({storage: this.storage, backends: [connected], observer: this.observer, output: false});
     this.computers.set(job.backend, computer);
     return computer.runtime;
   }
@@ -54,6 +63,7 @@ export class WorkspaceJavaScript {
     if (!this.loader) throw new Error('This deployment has no JavaScript Worker Loader');
     if (request.operation === 'start') {
       const cwd = workspacePath(request.cwd);
+      if (this.storage.sql.exec<{n: number}>("SELECT COUNT(*) AS n FROM weft_javascript_jobs WHERE state='running'").one().n >= 4) throw new Error('Four JavaScript tasks are already running; query their status before starting another');
       // Bound history without removing the identity of a running or waiting task.
       this.storage.sql.exec("DELETE FROM weft_javascript_jobs WHERE id IN (SELECT id FROM weft_javascript_jobs WHERE state IN ('completed','failed','cancelled') ORDER BY created_at DESC LIMIT -1 OFFSET 100)");
       if (this.storage.sql.exec<{n: number}>('SELECT COUNT(*) AS n FROM weft_javascript_jobs').one().n >= 256) throw new Error('JavaScript task capacity reached; finish or cancel old tasks first');
@@ -84,10 +94,22 @@ export class WorkspaceJavaScript {
       this.storage.sql.exec("UPDATE weft_javascript_jobs SET state='cancelled' WHERE id=?", job.id);
     }
   }
+  hasRunning(): boolean {return this.storage.sql.exec<{n: number}>("SELECT COUNT(*) AS n FROM weft_javascript_jobs WHERE state='running'").one().n > 0;}
+  async recover(): Promise<void> {
+    for (const job of this.storage.sql.exec<Job>("SELECT * FROM weft_javascript_jobs WHERE state='running'").toArray()) {
+      try {await this.status(job);}
+      catch {this.storage.sql.exec("UPDATE weft_javascript_jobs SET state='failed' WHERE id=?", job.id);}
+    }
+  }
   private async status(job: Job): Promise<JavaScriptStatus> {
     const runtime = this.runtime(job);
-    const handle = await runtime.getExec(job.id, {backend: job.backend, encoding: 'utf8', resume: 'full', output: false});
-    const reader = handle.getReader();
+    await runtime.recover();
+    // Use the native backend's bounded event subscription. Cancelling a pending
+    // read of Computer 0.7's public UTF-8 wrapper races its mutable reader slot.
+    const connection = this.connections.get(job.backend)!;
+    const envelope = await connection.getExec({id: job.id});
+    const reader = envelope.events.getReader();
+    const decoders = {stdout: new TextDecoder(), stderr: new TextDecoder()};
     const snapshot: JavaScriptStatus = {id: job.id, status: 'running', stdout: '', stderr: '', pending: []};
     let timer: ReturnType<typeof setTimeout> | undefined;
     const deadline = new Promise<null>(resolve => {timer = setTimeout(() => resolve(null), 100);});
@@ -96,7 +118,7 @@ export class WorkspaceJavaScript {
         const next = await Promise.race([reader.read(), deadline]);
         if (next === null || next.done) break;
         const event = next.value;
-        if (event.name === 'stdout' || event.name === 'stderr') snapshot[event.name] += event.value;
+        if (event.name === 'stdout' || event.name === 'stderr') snapshot[event.name] += decoders[event.name].decode(event.value, {stream: true});
         if (event.name === 'exit') {
           snapshot.exitCode = event.code;
           snapshot.status = event.code === 0 ? 'completed' : event.code === 130 ? 'cancelled' : 'failed';
@@ -104,7 +126,10 @@ export class WorkspaceJavaScript {
           break;
         }
       }
-    } finally {clearTimeout(timer); await reader.cancel(); reader.releaseLock();}
+    } finally {
+      clearTimeout(timer); await reader.cancel(); reader.releaseLock();
+      snapshot.stdout += decoders.stdout.decode(); snapshot.stderr += decoders.stderr.decode();
+    }
     if (snapshot.status === 'running') {
       snapshot.pending = (await this.pending(runtime, job)).map(call => ({callId: call.callId, reason: z.object({reason: z.string()}).parse(call.payload).reason, since: call.since}));
       if (snapshot.pending.length) snapshot.status = 'waiting';

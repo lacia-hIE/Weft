@@ -20,7 +20,7 @@ export function mountComputerJavaScript(ctx: Context, scope: WorkspaceScope, tra
   }, {global: true});
   ctx.tools.register(defineTool({
     name: 'javascript_task',
-    description: 'Start or manage a durable JavaScript task in a Worker without a container. Source must be an ES module exporting a default function(input). Read workspace files with node:fs/promises. Network access is disabled. Tasks replay after host restarts; use status to reconnect. Default access is read-only. writable requires explicit user approval for this immutable task. For a durable approval checkpoint import {request} from "ws:approval" and await request("reason"); it returns {approved}. Use approve with the exact pending callId to ask the user through the native approval UI. A task may outlive this Agent turn. Use run_code for normal tool orchestration; run_code can call this tool through tools.javascript_task.',
+    description: 'Start or manage a durable JavaScript task in a Worker without a container. Source must be an ES module exporting a default function(input). Read workspace files with node:fs/promises. Network access is disabled. Tasks replay after host restarts; use status to reconnect. Default access is read-only. writable follows the calling Session sandbox and its original project root; changing the Session to read-only cancels writable tasks. For a durable approval checkpoint import {request} from "ws:approval" and await request("reason"); it returns {approved} without widening file access. Use approve with the exact pending callId to ask the user through the native approval UI. A task may outlive this Agent turn. Use run_code for normal tool orchestration; run_code can call this tool through tools.javascript_task.',
     parameters: {
       operation: {type: 'string', enum: ['start', 'status', 'approve', 'cancel'], required: true},
       source: {type: 'string'}, input: {type: 'json'}, id: {type: 'string'}, callId: {type: 'string'},
@@ -43,8 +43,6 @@ export function mountComputerJavaScript(ctx: Context, scope: WorkspaceScope, tra
         const policy = ctx.sandboxPolicy.resolve({session: agent.session});
         if (args.writable) {
           if (policy.mode === 'read-only') throw new Error('Writable JavaScript tasks are forbidden by the read-only sandbox');
-          const outcome = await ctx.approval.request({agent, toolName: 'javascript_task', callId: exec.callId, reason: 'Allow this JavaScript task to modify files in /workspace.\n'+String(args.source ?? ''), signal: exec.signal});
-          if (outcome !== 'allowed-once') throw new Error('Writable JavaScript task was not approved');
         }
         request = javascriptRequest.parse({operation: 'start', source: args.source, ...(args.input === undefined ? {} : {input: args.input}), cwd: ctx.workingDirectory.get(agent.session), root: policy.mode === 'danger-full-access' ? '/workspace' : policy.workspaceRoot, writable: args.writable ?? false, timeoutMs: args.timeoutMs ?? 120000});
       } else request = javascriptRequest.parse({operation: args.operation, id: args.id});

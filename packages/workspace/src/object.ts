@@ -97,7 +97,13 @@ export class WorkspaceDO extends DurableObject<Env> {
     const scope = workspaceScopeSchema.parse(input);
     if (!this.ctx.id.equals(this.env.WORKSPACES.idFromName(workspaceAddress(scope)))) throw new Error('Workspace scope mismatch');
     if (!/^[a-zA-Z0-9_-]{1,80}$/.test(owner)) throw new Error('Invalid Session owner');
-    return Response.json(await this.javascriptTasks.call(owner, request));
+    const status = await this.javascriptTasks.call(owner, request);
+    if (this.javascriptTasks.hasRunning()) await this.ctx.storage.setAlarm(Date.now() + 30000);
+    return Response.json(status);
+  }
+  override async alarm(): Promise<void> {
+    await this.javascriptTasks.recover();
+    if (this.javascriptTasks.hasRunning()) await this.ctx.storage.setAlarm(Date.now() + 30000);
   }
   async revokeJavaScriptWrites(input: WorkspaceScope, owner: string): Promise<void> {
     const scope = workspaceScopeSchema.parse(input);
