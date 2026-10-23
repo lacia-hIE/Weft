@@ -15,7 +15,7 @@ export class ScriptedAdapter extends LlmAdapter {
     const last = options.messages.at(-1);
     if (last?.role !== 'tool') {
       const id = ToolCallId(crypto.randomUUID());
-      const taskFixture = last?.content.some(block => block.type === 'text' && block.text.includes('WEFT_DURABLE_TASK_FIXTURE'));
+      const taskFixture = options.messages.some(message => message.role === 'user' && message.content.some(block => block.type === 'text' && block.text.includes('WEFT_DURABLE_TASK_FIXTURE')));
       const name = taskFixture ? 'javascript_task' : 'tenant_identity';
       const args = taskFixture ? JSON.stringify({operation: 'start', source: `import {request} from 'ws:approval'; export default () => request('Keep the browser fixture task waiting');`}) : '{}';
       yield { type: 'block-start', index: 0, blockType: 'tool-call' };

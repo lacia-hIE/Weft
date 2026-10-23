@@ -39,12 +39,14 @@ async function request(sessionId: string, operation: 'list' | 'status' | 'cancel
 
 /** No polling while closed or hidden; one awaited read precedes each timer. */
 function useTasks(sessionId: string, enabled: boolean, id?: string) {
-  const [value, setValue] = React.useState<JavaScriptList>();
+  const owner = sessionId+':'+(id ?? '*');
+  const [snapshot, setSnapshot] = React.useState<{owner: string; value: JavaScriptList}>();
+  const value = snapshot?.owner === owner ? snapshot.value : undefined;
   const [error, setError] = React.useState(false);
   const [mutationError, setMutationError] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const [revision, refresh] = React.useReducer((n: number) => n + 1, 0);
-  React.useEffect(() => {setValue(undefined); setError(false); setMutationError(false);}, [sessionId, id]);
+  React.useEffect(() => {setError(false); setMutationError(false);}, [sessionId, id]);
   React.useEffect(() => {
     if (!enabled || busy) return;
     const abort = new AbortController();
@@ -54,7 +56,7 @@ function useTasks(sessionId: string, enabled: boolean, id?: string) {
       try {
         const next = await request(sessionId, id ? 'status' : 'list', id, abort.signal);
         if (abort.signal.aborted) return;
-        setValue(next); setError(false);
+        setSnapshot({owner, value: next}); setError(false);
         if (next.tasks.some(unfinished)) timer = setTimeout(() => {void read();}, next.tasks.some(task => task.status === 'running') ? 3000 : 15000);
       } catch {if (!abort.signal.aborted) setError(true);}
     };
@@ -65,7 +67,7 @@ function useTasks(sessionId: string, enabled: boolean, id?: string) {
   }, [sessionId, enabled, id, revision, busy]);
   const cancel = async (task?: string) => {
     setBusy(true); setMutationError(false);
-    try {setValue(await request(sessionId, task ? 'cancel' : 'cancelAll', task));}
+    try {setSnapshot({owner, value: await request(sessionId, task ? 'cancel' : 'cancelAll', task)});}
     catch {setMutationError(true);}
     finally {setBusy(false); refresh();}
   };

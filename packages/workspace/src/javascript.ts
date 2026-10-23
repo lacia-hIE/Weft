@@ -163,9 +163,8 @@ export class WorkspaceJavaScript {
     try {await this.runtime(job).disposeExec(job.id, {backend: job.backend});} catch (error) {if (!missing(error)) throw error;}
   }
   nextAlarm(): number | undefined {
-    const jobs = this.storage.sql.exec<Job>('SELECT * FROM weft_javascript_jobs').toArray();
-    if (!jobs.length) return undefined;
-    return Math.max(Date.now() + 30000, Math.min(...jobs.map(job => job.state === 'running' ? Date.now() + 30000 : job.state === 'expired' ? job.created_at + HISTORY_TTL : job.expires_at)));
+    const row = this.storage.sql.exec<{next: number | null}>("SELECT MIN(CASE WHEN state='running' THEN ? WHEN state='expired' THEN created_at+? ELSE expires_at END) AS next FROM weft_javascript_jobs", Date.now() + 30000, HISTORY_TTL).one();
+    return row.next === null ? undefined : Math.max(Date.now() + 30000, row.next);
   }
   private async cleanup(): Promise<void> {
     const now = Date.now();
