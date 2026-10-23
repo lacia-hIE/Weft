@@ -66,7 +66,8 @@ export class DurableAgentRevisions<T extends {revision: number}> {
   }
 
   async publish(agentId: string, value: T): Promise<boolean> {
-    return this.storage.sql.exec('INSERT INTO weft_agent_revisions VALUES (?,?,?) ON CONFLICT DO NOTHING', agentId, value.revision, JSON.stringify(value)).rowsWritten === 1;
+    // rowsWritten also counts index writes; RETURNING observes actual insertion.
+    return this.storage.sql.exec('INSERT INTO weft_agent_revisions VALUES (?,?,?) ON CONFLICT DO NOTHING RETURNING revision', agentId, value.revision, JSON.stringify(value)).toArray().length === 1;
   }
 }
 
