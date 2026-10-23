@@ -36,7 +36,7 @@ test('the Plugins page chooses auto, worker only or always container and the con
   await expect(size.getByRole('tab', {name: 'standard-1', exact: true})).toHaveAttribute('aria-selected', 'true');
 });
 
-test('the workspace settings stop control waits for completion and displays a stopped container', async ({page, request}) => {
+test('the workspace settings stop control waits for completion and displays a stopped container', async ({page, request}, testInfo) => {
   const me = await (await request.get('/v1/me')).json() as {tenantId: string};
   const id = 'stop-container-'+crypto.randomUUID().slice(0, 8);
   expect((await request.post(`/v1/tenants/${me.tenantId}/environments`, {data: {id, name: id}})).status()).toBe(201);
@@ -60,4 +60,5 @@ test('the workspace settings stop control waits for completion and displays a st
   expect(stops).toBe(1);
   await page.getByRole('button', {name: 'Refresh container state', exact: true}).click();
   await expect(stop).toBeDisabled();
+  await page.screenshot({path: testInfo.outputPath('workspace-runtime-controls.png')});
 });

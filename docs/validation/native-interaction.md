@@ -52,7 +52,7 @@ Agent 级的直接调用方法（commands、userQuestions、goals、skills、fil
 - 主机名经平台在边缘解析，Worker 无法预先检查域名解析到的地址；IP 字面量按原版规则检查。
 - DeepSeek 平台账号登录依赖 loopback 回调的 OAuth，`account/*` 明确拒绝；模型凭据使用环境 API key。
 - Office 转 PDF 依赖 LibreOffice（原生库或数十 MB 的 WASM），超出 Worker 的体积与内存上限，`officeToPdf/*` 明确拒绝。
-- 插件市场的原版 `pluginMarket` 服务已在 EnvironmentDO 中运行：索引 URL 保存在环境设置 `plugin-market` 命名空间，`listIndexes`、`setIndexes`、`search` 使用原版解析、搜索与兼容性检查（运行时版本固定为构建所用 app-boot 版本），设置变更广播 `plugin-market/changed`。上游官方 Web profile 不挂载市场，Discover 页属于默认关闭的实验 bundle，因此本部署同样不显示它。通用包安装需要在宿主 isolate 中加载任意 npm 代码，`pluginManager/installBundle` 明确拒绝。语音、思维链翻译等实验模块不在官方 Web profile 中。
+- 插件市场的原版 `pluginMarket` 服务已在 EnvironmentDO 中运行：索引 URL 保存在环境设置 `plugin-market` 命名空间，`listIndexes`、`setIndexes`、`search` 使用原版解析、搜索与兼容性检查（运行时版本固定为构建所用 app-boot 版本），设置变更广播 `plugin-market/changed`。上游官方 Web profile 不挂载市场，Discover 页属于默认关闭的实验 bundle，因此本部署同样不显示它。公开 npm 的原版 `dsh.bundle.patch` 安装已通过隔离编译与精确版本审批接通，具体范围见[插件安装](package-installation.md)。语音、思维链翻译等实验模块不在官方 Web profile 中。
 - 上述三项的外部服务方案见 [外部服务设计](../architecture/external-services.md)。
 - 受控模型不会产生真实网络 I/O；goal 连续轮次在测试中需要设置轮次上限。
 

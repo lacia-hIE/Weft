@@ -56,7 +56,7 @@ Cloudflare DO SQL 对部分 PRAGMA 操作有限制；本工程使用普通 schem
 
 ## Cloudflare 云端复核
 
-2026-10-16 使用 `cf@1.0.0-beta.17` 实际部署 `weft-kernel-validation`，Durable Object 通过 exports 生命周期声明创建 SQLite 存储。云端健康检查、alpha / beta 两租户工具循环、持久日志读取和跨租户拒绝均通过。云端进程硬终止、实际模型和 Computer 仍待验证。持续部署状态与配置见 [部署记录](../deployment.md)。
+2026-10-16 使用 `cf@1.0.0-beta.17` 实际部署主 Worker，Durable Object 通过 exports 生命周期声明创建 SQLite 存储。云端健康检查、alpha / beta 两租户工具循环、持久日志读取和跨租户拒绝均通过。云端进程硬终止、实际模型和 Computer 仍待验证。持续部署状态与配置见 [部署记录](../deployment.md)。
 
 2026-10-16 已将用户入口切换至 Cloudflare Access。认证通过运行时 `ctx.access`；本地使用官方 `access.dev` 模拟并在真实 workerd 执行测试。应用不再提供 Bearer Token 用户认证；新增身份发现、邮箱变更后租户稳定性和跨站写入拒绝验证。
 

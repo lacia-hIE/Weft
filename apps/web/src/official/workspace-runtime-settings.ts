@@ -1,5 +1,5 @@
 import React from 'react';
-import { SegmentedControl, SettingsForm, SettingsFormModel, settingsTextField, type SettingsFieldState, type SettingsFormScope, type SettingsFormShell } from '@deepseek-ai/dsh-client-ui-primitives';
+import { Button, SegmentedControl, SettingsForm, SettingsFormModel, settingsTextField, type SettingsFieldState, type SettingsFormScope, type SettingsFormShell } from '@deepseek-ai/dsh-client-ui-primitives';
 
 /**
  * The environment's workspace runtime on the Plugins page: where bash and
@@ -156,11 +156,12 @@ function ContainerControl({t}: {t: CardProps['t']}): React.ReactNode {
     finally {setBusy(false);}
   };
   const status = busy || state?.status === 'stopping' ? 'stopping' : !state ? 'loading' : !state.available ? 'containerUnavailable' : state.status;
-  return React.createElement('section', {style: {borderTop: '1px solid currentColor', paddingTop: 16, marginTop: 20}},
-    React.createElement('strong', null, t('containerControl')),
-    React.createElement('p', {style: {fontSize: 12, opacity: 0.7}}, t('stopHint')),
-    React.createElement('p', {role: 'status'}, t(status)),
-    error ? React.createElement('p', {role: 'alert'}, error) : null,
-    React.createElement('button', {type: 'button', disabled: busy || !state?.available || state.status === 'stopped', onClick: () => {void stop();}}, t('stop')),
-    React.createElement('button', {type: 'button', disabled: busy, onClick: () => {setError(undefined); setRevision(value => value + 1);}, style: {marginLeft: 12}}, t('refresh')));
+  return React.createElement('section', {'aria-labelledby': 'weft-container-control-title', style: {display: 'grid', gap: 8, borderTop: '0.5px solid var(--dsw-alias-border-l3)', paddingTop: 16, marginTop: 16}},
+    React.createElement('span', {id: 'weft-container-control-title', style: {fontSize: 13, fontWeight: 500, color: 'var(--dsw-alias-label-primary)'}}, t('containerControl')),
+    React.createElement('p', {style: {margin: 0, fontSize: 12, lineHeight: 1.5, color: 'var(--dsw-alias-label-tertiary)'}}, t('stopHint')),
+    React.createElement('p', {role: 'status', style: {margin: 0, fontSize: 12, lineHeight: 1.5, color: 'var(--dsw-alias-label-secondary)'}}, t(status)),
+    error ? React.createElement('p', {role: 'alert', style: {margin: 0, fontSize: 12, lineHeight: 1.5, color: 'var(--dsw-alias-label-error)'}}, error) : null,
+    React.createElement('div', {style: {display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginTop: 4}},
+      React.createElement(Button, {variant: 'outline', size: 'sm', disabled: busy || !state?.available || state.status !== 'running', onClick: () => {void stop();}}, t('stop')),
+      React.createElement(Button, {variant: 'outline', size: 'sm', disabled: busy, onClick: () => {setError(undefined); setRevision(value => value + 1);}}, t('refresh'))));
 }

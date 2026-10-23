@@ -8,8 +8,9 @@ import {
   getWorkerBundleDir,
   getWorkerAssetsDir,
 } from "@cloudflare/build-output-utils";
-import { mkdir, copyFile, cp } from "node:fs/promises";
+import { mkdir, copyFile, cp, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import {deployment, deploymentFingerprint} from './deployment-config.ts';
 
 // The CLI currently emits only the default Worker when delegating to Wrangler.
 // Produce its standard Build Output Specification for both already-bundled Workers.
@@ -62,4 +63,6 @@ export async function writeBuildOutput() {
       },
     });
   }
+  // A prebuilt artifact must be published with the same configuration it was built with.
+  await writeFile(resolve(root, '.cloudflare/output/weft-deployment.sha256'), deploymentFingerprint(deployment) + '\n');
 }

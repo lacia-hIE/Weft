@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import {recordDeploymentImage} from './deployment-config.ts';
 
 /**
  * The workspace container image: built from apps/workspace-container and
@@ -19,7 +20,8 @@ const directory = resolve(root, 'apps/workspace-container');
 const dockerfile = readFileSync(resolve(directory, 'Dockerfile'), 'utf8');
 const record = resolve(directory, 'image.json');
 const NAME = 'weft-workspace-shell';
-execFileSync(process.execPath, [resolve(root, 'scripts/build-process-service.mjs')], {cwd: root, stdio: 'inherit'});
+if (!process.argv.includes('--publish') && !process.argv.includes('--tag'))
+  execFileSync(process.execPath, [resolve(root, 'scripts/build-process-service.mjs')], {cwd: root, stdio: 'inherit'});
 
 const computer = JSON.parse(readFileSync(resolve(root, 'node_modules/@cloudflare/computer/package.json'), 'utf8')).version;
 const computerd = /^FROM ghcr\.io\/cloudflare\/computer-computerd-linux-x64:(\S+) AS computerd$/m.exec(dockerfile)?.[1];
@@ -29,6 +31,7 @@ const hash = createHash('sha256');
 for (const source of sources) hash.update(source).update(readFileSync(resolve(directory, source)));
 hash.update(readFileSync(resolve(root, 'package-lock.json'))).update(readFileSync(resolve(root, 'upstream.lock.json'))).update(readFileSync(resolve(root, 'scripts/build-process-service.mjs')));
 const tag = hash.digest('hex').slice(0, 12);
+if (process.argv.includes('--tag')) {console.log(`${NAME}:${tag}`); process.exit(0);}
 
 if (process.argv.includes('--check')) {
   if (process.env.WEFT_LOCAL_CONTAINER === '1') {
@@ -37,14 +40,14 @@ if (process.argv.includes('--check')) {
     process.exit(0);
   }
   const {reference} = JSON.parse(readFileSync(record, 'utf8'));
-  if (!reference.endsWith(`/${NAME}:${tag}`)) throw new Error(`apps/workspace-container/image.json names ${reference}, not the current image sources (${tag}); run node scripts/workspace-container.mjs`);
+  if (reference !== `${NAME}:${tag}`) throw new Error(`Workspace image tag is stale (${tag}); update its portable image tag and verify it in CI before publishing`);
 } else {
-  execFileSync('docker', ['build', '--platform', 'linux/amd64', '-t', `${NAME}:${tag}`, directory], {stdio: 'inherit'});
+  if (process.argv.includes('--publish')) execFileSync('docker', ['image', 'inspect', `${NAME}:${tag}`], {stdio: 'ignore'});
+  else execFileSync('docker', ['build', '--platform', 'linux/amd64', '-t', `${NAME}:${tag}`, directory], {stdio: 'inherit'});
   if (process.argv.includes('--local')) {console.log(`Built ${NAME}:${tag}`); process.exit(0);}
   const output = execFileSync(process.execPath, [resolve(root, 'node_modules/cf/bin/cf'), 'containers', 'push', '--tag', `${NAME}:${tag}`], {cwd: root, encoding: 'utf8'});
-  process.stdout.write(output);
   const reference = /registry\.cloudflare\.com\/\S+?\/weft-workspace-shell:[0-9a-f]{12}/.exec(output)?.[0];
   if (!reference) throw new Error('The registry push did not report the image reference');
-  writeFileSync(record, JSON.stringify({reference}, null, 2) + '\n');
-  console.log(`Recorded ${reference}`);
+  recordDeploymentImage('workspaceImage', reference);
+  console.log(`Published ${reference}`);
 }

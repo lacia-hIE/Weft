@@ -1,6 +1,8 @@
 import { loadAndParseConfig } from "@cloudflare/config";
 import { Miniflare, convertV4MiniflareOptions } from "miniflare";
 import { resolve } from "node:path";
+import {readdirSync, readFileSync} from 'node:fs';
+import {deployment} from './deployment-config.ts';
 
 const parsed = await loadAndParseConfig(resolve("cloudflare.config.ts"), {
   isPreview: false,
@@ -24,7 +26,7 @@ for (const [name, binding] of Object.entries(worker.env ?? {})) {
 }
 const options = convertV4MiniflareOptions({
   host: "127.0.0.1",
-  port: 8787,
+  port: Number(process.env.WEFT_DEV_PORT ?? 8787),
   workers: [
     {
       name: worker.name,
@@ -36,6 +38,10 @@ const options = convertV4MiniflareOptions({
       bindings,
       durableObjects,
       serviceBindings: { UI: "assets" },
+      workerLoaders: {LOADER: {}},
+      d1Databases: {CONFIG_DB: deployment.databaseName},
+      r2Buckets: {PLUGIN_ARTIFACTS: deployment.artifactBucketName},
+      images: {binding: 'IMAGES'},
     },
     {
       name: "assets",
@@ -50,9 +56,23 @@ for (const item of options.workers)
   item.dev = { ...item.dev, unsafeRegisterWorker: false };
 const runtime = new Miniflare({
   ...options,
-  resourcePersistencePath: resolve(".cloudflare/local-state"),
+  resourcePersistencePath: resolve(process.env.WEFT_DEV_STATE_DIR ?? ".cloudflare/local-state"),
 });
-console.log(`Local workerd ready: ${await runtime.ready}`);
+try {
+  await runtime.ready;
+  const db = await runtime.getD1Database('CONFIG_DB', worker.name);
+  await db.prepare('CREATE TABLE IF NOT EXISTS d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL)').run();
+  const applied = new Set((await db.prepare('SELECT name FROM d1_migrations').all()).results.map(row => row.name));
+  for (const name of readdirSync('migrations').filter(name => name.endsWith('.sql')).sort()) {
+    if (applied.has(name)) continue;
+    const statements = readFileSync(resolve('migrations', name), 'utf8').replace(/--.*$/gm, '').split(';').map(value => value.trim()).filter(Boolean);
+    await db.batch([...statements.map(sql => db.prepare(sql)), db.prepare('INSERT INTO d1_migrations (name) VALUES (?)').bind(name)]);
+  }
+  console.log(`Local workerd ready: ${await runtime.ready}`);
+} catch (error) {
+  await runtime.dispose();
+  throw error;
+}
 const stop = async () => {
   await runtime.dispose();
   process.exit(0);

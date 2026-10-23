@@ -1,7 +1,8 @@
 import {createHash} from 'node:crypto';
-import {readFileSync, writeFileSync} from 'node:fs';
+import {readFileSync} from 'node:fs';
 import {execFileSync} from 'node:child_process';
 import {resolve} from 'node:path';
+import {recordDeploymentImage} from './deployment-config.ts';
 const root = resolve(import.meta.dirname, '..'), directory = resolve(root, 'apps/plugin-builder');
 const hash = createHash('sha256');
 for (const name of ['Dockerfile', 'package.json', 'package-lock.json', 'server.mjs']) hash.update(name).update(readFileSync(resolve(directory, name)));
@@ -15,8 +16,8 @@ if (process.argv.includes('--publish')) {
   const output = execFileSync(process.execPath, [resolve(root, 'node_modules/cf/bin/cf'), 'containers', 'push', '--tag', image], {cwd: root, encoding: 'utf8'});
   const reference = /registry\.cloudflare\.com\/\S+?\/weft-plugin-builder:[0-9a-f]{12}/.exec(output)?.[0];
   if (!reference) throw new Error('Container registry did not return the pushed image');
-  writeFileSync(resolve(directory, 'image.json'), JSON.stringify({reference}, null, 2) + '\n');
+  recordDeploymentImage('pluginBuilderImage', reference);
   console.log(`Published ${reference}`); process.exit(0);
 }
 const {reference} = JSON.parse(readFileSync(resolve(directory, 'image.json'), 'utf8'));
-if (!reference.endsWith('/' + image)) throw new Error('Plugin builder image is stale; build the current image in CI and publish it');
+if (reference !== image) throw new Error('Plugin builder image is stale; update its portable image tag and verify it in CI before publishing');

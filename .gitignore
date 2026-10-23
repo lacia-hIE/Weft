@@ -5,6 +5,14 @@ dist/
 .cloudflare/
 .dev.vars
 .env
+.env.*
+!.env.example
+.dev.vars.*
+.weft/
+*.pem
+*.key
+*.p12
+*.pfx
 coverage/
 test-results/
 playwright-report/

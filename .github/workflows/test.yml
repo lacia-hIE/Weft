@@ -3,6 +3,8 @@
 # workers in dist/ and the top-level .generated files the tests read) instead
 # of each building again, and unit shards restore the cached upstream checkout.
 name: Test
+permissions:
+  contents: read
 
 # `ci` is the branch for candidate commits: it runs the suites without deploying
 # (Cloudflare Workers Builds deploys main only). main moves to a commit once it passes.
@@ -102,6 +104,13 @@ jobs:
         run: npm run test:process:container
       - name: Git and FUSE regression
         run: npm run test:workspace:container
+      - name: Export the verified workspace image for publication
+        run: docker save $(node scripts/workspace-container.mjs --tag) | gzip > workspace-container-image.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: workspace-container-image
+          path: workspace-container-image.tar.gz
+          retention-days: 1
 
   unit:
     name: Unit ${{ matrix.shard }}/4
@@ -159,8 +168,8 @@ jobs:
       - run: tar -xzf build.tgz
       - name: Browser tests
         run: npx playwright test --shard=${{ matrix.shard }}/2
-      - name: Keep failure traces
-        if: failure()
+      - name: Keep browser screenshots and failure traces
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: playwright-results-${{ matrix.shard }}

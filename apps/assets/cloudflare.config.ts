@@ -1,7 +1,8 @@
 import { defineConfig, bindings } from "cf/config";
+import {deployment} from '../../scripts/deployment-config.ts';
 export default defineConfig({
   worker: {
-    name: "weft-ui-assets",
+    name: deployment.uiWorkerName,
     entrypoint: "../../dist/assets-worker.js",
     compatibilityDate: "2026-07-30",
     workersDev: false,

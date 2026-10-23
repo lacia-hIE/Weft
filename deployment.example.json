@@ -1,0 +1,14 @@
+{
+  "workerName": "weft",
+  "uiWorkerName": "weft-ui-assets",
+  "domain": "weft.example.com",
+  "accessAudience": "REPLACE_WITH_YOUR_ACCESS_APPLICATION_AUD",
+  "accessTeamDomain": "your-team.cloudflareaccess.com",
+  "databaseName": "weft-config",
+  "databaseId": "REPLACE_WITH_YOUR_D1_DATABASE_UUID",
+  "artifactBucketName": "weft-plugin-artifacts",
+  "workspaceContainerPrefix": "weft-workspace-shell",
+  "pluginBuilderName": "weft-plugin-builder",
+  "workspaceImage": "REPLACE_WITH_PUBLISHED_WORKSPACE_IMAGE",
+  "pluginBuilderImage": "REPLACE_WITH_PUBLISHED_PLUGIN_BUILDER_IMAGE"
+}

@@ -24,7 +24,7 @@
 - 新客户端发布默认停用。启用校验精确 revision；模块获取校验 Access、租户和当前启用版本。React、Cordis 与 Store 共享同一份实例。
 - 客户端插件与当前用户页面同权，需用户审核；CSP/import 限制不是浏览器 isolate 沙箱。平台模型密钥和任意租户绑定不会传入客户端。
 - `/?safe=1` 跳过插件恢复，可停用错误版本。加载与卸载有期限；同步阻塞浏览器主线程的代码需重新进入安全模式恢复。
-- 主 Worker 先验证 Access 上下文或签名校验通过的 Access 断言，再通过 Service Binding 从私有 weft-ui-assets Worker 返回资产；具体鉴权链路见 [部署说明](../deployment.md)。资产 Worker 无公网路由、workers.dev 或预览地址，无租户或模型绑定；业务 Worker 不嵌入大体积 UI 资产。资产与源码均为 private/no-store，第三方许可在 /licenses.txt。
+- 主 Worker 先验证 Access 上下文或签名校验通过的 Access 断言，再通过 Service Binding 从私有 UI 资产 Worker 返回资产；具体鉴权链路见 [部署说明](../deployment.md)。资产 Worker 无公网路由、workers.dev 或预览地址，无租户或模型绑定；业务 Worker 不嵌入大体积 UI 资产。资产与源码均为 private/no-store，第三方许可在 /licenses.txt。
 
 ## 验证
 
