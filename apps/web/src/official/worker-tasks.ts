@@ -94,9 +94,9 @@ function CatalogTask({sessionId, task, t, cancel, busy}: Owner & {task: JavaScri
   const [open, setOpen] = React.useState(false);
   const state = useTasks(sessionId, open, task.id, true);
   return React.createElement('section', {style: section, 'data-task-id': task.id},
-    React.createElement(DisclosureRow, {title: task.id, icon: React.createElement(IconCodeOutlineRegular, {size: 14}), open, expandable: true, expandOnRowClick: true, keepContentWhenOpen: true,
-      onToggle: () => setOpen(value => !value), collapsedContent: React.createElement('span', {role: 'status'}, t(task.status)),
-      headerAccessory: unfinished(task) ? React.createElement(Button, {variant: 'outline', size: 'sm', disabled: busy, onClick: () => {void cancel(task.id);}}, t('cancel')) : null,
+    React.createElement(DisclosureRow, {title: task.id.slice(0, 8), icon: React.createElement(IconCodeOutlineRegular, {size: 14}), open, expandable: true, expandOnRowClick: true, keepContentWhenOpen: true,
+      onToggle: () => setOpen(value => !value), collapsedContent: React.createElement('span', {role: 'status', style: {marginLeft: 8}}, t(task.status)),
+      headerAccessory: unfinished(task) ? React.createElement(Button, {variant: 'outline', size: 'sm', style: {whiteSpace: 'nowrap', flexShrink: 0}, disabled: busy, onClick: () => {void cancel(task.id);}}, t('cancel')) : null,
       children: state.details.has(task.id) ? React.createElement(TaskDetails, {task: state.details.get(task.id)!, t}) : React.createElement('p', {role: state.error ? 'alert' : 'status'}, t(state.error ? 'error' : 'loading'))}));
 }
 
