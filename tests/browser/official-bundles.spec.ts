@@ -26,7 +26,7 @@ test('official Team bundle card installs, selects its browser module and persist
   const teamAction = page.getByRole('button', {name: 'Agent Team', exact: true});
   await teamAction.click({timeout: 45000});
   const teamPanel = page.getByRole('dialog', {name: 'Agent Team', exact: true});
-  await expect(teamPanel.getByText('Members', {exact: true})).toBeVisible();
+  await expect(teamPanel.getByRole('heading', {name: /^Members/})).toBeVisible();
   await expect(teamPanel.getByText('No shared tasks yet. Create them through the conversation.', {exact: true})).toBeVisible();
   await page.keyboard.press('Escape');
   await page.getByRole('button', {name: 'Plugins', exact: true}).click({timeout: 45000});
