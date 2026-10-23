@@ -39,6 +39,8 @@ test('Worker bundles use native patches, isolate settings, and unload/reload too
     const bundles = await api.call<BundleInfo[]>('pluginManager/listBundles', {});
     const worker = bundles.filter(bundle => ['@weft/worker-javascript', '@weft/worker-documents'].includes(bundle.name));
     assert.equal(worker.length, 2); assert.ok(worker.every(bundle => bundle.enabled && bundle.installed && !bundle.official));
+    assert.equal((await api.call<{status: string}>('pluginManager/inspect', {spec: '@weft/worker-javascript@99.0.0'})).status, 'refused');
+    assert.equal((await api.call<ChangeResult>('pluginManager/setBundleEnabled', {name: '@weft/worker-task-management', enabled: false})).error?.code, 'management-required');
     const plugins = await api.call<PluginInfo[]>('pluginManager/listPlugins', {});
     assert.ok(plugins.some(plugin => plugin.entryId === 'weft-javascript' && plugin.patchId === 'weft-javascript'));
     await api.call('session/create', {request: {sessionId: 'worker-plugin-live', agentPreset: 'standard'}});

@@ -190,7 +190,7 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
         : {provider: 'deepseek-official', model: this.latest(DEFAULT_PRESET)?.spec.model?.name ?? 'deepseek-flash'},
       changed: (event, args) => {
         this.nativeEvents.emit(event, args);
-        if (event === 'settings/document-updated' && (args[0] === PRESET_NAMESPACE || args[0] === PROFILE_PLUGINS_NAMESPACE)) this.nativeEvents.emit('plugin-manager/changed', [{reason: 'plugin'}]);
+        if (event === 'settings/document-updated' && [PRESET_NAMESPACE, PROFILE_PLUGINS_NAMESPACE, JS, DOCS, CARDS, BUNDLES].includes(String(args[0]))) this.nativeEvents.emit('plugin-manager/changed', [{reason: 'plugin'}]);
         if (event === 'settings/document-updated' && (args[0] === MODEL_NAMESPACE || args[0] === PI_AI_NAMESPACE || args[0] === DEFAULT_MODEL_NAMESPACE)) void this.modelWorld?.refresh().catch(() => { /* A rejected draft keeps the previous entries serving; the next read retries. */ });
         if (event === 'settings/document-updated' && args[0] === MARKET_NAMESPACE) {
           const previous = this.market;
@@ -461,6 +461,13 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
     let args: Record<string, unknown>;
     try {args = method.input({strict: true}).create().parse(raw) as Record<string, unknown>;}
     catch {throw new RemoteError('gateway/bad-request', 'Invalid plugin management arguments', {});}
+    const bundled = workerBundleInfo(this.settings(scope).workerPlugins());
+    const builtinSpec = bundled.find(row => args.spec === row.name || typeof args.spec === 'string' && args.spec.startsWith(row.name+'@'));
+    if (builtinSpec && endpoint === 'pluginManager/inspect') return Response.json({value: {status: 'refused', problem: 'already-installed', reason: 'This prebuilt Weft bundle ships with the deployment. Use its plugin or bundle switches.'}});
+    if (builtinSpec && endpoint === 'pluginManager/installBundle') return Response.json({value: {changed: false, application: 'failed', stage: 'install', target: args.spec, error: {code: 'already-installed', diagnostic: 'Use the prebuilt bundle included in this deployment.'}}});
+    const fixedBundle = bundled.find(row => row.name === args.name && row.readOnlyReason);
+    const fixedPlugin = workerPluginInfo(this.settings(scope).workerPlugins()).find(row => row.entryId === args.id && row.readOnlyReason);
+    if (fixedBundle && ['pluginManager/setBundleEnabled', 'pluginManager/removeBundle'].includes(endpoint) || fixedPlugin && endpoint === 'pluginManager/setPluginEnabled') return Response.json({value: {changed: false, application: 'failed', stage: endpoint.endsWith('removeBundle') ? 'remove' : 'enable', target: args.id ?? args.name, error: {code: 'management-required'}}});
     const workerBundle = workerBundles.find(row => args.name === row.manifest.name);
     if (endpoint === 'pluginManager/setBundleEnabled' && workerBundle || endpoint === 'pluginManager/setPluginEnabled' && [JS, DOCS, CARDS].includes(String(args.id))) {
       const changed = await this.configWrites.run(() => workerBundle

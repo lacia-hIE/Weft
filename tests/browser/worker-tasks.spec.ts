@@ -6,6 +6,11 @@ test('native Worker task cards and catalog recover after reload and cancel the r
   const environment = 'worker-tasks-'+crypto.randomUUID().slice(0, 8);
   expect((await request.post(`/v1/tenants/${me.tenantId}/environments`, {data: {id: environment, name: environment}})).status()).toBe(201);
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
+  const native = async (method: string, args: object) => {
+    const response = await request.post(`/v1/tenants/${me.tenantId}/environments/${environment}/native/api/${method}`, {data: {type: 'client-request', rpcId: crypto.randomUUID(), method, payload: {args}}});
+    expect(response.status()).toBe(200);
+    expect((await response.json()).result.ok).toBe(true);
+  };
   await page.goto('/agents/'+environment);
   await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
   await expect(page.getByRole('button', {name: 'Select model, current scripted', exact: true})).toBeVisible({timeout: 45_000});
@@ -17,6 +22,11 @@ test('native Worker task cards and catalog recover after reload and cancel the r
   await expect(card.getByRole('status')).toHaveText('Awaiting approval', {timeout: 30_000});
   await card.getByRole('button', {name: 'JavaScript task', exact: false}).first().click();
   await expect(card.getByText('Keep the browser fixture task waiting', {exact: true})).toBeVisible();
+  await native('pluginManager/setPluginEnabled', {id: 'weft-task-cards', enabled: false});
+  await expect(card).toHaveCount(0);
+  await expect(page.getByRole('button', {name: 'Worker tasks', exact: true})).toBeVisible();
+  await native('pluginManager/setPluginEnabled', {id: 'weft-task-cards', enabled: true});
+  await expect(card).toBeVisible();
   await page.reload();
   await page.getByRole('button', {name: 'Worker tasks', exact: true}).first().click({timeout: 45_000});
   const dialog = page.getByRole('dialog', {name: 'Worker tasks', exact: true});
@@ -24,6 +34,9 @@ test('native Worker task cards and catalog recover after reload and cancel the r
   await expect(dialog.getByText('Keep the browser fixture task waiting', {exact: true})).toHaveCount(0);
   await dialog.locator('[data-task-id]').getByRole('button').first().click();
   await expect(dialog.getByText('Keep the browser fixture task waiting', {exact: true})).toBeVisible();
+  await native('pluginManager/setBundleEnabled', {name: '@weft/worker-javascript', enabled: false});
+  await expect(dialog).toBeVisible();
+  await expect(dialog.locator('[data-task-id] [role="status"]').first()).toHaveText('Awaiting approval');
   await page.screenshot({path: testInfo.outputPath('worker-task-catalog.png')});
   await dialog.getByRole('button', {name: 'Cancel task', exact: true}).click();
   await expect(dialog.locator('[data-task-id] [role="status"]').first()).toHaveText('Cancelled');

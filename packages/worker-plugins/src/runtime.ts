@@ -3,7 +3,7 @@ import {workerdLoader, createEntry} from '../../native-profile/src/loader.ts';
 import {mountComputerJavaScript, type JavaScriptTransport} from '../../native-computer/src/index.ts';
 import {mountWorkerDocuments, type DocumentTransport} from '../../native-documents/src/index.ts';
 import type {WorkspaceScope} from '../../workspace/src/protocol.ts';
-import {JS, DOCS, workerRows, managementRows, type WorkerPluginSettings} from './catalog.ts';
+import {JS, DOCS, JavaScriptConfig, DocumentsConfig, workerRows, managementRows, type WorkerPluginSettings} from './catalog.ts';
 
 /** The privileged transport stays in the platform; Loader fibers own only Agent tools. */
 export async function mountWorkerPlugins(ctx: Context, scope: WorkspaceScope, transport: JavaScriptTransport & DocumentTransport, read: () => Promise<WorkerPluginSettings>, initial: WorkerPluginSettings) {
@@ -40,8 +40,12 @@ async function loadWorkerPlugins(ctx: Context, scope: WorkspaceScope, transport:
     }, {global: true});
   }};
   const modules: Record<string, Plugin> = {
-    [JS]: {name: '@weft/worker-javascript-tool', inject: ['tools', 'sandboxPolicy', 'workingDirectory'], apply: child => mountComputerJavaScript(child, scope, guarded, applied.javascript)},
-    [DOCS]: {name: '@weft/worker-documents-tool', inject: ['tools', 'fs', 'workingDirectory', 'sandboxPolicy'], apply: child => mountWorkerDocuments(child, scope, guarded, applied.documents)},
+    [JS]: {name: '@weft/worker-javascript-tool', Config: JavaScriptConfig, inject: ['tools', 'sandboxPolicy', 'workingDirectory'], apply: (child, config: ReturnType<typeof JavaScriptConfig>) => mountComputerJavaScript(child, scope, guarded, {
+      get defaultTimeoutMs() {return config.defaultTimeoutMs.get();}, get allowWritable() {return config.allowWritable.get();},
+    })},
+    [DOCS]: {name: '@weft/worker-documents-tool', Config: DocumentsConfig, inject: ['tools', 'fs', 'workingDirectory', 'sandboxPolicy'], apply: (child, config: ReturnType<typeof DocumentsConfig>) => mountWorkerDocuments(child, scope, guarded, {
+      get maxInputMiB() {return config.maxInputMiB.get();}, get previewCharacters() {return config.previewCharacters.get();},
+    })},
     'weft-task-sandbox': sandbox,
   };
   const loader = await workerdLoader(ctx, modules);
