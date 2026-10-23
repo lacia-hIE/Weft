@@ -13,7 +13,7 @@ import type {Installation, Artifact} from '../packages/package-install/src/contr
 import {artifactKey} from '../packages/package-install/src/contracts.ts';
 
 test('original bundle installs through native manager, applies patches, runs standard tools and restores with exact approval', {timeout: 150000}, async () => {
-  const fixture = packageFixture({files: {'host.js': `import {defineTool} from '@deepseek-ai/dsh-tools';export default class Counter {static inject=['fs','tools'];static Config=value=>value;constructor(ctx,config){ctx.tools.register(defineTool({name:'package_save',description:'Save bundle configuration',parameters:{},output:{schema:{type:'json'},render:()=>[]},execute:async()=>{const target=await ctx.fs.resolve(config.filename);await ctx.fs.writeText(target,config.value);return {saved:true}}}))}}`}}), model = packageModel(); let builds=0;
+  const fixture = packageFixture({files: {'host.js': `import {defineTool} from '@deepseek-ai/dsh-tools';export default class Counter {static inject=['fs','tools'];static Config={'~standard':{version:1,vendor:'fixture',validate:value=>({value:{...value,value:'validated:'+value.value}})}};constructor(ctx,config){ctx.tools.register(defineTool({name:'package_save',description:'Save bundle configuration',parameters:{},output:{schema:{type:'json'},render:()=>[]},execute:async()=>{const target=await ctx.fs.resolve(config.filename);await ctx.fs.writeText(target,config.value);return {saved:true}}}))}}`}}), model = packageModel(); let builds=0;
   const directory = await mkdtemp(join(tmpdir(),'weft-native-bundle-'));
   const options: NonNullable<Parameters<typeof createRuntime>[1]> = {packages:true,
     bindings:{MODEL_BACKEND:'deepseek',DEEPSEEK_API_KEY:'package-fixture',DEEPSEEK_BASE_URL:'https://package-model.test/anthropic'},
@@ -46,10 +46,14 @@ test('original bundle installs through native manager, applies patches, runs sta
     assert.equal((await runtime.dispatchFetch(url('beta',asset.replace(tenantId('alpha'),tenantId('beta'))))).status,409);
     await api.call('session/create',{request:{sessionId:'native-package'}});await run('native-package');
     let file=await runtime.dispatchFetch(url('alpha',base+'/workspaces/default/files?path=/workspace/package-result.txt'));
-    assert.equal(file.status,200,JSON.stringify(model.observations));assert.match(await file.text(),/from-patch/);
+    assert.equal(file.status,200,JSON.stringify(model.observations));assert.match(await file.text(),/validated:from-patch/);
     await runtime.dispose();runtime=createRuntime(directory,options);
     await run('native-package');assert.equal((await installed()).approved,true);
     await operation({operation:'install',spec:`${fixture.name}@${fixture.version}`,requestId:receipt});assert.equal(builds,1);
+    assert.equal((await operation({operation:'approve',name:row.name,digest:row.digest,permissions:{...artifact.permissions,tools:false,client:false}})).status,200);
+    await run('native-package');
+    const afterRevocation=JSON.parse(model.observations.at(-1)!) as {tools?:{name:string}[]};
+    assert.ok(!afterRevocation.tools?.some(tool=>tool.name==='package_save'),'Reduced grants must unload previously registered tools at the next turn');
     await api.call('pluginManager/setBundleEnabled',{name:row.name,enabled:false});assert.equal((await runtime.dispatchFetch(url('alpha',asset))).status,409);
     await api.call('pluginManager/removeBundle',{name:row.name});assert.equal((await installed()),undefined);
   } finally {await runtime.dispose();await rm(directory,{recursive:true,force:true});}

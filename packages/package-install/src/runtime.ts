@@ -5,6 +5,10 @@ import type {Artifact, Installation} from './contracts.ts';
 interface Active {
   installation: Installation; runId: string; fiber?: Fiber;
 }
+function authority(row: Installation): string {
+  const p = row.permissions;
+  return JSON.stringify([row.digest, p.files, p.tools, p.timer, p.client]);
+}
 /** Per-Session activations; declarations, grants and module authority remain in EnvironmentDO. */
 export class InstalledPackageRuntime {
   private readonly active = new Map<string, Active>();
@@ -20,10 +24,10 @@ export class InstalledPackageRuntime {
   reconcile(): Promise<void> {
     const operation = this.tail.catch(() => {}).then(async () => {
       const selected = (await this.source.list()).filter(row => row.enabled && row.approved);
-      for (const name of this.failed.keys()) if (!selected.some(row => row.name === name && row.digest === this.failed.get(name))) this.failed.delete(name);
-      for (const [name, row] of this.active) if (!selected.some(next => next.name === name && next.digest === row.installation.digest)) await this.stopNow(name);
+      for (const name of this.failed.keys()) if (!selected.some(row => row.name === name && authority(row) === this.failed.get(name))) this.failed.delete(name);
+      for (const [name, row] of this.active) if (!selected.some(next => next.name === name && authority(next) === authority(row.installation))) await this.stopNow(name);
       for (const installation of selected) {
-        if (this.active.has(installation.name) || this.failed.get(installation.name) === installation.digest) continue;
+        if (this.active.has(installation.name) || this.failed.get(installation.name) === authority(installation)) continue;
         const runId = 'installed-' + crypto.randomUUID();
         const row: Active = {installation, runId};
         this.active.set(installation.name, row);
@@ -38,7 +42,7 @@ export class InstalledPackageRuntime {
           }
         } catch (error) {
           await this.stopNow(installation.name);
-          this.failed.set(installation.name, installation.digest);
+          this.failed.set(installation.name, authority(installation));
           // A broken optional package must not make a Session or its built-in tools unavailable.
           console.warn('weft.package.activation.failed', {name: installation.name, message: error instanceof Error ? error.message : String(error)});
         }

@@ -23,7 +23,7 @@ export function packageFixture(options: {name?: string; version?: string; files?
     dsh: {bundle: declarationRaw, ...(options.client === false ? {} : {client: {platform: 'web'}})},
     ...(options.dependencies ? {dependencies: options.dependencies} : {}), ...(options.scripts ? {scripts: options.scripts} : {})};
   const bytes = archiveFiles({'package.json': JSON.stringify(manifest), 'cordis.patch.yml': JSON.stringify(patch),
-    'host.js': `import {defineTool} from '@deepseek-ai/dsh-tools';export const inject=['fs','tools'];export const Config=value=>value;export function apply(ctx,config){ctx.tools.register(defineTool({name:'package_save',description:'Save a value from the native bundle configuration',parameters:{},output:{schema:{type:'json'},render:()=>[]},execute:async()=>{const target=await ctx.fs.resolve(config.filename);await ctx.fs.writeText(target,config.value);return {saved:true,value:config.value}}}))}`,
+    'host.js': `import {defineTool} from '@deepseek-ai/dsh-tools';export const inject=['fs','tools'];export const Config={'~standard':{version:1,vendor:'fixture',validate:value=>({value})}};export function apply(ctx,config){ctx.tools.register(defineTool({name:'package_save',description:'Save a value from the native bundle configuration',parameters:{},output:{schema:{type:'json'},render:()=>[]},execute:async()=>{const target=await ctx.fs.resolve(config.filename);await ctx.fs.writeText(target,config.value);return {saved:true,value:config.value}}}))}`,
     'client.js': 'import React from "react";export const inject=["slots"];export function apply(ctx){ctx.slots.register({name:"conversation.session.header.utilities",id:"package-fixture"},()=>React.createElement("button",null,"Package active"))}',
     ...options.files,
   });

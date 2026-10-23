@@ -3,7 +3,7 @@ import * as cordis from '@deepseek-ai/cordis';
 import {composeInstalledBundle} from '../../../../packages/package-install/src/composition.ts';
 import type {Installation, InstallJob, Artifact, Permissions} from '../../../../packages/package-install/src/contracts.ts';
 
-interface Fiber {dispose(): Promise<void>}
+interface Fiber {dispose(): Promise<void>; await(): Promise<unknown>}
 interface ClientContext {
   slots: {inject(name: string, callback: () => unknown): unknown; register(spec: object, component: (props: {subject: {kind: string; pkg?: {name: string}}}) => React.ReactNode): unknown};
   locale: {register(ns: string, dictionaries: object): () => void; bind(ns: string): (key: string) => string};
@@ -39,7 +39,7 @@ export function apply(ctx: ClientContext): void {
       while (dirty && !closed) {
         dirty = false;
         const snapshot = await operation<Snapshot>();
-        for (const [name, row] of active) if (!snapshot.installations.some(next => next.name === name && next.digest === row.digest && next.approved && next.enabled)) {active.delete(name); await row.fiber.dispose();}
+        for (const [name, row] of active) if (!snapshot.installations.some(next => next.name === name && next.digest === row.digest && next.approved && next.enabled && next.permissions.client)) {active.delete(name); await row.fiber.dispose();}
         for (const row of snapshot.installations) {
           if (closed || !row.approved || !row.enabled || !row.permissions.client || active.has(row.name)) continue;
           const url = new URL(`package-assets/${row.digest}/client.js?name=${encodeURIComponent(row.name)}`, document.baseURI).href;
@@ -47,7 +47,10 @@ export function apply(ctx: ClientContext): void {
           if (closed) break;
           const plugin = await module.default({React, cordis, compose: composeInstalledBundle});
           if (closed) break;
-          const fiber = ctx.plugin(plugin); active.set(row.name, {digest: row.digest, fiber});
+          const fiber = ctx.plugin(plugin);
+          try {await fiber.await();} catch (error) {await fiber.dispose(); throw error;}
+          if (closed) {await fiber.dispose(); break;}
+          active.set(row.name, {digest: row.digest, fiber});
         }
       }
     })().catch(error => {if (!closed) console.error('[weft] installed Client activation failed', error);}).finally(() => {pending = undefined; if (dirty) refresh();});
