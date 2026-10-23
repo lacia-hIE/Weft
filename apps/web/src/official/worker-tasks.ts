@@ -137,7 +137,7 @@ function TaskToolCard({sessionId, block, phase, t}: ToolOwner): React.ReactNode 
   const live = useTasks(sessionId, recorded !== undefined && (open || unfinished(recorded)), recorded?.id, open);
   const detail = recorded ? live.details.get(recorded.id) : undefined;
   const task = live.value?.tasks.find(task => task.id === recorded?.id) ?? recorded;
-  return React.createElement('div', {'data-tool': 'javascript_task'},
+  return React.createElement('div', {'data-tool': 'javascript_task', 'data-worker-task-card': true},
     React.createElement(DisclosureRow, {title: t('task'), icon: React.createElement(IconCodeOutlineRegular, {size: 14}), open, expandable: true, expandOnRowClick: true, keepContentWhenOpen: true,
       running: !task && phase !== 'result', onToggle: () => setOpen(value => !value),
       collapsedContent: React.createElement('span', {role: 'status', style: {marginLeft: 8}}, task ? t(task.status) : block.isError ? t('failed') : t(phase === 'preparing' ? 'preparing' : 'title')),

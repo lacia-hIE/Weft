@@ -18,7 +18,7 @@ test('native Worker task cards and catalog recover after reload and cancel the r
   await page.getByRole('button', {name: 'Send message', exact: true}).click();
   await page.getByRole('button', {name: /^Completed in /}).click({timeout: 30_000});
   await page.getByRole('button', {name: 'Called tools', exact: true}).click();
-  const card = page.locator('[data-tool="javascript_task"]');
+  const card = page.locator('[data-worker-task-card]');
   await expect(card.getByRole('status')).toHaveText('Awaiting approval', {timeout: 30_000});
   await card.getByRole('button', {name: 'JavaScript task', exact: false}).first().click();
   await expect(card.getByText('Keep the browser fixture task waiting', {exact: true})).toBeVisible();
