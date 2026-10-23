@@ -19,7 +19,7 @@ test('official Team bundle card installs, selects its browser module and persist
   await card.getByRole('switch').click();
   const dialog = page.getByRole('dialog');
   await expect(dialog).toBeVisible();
-  await dialog.getByRole('button', {name: 'Install', exact: true}).click();
+  // The official catalog switch opens the progress dialog and installs immediately.
   await expect.poll(async () => (await rpc('pluginManager/listBundles', {})).find((row: {name: string}) => row.name === '@deepseek-ai/dsh-experimental-agent-team-profile')?.enabled).toBe(true);
   await page.reload();
   await page.getByRole('button', {name: 'Plugins', exact: true}).click({timeout: 45000});

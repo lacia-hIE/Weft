@@ -44,6 +44,6 @@ Agent loop 表单复用上游 Config 的 volatile 部分，仅暴露并行调用
 
 ## 尚未完成
 
-兼容包的精确 npm 版本安装、隔离构建、产物审批、启停卸载与恢复见 [插件包安装第一版](package-installation.md)。通用原版 bundle、Git/本地/私有源、更新回滚和配置编辑仍需接入；不支持的来源与能力明确拒绝。安装不执行依赖脚本。动态 Cordis 源码包继续走已有的精确版本审批与 facet 执行路径。
+兼容包的精确 npm 版本安装、隔离构建、产物审批、启停卸载与恢复见 [插件包安装第一版](package-installation.md)。固定部署版本的官方 bundle 及 Agent Teams 接入见 [官方组合包](official-bundles.md)。通用第三方 bundle、Git/本地/私有源、更新回滚和配置编辑仍需接入；不支持的来源与能力明确拒绝。安装不执行依赖脚本。动态 Cordis 源码包继续走已有的精确版本审批与 facet 执行路径。
 
 本地真实 workerd、模型与页面验证不代替 Cloudflare Access 允许用户登录后的云端完整运行验收。旧数据不要求兼容或迁移。

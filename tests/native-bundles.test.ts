@@ -38,7 +38,9 @@ test('official patch installs real Team tools, persists roster/tasks, restores p
     assert.equal(available.installed, false); assert.ok(available.installTarget);
     const wrong = await api.call<ChangeResult>('pluginManager/installBundle', {spec: bundle+'@99.0.0'});
     assert.equal(wrong.application, 'failed');
-    const install = await api.call<ChangeResult>('pluginManager/installBundle', {spec: available.installTarget.spec});
+    const privateSource = await api.call<{status: string}>('pluginManager/inspect', {spec: bundle, options: {registry: 'https://private.invalid'}});
+    assert.equal(privateSource.status, 'refused');
+    const install = await api.call<ChangeResult>('pluginManager/installBundle', {spec: available.installTarget.spec, options: {registry: 'https://registry.npmjs.org/'}});
     assert.equal(install.application, 'applied'); assert.equal(install.enabled, true);
     assert.equal((await boot()).entries.some(row => row.id === client), true);
     assert.equal((await other.call<BundleInfo[]>('pluginManager/listBundles', {})).find(row => row.name === bundle)?.installed, false);
@@ -55,7 +57,7 @@ test('official patch installs real Team tools, persists roster/tasks, restores p
     assert.ok(rootCalls.every(row => !row.tools.includes('subagent') && !row.tools.includes('subagent_fork')));
     assert.ok(rootCalls.every(row => row.tools.filter(name => name === 'send_message').length === 1));
     await run('old-session', 'FROZEN_BEFORE_INSTALL');
-    assert.equal(model.observations.at(-1)?.tools.includes('spawn_teammate'), false);
+    assert.equal(model.observations.find(row => row.body.includes('FROZEN_BEFORE_INSTALL'))?.tools.includes('spawn_teammate'), false);
     await runtime.dispose(); runtime = createRuntime(directory, options);
     // Read-only cold projection must restore the official fold without starting an Agent.
     team = await projection();
@@ -69,7 +71,7 @@ test('official patch installs real Team tools, persists roster/tasks, restores p
     assert.equal((await boot()).entries.some(row => row.id === client), false);
     await api.call('session/create', {request: {sessionId: 'after-disable', agentPreset: 'standard'}});
     await run('after-disable', 'AFTER_DISABLE');
-    assert.equal(model.observations.at(-1)?.tools.includes('spawn_teammate'), false);
+    assert.equal(model.observations.find(row => row.body.includes('AFTER_DISABLE'))?.tools.includes('spawn_teammate'), false);
     assert.equal((await projection()).members.find(row => row.name === 'reviewer')?.id, childId);
     assert.equal((await api.call<ChangeResult>('pluginManager/removeBundle', {name: bundle})).changed, true);
     await runtime.dispose(); runtime = createRuntime(directory, options);
