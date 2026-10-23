@@ -20,9 +20,9 @@ npx cf auth login
 ## 2. 创建数据资源
 
 ```bash
-npx cf d1 create weft-config
+npx cf d1 create --name weft-config
 npx cf d1 migrations apply YOUR_DATABASE_UUID --dir migrations
-npx cf r2 buckets create weft-plugin-artifacts
+npx cf r2 buckets create --name weft-plugin-artifacts
 ```
 
 记录数据库 UUID；按所选资源名修改私有配置。R2 bucket 用于插件不可变产物，保持私有，不开启公开访问。
