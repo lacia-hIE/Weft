@@ -75,6 +75,7 @@ export class PackageInstaller {
   }
   async artifact(name: string, digest: string, approved = true): Promise<Artifact> {
     const row = this.registry.get(name);
+    if (row?.needsReinstall) throw new Error('Remove and reinstall this package using its native dsh.bundle.patch declaration');
     if (!row || row.digest !== digest || (approved && (!row.approved || !row.enabled))) throw new Error('Package activation is not authorized');
     const object = await this.owner.bucket?.get(artifactKey(this.owner.scope, digest));
     if (!object) throw new Error('Package artifact is missing');

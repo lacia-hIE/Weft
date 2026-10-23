@@ -21,6 +21,7 @@ export type Artifact = z.infer<typeof artifactSchema>;
 export interface Installation {
   name: string; version: string; digest: string; enabled: boolean; approved: boolean;
   patch: Record<string, unknown>[]; rows: Record<string, unknown>[]; permissions: Permissions; description: string; installedAt: number;
+  needsReinstall?: true;
 }
 export interface InstallJob {
   id: string; spec: string; phase: 'resolving' | 'building' | 'review' | 'failed';
