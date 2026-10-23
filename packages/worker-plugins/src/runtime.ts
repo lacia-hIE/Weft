@@ -40,10 +40,10 @@ async function loadWorkerPlugins(ctx: Context, scope: WorkspaceScope, transport:
     }, {global: true});
   }};
   const modules: Record<string, Plugin> = {
-    [JS]: {name: '@weft/worker-javascript-tool', Config: JavaScriptConfig, inject: ['tools', 'sandboxPolicy', 'workingDirectory'], apply: (child, config: ReturnType<typeof JavaScriptConfig>) => mountComputerJavaScript(child, scope, guarded, {
+    [JS]: {name: '@weft/worker-javascript-tool', Config: JavaScriptConfig, inject: ['tools', 'sandboxPolicy', 'workingDirectory'], apply: (child: Context, config: ReturnType<typeof JavaScriptConfig>) => mountComputerJavaScript(child, scope, guarded, {
       get defaultTimeoutMs() {return config.defaultTimeoutMs.get();}, get allowWritable() {return config.allowWritable.get();},
     })},
-    [DOCS]: {name: '@weft/worker-documents-tool', Config: DocumentsConfig, inject: ['tools', 'fs', 'workingDirectory', 'sandboxPolicy'], apply: (child, config: ReturnType<typeof DocumentsConfig>) => mountWorkerDocuments(child, scope, guarded, {
+    [DOCS]: {name: '@weft/worker-documents-tool', Config: DocumentsConfig, inject: ['tools', 'fs', 'workingDirectory', 'sandboxPolicy'], apply: (child: Context, config: ReturnType<typeof DocumentsConfig>) => mountWorkerDocuments(child, scope, guarded, {
       get maxInputMiB() {return config.maxInputMiB.get();}, get previewCharacters() {return config.previewCharacters.get();},
     })},
     'weft-task-sandbox': sandbox,
@@ -58,8 +58,10 @@ async function loadWorkerPlugins(ctx: Context, scope: WorkspaceScope, transport:
     applied = structuredClone(settings);
     for (const row of rows(settings)) {
       if (JSON.stringify(row) === JSON.stringify(previous.find(old => old.id === row.id))) continue;
+      const fiber = loader.resolve(row.id).fiber;
       await loader.update(row.id!, {disabled: row.disabled, config: row.config});
-      if (!row.disabled) await loader.resolve(row.id).fiber?.await();
+      if (row.disabled) await fiber?.dispose();
+      else await loader.resolve(row.id).fiber?.await();
     }
   };
 }
