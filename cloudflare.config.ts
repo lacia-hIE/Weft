@@ -13,7 +13,7 @@ const pluginBuilder = defineContainer({name: 'weft-plugin-builder', image: {refe
 const uiWorker = defineWorker({ name:'weft-ui-assets',entrypoint:'./dist/assets-worker.js',compatibilityDate:'2026-07-30',workersDev:false,previewUrls:false });
 
 export default defineConfig({
-  containers: [...Object.values(workspaceContainers), pluginBuilder],
+  containers: [workspaceContainers.basic, workspaceContainers.standard1, workspaceContainers.standard2, pluginBuilder],
   worker: {
     name: 'weft-kernel-validation',
     entrypoint: './dist/worker.js',

@@ -9,7 +9,7 @@ export function archiveFiles(files: Record<string, string>): Buffer {
     header.write('package/' + path, 0, 100, 'utf8'); header.write('0000644\0', 100); header.write('0000000\0', 108); header.write('0000000\0', 116);
     header.write(body.length.toString(8).padStart(11, '0') + '\0', 124); header.write('00000000000\0', 136); header.fill(32, 148, 156); header.write('0', 156);
     header.write('ustar\0', 257); header.write('00', 263);
-    const sum = header.reduce((sum, byte) => sum + byte, 0);
+    const sum = header.reduce((sum: number, byte: number) => sum + byte, 0);
     header.write(sum.toString(8).padStart(6, '0') + '\0 ', 148);
     blocks.push(header, body, Buffer.alloc((512 - body.length % 512) % 512));
   }

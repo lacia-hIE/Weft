@@ -104,8 +104,9 @@ export class PackageInstaller {
     if (!row) throw new Error('Unknown installed package');
     this.registry.save({...row, enabled: false}); await this.owner.state.storage.sync();
     await this.owner.revoke(name, row.digest);
+    await this.owner.bucket?.delete(artifactKey(this.owner.scope, row.digest));
     this.registry.remove(name); await this.owner.state.storage.sync();
     await this.owner.changed();
-    // Never delete workspace/user data. Artifacts remain immutable for receipts and are reclaimed separately.
+    // Never delete workspace/user data; completed job metadata remains a deduplication receipt.
   }
 }

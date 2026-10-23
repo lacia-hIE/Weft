@@ -1,4 +1,5 @@
 import {z} from 'zod';
+import {pluginEntryId} from '@deepseek-ai/dsh-host-plugin-inventory';
 
 export const ABI = 'weft-plugin-v1';
 export const permissionSchema = z.object({
@@ -30,7 +31,7 @@ export interface InstallJob {
   error?: string; digest?: string; createdAt: number;
 }
 export const exactSpec = /^((?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*)@(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/;
-export const entryId = (name: string) => `installed:${name}`;
+export const entryId = (name: string) => pluginEntryId(`installed:${name}`);
 export async function sha256(value: string | Uint8Array): Promise<string> {
   const data = typeof value === 'string' ? new TextEncoder().encode(value) : value;
   const digest = await crypto.subtle.digest('SHA-256', data as BufferSource);
