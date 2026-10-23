@@ -64,7 +64,7 @@ test('native HEAD and streamed GET export original logs and referenced files wit
 });
 
 test('native export rejects unsupported methods and invalid queries and isolates tenants and environments', async () => {
-  const runtime = createRuntime(undefined, {browser: true});
+  const runtime = createRuntime();
   const api = nativeClient(() => runtime);
   try {
     await api.call('session/create', {request: {sessionId: 'same'}});
