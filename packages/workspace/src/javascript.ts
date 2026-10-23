@@ -1,5 +1,5 @@
 import {WorkerJavaScriptBackend} from '@cloudflare/computer/backends/worker-javascript';
-import {Workspace, type WorkspaceRuntimeValue, type WorkspaceObserver, type WorkspaceRuntimePendingCall, type WorkspaceModuleBackendHandle, type WorkspaceModuleBackend} from '@cloudflare/computer';
+import {Workspace, WorkspaceFilesystemStub, type WorkspaceRuntimeValue, type WorkspaceObserver, type WorkspaceRuntimePendingCall, type WorkspaceModuleBackendHandle, type WorkspaceModuleBackend} from '@cloudflare/computer';
 import {createHash} from 'node:crypto';
 import {z} from 'zod';
 import {workspacePath} from './protocol.ts';
@@ -41,7 +41,16 @@ export class WorkspaceJavaScript {
     const connected: WorkspaceModuleBackend = {
       id: backend.id, type: backend.type, protocol: 'module', callable: true, description: backend.description,
       connect: async host => {
-        const handle = await backend.connect(host);
+        // Module backends receive the raw filesystem, which bypasses observers.
+        // Route every filesystem call through Computer's observed RPC facade so
+        // private paths, symlinks and file-change notifications share shell policy.
+        const observed = new WorkspaceFilesystemStub(computer);
+        const fs = new Proxy(host.fs, {get(_target, key) {
+          const method = Reflect.get(observed, key, observed);
+          if (typeof method !== 'function') throw new Error('JavaScript filesystem operation is unavailable');
+          return method.bind(observed);
+        }});
+        const handle = await backend.connect({...host, fs});
         this.connections.set(job.backend, handle);
         return handle;
       },

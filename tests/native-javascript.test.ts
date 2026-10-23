@@ -68,11 +68,13 @@ export default async () => {
     for (const [source, cwd, root] of [
       [`import fs from 'node:fs/promises'; export default () => fs.writeFile('/workspace/outside-project.txt', 'bad');`, '/workspace/project', '/workspace/project'],
       [`import fs from 'node:fs/promises'; export default () => fs.mkdir('/workspace/.weft/private-task', {recursive:true});`, '/workspace', '/workspace'],
+      [`import fs from 'node:fs/promises'; export default () => fs.readFile('/workspace/.weft/attachments/v1/anything', 'utf8');`, '/workspace', '/workspace'],
+      [`import fs from 'node:fs/promises'; export default () => fs.symlink('/workspace/replay-count.txt', '/workspace/task-link');`, '/workspace', '/workspace'],
     ]) {
       let result = await call({operation: 'start', source: source!, cwd: cwd!, root: root!, writable: true, timeoutMs: 3000});
       assert.equal(result.status, 200, JSON.stringify(result.value));
       for (let i = 0; result.value.status === 'running' && i < 40; i++) result = await call({operation: 'status', id: result.value.id});
-      assert.equal(result.value.status, 'failed', 'writable tasks still enforce their project and private-file boundaries');
+      assert.equal(result.value.status, 'failed', `writable tasks enforce project, private-file and symlink boundaries: ${source}`);
     }
   } finally {await runtime.dispose(); await rm(directory, {recursive: true, force: true});}
 });
