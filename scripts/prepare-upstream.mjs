@@ -161,6 +161,6 @@ const optionalBundles = ['agent-team-profile'].map(id => {
   const source = readFileSync(resolve(directory, patchPath), 'utf8');
   const patch = yaml.load(source, {schema: yaml.JSON_SCHEMA});
   return {name: manifest.name, version: manifest.version, description: manifest.description,
-    upstream: actual, digest: createHash('sha256').update(source).digest('hex'), patch};
+    upstream: actual, digest: createHash('sha256').update(actual).update('\0').update(source).digest('hex'), patch};
 });
 writeFileSync(resolve(output, 'official-optional-bundles.json'), JSON.stringify(optionalBundles, null, 2) + '\n');

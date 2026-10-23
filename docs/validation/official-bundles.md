@@ -2,7 +2,7 @@
 
 官方 Plugins 页支持部署预编译目录中的 `dsh.bundle.patch`：首个组合包为 `@deepseek-ai/dsh-experimental-agent-team-profile`。卡片开关进入原版安装进度窗口，安装默认启用，也支持 API 安装时 `options.enabled=false`。可停用、重新启用、卸载与重装。名称不带版本时固定解析为当前部署版本；其他版本、安装脚本和替换 registry 明确拒绝。此路径不使用外部包的 Weft ABI，也不把任意 npm 内容当成官方可信代码。
 
-构建从锁定、干净的上游 checkout 读取原始 manifest 和 patch，记录版本、commit 与 SHA-256。解析使用 JSON YAML schema，不执行 `!!js`。环境 SQLite 原子保存安装选择；原版 `applyEntryPatches` 执行原始 patch。读取预设时，将组合包配置应用到当前源预设，Session 保存最终冻结配置。根服务、预设工具与浏览器模块分别交由现有的真实运行时装配。
+构建从锁定、干净的上游 checkout 读取原始 manifest 和 patch，记录版本、commit 与覆盖 commit 和 patch 文本的 SHA-256。解析使用 JSON YAML schema，不执行 `!!js`。环境 SQLite 原子保存安装选择；原版 `applyEntryPatches` 执行原始 patch。读取预设时，将组合包配置应用到当前源预设，Session 保存最终冻结配置。根服务、预设工具与浏览器模块分别交由现有的真实运行时装配。
 
 Team 复用原版 TeamService、tool-agent-team 和 client-ui-agent-team。创建与任务状态写入 Lead 日志；成员实际运行在所属 SessionDO 内的原生 spawn/fork provider，不为每个成员新建容器。旧的 subagent/control/list/fork 工具被 patch 停用，避免名字冲突。只读 Session reader 注册原版 Team fold，冷读取不会启动 Agent。检查预设的 Context 挂载真实持久化服务但不打开 Session handle，也不取得 writer。
 
