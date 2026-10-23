@@ -76,7 +76,7 @@ export interface Env extends ModelEnvironment {
   WORKSPACES: DurableObjectNamespace<WorkspaceDO>;
   TENANTS: DurableObjectNamespace<TenantDO>;
   ENVIRONMENTS: DurableObjectNamespace<EnvironmentDO>;
-  /** Configuration plane (D1): environment settings and other non-secret configuration. */
+  /** Platform catalogue (D1): environments and their tenant ownership. */
   CONFIG_DB: D1Database;
   ACCESS_AUD?: string;
   ACCESS_TEAM_DOMAIN?: string;

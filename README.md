@@ -42,8 +42,8 @@ Weft 适合希望自行托管 Web 编程助手、通过浏览器访问远程工�
 | 本地 HTTP 服务与 API 入口 | Workers | 主 Worker 验证身份、处理 HTTP / SSE / WebSocket，并把请求转到所属环境和会话 |
 | 本地 Web 静态文件服务 | [Workers Static Assets](https://developers.cloudflare.com/workers/static-assets/) + Service Binding | 原版 UI 构建为静态资源，由私有 UI Worker 提供；浏览器经主 Worker 认证后访问 |
 | 宿主进程中的 Agent 与服务实例 | [Durable Objects](https://developers.cloudflare.com/durable-objects/) | 环境和会话各有自己的对象，装配原版服务、协调状态和并发操作 |
-| 会话 JSONL、插件状态文件与本地凭据存储 | DO SQLite | 用原版持久化接口读写会话事件、插件状态与环境凭据；凭据只通过所属环境的服务解析 |
-| 环境目录、设置文件与预设版本记录 | [D1](https://developers.cloudflare.com/d1/) | `CONFIG_DB` 保存环境、设置、Agent 预设版本与工作区注册表；配置文件由同一套设置服务校验和读写 |
+| 配置文件、预设版本、会话 JSONL、插件状态与本地凭据存储 | DO SQLite | 环境配置与工作区登记保存在 EnvironmentDO，会话事件保存在 SessionDO；使用原版 schema、协议与持久化适配器，凭据只通过所属环境的服务解析 |
+| 用户所属的环境目录 | [D1](https://developers.cloudflare.com/d1/) | `CONFIG_DB` 只保存平台环境目录与租户归属；环境内部的设置、预设版本和工作区登记由 EnvironmentDO 自己持有 |
 | 工作区磁盘与文件系统 API | DO SQLite + `@cloudflare/computer` | WorkspaceDO 保存虚拟文件系统；原版文件工具通过 FileSystem 适配器读写，容器通过 computerd / FUSE 使用同一文件卷 |
 | bash、git、Node.js、Python 与 PTY | [Cloudflare Containers](https://developers.cloudflare.com/containers/) | Linux 容器提供真实进程与终端，WorkspaceDO 协调文件同步，独立的容器宿主 DO 管理实例生命周期 |
 | 运行时生成代码与外部 Host 插件执行 | [Dynamic Workers](https://developers.cloudflare.com/dynamic-workers/) / Worker Loader | 按需加载代码；外部 Host 插件在隔离 DO facet 中执行，通过受限桥接调用已授权服务 |
@@ -64,8 +64,9 @@ flowchart LR
     Browser[浏览器] --> Access[Cloudflare Access]
     Access --> Worker[主 Worker]
     Worker -->|Service Binding| UI[私有 UI Worker / Static Assets]
-    Worker --> Environment[TenantDO / EnvironmentDO]
-    Environment --> Settings[D1 配置与注册表]
+    Worker --> Tenant[TenantDO / 平台环境目录]
+    Tenant --> Catalogue[D1 / 环境归属]
+    Worker --> Environment[EnvironmentDO / 环境配置与工作区登记]
     Environment --> Session[SessionDO / 原版 Agent Loop]
     Session --> Model[用户配置的模型 API]
     Session --> Workspace[WorkspaceDO / Computer 文件卷]
@@ -90,16 +91,18 @@ flowchart LR
 
 | 存储位置 | 当前保存的数据 | 生命周期 |
 | --- | --- | --- |
-| D1 | 环境注册、环境设置、Agent 预设版本、工作区路径与会话归属 | 独立于 Worker 和容器运行实例 |
+| D1 | 平台环境目录、显示名称与租户归属 | 由 TenantDO 管理；预留用户、成员权限与配额等平台抽象 |
 | SessionDO SQLite | 会话头、事件日志、原版服务状态、动态插件定义和运行记录 | 对象重建后从持久记录恢复 |
-| EnvironmentDO SQLite | 模型凭据、会话索引、插件安装与审批记录等环境私有状态 | 由所属环境持有，凭据不写入 D1 |
+| EnvironmentDO SQLite | 环境设置、Agent 预设版本、工作区登记与会话归属、凭据、会话索引、插件安装与审批记录 | 由所属环境持有；环境内部操作不访问 D1 |
 | WorkspaceDO SQLite / Computer | 源码、`.git`、工作区文件、附件及图片衍生版本 | 独立于 Linux 容器；文件内容与版本由工作区服务管理 |
 | 私有 R2 | 已构建 npm 插件包的不可变代码与审核产物 | 按安装记录和产物摘要读取 |
 | 容器本地磁盘 | `node_modules`、`.venv`、常见缓存与临时文件 | 容器替换后需要重建 |
 
-D1 适合查询和版本化配置；DO SQLite 让运行状态与拥有它的对象放在一起；R2 承载编译产物。当前项目的持久工作区使用 Computer 的 DO 存储后端，源码和 `.git` 保存在 WorkspaceDO 中。
+D1 管理环境之外的平台目录；DO SQLite 让配置、业务状态与拥有它的环境或会话放在一起；R2 承载编译产物。当前项目的持久工作区使用 Computer 的 DO 存储后端，源码和 `.git` 保存在 WorkspaceDO 中。
 
 DO 的内存实例也可能重建。Weft 持久保存的是会话、配置和服务记录；正在执行的 Linux 进程、PTY 与普通 JavaScript 内存变量不属于这些持久记录。
+
+当前采用 `harness-v2` 数据布局，不导入旧环境配置、会话、文件卷或浏览器缓存。更新已有部署会得到全新的环境内部状态，平台环境目录继续保留；迁移 `0007` 删除旧 D1 环境内部表。详见[数据归属与重置](docs/architecture/environment-storage.md)。
 
 ### 用户、环境、工作区和会话
 
@@ -204,7 +207,7 @@ Weft 保留原版交互与插件声明，但运行能力取决于 Cloudflare 宿
 | `apps/plugin-builder` | 插件隔离编译容器 |
 | `packages` | Harness 与 Cloudflare 平台适配模块 |
 | `packages/session-persistence-do` | 原版会话持久化接口到 DO SQLite 的适配 |
-| `packages/config-store`、`packages/control-plane` | D1 配置仓储、环境服务与凭据存储 |
+| `packages/environment-storage`、`packages/control-plane` | 环境本地 SQLite 适配、环境服务、凭据与平台目录 |
 | `packages/workspace` | Computer 文件卷、FileSystem / Subprocess 适配与容器生命周期 |
 | `packages/native-plugins`、`packages/package-install` | Dynamic Worker 插件执行、npm 安装与 R2 产物管理 |
 | `migrations` | D1 版本迁移 |

@@ -23,7 +23,7 @@ import { sessionReadPorts } from '../../native-query/src/ports.ts';
 import { credentialRef } from '@deepseek-ai/dsh-credentials';
 import { openEnvironmentStream } from '../../native-environment/src/index.ts';
 import { MarketWorld } from '../../native-environment/src/market.ts';
-import { ConfigWriteQueue, D1AgentRevisions, D1SettingsDocuments, D1WorkspaceRegistry } from '../../config-store/src/index.ts';
+import { ConfigWriteQueue, DurableAgentRevisions, DurableSettingsDocuments, DurableWorkspaceRegistry } from '../../environment-storage/src/index.ts';
 import { DurableSessionIndex } from './session-index.ts';
 import type { HarnessHomeFacts } from '../../native-environment/src/harness-home.ts';
 import { EnvironmentModelWorld } from '../../native-models/src/environment.ts';
@@ -98,14 +98,18 @@ import {RemoteError, remoteErrorOf} from '@deepseek-ai/dsh-typert-protocol';
 
 declare const WEFT_VALIDATION_BUILD: boolean;
 
-export interface TenantEnvironment extends ModelEnvironment {
+export interface HarnessEnvironment extends ModelEnvironment {
   PLUGIN_ARTIFACTS?: R2Bucket;
   PLUGIN_BUILDER?: Fetcher;
   TENANTS: DurableObjectNamespace<TenantDO>;
   ENVIRONMENTS: DurableObjectNamespace<EnvironmentDO>;
   WORKSPACES: DurableObjectNamespace<WorkspaceDO>;
   SESSIONS: DurableObjectNamespace<SessionDO>;
-  /** Configuration plane: environment settings and other non-secret configuration. */
+  // Environment internals receive no D1 binding in their type contract.
+}
+
+/** The platform catalogue owns the D1 binding. */
+export interface TenantEnvironment extends HarnessEnvironment {
   CONFIG_DB: D1Database;
 }
 /** The preset new tasks use until the user selects another: the official default. */
@@ -114,7 +118,7 @@ export const tenantAddress = (tenantId: string): string =>
   JSON.stringify([DATA_LAYOUT_VERSION, "tenant", id.parse(tenantId)]);
 
 /** Environment-local Harness configuration, revisions and discoverable sessions. */
-abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
+abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
   private nativeSearch: NativeSessionSearch | undefined;
   private sessionSearch(scope: ControlScope): NativeSessionSearch {
     this.scope(scope);
@@ -599,19 +603,21 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
   async nativeAttachWorkspace(scope: ControlScope, workspaceId: string, sessionId: string): Promise<void> {
     await this.workspaces(scope).attach(workspaceId, sessionId);
   }
-  private settingsDocuments: D1SettingsDocuments | undefined;
+  private settingsDocuments: DurableSettingsDocuments | undefined;
   private readonly configWrites = new ConfigWriteQueue();
-  private agentRevisions: D1AgentRevisions<AgentRevision> | undefined;
+  private agentRevisions: DurableAgentRevisions<AgentRevision> | undefined;
   private sessionRecords: DurableSessionIndex<SessionRecord> | undefined;
-  private workspaceRegistry: D1WorkspaceRegistry | undefined;
-  constructor(ctx: DurableObjectState, env: TenantEnvironment) {
+  private workspaceRegistry: DurableWorkspaceRegistry | undefined;
+  constructor(ctx: DurableObjectState, env: HarnessEnvironment) {
     super(ctx, env);
-    // The object is addressed by its environment; its settings rows load before any request.
-    const scope = environmentScopeOf(ctx.id.name);
+    // Every environment-owned record is local; activation never waits for D1.
+    environmentScopeOf(ctx.id.name);
     void ctx.blockConcurrencyWhile(async () => {
       // Sessions belong to this environment alone: their index lives in the object's own storage.
       this.sessionRecords = new DurableSessionIndex<SessionRecord>(ctx.storage.sql);
-      [this.settingsDocuments, this.agentRevisions, this.workspaceRegistry] = await Promise.all([D1SettingsDocuments.open(env.CONFIG_DB, scope, this.configWrites), D1AgentRevisions.open<AgentRevision>(env.CONFIG_DB, scope), D1WorkspaceRegistry.open(env.CONFIG_DB, scope, JSON.stringify({initialized: true, workspaceIds: [], archivedSessionIds: [], pinnedSessionIds: []}))]);
+      this.settingsDocuments = new DurableSettingsDocuments(ctx.storage, this.configWrites);
+      this.agentRevisions = new DurableAgentRevisions<AgentRevision>(ctx.storage);
+      this.workspaceRegistry = new DurableWorkspaceRegistry(ctx.storage, JSON.stringify({initialized: true, workspaceIds: [], archivedSessionIds: [], pinnedSessionIds: []}));
       await this.seedAgents();
     });
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS native_child_owners (id TEXT PRIMARY KEY, parent_id TEXT NOT NULL, root_id TEXT NOT NULL)');
@@ -717,7 +723,7 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
     if (!this.sessionRecords) throw new Error('Environment Session index is not loaded');
     return this.sessionRecords;
   }
-  private agents(): D1AgentRevisions<AgentRevision> {
+  private agents(): DurableAgentRevisions<AgentRevision> {
     if (!this.agentRevisions) throw new Error('Environment Agents are not loaded');
     return this.agentRevisions;
   }

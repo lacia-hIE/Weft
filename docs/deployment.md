@@ -27,7 +27,7 @@ npx cf r2 buckets create --name weft-plugin-artifacts
 
 记录数据库 UUID；按所选资源名修改私有配置。R2 bucket 用于插件不可变产物，保持私有，不开启公开访问。
 
-更新已有部署时应用所有尚未执行的迁移，不能只执行历史文档中的某几个文件。会话与文件卷存于各自 Durable Object 的 SQLite，设置存于 D1，模型凭据存于对应 EnvironmentDO。重命名主 Worker 或修改对象寻址会改变数据归属；已有部署应保留资源名称与数据库 ID。
+更新已有部署时应用所有尚未执行的迁移，不能只执行历史文档中的某几个文件。会话与文件卷存于各自 Durable Object 的 SQLite，环境设置、预设版本、工作区登记与模型凭据存于对应 EnvironmentDO。D1 当前只保存平台环境目录与租户归属。`harness-v2` 是一次明确的数据重置，不导入旧对象或浏览器缓存；旧 D1 环境内部表由 `0007` 删除。升级已有部署应先发布 v2 Worker，再执行这项清理，避免旧 Worker 访问已删除的表；这次更新无需兼容旧数据。更换对象地址不会物理删除旧 DO，旧资源清理与恢复边界见[环境数据归属](architecture/environment-storage.md)。
 
 ## 3. 私有部署配置
 

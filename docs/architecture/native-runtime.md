@@ -1,4 +1,4 @@
-# 原生运行时重构：Profile 装配、D1 配置面与 Computer 执行后端
+# 原生运行时重构：Profile 装配、环境存储与 Computer 执行后端
 
 状态：方案，待实施。目标是在 Cloudflare Workers / Durable Objects 上原生运行 deepseek-harness：插件由官方 profile 装配，Weft 只替换平台相关的条目。
 
@@ -20,24 +20,22 @@ DeepSeek Harness 的所有能力都是插件，由 Cordis Loader 按 profile（`
   - 两边各自加载 profile，按条目的服务归属启用；跨对象调用沿用现有 RPC。
 - **模型：** 直接使用官方 `llm-deepseek-api-key` 与 `llm-pi-ai` 条目，删除自写的 `SafeDeepSeekAdapter` 与写死的提供商目录。第三方提供商（OpenAI、Anthropic、Kimi 等）、思考等级与重试策略按原版工作。pi-ai 1.1.0 打包后增加约 315 KiB（gzip 后），已验证可打包。
 
-## 2. D1 配置面
+## 2. 平台目录与环境本地数据
 
-配置类数据集中到 D1，便于跨环境管理与查询；运行时状态继续留在 Durable Object。
+D1 只管理环境之外的平台抽象，目前保存环境目录与租户归属。环境内部配置和业务状态由其 Durable Object 持有；用户、成员关系和配额等后续平台模型可放在 D1，不把环境内的插件设置同步回 D1。
 
-| 放 D1 | 留在 DO |
+| 存储位置 | 权威数据 |
 | --- | --- |
-| 租户与环境注册表 | 会话日志与投影（SessionDO SQLite） |
-| Agent 组合（预设定义与版本） | 工作区文件（Computer VFS，WorkspaceDO） |
-| 工作区注册表与会话-工作区归属 | 实时事件中心、流、waterfall |
-| 环境设置文档（非密钥字段） | 调度提醒（DO Alarm） |
-| | 会话索引（标题、更新时间、所属 Agent；EnvironmentDO SQLite） |
-| | 凭据（EnvironmentDO，见下） |
+| D1 / TenantDO 目录 | 环境 ID、显示名称、租户归属和创建时间 |
+| EnvironmentDO SQLite | 环境设置及修订号、预设发布版本、工作区登记与会话归属、会话索引、凭据、插件安装审批 |
+| SessionDO SQLite | 会话日志、投影、Inbox、冻结预设、提醒和会话插件状态 |
+| WorkspaceDO / Computer | 文件、附件、执行任务与转换缓存 |
 
-- **访问方式：** 仓储层封装 D1，所有查询带 `tenant_id` 与 `environment_id` 条件；写入经 EnvironmentDO 串行化，保持设置 revision 与冲突检测语义。
-- **插件配置：** 环境设置就是官方 profile 条目的配置覆盖层，命名空间 id 即条目 id。Weft 自己挂载的条目（模型、Agent 循环、子 Agent、权限、预设注册表等）由 `NativeSettings` 显式登记；由 Loader 加载的官方条目只要其 schema 声明了热更新字段，就由 `packages/native-profile/src/settings-rows.ts` 从官方模块表自动登记，表单与默认值都来自官方 schema 与 profile 配置。会话世界创建条目时套用覆盖层，每轮开始前比较覆盖层并以 `loader.update` 让改动生效（热更新字段原地更新，其余字段重启该条目），与官方 `config-editor` 调和 profile patch 的效果一致（`tests/native-profile-settings.test.ts`）。
-- **迁移：** 使用 D1 migrations（`migrations/` 目录），本地由 miniflare 提供 D1。本轮沿用全新数据布局，不迁移旧 DO 数据。
-- **会话索引：** 会话只属于一个环境，也只经它读取，所以索引留在 EnvironmentDO 自己的 SQLite（`session_index` 表），创建与更新会话不再跨区域写 D1。D1 的 `session_index` 表由迁移 `0006` 删除，旧索引行不保留。
-- **凭据：** 存于 EnvironmentDO，不进入 D1，保持密钥与可查询配置分离（已确认）。
+`packages/environment-storage` 提供当前环境的 SQLite 持久化适配器，不持有 D1 或租户路由。设置与预设发布共用写入队列，设置校验在本地事务读取的最新修订号上进行；工作区多行修改使用 `storage.transactionSync`，失败后数据库一起回滚，不维护另一份提交前缓存。预设按需查询当前版本，冷启动不再载入完整历史。
+
+原版设置协议、Config schema、配置 YAML 与插件生命周期行为保持一致。`NativeSettings` 和 `NativeWorkspaces` 继续承担当前 Cloudflare 平台适配，并不宣称已替换为原版 SettingsForms 或 WorkspaceRegistry 的完整实现。后续向原版服务收敛时，优先复用现有的 `StorageBackend / StorageDomain` 和环境文件、会话读取服务，不恢复 D1 业务副本。
+
+本轮使用新的 `harness-v2` 对象与浏览器存储地址，不导入旧配置、日志或文件卷。D1 迁移 `0007` 删除旧环境内部四类表，保留平台环境目录。完整边界、重置和验证见[环境数据归属](environment-storage.md)。
 
 ## 3. Computer 执行后端
 
@@ -57,7 +55,7 @@ Workspace 同时注册三种后端，由 `workspace.runtime.exec(source, {backen
 
 1. **模型链路（已完成）：** 官方 `llm-deepseek-api-key` + `llm-pi-ai` 作为 Loader 条目，环境级模型目录与发现，会话挂载；设置中加入 `llm-pi-ai` 命名空间；匿名 id 与 DeepSeek 上传索引改为环境级 harness home。详见 [模型验证](../validation/model.md)。
 2. **Profile 装配（进行中）：** 构建期把官方 `base` + `web-app` bundle patch 转成 JSON，以原版 `applyEntryPatches` 合成 184 个条目，再叠加 `packages/harness-profile/src/overlay.ts`。覆盖层把每个 Host 条目归入一张表（`LOADED`、`MOUNTED_BY_WEFT`、`PLATFORM`、`NOT_APPLICABLE`、`EXTERNAL`、`PENDING`），浏览器条目由 Boot Graph 提供，预设级条目由预设装配启用；构建在条目未分类、表中名称失效或启用条目残留 `!!js` 时失败（workerd 不执行动态代码，`!!js` 由覆盖层固定为部署事实）。只有启用条目的模块进入 Worker（`weft:official-modules`）。已由会话 Loader 加载：`timer`、`llm-retry`、`deepseek-llm-api-extensions`、`session-log-deepseek`、`session-title-llm`、`timeout-policy`、`session-checkpoint-policy`、`image-offload`、`session-stats`、`session-turn-outline`；只在原生会话加载（`native`）的有 `message-feedback`、`command-feedback`、`web`、`web-fetch-http`、`web-search-deepseek`（其 `baseURL` 经条目覆盖层跟随环境的 DeepSeek 端点）与 `repeat-tool-reminder`。`MOUNTED_BY_WEFT` 中的条目逐步迁移为 Loader 加载。
-3. **D1 配置面（已完成）：** `CONFIG_DB` 绑定与 `migrations/`（`cf d1 migrations apply` 记录已应用的文件；测试按同样方式应用）。已迁入 D1：环境设置（`environment_settings`）、Agent 组合版本（`agent_revisions`）、环境注册表（`environments`）、工作区注册表（`workspace_state`、`workspaces`）。EnvironmentDO 按对象名得到租户与环境，激活时载入本环境的行到缓存；写入经 EnvironmentDO 串行执行并以 revision 或主键为条件，预设发布与默认预设设置共用一个写入队列，检查与写入看到同一状态；工作区事务在副本上修改，变更行以一个 D1 batch 原子提交。留在 Durable Object 的是凭据、运行时拓扑（子会话归属、插件运行请求）、harness home 状态与代码产物（客户端插件模块、原生插件定义，单个模块可能超过 D1 的行大小上限）。
+3. **环境本地持久化（已实现）：** 环境设置、预设版本和工作区登记改为 EnvironmentDO SQLite；D1 仅保存平台目录。EnvironmentDO 的 binding 类型不提供 D1，激活与环境内部操作不等待 D1。使用真实无 D1 binding 的环境验证配置冲突、隔离、工作区会话归属、预设升级与冷重启。
 4. **执行后端：**
    - **PTC 运行时（已完成）：** `packages/native-ptc` 提供 `ctx.ptcRuntime`（`language: 'typescript'`，`isolation: 'dynamic-worker'`），覆盖层把 `ptc-runtime` 归入 `PLATFORM`。每次 `run_code` 由 SessionDO 的 Worker Loader 起一个新的 Dynamic Worker（`globalOutbound: null`，无文件系统），程序经 sucrase 擦除类型后作为模块加载，程序中 `import("data:text/javascript,…")` 引入的内联模块成为同一 isolate 的模块；程序只能经绑定访问文件，所以运行时报告会话的文件策略模式；`tools` 绑定通过 RPC 回到会话世界执行，所以审批、权限与工具日志与原生调用一致。失败按原版分类返回（`exception`、`timeout`、`abort`、`invalid-output`、`output-limit`、`worker-exit`）。运行时直接放在会话里而不经 WorkspaceDO：绑定是会话内的闭包，程序访问文件也走 `tools`。PTC 模式（`tool-presentation`，`mode: 'ptc'`）因此可用。
    - **workflow（已完成）：** 官方 `workflow-ptc` 原本用 `node:vm` 在宿主侧解析脚本、在 guest 中执行脚本。`scripts/native-workflow-platform.mjs` 在构建期做三处替换：宿主侧解析改用 acorn；PTC 程序把脚本体编进同一模块（Dynamic Worker 加载时编译，Workers 不在运行时求值源码）；guest 的 `vm.Script` 收到这个已编译的函数并以官方钩子（`agent`、`parallel`、`pipeline`、`phase`、`log`、`args`）调用。guest 由同一份官方源码重新打包。限制、子 Agent、进度与结果仍是官方代码；脚本以严格模式运行。预设装配沿用官方 `delegation` 分组（`isolate: {workflowEngine: true}`）。`tests/native-workflow.test.ts` 验证脚本派生子 Agent 并返回结果。

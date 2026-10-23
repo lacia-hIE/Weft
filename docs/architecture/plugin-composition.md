@@ -13,7 +13,7 @@ Weft 的预置扩展通过同一插件目录注册。组合包继续使用原版
 
 ## 配置与管理
 
-配置通过原版 `settings/describe`、`settings/update` 和配置 YAML 编辑，启停通过原版 `pluginManager` 接口处理。配置写入仍由原版适配层的 D1 队列串行化，不在插件管理层重复排队。
+配置通过原版 `settings/describe`、`settings/update` 和配置 YAML 编辑，启停通过原版 `pluginManager` 接口处理。配置写入仍由环境适配层的共享写入队列串行化，不在插件管理层重复排队。
 
 浏览器使用原版插件清单及设置接口取得启用状态和配置，监听原版变更事件与重连事件。任务管理插件只提供自身的 UI 和状态订阅，不负责加载其他插件，也不再请求专用的 `worker-plugins` 配置接口。
 

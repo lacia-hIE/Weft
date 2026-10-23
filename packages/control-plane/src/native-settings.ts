@@ -13,7 +13,7 @@ import { credentialRef, type CredentialRef } from '@deepseek-ai/dsh-credentials'
 import { RemoteError } from '@deepseek-ai/dsh-typert-protocol';
 import settingsRemote from '../../../.generated/official-remotes/packages/api/settings-controller/typert.remote-client.js';
 import { DurableCredentials } from './native-credentials.ts';
-import type { D1SettingsDocuments } from '../../config-store/src/index.ts';
+import type { DurableSettingsDocuments } from '../../environment-storage/src/index.ts';
 import AgentPresets from '@deepseek-ai/dsh-agent-preset-registry';
 import AgentLoop from '@deepseek-ai/dsh-agent-loop';
 import Subagents from '@deepseek-ai/dsh-subagent';
@@ -117,7 +117,7 @@ function editPath(value: unknown, path: readonly string[], op: SettingsPathOpVie
 export class NativeSettings {
   readonly credentials: DurableCredentials;
   private readonly namespaces: Namespace[];
-  constructor(storage: DurableObjectStorage, private readonly host: NativeSettingsHost, private readonly documents: D1SettingsDocuments) {
+  constructor(storage: DurableObjectStorage, private readonly host: NativeSettingsHost, private readonly documents: DurableSettingsDocuments) {
     this.credentials = new DurableCredentials(new Context(), storage, (event, ref) => host.changed(event, [ref]));
     this.namespaces = [
       ...environmentPlugins.namespaces.map(row => ({...row, base: () => structuredClone(row.base), autoGenerate: false, validate: () => {}})),

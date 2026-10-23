@@ -1,3 +1,5 @@
+> 当前数据归属以 [环境本地持久化](docs/architecture/environment-storage.md) 为准：D1 仅保存平台目录，环境内部设置、预设和工作区登记由 EnvironmentDO SQLite 管理。下文早期 D1 配置表设计保留为历史背景。
+
 # Weft — 可组合、零常驻的 Agent Fabric
 
 > **产品设计与技术架构 RFC**  

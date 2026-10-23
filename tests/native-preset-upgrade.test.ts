@@ -1,23 +1,31 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import {mkdtemp, rm} from 'node:fs/promises';
+import {join} from 'node:path';
+import {tmpdir} from 'node:os';
 import { createRuntime, tenantId, url } from './helpers/miniflare.ts';
 
 const base = `/v1/tenants/${tenantId('alpha')}`;
-const revision = (id: string, number: number, plugins: unknown[]) => JSON.stringify({
+const revision = (id: string, number: number, plugins: unknown[]) => ({
   revision: number, publishedAt: new Date(0).toISOString(), upstream: 'an-earlier-upstream',
   spec: {id, name: id, persona: '', workspaceId: 'default', allowClientPlugins: id === 'cordis', plugins},
 });
 
 test('official presets Weft published follow the official definition; presets the environment published stay', {timeout: 120_000}, async () => {
-  const runtime = createRuntime();
+  const directory = await mkdtemp(join(tmpdir(), 'weft-preset-upgrade-'));
+  const options = {browser: true, configureModel: false, scriptPath: 'dist/environment-storage-worker.js'};
+  let runtime = createRuntime(directory, options);
   try {
-    // Requests wait for the runtime's configuration migrations; /health activates no environment.
-    assert.equal((await runtime.dispatchFetch(url('alpha', '/health'))).status, 200);
-    const db = await runtime.getD1Database('CONFIG_DB', 'alpha');
-    const insert = (id: string, number: number, plugins: unknown[]) => db.prepare('INSERT INTO agent_revisions VALUES (?, ?, ?, ?, ?)').bind(tenantId('alpha'), 'default', id, number, revision(id, number, plugins)).run();
-    await insert('standard', 1, [{id: 'persona', config: {prefix: 'earlier'}}]);
-    await insert('cordis', 1, [{id: 'persona', config: {prefix: 'earlier'}}]);
-    await insert('cordis', 2, [{id: 'persona', config: {prefix: 'chosen by the environment'}}]);
+    const seeded = await runtime.dispatchFetch(url('alpha', '/_fixture/environment-storage'), {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({
+      scope: {tenantId: tenantId('alpha'), environmentId: 'default'}, operation: 'seed-presets',
+      document: JSON.stringify([
+        revision('standard', 1, [{id: 'persona', config: {prefix: 'earlier'}}]),
+        revision('cordis', 1, [{id: 'persona', config: {prefix: 'earlier'}}]),
+        revision('cordis', 2, [{id: 'persona', config: {prefix: 'chosen by the environment'}}]),
+      ]),
+    })});
+    assert.equal(seeded.status, 200);
+    await runtime.dispose(); runtime = createRuntime(directory, options);
     const latest = async (id: string) => {
       const response = await runtime.dispatchFetch(url('alpha', `${base}/agents/${id}`));
       assert.equal(response.status, 200, await response.clone().text());
@@ -32,5 +40,6 @@ test('official presets Weft published follow the official definition; presets th
     assert.deepEqual(cordis.spec.plugins.map(row => row.id), ['persona'], 'a revision the environment published is kept');
   } finally {
     await runtime.dispose();
+    await rm(directory, {recursive: true, force: true});
   }
 });

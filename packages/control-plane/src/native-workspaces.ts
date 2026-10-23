@@ -1,4 +1,4 @@
-import type { D1WorkspaceRegistry, WorkspaceTransaction } from '../../config-store/src/index.ts';
+import type { DurableWorkspaceRegistry, WorkspaceTransaction } from '../../environment-storage/src/index.ts';
 import { posix } from 'node:path';
 import { RemoteError } from '@deepseek-ai/dsh-typert-protocol';
 import { brandString } from '@deepseek-ai/dsh-brand';
@@ -24,9 +24,9 @@ const wid = (id: string) => brandString<WorkspaceId>(id);
 export class NativeWorkspaces {
   private readonly feed = new NativeStreamHub<WorkspaceFollowFrame>();
   private tail = Promise.resolve();
-  /** The open registry transaction; reads and writes inside `commit` go to its private copy. */
+  /** The open local SQLite transaction; `commit` publishes only after it succeeds. */
   private tx: WorkspaceTransaction | undefined;
-  constructor(private readonly registry: D1WorkspaceRegistry, private readonly host: NativeWorkspaceHost) {
+  constructor(private readonly registry: DurableWorkspaceRegistry, private readonly host: NativeWorkspaceHost) {
     this.snapshot();
   }
   private state(): WorkspaceDomainState {

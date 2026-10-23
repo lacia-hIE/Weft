@@ -38,7 +38,7 @@ export function sessionPath(
 }
 
 /**
- * Apply `migrations/*.sql` to the runtime's configuration database the way
+ * Apply `migrations/*.sql` to the runtime's platform database the way
  * `cf d1 migrations apply` does: each file runs once, recorded in
  * `d1_migrations`, so persisted test directories keep their schema across restarts.
  */
@@ -190,7 +190,7 @@ export function createRuntime(
     ...options,
     ...(persist ? { resourcePersistencePath: persist } : {}),
   });
-  // The configuration plane's D1 schema comes from the same migration files a deployment applies.
+  // The platform catalogue's D1 schema uses the same migrations as a deployment.
   // Only application requests wait: Miniflare's own binding proxies (the D1 handle
   // the migration uses) travel through dispatchFetch too.
   const migrated = runtime.ready.then(() => applyConfigMigrations(runtime));
