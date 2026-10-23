@@ -25,7 +25,11 @@ export function apply(ctx: ClientContext) {
     apply: async entry => {
       const fiber = fibers.get(entry.id);
       if (entry.disabled) {if (fiber) {await fiber.dispose(); fibers.delete(entry.id);} return;}
-      if (fiber) {fiber.update(entry.config, true); await fiber.await(); return;}
+      if (fiber) {
+        try {fiber.update(entry.config, true); await fiber.await();}
+        catch (error) {await fiber.dispose(); fibers.delete(entry.id); throw error;}
+        return;
+      }
       const plugin = environmentClientModules[entry.name];
       if (!plugin) throw new Error('Unregistered client plugin: '+entry.name);
       const next = ctx.plugin(plugin, entry.config);

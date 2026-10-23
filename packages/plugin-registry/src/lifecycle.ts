@@ -21,7 +21,8 @@ export class PluginCoordinator {
         const old = this.applied.get(entry.id);
         if (JSON.stringify(old) === JSON.stringify(entry)) continue;
         if (old && old.name !== entry.name) {await this.driver.remove(old); this.applied.delete(entry.id);}
-        await this.driver.apply(entry);
+        try {await this.driver.apply(entry);}
+        catch (error) {this.applied.delete(entry.id); throw error;}
         this.applied.set(entry.id, entry);
       }
     };

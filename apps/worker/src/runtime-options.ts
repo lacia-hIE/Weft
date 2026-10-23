@@ -33,6 +33,7 @@ import {mountNativeAttachments} from '../../../packages/native-attachments/src/i
 import {mountSessionExport} from '../../../packages/harness-runtime/src/session-export.ts';
 import {mountEnvironmentPlugins} from '../../../packages/native-composition/src/lifecycle.ts';
 import {WorkspaceServices} from '../../../packages/workspace/src/services.ts';
+import type {PluginPlan} from '../../../packages/plugin-registry/src/types.ts';
 import {mountOfficialTeam} from '../../../packages/native-bundles/src/runtime.ts';
 import {mountNativeSubagents, type SubagentLimits} from '../../../packages/native-subagents/src/index.ts';
 import SessionFileReferences from '@weft/upstream/packages/api/session-controller/src/file-references.ts';
@@ -190,7 +191,10 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
         if (presentation) await mountNativeAttachments(ctx, {storage, scope: workspace, sessionId: scope.sessionId, transport: env.WORKSPACES.getByName(workspaceAddress(workspace)), ...(env.IMAGES ? {images: env.IMAGES} : {})});
         if (presentation) await mountSessionExport(ctx);
         if (presentation) {
-          await ctx.plugin(WorkspaceServices, {scope: workspace, transport: env.WORKSPACES.getByName(workspaceAddress(workspace)), resolve: async (id: string) => (await control.nativePluginPlan(owner)).entries.find(row => row.id === id)});
+          await ctx.plugin(WorkspaceServices, {scope: workspace, transport: env.WORKSPACES.getByName(workspaceAddress(workspace)), resolve: async (id: string) => {
+            const plan = await (await control.nativePluginPlan(owner)).json() as PluginPlan;
+            return plan.entries.find(row => row.id === id);
+          }});
           reconcilePlugins = await mountEnvironmentPlugins(ctx, context.pluginPlan);
         }
         // Change summaries come from git snapshots in the workspace container, so they follow the environment's shell.

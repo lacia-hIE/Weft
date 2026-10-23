@@ -322,7 +322,7 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
   async nativePluginPlan(scope: ControlScope) {
     this.scope(scope);
     await this.syncSettingsDocument(scope);
-    return this.settings(scope).pluginPlan();
+    return Response.json(this.settings(scope).pluginPlan());
   }
   async nativeProfileOverrides(scope: ControlScope): Promise<Record<string, Record<string, unknown>>> {
     await this.syncSettingsDocument(scope);

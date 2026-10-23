@@ -17,7 +17,14 @@ export async function updateLoaderEntry(loader: Loader, options: EntryOptions): 
 }
 export function loaderDriver(loader: Loader): PluginDriver {
   return {
-    apply: entry => updateLoaderEntry(loader, {id: entry.id, name: entry.name, config: entry.config, disabled: entry.disabled}),
+    apply: async entry => {
+      try {await updateLoaderEntry(loader, {id: entry.id, name: entry.name, config: entry.config, disabled: entry.disabled});}
+      catch (error) {
+        const current = [...loader.entries()].find(row => row.options.id === entry.id);
+        if (current) {await current.fiber?.dispose(); loader.remove(entry.id);}
+        throw error;
+      }
+    },
     remove: async entry => {
       const current = [...loader.entries()].find(row => row.options.id === entry.id);
       if (!current) return;
