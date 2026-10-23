@@ -1,4 +1,4 @@
-import {namesOfficialBundle, optionalBundleInfo, shippedBundle, type BundleState} from './catalog.ts';
+import {availableBundleStates, namesOfficialBundle, optionalBundleInfo, shippedBundle, type BundleState} from './catalog.ts';
 import type {ChangeResult, PluginSpecInspection} from '@deepseek-ai/dsh-plugin-manager/types';
 
 const warning = 'Applies to new Sessions. Existing Sessions retain their frozen composition. Refresh the workbench to update official browser plugins.';
@@ -33,6 +33,7 @@ export class OfficialBundleRegistry {
       return {changed: Boolean(old), application: 'applied', stage, target, warnings: [warning]};
     }
     if (endpoint.endsWith('setBundleEnabled') && !old) return fail('Install the official bundle first.');
+    if (endpoint.endsWith('setBundleEnabled') && old && !availableBundleStates([old]).length) return fail('Reinstall the version included in this deployment before enabling it.');
     const options = (args.options ?? {}) as {enabled?: boolean; registry?: string | null; approvedBuilds?: string[]};
     if (options.registry != null && options.registry.replace(/\/$/, '') !== 'https://registry.npmjs.org' || options.approvedBuilds?.length) return fail('Prebuilt official bundles do not use alternate registries or install scripts.');
     const next: BundleState = {name: bundle.name, version: bundle.version, digest: bundle.digest,

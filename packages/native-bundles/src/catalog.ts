@@ -2,6 +2,7 @@ import {applyEntryPatches, type PatchOptions} from '@deepseek-ai/cordis-plugin-i
 import type {EntryOptions} from '@deepseek-ai/cordis-plugin-loader';
 import type {AgentRevision} from '../../control-plane/src/contracts.ts';
 import type {BundleInfo, PluginInfo, PluginEntryId} from '@deepseek-ai/dsh-plugin-manager/types';
+import type {PluginLocalizedMeta} from '@deepseek-ai/dsh-package-manifest';
 import definitions from '../../../.generated/official-optional-bundles.json';
 import metadata from '../../../.generated/plugin-meta.json';
 
@@ -10,7 +11,7 @@ export const TEAM_CLIENT = '@deepseek-ai/dsh-experimental-client-ui-agent-team';
 export const optionalBundles = definitions;
 export interface BundleState {name: string; version: string; digest: string; enabled: boolean}
 const entryId = (name: string, id: string): PluginEntryId => `official-bundle:${name}:${id}` as PluginEntryId;
-const metaOf = (name: string) => (metadata.packages as Record<string, {title?: Record<string, string>; description?: Record<string, string>}>)[name];
+const metaOf = (name: string) => (metadata.packages as Record<string, PluginLocalizedMeta>)[name];
 
 /** Exact shipped code only; a version or source outside this catalog cannot acquire trust. */
 export function shippedBundle(spec: string) {
@@ -18,6 +19,9 @@ export function shippedBundle(spec: string) {
 }
 export function namesOfficialBundle(spec: string): boolean {
   return optionalBundles.some(row => spec === row.name || spec.startsWith(row.name+'@'));
+}
+export function availableBundleStates(states: readonly BundleState[]): BundleState[] {
+  return states.filter(state => optionalBundles.some(bundle => bundle.name === state.name && bundle.version === state.version && bundle.digest === state.digest));
 }
 
 /** Apply the upstream patch, then separate root services and browser rows from preset tools. */
@@ -44,16 +48,17 @@ export function composeBundleProfile(profile: AgentRevision, states: readonly Bu
 export function optionalBundleInfo(states: readonly BundleState[]): BundleInfo[] {
   return optionalBundles.map(bundle => {
     const state = states.find(row => row.name === bundle.name);
+    const compatible = !state || availableBundleStates([state]).length === 1;
     const inserts = bundle.patch.flatMap(row => 'insert' in row ? row.insert : []);
-    return {name: bundle.name, version: bundle.version, description: bundle.description,
+    return {name: bundle.name, version: state?.version ?? bundle.version, description: bundle.description,
       ...(metaOf(bundle.name) ? {meta: metaOf(bundle.name)!} : {}), official: true,
-      availability: state ? 'profile' : 'missing', installed: Boolean(state), enabled: state?.enabled ?? false,
+      availability: state ? 'profile' : 'missing', installed: Boolean(state), enabled: compatible && (state?.enabled ?? false),
       installTarget: {spec: `${bundle.name}@${bundle.version}`, version: bundle.version}, optional: false, removable: Boolean(state),
       rows: inserts.map(row => ({rowId: row.id, moduleName: row.name,
         ...(metaOf(row.name) ? {meta: metaOf(row.name)!} : {}),
         ...(state ? {entryId: entryId(bundle.name, row.id)} : {})})),
       overrides: bundle.patch.flatMap(row => 'id' in row ? [row.id] : []),
-      ...(state && (state.digest !== bundle.digest || state.version !== bundle.version) ? {error: {code: 'incompatible-version' as const, diagnostic: 'Reinstall the version included in this deployment.'}} : {}),
+      ...(!compatible ? {error: {code: 'incompatible-version' as const, diagnostic: 'Reinstall the version included in this deployment.'}} : {}),
     };
   });
 }

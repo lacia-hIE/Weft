@@ -80,7 +80,7 @@ import {readNativePresets, type CompositionEndpoint} from '../../native-composit
 import {profileDefinitions} from '../../harness-profile/src/index.ts';
 import {manageNativePlugins} from '../../native-composition/src/manager.ts';
 import {OfficialBundleRegistry} from '../../native-bundles/src/registry.ts';
-import {composeBundleProfile, optionalBundleInfo, optionalBundlePlugins, TEAM_CLIENT, TEAM_BUNDLE} from '../../native-bundles/src/catalog.ts';
+import {availableBundleStates, composeBundleProfile, optionalBundleInfo, optionalBundlePlugins, TEAM_CLIENT, TEAM_BUNDLE} from '../../native-bundles/src/catalog.ts';
 import {PackageInstaller} from '../../package-install/src/host.ts';
 import {mountWorkspace} from '../../workspace/src/provider.ts';
 import { ModelConfigurationError, type ModelEnvironment } from '../../model-provider/src/index.ts';
@@ -334,7 +334,7 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
   private officialBundles(): OfficialBundleRegistry {return this.officialBundleRegistry ??= new OfficialBundleRegistry(this.ctx.storage);}
   async nativeOfficialBundleClients(scope: ControlScope): Promise<string[]> {
     this.scope(scope);
-    return this.officialBundles().list().some(row => row.name === TEAM_BUNDLE && row.enabled) ? [TEAM_CLIENT] : [];
+    return availableBundleStates(this.officialBundles().list()).some(row => row.name === TEAM_BUNDLE && row.enabled) ? [TEAM_CLIENT] : [];
   }
   private packageInstaller: PackageInstaller | undefined;
   private packages(scope: ControlScope): PackageInstaller {
@@ -380,7 +380,9 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
     await this.syncSettingsDocument(scope);
     const defaultId = await this.nativePresetDefault(scope);
     const bundleStates = this.officialBundles().list();
-    const profiles = (await this.state(scope)).agents.map(profile => composeBundleProfile(profile, bundleStates));
+    // Keep management readable when a deployment retires an installed version,
+    // so users can uninstall or reinstall it. Session admission stays strict.
+    const profiles = (await this.state(scope)).agents.map(profile => composeBundleProfile(profile, availableBundleStates(bundleStates)));
     const enablement = this.settings(scope).profileEnablement();
     const packages = this.packages(scope).registry;
     const version = JSON.stringify([defaultId, profiles.map(profile => [profile.spec.id, profile.revision]), enablement, packages.list(), bundleStates]);
