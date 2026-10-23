@@ -24,17 +24,6 @@ body {
 .home-brand {
   color: var(--dsw-alias-label-primary);
 }
-.home-logout {
-  color: var(--dsw-alias-label-secondary);
-  text-decoration: none;
-  font-size: 13px;
-  padding: 6px 10px;
-  border-radius: 8px;
-}
-.home-logout:hover {
-  color: var(--dsw-alias-label-primary);
-  background: var(--dsw-alias-interactive-bg-hover);
-}
 .home-main {
   width: 100%;
   max-width: 960px;
@@ -51,20 +40,9 @@ body {
   margin: 8px 0 0;
   color: var(--dsw-alias-label-secondary);
 }
-.home-create {
-  display: flex;
-  gap: 8px;
-  margin: 28px 0 24px;
-  max-width: 480px;
-}
-.home-create input {
-  min-width: 0;
-  flex: 1;
-  height: 36px;
-}
 .home-error {
-  color: var(--dsw-alias-label-danger, rgb(239, 68, 68));
-  margin: -8px 0 16px;
+  color: var(--dsw-alias-label-error);
+  margin: 0 0 16px;
 }
 .home-grid {
   display: grid;
@@ -91,7 +69,7 @@ body {
   background: var(--dsw-alias-interactive-bg-hover);
 }
 .home-card:focus-visible {
-  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline: 2px solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
   outline-offset: 2px;
 }
 .home-card-mark {
@@ -122,15 +100,6 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.home-badge {
-  flex-shrink: 0;
-  font-size: 11px;
-  line-height: 18px;
-  padding: 0 6px;
-  border-radius: 6px;
-  color: var(--dsw-alias-label-secondary);
-  border: 1px solid var(--dsw-alias-border-l2);
-}
 .home-card-meta {
   display: flex;
   flex-wrap: wrap;
@@ -160,7 +129,35 @@ body {
   .home-main {
     padding: 32px 16px 48px;
   }
-  .home-create {
-    max-width: none;
   }
+
+/* Layout around the original DSH controls, using the same theme tokens. */
+.home-account { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.home-avatar { display: grid; place-items: center; flex: none; width: 32px; height: 32px; border: 0.5px solid var(--dsw-alias-border-l3); border-radius: 50%; color: var(--dsw-alias-label-secondary); }
+.home-identity { display: flex; flex-direction: column; min-width: 0; }
+.home-identity-label { font-size: 11px; color: var(--dsw-alias-label-tertiary); }
+.home-email { max-width: min(32vw, 280px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.home-intro { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 40px; }
+.home-intro > button { flex: none; }
+.home-list-heading { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.home-list-heading h2 { margin: 0; font-size: 14px; font-weight: 500; }
+.home-list-heading > span { font-size: 12px; color: var(--dsw-alias-label-tertiary); }
+.home-create-dialog { width: min(580px, 100%); max-height: 100%; }
+.home-create-dialog > div:first-of-type { min-height: 0; overflow-y: auto; }
+.home-create-form { display: flex; flex-direction: column; gap: 12px; }
+.home-field-label { font-size: 13px; font-weight: 500; }
+.home-yaml { min-width: 0; }
+.home-yaml > p { margin: 10px 0 0; font-size: 12px; line-height: 1.6; color: var(--dsw-alias-label-tertiary); }
+.home-yaml textarea { min-height: 220px; max-height: 340px; font-family: var(--dsw-font-family-code, ui-monospace, monospace); font-size: 12px; line-height: 1.6; tab-size: 2; }
+.home-create-form .home-error { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+@media (max-width: 600px) {
+  .home-bar { gap: 12px; }
+  .home-brand { width: 130px; height: auto; flex-shrink: 1; }
+  .home-account { gap: 8px; }
+  .home-avatar, .home-identity-label { display: none; }
+  .home-email { max-width: 32vw; }
+  .home-intro { align-items: flex-start; flex-direction: column; gap: 20px; margin-bottom: 28px; }
+  .home-grid { grid-template-columns: minmax(0, 1fr); }
+  .home-card-meta code { overflow-wrap: anywhere; }
+  .home-yaml textarea { min-height: 180px; }
 }

@@ -208,12 +208,16 @@ export class NativeSettings {
    * returns to its profile configuration, and secret fields keep their values.
    * @throws Error naming the first rejected row; nothing is written then.
    */
-  async replaceDocument(text: string): Promise<void> {
-    const parsed: unknown = YAML.parse(text) ?? [];
+  validateDocument(text: string): Map<string, Section> {
+    const document = YAML.parseDocument(text);
+    if (document.errors.length || document.warnings.length) throw new Error((document.errors[0] ?? document.warnings[0])!.message);
+    const parsed: unknown = document.toJS({maxAliasCount: 0}) ?? [];
     if (!Array.isArray(parsed)) throw new Error('The document must be a YAML list of profile rows');
+    if (parsed.length > 256) throw new Error('The document contains too many profile rows');
     const next = new Map<string, Section>();
     for (const [index, row] of parsed.entries()) {
       if (!object(row) || typeof row.id !== 'string') throw new Error(`Row ${index + 1} needs an id`);
+      if (Object.keys(row).some(key => key !== 'id' && key !== 'config')) throw new Error(`Row ${index + 1} accepts only id and config`);
       const ns = this.namespaces.find(item => item.id === row.id);
       if (!ns) throw new Error(`"${row.id}" is not a configurable plugin entry`);
       if (next.has(ns.id)) throw new Error(`"${ns.id}" appears more than once`);
@@ -233,6 +237,10 @@ export class NativeSettings {
       catch (error) { throw new Error(`"${ns.id}": ${error instanceof Error ? error.message : String(error)}`); }
       next.set(ns.id, user);
     }
+    return next;
+  }
+  async replaceDocument(text: string): Promise<void> {
+    const next = this.validateDocument(text);
     for (const ns of this.namespaces) {
       const user = next.get(ns.id) ?? {};
       if (JSON.stringify(user) !== JSON.stringify(this.row(ns.id).user)) await this.write(ns.id, undefined, () => user);

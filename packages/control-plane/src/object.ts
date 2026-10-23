@@ -208,6 +208,18 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
     if (endpoint !== 'settings/describe' && endpoint !== 'settings/openSettingsDocument') await this.renderSettingsDocument(scope);
     return response;
   }
+  /** The tenant registers a new environment only after its initial profile is valid and durable. */
+  async nativeInitializeEnvironment(scope: ControlScope, configuration: string): Promise<Response> {
+    this.scope(scope);
+    if (typeof configuration !== 'string' || configuration.length > 65_536) return Response.json({error: 'Invalid environment configuration'}, {status: 400});
+    const settings = this.settings(scope);
+    try {settings.validateDocument(configuration);}
+    catch (error) {return Response.json({error: `环境 YAML 配置无效：${error instanceof Error ? error.message : String(error)}`}, {status: 400});}
+    await settings.replaceDocument(configuration);
+    await this.writeSettingsDocument(scope);
+    await this.ctx.storage.sync();
+    return Response.json({initialized: true});
+  }
   /**
    * The configuration document lives in the environment's default workspace,
    * where the official file preview opens it and Agents edit it with their file
@@ -1032,6 +1044,11 @@ export class TenantDO extends DurableObject<TenantEnvironment> {
         return Response.json({ error: "Environment already exists" }, { status: 409 });
       if (rows.length >= 64)
         return Response.json({ error: "Environment limit reached" }, { status: 409 });
+      if (parsed.data.configuration !== undefined) {
+        const scope = {tenantId, environmentId};
+        const initialized = await this.env.ENVIRONMENTS.getByName(environmentAddress(scope)).nativeInitializeEnvironment(scope, parsed.data.configuration);
+        if (!initialized.ok) return initialized;
+      }
       const now = new Date().toISOString();
       const record: EnvironmentRecord = {id: environmentId, name: parsed.data.name, createdAt: now, updatedAt: now};
       const result = await this.env.CONFIG_DB.prepare('INSERT INTO environments (tenant_id, environment_id, document) VALUES (?, ?, ?) ON CONFLICT DO NOTHING')

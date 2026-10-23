@@ -341,3 +341,40 @@ test("environment model choices use the published session revision and server-ow
     await runtime.dispose();
   }
 });
+
+test('environment creation validates native profile YAML before publishing and restores its real settings and document', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'weft-environment-yaml-'));
+  let runtime = createRuntime(directory);
+  const base = `/v1/tenants/${tenantId('alpha')}/environments`;
+  const create = (id: string, configuration: string) => runtime.dispatchFetch(url('alpha',base),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id,name:id,configuration})});
+  const describe = async (id: string) => {
+    const method='settings/describe';
+    const response=await runtime.dispatchFetch(url('alpha',`${base}/${id}/native/api/${method}`),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({type:'client-request',rpcId:crypto.randomUUID(),method,payload:{args:{}}})});
+    const body=await response.json() as {result:{ok:boolean;value:{namespaces:{ns:string;value:Record<string,unknown>}[]}}};
+    assert.equal(body.result.ok,true);
+    return Object.fromEntries(body.result.value.namespaces.map(row=>[row.ns,row.value]));
+  };
+  const configuration='- id: workspace-runtime\n  config:\n    shell: worker\n    containerInstance: standard-1\n- id: agent-loop\n  config:\n    maxParallelToolCalls: 3\n- id: agent-preset-registry\n  config:\n    selectedDefault: minimal\n';
+  try {
+    for (const invalid of ['- id: [','not-a-list','- id: workspace-runtime\n  config: {shell: invalid}', '- id: agent-loop\n  config: {maxParallelToolCalls: 3}\n- id: unknown-entry', '- id: agent-loop\n  disabled: true', '- id: agent-loop\n  config: &a {maxParallelToolCalls: 3}\n- id: subagent\n  config: *a', '- id: agent-loop\n  id: subagent']) {
+      const response=await create('yaml-retry',invalid);
+      assert.equal(response.status,400,await response.clone().text());
+      const list=await (await runtime.dispatchFetch(url('alpha',base))).json() as {environments:{id:string}[]};
+      assert.ok(!list.environments.some(row=>row.id==='yaml-retry'));
+    }
+    assert.equal((await create('yaml-retry',configuration)).status,201);
+    const first=await describe('yaml-retry');
+    assert.equal(first['workspace-runtime']!.shell,'worker');
+    assert.equal(first['agent-loop']!.maxParallelToolCalls,3);
+    assert.equal(first['agent-preset-registry']!.selectedDefault,'minimal');
+    assert.equal((await create('yaml-retry','[]')).status,409);
+    assert.equal((await describe('yaml-retry'))['agent-loop']!.maxParallelToolCalls,3);
+    const doc=await runtime.dispatchFetch(url('alpha',`${base}/yaml-retry/workspaces/default/files?path=/workspace/.dsh/profile.yml`));
+    assert.equal(doc.status,200);assert.match(await doc.text(),/workspace-runtime/);
+    const other=await describe('default');
+    assert.equal(other['workspace-runtime']!.shell,'auto');
+    assert.equal((await runtime.dispatchFetch(url('beta',`${base}/yaml-retry/state`))).status,403);
+    await runtime.dispose();runtime=createRuntime(directory);
+    assert.equal((await describe('yaml-retry'))['agent-loop']!.maxParallelToolCalls,3);
+  } finally {await runtime.dispose();await rm(directory,{recursive:true,force:true});}
+});

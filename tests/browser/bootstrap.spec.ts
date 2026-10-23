@@ -16,7 +16,7 @@ test('a rejected application chunk shows a recoverable error instead of leaving 
   await page.unroute(chunk);
   await page.getByRole('button', {name: '重新加载', exact: true}).click();
   await expect(page.getByText('界面资源加载失败，请刷新页面重试。', {exact: true})).toHaveCount(0);
-  await expect(page.getByRole('heading', {name: '我的 Agents', exact: true})).toBeVisible({timeout: 45_000});
+  await expect(page.getByRole('heading', {name: '我的环境', exact: true})).toBeVisible({timeout: 45_000});
 });
 
 test('an application evaluation error preserves its cause in the recovery screen', async ({page}) => {

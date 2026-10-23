@@ -79,6 +79,8 @@ npm run dev
 
 首次构建会下载固定版本的上游源码。打开 `http://127.0.0.1:8787`，创建或选择 Agent 环境，再到 **Settings → Models** 填写模型 API Key、模型和 HTTPS endpoint，即可开始对话。
 
+首页显示当前登录邮箱；创建环境时可展开 YAML 高级配置，使用与设置页一致的 `profile.yml` 条目格式。配置通过校验后才会创建环境。
+
 本地开发使用模拟身份，仅监听回环地址；会自动初始化 D1 表结构，数据保存在 `.cloudflare/local-state/`。无需维护者账号或生产部署配置，也不需要将模型密钥写进 `.env`。
 
 本地可使用 Worker shell、会话、设置与动态 Worker 插件。真实 Linux 容器及 npm 插件隔离编译服务需要云端部署。

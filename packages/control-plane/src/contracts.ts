@@ -78,7 +78,7 @@ export const environmentScopeSchema = z
 export type EnvironmentScope = z.infer<typeof environmentScopeSchema>;
 export type ControlScope = EnvironmentScope;
 export const environmentCreateSchema = z
-  .object({ id: id.optional(), name: z.string().trim().min(1).max(80) })
+  .object({ id: id.optional(), name: z.string().trim().min(1).max(80), configuration: z.string().max(65_536).optional() })
   .strict();
 export interface EnvironmentRecord {
   id: string;

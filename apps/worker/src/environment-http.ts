@@ -55,7 +55,7 @@ export async function resolveEnvironmentRequest(
         request,
         response: await tenant.createEnvironment(
           principal.tenantId,
-          await readJson(request, 4096),
+          await readJson(request, 131_072),
         ),
       };
     }

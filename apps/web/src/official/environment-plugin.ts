@@ -113,7 +113,7 @@ function mount(ctx: ClientContext): void {
         if (sessionId === undefined) return;
         ctx.sidebarRight.openResource(fileAddressFor(sessionId, ctx.sessions.list.getSnapshot().byId[sessionId]?.cwd, document.path));
     }) as () => void);
-    // My Agents is the site home page, outside every environment's workbench; the sidebar entry leaves for it.
+    // My environments is the site home page, outside every environment's workbench; the sidebar entry leaves for it.
     ctx.effect(() => ctx.locale.register(NS, {zh, en}), 'weft.environments-locale');
     const t = ctx.locale.bind(NS);
     ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({ name: 'sidebar.panellist', id: PANEL_ID, order: 100, label: () => t('panel'), locale: NS }, EnvironmentsIcon));
@@ -122,8 +122,8 @@ function mount(ctx: ClientContext): void {
 
 const NS = 'weft.environments';
 const PANEL_ID = 'weft-agents';
-const zh = { panel: '我的 Agents' };
-const en = { panel: 'My Agents' };
+const zh = { panel: '我的环境' };
+const en = { panel: 'My environments' };
 
 function EnvironmentsIcon(): React.ReactNode {
     return React.createElement('svg', { width: 16, height: 16, viewBox: '0 0 16 16', fill: 'none', stroke: 'currentColor', strokeWidth: 1.4, 'aria-hidden': true },
@@ -131,7 +131,7 @@ function EnvironmentsIcon(): React.ReactNode {
         React.createElement('rect', { x: 2, y: 9, width: 5, height: 5, rx: 1 }), React.createElement('rect', { x: 9, y: 9, width: 5, height: 5, rx: 1 }));
 }
 
-/** Selecting My Agents returns the workbench to its Conversation and opens the site home page. */
+/** Selecting My environments returns the workbench to its Conversation and opens the site home page. */
 function LeaveForHome({ layout }: { layout: ClientContext['layout'] }): React.ReactNode {
     React.useEffect(() => {
         layout.selectPanel(null);

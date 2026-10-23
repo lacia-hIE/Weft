@@ -15,9 +15,9 @@ async function boot(): Promise<void> {
   }
   const response = await fetch("/v1/me");
   if (!response.ok) throw new Error("请先通过 Cloudflare Access 登录");
-  const me = (await response.json()) as { tenantId: string };
+  const me = (await response.json()) as { tenantId: string; user: {id: string; email: string} };
   configureTenant(me.tenantId);
-  createRoot(document.getElementById("root")!).render(<Environments />);
+  createRoot(document.getElementById("root")!).render(<Environments user={me.user} />);
 }
 void boot().catch((error) => {
   const root = document.getElementById("root");
