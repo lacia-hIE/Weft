@@ -162,7 +162,18 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
     if (auxiliary[1] !== principal.tenantId) throw new HttpError(403, 'Tenant access denied');
     if (request.method !== 'GET') throw new HttpError(405, 'Expected GET');
     if (auxiliary[2] === 'open-in-app/apps') return Response.json({apps: []}, {headers: {'cache-control': 'private, no-store'}});
-    return env.UI.fetch(new Request(new URL('/harness/boot.json', request.url)));
+    const asset = await env.UI.fetch(new Request(new URL('/harness/boot.json', request.url)));
+    if (!asset.ok) return asset;
+    const graph = await asset.json() as {rev: string; entries: {id: string}[]; batches: {entries: string[]}[]};
+    const teamClient = '@deepseek-ai/dsh-experimental-client-ui-agent-team';
+    const owner = controlScope(principal.tenantId, environmentId);
+    const clients = await controlFor(env, owner).nativeOfficialBundleClients(owner);
+    if (!clients.includes(teamClient)) {
+      graph.entries = graph.entries.filter(row => row.id !== teamClient);
+      graph.batches = graph.batches.filter(row => !row.entries.includes(teamClient));
+      graph.rev += '-without-teams';
+    }
+    return Response.json(graph, {headers: {'cache-control': 'private, no-store'}});
   }
   const match = /^\/v1\/tenants\/([^/]+)\/native\/(api|streams)\/(.+)$/.exec(pathname);
   if (!match) return undefined;

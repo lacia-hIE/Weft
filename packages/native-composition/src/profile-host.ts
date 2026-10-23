@@ -23,6 +23,8 @@ import {profileManifest, profileDescriptor, profileEntries, presetEntryId} from 
 import type {PluginInfo, BundleInfo} from '@deepseek-ai/dsh-plugin-manager/types';
 import pluginRemote from '../../../.generated/official-remotes/packages/boot/plugin-manager/typert.remote-client.js';
 import inventoryRemote from '../../../.generated/official-remotes/packages/host/plugin-inventory/typert.remote-client.js';
+import {mountOfficialTeam} from '../../native-bundles/src/runtime.ts';
+import {SqliteSessionPersistence} from '../../session-persistence-do/src/index.ts';
 import {mountNativeSubagentProviders} from '../../native-subagents/src/index.ts';
 import {officialInventory, officialPluginInfo, officialBundles} from './inventory.ts';
 import type {ProfileEnablement} from '../../harness-profile/src/management.ts';
@@ -31,7 +33,7 @@ export type CompositionEndpoint = 'agentPresets/list' | 'agentPresets/read' | 'p
 const methods = {...remote.methods, ...pluginRemote.methods, ...inventoryRemote.methods};
 
 /** A real composition inspection world. It creates no Agent or session writer. */
-export async function readNativePresets(profiles: AgentRevision[], defaultId: string, endpoint: CompositionEndpoint, raw: unknown, mountWorkspace: (ctx: Context) => Promise<void>, enablement: ProfileEnablement = {}): Promise<Response> {
+export async function readNativePresets(profiles: AgentRevision[], defaultId: string, endpoint: CompositionEndpoint, raw: unknown, mountWorkspace: (ctx: Context) => Promise<void>, enablement: ProfileEnablement = {}, storage?: DurableObjectStorage): Promise<Response> {
   const method = methods[endpoint];
   const args = method.input({strict: true}).create().parse(raw);
   const ctx = new Context();
@@ -54,6 +56,9 @@ export async function readNativePresets(profiles: AgentRevision[], defaultId: st
     const inspectOnly = () => Promise.reject(new Error('Preset inspection does not execute commands'));
     await mountWorkspaceShell(ctx, {exec: inspectOnly, kill: inspectOnly}, '/workspace');
     await mountNativeSubagentProviders(ctx, {maxDepth: 1, maxActiveSubagents: 8});
+    // This real persistence provider opens no handles in an inspection world;
+    // no Agents, Sessions or writers are created here.
+    if (storage) {await ctx.plugin(SqliteSessionPersistence, {storage}); await mountOfficialTeam(ctx, profiles);}
     // Without a loader the runtime is present for PTC and workflow rows but runs nothing.
     await ctx.plugin(WorkerPtcRuntime, {cwd: '/workspace'});
     const registry = await mountNativeComposition(ctx, profiles.map(nativePresetDefinition), defaultId, profiles.filter(profile => profile.spec.disabled).map(profile => profile.spec.id));

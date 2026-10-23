@@ -31,6 +31,7 @@ import Terminals from '@deepseek-ai/dsh-terminal';
 import * as TerminalBash from '@deepseek-ai/dsh-terminal-bash';
 import * as PersistentBash from '@deepseek-ai/dsh-tool-bash-persistent';
 import z from '@deepseek-ai/schemastery';
+import * as TeamTools from '@deepseek-ai/dsh-experimental-tool-agent-team';
 
 /** The official persona schema over a stored selection; `prefix` is required. */
 function personaConfig(config: Record<string, unknown>): Persona.Config {
@@ -99,6 +100,11 @@ const FileToolsBundle = {
 // Only the platform adapter lives here. Schemas, tools, projections and lifecycle
 // come from the same pinned upstream tree as the AgentLoop and browser renderer.
 const entries: Entry[] = [
+  {id: 'tool-agent-team', package: '@deepseek-ai/dsh-experimental-tool-agent-team', module: TeamTools,
+    title: '智能体团队工具', description: '官方团队成员、直接消息与共享任务板工具。', workspace: true,
+    schema: TeamTools.Config, defaults: {freshProvider: 'spawn', forkProvider: 'fork'},
+    validate: config => {const value = TeamTools.Config(config); if (value.freshProvider !== 'spawn' || value.forkProvider !== 'fork') throw new Error('Unsupported Team provider');},
+    mount: async (ctx, config) => {await ctx.plugin(TeamTools, TeamTools.Config(config));}},
   {
     id: 'agent-instructions', module: AgentInstructions, title: '项目指令',
     description: '官方 AGENTS.md / CLAUDE.md 发现与上下文注入；读取所属环境的工作区。',

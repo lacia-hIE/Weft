@@ -30,6 +30,7 @@ import type {Context} from '@deepseek-ai/cordis';
 import AgentLoop from '@deepseek-ai/dsh-agent-loop';
 import {updateVolatile} from '@deepseek-ai/cosmokit';
 import {mountNativeAttachments} from '../../../packages/native-attachments/src/index.ts';
+import {mountOfficialTeam} from '../../../packages/native-bundles/src/runtime.ts';
 import {mountNativeSubagents, type SubagentLimits} from '../../../packages/native-subagents/src/index.ts';
 import SessionFileReferences from '@weft/upstream/packages/api/session-controller/src/file-references.ts';
 import {ComputerFileReferences} from '../../../packages/native-files/src/references.ts';
@@ -191,6 +192,7 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
       if (profile) {
         if (presentation) refreshSubagents = await mountNativeSubagents(ctx, storage, context.subagents as unknown as SubagentLimits);
         if (presentation) await mountNativeInteraction(ctx, env, storage, scope, owner, {models: context.models as EnvironmentModels, ...(context.permissionDefault === undefined ? {} : {permissionDefault: context.permissionDefault})});
+        if (presentation) await mountOfficialTeam(ctx, [profile]);
         if (presentation) {await mountNativeComposition(ctx, [nativePresetDefinition(profile)], profile.spec.id); composition = ctx;}
         // Without preset realms the persona row's text is the root prefix; the root owns that prompt section.
         else await mountPlugins(ctx, profile.spec.plugins.filter(plugin => plugin.id !== 'persona'));

@@ -35,13 +35,15 @@ const presetGroups = [
   // Weft's skill catalog service rides with the skill rows, private to the preset.
   {id: 'skills', members: ['skill-filesystem', 'tool-skill'], isolate: {skills: true}},
   {id: 'persistent-shell', members: ['pty', 'terminal-bash', 'persistent-bash'], isolate: {terminals: true}},
-  {id: 'delegation', members: ['tool-subagent-control', 'tool-subagent-list-agents', 'tool-subagent', 'tool-subagent-fork', 'workflow-ptc', 'tool-workflow'], isolate: {workflowEngine: true}},
+  {id: 'delegation', members: ['tool-agent-team', 'tool-subagent-control', 'tool-subagent-list-agents', 'tool-subagent', 'tool-subagent-fork', 'workflow-ptc', 'tool-workflow'], isolate: {workflowEngine: true}},
 ] as const;
 
 export function nativePresetDefinition(profile: {spec: {id: string; name: string; plugins: PluginSelection[]; allowClientPlugins?: boolean}}): PresetDefinition {
   const row = (plugin: PluginSelection) => ({id: plugin.id, name: 'cordis:'+plugin.id, config: plugin.config, ...(plugin.disabled ? {disabled: true} : {})});
   const plugins: Array<PresetDefinition['plugins'][number]> = [];
   for (const plugin of profile.spec.plugins) {
+    // Root service and browser activation are owned by the bundle adapters.
+    if (plugin.id === 'agent-team' || plugin.id === 'ui-agent-team') continue;
     const group = presetGroups.find(item => (item.members as readonly string[]).includes(plugin.id));
     if (!group) {plugins.push(row(plugin)); continue;}
     if (plugins.some(entry => entry.id === group.id)) continue;

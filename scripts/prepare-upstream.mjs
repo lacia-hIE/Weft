@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import yaml from 'js-yaml';
 import { resolve, relative } from 'node:path';
 import ts from 'typescript';
+import {createHash} from 'node:crypto';
 
 const root = resolve(import.meta.dirname, '..');
 const lock = JSON.parse(readFileSync(resolve(root, 'upstream.lock.json'), 'utf8'));
@@ -49,6 +50,8 @@ const declarationOnlyPackages = {
   '@deepseek-ai/dsh-api-gateway': 'packages/api/gateway/src/index.ts',
   // Keep each Host class and its internal imports on the same declaration
   // boundary. Runtime builds still resolve the unmodified original sources.
+  '@deepseek-ai/dsh-experimental-agent-team': 'packages/experimental/agent-team/src/index.ts',
+  '@deepseek-ai/dsh-experimental-tool-agent-team': 'packages/experimental/tool-agent-team/src/index.ts',
   '@deepseek-ai/dsh-subagent': 'packages/subagent/subagent/src/index.ts',
   '@deepseek-ai/dsh-subagent/internal': 'packages/subagent/subagent/src/internal.ts',
   '@deepseek-ai/dsh-agent-preset-registry': 'packages/preset/agent-preset-registry/src/index.ts',
@@ -147,3 +150,17 @@ collectRows([officialBundles, presetPatches]);
 const officialPresets = presetPatches.flatMap(patch => patch.flatMap(operation => operation.insert ?? [])).filter(row => row.name === '@deepseek-ai/dsh-agent-preset').map(row => row.config).sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
 writeFileSync(resolve(output, 'official-presets.json'), JSON.stringify(officialPresets, null, 2) + '\n');
 writeFileSync(resolve(output, 'plugin-meta.json'), JSON.stringify(pluginMeta) + '\n');
+
+// Optional official bundles are admitted from this exact clean checkout only.
+// Persist both patch and provenance; runtime installs never fetch or evaluate YAML.
+const optionalBundles = ['agent-team-profile'].map(id => {
+  const directory = resolve(checkout, 'packages/experimental', id);
+  const manifest = JSON.parse(readFileSync(resolve(directory, 'package.json'), 'utf8'));
+  const patchPath = manifest.dsh?.bundle?.patch;
+  if (patchPath !== './cordis.patch.yml') throw new Error('Unsupported official bundle patch declaration');
+  const source = readFileSync(resolve(directory, patchPath), 'utf8');
+  const patch = yaml.load(source, {schema: yaml.JSON_SCHEMA});
+  return {name: manifest.name, version: manifest.version, description: manifest.description,
+    upstream: actual, digest: createHash('sha256').update(source).digest('hex'), patch};
+});
+writeFileSync(resolve(output, 'official-optional-bundles.json'), JSON.stringify(optionalBundles, null, 2) + '\n');

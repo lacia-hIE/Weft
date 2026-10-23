@@ -5,6 +5,7 @@ import Sessions, { type Session, type SessionEvent, type SessionId } from '@deep
 import Projections from '@deepseek-ai/dsh-session-projection';
 import Title from '@deepseek-ai/dsh-session-title';
 import {installDurableSessionQuery} from '../../native-query/src/index.ts';
+import {teamProjectionDefinition} from '@weft/upstream/packages/experimental/agent-team/src/projection.ts';
 import type { AssistantStreamFrame, Agent } from '@deepseek-ai/dsh-agent';
 import { installModelSelectionProjection } from './model-selection.ts';
 import { turnBoundaryProjectionDefinition } from '@deepseek-ai/dsh-agent-loop';
@@ -55,6 +56,7 @@ export async function createSessionReader(storage: DurableObjectStorage, promote
     await ctx.plugin(SystemPrompt, {personaPrefix: ''});
     await ctx.plugin(Tools);
     await ctx.plugin(Todo, {allowParallelInProgress: false});
+    ctx.sessionProjections.register(teamProjectionDefinition);
     ctx.sessionProjections.register(turnBoundaryProjectionDefinition);
     ctx.sessionProjections.register(inboxProjectionDefinition);
     ctx.sessionProjections.register(agentPresetProjectionDefinition);

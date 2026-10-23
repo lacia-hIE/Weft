@@ -44,6 +44,7 @@ import { buildForkSeed } from '@deepseek-ai/dsh-session/fork';
 import { runHarnessTurn, initializeHarnessSession, renameHarnessSession, renameLiveHarnessSession, selectHarnessModel } from '../../../packages/harness-runtime/src/runtime.ts';
 import { selectLiveHarnessModel } from '../../../packages/harness-runtime/src/model-selection.ts';
 import { NativeSessionHost, NativeHostReplacedError } from './native-session-host.ts';
+import {mountOfficialTeam} from '../../../packages/native-bundles/src/runtime.ts';
 import {replaceNativePreset, nativePresetDefinition} from '../../../packages/native-composition/src/index.ts';
 import { NativePlugins, nativePlugins, type NativePluginEndpoint } from '../../../packages/native-plugins/src/host.ts';
 import nativePluginRemote from '../../../.generated/official-remotes/packages/extensions/cordis-host-runner/typert.remote-client.js';
@@ -302,9 +303,10 @@ export class SessionDO extends DurableObject<Env> {
       if (profile.upstream !== upstream.commit) throw new Error('Agent runtime revision unavailable');
       const stored = this.ctx.storage.sql.exec<{agent_document: string}>('SELECT agent_document FROM weft_session_config WHERE id=1').one();
       const current = JSON.parse(stored.agent_document) as AgentRevision;
-      if (current.spec.id === profile.spec.id && current.revision === profile.revision) return profile.spec.id;
+      if (current.spec.id === profile.spec.id && current.revision === profile.revision && JSON.stringify(current.spec) === JSON.stringify(profile.spec)) return profile.spec.id;
       this.ctx.storage.sql.exec('INSERT INTO weft_pending_preset VALUES (1,?) ON CONFLICT(id) DO UPDATE SET document=excluded.document', JSON.stringify({beforeSeq: host.agent.session.seq - 1, profile}));
       try {
+        await mountOfficialTeam(host.ctx, [profile]);
         await replaceNativePreset(host.ctx, nativePresetDefinition(profile));
         const selected = await host.ctx.agentPresets.select(host.agent, preset);
         await host.ctx.sessionPersistence.flush();

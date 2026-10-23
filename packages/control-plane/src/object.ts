@@ -79,6 +79,8 @@ import { NativeSettings, PRESET_NAMESPACE, LOOP_NAMESPACE, SUBAGENT_NAMESPACE, P
 import {readNativePresets, type CompositionEndpoint} from '../../native-composition/src/profile-host.ts';
 import {profileDefinitions} from '../../harness-profile/src/index.ts';
 import {manageNativePlugins} from '../../native-composition/src/manager.ts';
+import {OfficialBundleRegistry} from '../../native-bundles/src/registry.ts';
+import {composeBundleProfile, TEAM_CLIENT, TEAM_BUNDLE} from '../../native-bundles/src/catalog.ts';
 import {PackageInstaller} from '../../package-install/src/host.ts';
 import {mountWorkspace} from '../../workspace/src/provider.ts';
 import { ModelConfigurationError, type ModelEnvironment } from '../../model-provider/src/index.ts';
@@ -318,7 +320,7 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
   async nativeProfile(scope: ControlScope, preset: string | undefined, revision?: number): Promise<Response> {
     this.scope(scope); this.ensureDefault(); this.ensureNativePresets();
     const value = await this.agent(scope, preset ?? this.presetDefault(scope), revision);
-    return Response.json({value: value?.spec.disabled ? undefined : value});
+    return Response.json({value: value?.spec.disabled ? undefined : value ? composeBundleProfile(value, this.officialBundles().list()) : undefined});
   }
   async nativePresetIds(scope: ControlScope): Promise<string[]> {return (await this.state(scope)).agents.filter(row => !row.spec.disabled).map(row => row.spec.id);}
   /**
@@ -328,6 +330,12 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
    */
   private presetReads = new Map<string, Promise<string>>();
   private presetReadsVersion = '';
+  private officialBundleRegistry: OfficialBundleRegistry | undefined;
+  private officialBundles(): OfficialBundleRegistry {return this.officialBundleRegistry ??= new OfficialBundleRegistry(this.ctx.storage);}
+  async nativeOfficialBundleClients(scope: ControlScope): Promise<string[]> {
+    this.scope(scope);
+    return this.officialBundles().list().some(row => row.name === TEAM_BUNDLE && row.enabled) ? [TEAM_CLIENT] : [];
+  }
   private packageInstaller: PackageInstaller | undefined;
   private packages(scope: ControlScope): PackageInstaller {
     this.scope(scope);
@@ -371,18 +379,19 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
   async nativePreset(scope: ControlScope, endpoint: CompositionEndpoint, args: unknown): Promise<Response> {
     await this.syncSettingsDocument(scope);
     const defaultId = await this.nativePresetDefault(scope);
-    const profiles = (await this.state(scope)).agents;
+    const bundleStates = this.officialBundles().list();
+    const profiles = (await this.state(scope)).agents.map(profile => composeBundleProfile(profile, bundleStates));
     const enablement = this.settings(scope).profileEnablement();
     const packages = this.packages(scope).registry;
-    const version = JSON.stringify([defaultId, profiles.map(profile => [profile.spec.id, profile.revision]), enablement, packages.list()]);
+    const version = JSON.stringify([defaultId, profiles.map(profile => [profile.spec.id, profile.revision]), enablement, packages.list(), bundleStates]);
     if (version !== this.presetReadsVersion) {this.presetReads = new Map(); this.presetReadsVersion = version;}
     const key = JSON.stringify([endpoint, args]);
     let read = this.presetReads.get(key);
     if (!read) {
       const volume = {...scope, workspaceId: 'default'};
-      read = readNativePresets(profiles, defaultId, endpoint, args, ctx => mountWorkspace(ctx, {scope: volume, transport: this.env.WORKSPACES.getByName(workspaceAddress(volume)), cwd: '/workspace', fileTools: false}), enablement).then(async response => {
+      read = readNativePresets(profiles, defaultId, endpoint, args, ctx => mountWorkspace(ctx, {scope: volume, transport: this.env.WORKSPACES.getByName(workspaceAddress(volume)), cwd: '/workspace', fileTools: false}), enablement, this.ctx.storage).then(async response => {
         const result = await response.json() as {value: unknown};
-        if (endpoint === 'pluginManager/listBundles') result.value = [...result.value as unknown[], ...packages.bundles()];
+        if (endpoint === 'pluginManager/listBundles') result.value = [...result.value as unknown[], ...packages.bundles(), ...this.officialBundles().bundles()];
         if (endpoint === 'pluginManager/listPlugins') result.value = [...result.value as unknown[], ...packages.plugins()];
         if (endpoint === 'pluginInventory/list') {const inventory = result.value as {entries: unknown[]}; inventory.entries.push(...packages.plugins());}
         return JSON.stringify(result);
@@ -415,6 +424,19 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
     let args: Record<string, unknown>;
     try {args = method.input({strict: true}).create().parse(raw) as Record<string, unknown>;}
     catch {throw new RemoteError('gateway/bad-request', 'Invalid plugin management arguments', {});}
+    // Trusted shipped bundle operations are admitted before the external npm
+    // path, so even a public package with a familiar name cannot replace code.
+    if (endpoint === 'pluginManager/inspect') {
+      const inspection = this.officialBundles().inspect(String(args.spec));
+      if (inspection) return Response.json({value: inspection});
+    }
+    if (['pluginManager/installBundle', 'pluginManager/setBundleEnabled', 'pluginManager/removeBundle'].includes(endpoint)) {
+      const result = await this.configWrites.run(() => this.officialBundles().change(endpoint, args));
+      if (result) {
+        if (result.changed) {this.presetReads.clear(); await this.settings(scope).invalidate(PRESET_NAMESPACE); await this.nativeEvent(scope, 'plugin-manager/changed', [{reason: result.stage}]);}
+        return Response.json({value: result});
+      }
+    }
     const name = typeof args.name === 'string' ? args.name : typeof args.id === 'string' && args.id.startsWith('installed:') ? args.id.slice('installed:'.length) : undefined;
     if (name && packages.registry.get(name) && ['pluginManager/setPluginEnabled', 'pluginManager/setBundleEnabled', 'pluginManager/removeBundle'].includes(endpoint)) {
       try {

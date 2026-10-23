@@ -95,6 +95,9 @@ export function officialUiRoster(upstreamDirectory, {profile = 'all'} = {}) {
     }
   };
   collect(patch);
+  // Build optional official Clients too. The authenticated environment Boot
+  // endpoint selects whether to activate them; static assets alone grant nothing.
+  names.add('@deepseek-ai/dsh-experimental-client-ui-agent-team');
   const visit = (name) => {
     const record = packages.get(name);
     if (!record?.manifest.dsh?.client)
