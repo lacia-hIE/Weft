@@ -32,6 +32,7 @@ export { WorkspaceDO, TenantDO, EnvironmentDO };
 export { WorkspaceServiceProxy, WorkspaceProxy } from '@cloudflare/computer';
 export { WorkspaceContainerBasicDO, WorkspaceContainerStandard1DO, WorkspaceContainerStandard2DO } from '../../../packages/workspace/src/container-host.ts';
 export {PluginBuilderDO} from '../../../packages/package-install/src/builder.ts';
+import type {Installation, Artifact} from '../../../packages/package-install/src/contracts.ts';
 import {InstalledPackageRuntime} from '../../../packages/package-install/src/runtime.ts';
 import { z } from 'zod';
 import { Context } from '@deepseek-ai/cordis';
@@ -189,8 +190,8 @@ export class SessionDO extends DurableObject<Env> {
           manifest: async () => (await (await controlFor(this.env, owner).nativePluginManifest(owner)).json() as {value: unknown}).value,
         });
         this.installedPackages = new InstalledPackageRuntime(ctx, this.ctx, this.env.LOADER, scope, {
-          list: async () => (await controlFor(this.env, owner).nativePackageList(owner)).installations,
-          artifact: (name, digest) => controlFor(this.env, owner).nativePackageArtifact(owner, name, digest),
+          list: async () => ((await (await controlFor(this.env, owner).nativePackageList(owner)).json()) as {installations: Installation[]}).installations,
+          artifact: async (name, digest) => await (await controlFor(this.env, owner).nativePackageArtifact(owner, name, digest)).json() as Artifact,
           capability: (pluginId, runId) => {
             const exported = this.ctx.exports as unknown as {PluginCapabilities(options: {props: {scope: SessionScope; pluginId: string; runId: string}}): Fetcher};
             return exported.PluginCapabilities({props: {scope, pluginId, runId}});
@@ -774,7 +775,7 @@ export class SessionDO extends DurableObject<Env> {
     const installation = this.installedPackages?.permission(pluginId, runId);
     if (installation) {
       const owner = controlScope(scope.tenantId, scope.environmentId);
-      const current = (await controlFor(this.env, owner).nativePackageList(owner)).installations.find(row => row.name === installation.name);
+      const current = ((await (await controlFor(this.env, owner).nativePackageList(owner)).json()) as {installations: Installation[]}).installations.find(row => row.name === installation.name);
       if (!current?.enabled || !current.approved || current.digest !== installation.digest) throw new Error('Package capability was revoked');
       if (installation.permissions.files === 'none' || (installation.permissions.files === 'read' && ['writeText', 'editText'].includes(method))) throw new Error('Package filesystem permission denied');
     } else if (!nativePlugins(host.ctx)?.hasRun(pluginId, runId)) throw new Error('Plugin activation no longer owns this capability');

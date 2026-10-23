@@ -1,3 +1,4 @@
+import type {Artifact} from '../../../packages/package-install/src/contracts.ts';
 import type { ControlScope } from '../../../packages/control-plane/src/contracts.ts';
 import { z } from 'zod';
 import { SessionId } from '@deepseek-ai/dsh-session';
@@ -78,11 +79,11 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
         if (request.method !== 'GET') return new Response(null, {status: 405});
         const name = new URL(request.url).searchParams.get('name');
         if (!name || name.length > 214) throw new HttpError(400, 'Package name required');
-        const artifact = await control.nativePackageArtifact(owner, name, packages[3]!);
+        const artifact = await (await control.nativePackageArtifact(owner, name, packages[3]!)).json() as Artifact;
         if (!artifact.client) throw new HttpError(404, 'Package has no Client module');
         return new Response(artifact.client, {headers: {'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'private, no-store', 'x-content-type-options': 'nosniff'}});
       }
-      if (request.method === 'GET' && packages[2] === 'package-installations') return Response.json(await control.nativePackageList(owner), {headers: {'cache-control': 'private, no-store'}});
+      if (request.method === 'GET' && packages[2] === 'package-installations') return control.nativePackageList(owner);
       if (request.method !== 'POST') return new Response(null, {status: 405});
       assertSameOrigin(request);
       const raw = await readJson(request, 1024 * 1024);

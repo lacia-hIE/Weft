@@ -370,8 +370,8 @@ abstract class HarnessStateDO extends DurableObject<TenantEnvironment> {
       },
     });
   }
-  async nativePackageList(scope: ControlScope) {return this.packages(scope).list();}
-  async nativePackageArtifact(scope: ControlScope, name: string, digest: string) {return this.packages(scope).artifact(name, digest);}
+  async nativePackageList(scope: ControlScope): Promise<Response> {return Response.json(this.packages(scope).list(), {headers: {'cache-control': 'private, no-store'}});}
+  async nativePackageArtifact(scope: ControlScope, name: string, digest: string): Promise<Response> {return Response.json(await this.packages(scope).artifact(name, digest));}
   async nativePackageOperation(scope: ControlScope, raw: unknown): Promise<Response> {
     const request = z.discriminatedUnion('operation', [
       z.object({operation: z.literal('list')}).strict(),
