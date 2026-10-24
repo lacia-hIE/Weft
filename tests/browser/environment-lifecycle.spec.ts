@@ -22,13 +22,15 @@ test('native environment actions rename, pause, resume and delete through confir
   await page.reload();await expect(card).toContainText('已暂停');
   await expect(card.getByRole('link')).toHaveCount(0);
   await card.getByRole('button',{name:'更多操作'}).click();
-  await page.screenshot({path:testInfo.outputPath('paused-environment-menu.png'),fullPage:true});
+  await expect(page.getByRole('menuitem',{name:'恢复环境',exact:true})).toBeVisible();
+  await page.screenshot({path:testInfo.outputPath('paused-environment-menu.png'),fullPage:true,animations:'disabled'});
   await page.getByRole('menuitem',{name:'恢复环境',exact:true}).click();
   await expect(card.getByRole('link')).toBeVisible({timeout:60_000});
   await card.getByRole('button',{name:'更多操作'}).click();
   await page.getByRole('menuitem',{name:'删除环境',exact:true}).click();
   dialog=page.getByRole('dialog',{name:'删除环境',exact:true});
-  await page.screenshot({path:testInfo.outputPath('delete-environment-confirm.png'),fullPage:true});
+  await expect(dialog).toBeVisible();
+  await page.screenshot({path:testInfo.outputPath('delete-environment-confirm.png'),fullPage:true,animations:'disabled'});
   const remove=dialog.getByRole('button',{name:'删除环境',exact:true});await expect(remove).toBeDisabled();
   await dialog.getByLabel('输入环境名称确认删除').fill(renamed);await remove.click();
   await expect(card).toHaveCount(0,{timeout:60_000});

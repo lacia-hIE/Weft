@@ -1298,7 +1298,7 @@ export class TenantDO extends DurableObject<TenantEnvironment> {
       if(operation.phase==='done'){
         record.status=operation.action==='delete'?'deleted':operation.action==='suspend'?'paused':'ready';record.updatedAt=new Date().toISOString();
         if(record.status==='deleted'){record.name='已删除环境';delete record.copy;}
-        delete operation.error;await this.saveLifecycle(job,true);
+        delete operation.error;delete job.resources;job.cursor=0;await this.saveLifecycle(job,true);
       }
     } catch(error){operation.error=(error instanceof Error?error.message:'环境操作失败').slice(0,500);await this.saveLifecycle(job);}
   }
