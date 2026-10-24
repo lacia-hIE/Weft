@@ -25,9 +25,10 @@ export class WorkspaceCopy {
       WHERE t.path NOT IN ('/workspace/.weft','/workspace/.dsh/spill','/workspace/.dsh/profile.yml','/workspace/.dsh/profile.error.txt')`);
       try {
         if (this.storage.sql.exec("SELECT 1 FROM weft_copy_tree WHERE type NOT IN ('file','dir') OR mount_root IS NOT NULL OR stub_size IS NOT NULL LIMIT 1").toArray().length) throw new Error('The workspace contains a symlink or unloaded mount; materialize regular files before copying');
+        if(this.storage.sql.exec("SELECT 1 FROM weft_copy_tree t WHERE type='file' AND size<>COALESCE((SELECT SUM(size) FROM vfs_chunks c WHERE c.inode=t.inode),0) LIMIT 1").toArray().length) throw new Error('Workspace file size does not match committed chunks');
         this.storage.sql.exec(`INSERT INTO weft_copy_entries
           SELECT ?,ROW_NUMBER() OVER (ORDER BY t.path,c.idx)-1,t.path,t.type,t.mode,t.size,
-            COALESCE(SUM(c.size) OVER (PARTITION BY t.inode ORDER BY c.idx ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING),0),b.bytes
+            COALESCE(SUM(c.size) OVER (PARTITION BY t.path ORDER BY c.idx ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING),0),b.bytes
           FROM weft_copy_tree t LEFT JOIN vfs_chunks c ON c.inode=t.inode LEFT JOIN vfs_blob_bytes b ON b.hash=c.hash
           ORDER BY t.path,c.idx`, id);
         if (this.storage.sql.exec("SELECT 1 FROM weft_copy_entries WHERE id=? AND kind='file' AND size>0 AND bytes IS NULL LIMIT 1",id).toArray().length) throw new Error('Workspace file bytes are not locally available');

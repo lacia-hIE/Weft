@@ -48,7 +48,7 @@ test('environment copying keeps a fixed file/configuration cut, resumes after fa
     assert.equal((await request('/'+requestId+'/state')).status,409,'draft is not usable');
     const failed=await wait('failed');assert.match(failed.copy!.error!,/Injected copy interruption/);
     assert.equal((await request('/default/copy','POST',{name:'Different name',requestId})).status,409);
-    assert.equal((await runtime.dispatchFetch(url('beta',base+'/default/copy'),{method:'POST',body:JSON.stringify({name:'Stolen',requestId:crypto.randomUUID()})})).status,403);
+    assert.equal((await runtime.dispatchFetch(url('beta',base+'/default/copy'),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:'Stolen',requestId:crypto.randomUUID()})})).status,403);
     // After the cut, both source bytes and configuration can change independently.
     await source.call('settings/update',{ns:'agent-loop',patch:{maxParallelToolCalls:7}});
     const oldFile=await (await request('/default/workspaces/default/files?path=/workspace/project/run.sh')).json() as {value:{version:string}};
@@ -65,8 +65,9 @@ test('environment copying keeps a fixed file/configuration cut, resumes after fa
     assert.equal(state.agents.find(row=>row.spec.id==='project-preset')!.spec.name,'Project preset');
     assert.equal(state.clientPlugins.find(row=>row.id==='copy-panel')!.enabled,false);
     assert.equal((settings.namespaces.find(row=>row.ns==='agent-preset-registry')!.value as {selectedDefault:string}).selectedDefault,'project-preset');
-    const inspected=await (await fixture(requestId,'inspect')).json() as {length:number;first:number;last:number;mode:number;count:number;private:boolean;spill:boolean};
+    const inspected=await (await fixture(requestId,'inspect')).json() as {length:number;first:number;last:number;linkedLength:number;linkedLast:number;empty:number;mode:number;count:number;private:boolean;spill:boolean};
     assert.equal(inspected.length,3*1024*1024+17);assert.equal(inspected.first,0);assert.equal(inspected.last,(inspected.length-1)%251);assert.equal(inspected.mode,0o755);assert.ok(inspected.count>5000);assert.equal(inspected.private,false);assert.equal(inspected.spill,false);
+    assert.equal(inspected.linkedLength,inspected.length);assert.equal(inspected.linkedLast,inspected.last);assert.equal(inspected.empty,0);
     const read=await (await request(`/${requestId}/workspaces/default/files?path=/workspace/project/run.sh`)).json() as {value:{content:string;version:string}};
     assert.match(read.value.content,/echo copied/);
     const stream=await target.stream<{type:string;value:{items:{title:string;sessionIds:string[]}[]}}>('workspace/follow',{});

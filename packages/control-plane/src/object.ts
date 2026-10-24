@@ -253,6 +253,9 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
       seeds:this.ctx.storage.sql.exec<{id:string;revision:number}>('SELECT id,revision FROM official_preset_seeds').toArray(),workspaces,
       bundles:this.officialBundles().list(),packages:this.packages(scope).registry.list(),clients:(await this.state(scope)).clientPlugins};
     const volume=this.documentVolume(scope),files=this.env.WORKSPACES.getByName(workspaceAddress(volume));
+    // If capture died before publishing its configuration receipt, no importer
+    // could have consumed it. Discard that orphan cut before taking a new one.
+    await files.copySnapshot(volume,copyId,'release');
     const {count}=await (await files.copySnapshot(volume,copyId,'capture')).json() as {count:number};
     await this.packages(scope).snapshotArtifacts({...scope,environmentId:copyId},data.packages);
     const currentWorkspaces=await this.workspaces(scope).configuration(),currentClients=(await this.state(scope)).clientPlugins;

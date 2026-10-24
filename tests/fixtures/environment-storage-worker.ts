@@ -20,6 +20,8 @@ export class WorkspaceDO extends BaseWorkspaceDO {
       provider.mkdirSync('/workspace/.dsh/spill',{recursive:true});
       const bytes=new Uint8Array(3*1024*1024+17);for(let i=0;i<bytes.length;i++)bytes[i]=i%251;
       provider.writeFileSync('/workspace/project/数据.bin',Buffer.from(bytes));
+      provider.linkSync('/workspace/project/数据.bin','/workspace/project/linked.bin');
+      provider.writeFileSync('/workspace/project/empty','');
       provider.writeFileSync('/workspace/project/run.sh','#!/bin/sh\necho copied\n');provider.chmodSync('/workspace/project/run.sh',0o755);
       provider.writeFileSync('/workspace/project/.git/config','[core]\n repositoryformatversion = 0\n');
       provider.writeFileSync('/workspace/.env','PROJECT=value');
@@ -29,7 +31,8 @@ export class WorkspaceDO extends BaseWorkspaceDO {
     }
     if(operation==='inspect') {
       const bytes=provider.readFileSync('/workspace/project/数据.bin') as Uint8Array;
-      return Response.json({length:bytes.length,first:bytes[0],last:bytes.at(-1),mode:provider.statSync('/workspace/project/run.sh').mode&0o777,count:provider.readdirSync('/workspace/project').length,private:provider.existsSync('/workspace/.weft/attachments/v1/private'),spill:provider.existsSync('/workspace/.dsh/spill/private'),snapshots:this.ctx.storage.sql.exec<{count:number}>('SELECT COUNT(*) AS count FROM weft_copy_volumes').one().count});
+      const linked=provider.readFileSync('/workspace/project/linked.bin') as Uint8Array;
+      return Response.json({length:bytes.length,first:bytes[0],last:bytes.at(-1),linkedLength:linked.length,linkedLast:linked.at(-1),empty:provider.statSync('/workspace/project/empty').size,mode:provider.statSync('/workspace/project/run.sh').mode&0o777,count:provider.readdirSync('/workspace/project').length,private:provider.existsSync('/workspace/.weft/attachments/v1/private'),spill:provider.existsSync('/workspace/.dsh/spill/private'),snapshots:this.ctx.storage.sql.exec<{count:number}>('SELECT COUNT(*) AS count FROM weft_copy_volumes').one().count});
     }
     return Response.json({ok:true});
   }
