@@ -307,20 +307,22 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
   async nativeSessionContext(scope: ControlScope, knownRevision?: number): Promise<Response> {
     this.scope(scope);
     await this.syncSettingsDocument(scope);
+    const harnessHome = await this.nativeHarnessHome(scope);
     const settings = this.settings(scope);
-    if (knownRevision === settings.revision) return Response.json({unchanged: true, revision: knownRevision});
+    const revision = settings.revision;
+    if (knownRevision === revision) return Response.json({unchanged: true, revision});
     const models = settings.modelSections();
     const providers = models.piAi.providers !== null && typeof models.piAi.providers === 'object' ? Object.keys(models.piAi.providers) : [];
     const refs = new Set(['deepseek-official', ...providers].flatMap(provider => credentialRefFor(models as EnvironmentModels, provider) ?? []));
     const credentials: Record<string, boolean> = {};
     for (const ref of refs) {
-      try { credentials[ref] = await settings.credentials.resolve(credentialRef(ref)) !== undefined; }
+      try { credentials[ref] = settings.credentials.configuredLocally(credentialRef(ref)); }
       catch { credentials[ref] = false; }
     }
     const permission = settings.value(PERMISSION_NAMESPACE).defaultPreset;
     const context: NativeSessionContext = {
-      revision: settings.revision,
-      models, credentials, harnessHome: await this.nativeHarnessHome(scope),
+      revision,
+      models, credentials, harnessHome,
       loop: settings.value(LOOP_NAMESPACE) as {maxParallelToolCalls: number}, subagents: settings.value(SUBAGENT_NAMESPACE),
       ...(typeof permission === 'string' ? {permissionDefault: permission} : {}),
       profileOverrides: settings.profileOverrides(),

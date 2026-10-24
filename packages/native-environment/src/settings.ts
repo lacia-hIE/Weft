@@ -87,10 +87,14 @@ export class EnvironmentSettings {
     return pending;
   }
   async describe(): Promise<SettingsDescriptor[]> {
-    await this.sync();
-    const revision = this.documents.revision;
-    if (this.description?.revision !== revision) this.description = {revision, value: (await this.ready).settings.describe({redactSecrets: true})};
-    return structuredClone(this.description.value);
+    const ctx = await this.ready;
+    for (;;) {
+      await this.sync();
+      if (this.applied !== this.documents.revision) continue;
+      const revision = this.applied;
+      if (this.description?.revision !== revision) this.description = {revision, value: ctx.settings.describe({redactSecrets: true})};
+      return structuredClone(this.description.value);
+    }
   }
   async update(method: 'update' | 'replace' | 'mutate', ns: string, value: unknown, expected?: number): Promise<void> {
     await this.sync();

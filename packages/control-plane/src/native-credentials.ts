@@ -25,6 +25,11 @@ export class DurableCredentials extends CredentialProvider {
     const row = this.storage.sql.exec<{value: string}>('SELECT value FROM weft_credential_refs WHERE ref=?', ref).toArray()[0];
     return row ? {value: row.value, source: 'environment'} : undefined;
   }
+  /** Presence only, synchronous so a configuration snapshot has one local revision cut. */
+  configuredLocally(ref: CredentialRef): boolean {
+    credentialRef(ref);
+    return this.storage.sql.exec('SELECT 1 FROM weft_credential_refs WHERE ref=?', ref).toArray().length > 0;
+  }
   override async describe(ref: CredentialRef) {
     const value = await this.resolve(ref);
     return {configured: value !== undefined, ...(value ? {source: value.source} : {}), writable: true};
