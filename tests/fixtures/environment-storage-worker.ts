@@ -168,7 +168,7 @@ export default {
       const {scope,kind,action}=await request.json() as {action?:string;scope:SessionScope&WorkspaceScope;kind:'session'|'workspace'|'environment'};
       if(kind==='session')return (env.SESSIONS.getByName(sessionAddress(scope)) as DurableObjectStub<SessionDO>).fixtureLifecycle(action);
       if(kind==='workspace')return (env.WORKSPACES.getByName(workspaceAddress(scope)) as DurableObjectStub<WorkspaceDO>).fixtureLifecycle(action);
-      return (env.ENVIRONMENTS.getByName(environmentAddress(scope)) as DurableObjectStub<EnvironmentDO>).fixtureLifecycle();
+      return (env.ENVIRONMENTS.getByName(environmentAddress({tenantId:scope.tenantId,environmentId:scope.environmentId??'default'})) as DurableObjectStub<EnvironmentDO>).fixtureLifecycle();
     }
     if(new URL(request.url).pathname==='/_fixture/workspace-copy') {
       const {scope,operation}=await request.json() as {scope:WorkspaceScope;operation:string};
