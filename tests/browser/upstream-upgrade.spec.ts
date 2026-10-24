@@ -15,6 +15,7 @@ test('rc.2 native Web search form persists Search and Fetch selection and keeps 
   await page.getByLabel('API key',{exact:true}).fill('ui-rc2-web-key');
   await page.getByRole('button',{name:'Save',exact:true}).click();
   await expect(page.getByRole('button',{name:'Save',exact:true})).toBeDisabled();
+  await expect.poll(async()=>{const saved=await rpc('settings/describe',{});return saved.namespaces.find((ns:{ns:string})=>ns.ns==='web-deepseek-api').value;}).toMatchObject({baseURL:'https://web-api.test/v1',count:4});
   const settings=await rpc('settings/describe',{});
   expect(settings.namespaces.find((ns:{ns:string})=>ns.ns==='web').value).toMatchObject({searchProvider:'deepseek-search-api',fetchProvider:'deepseek-fetch-api'});
   expect(settings.namespaces.find((ns:{ns:string})=>ns.ns==='web-deepseek-api').value).toMatchObject({baseURL:'https://web-api.test/v1',count:4});
