@@ -69,7 +69,7 @@ export class NativeWorkspaces {
   async resolve(id?: string, cwd?: string): Promise<WorkspaceView> {
     if (id && cwd) throw new RemoteError('gateway/bad-request', 'workspaceId and cwd are exclusive', {});
     if (cwd) return this.run(async ({commands}) => (await commands.create({path: cwd})).workspace);
-    const value = id ? await this.run(({ctx}) => {const row = ctx.workspaceRegistry.get(WorkspaceId(id)); return row && workspaceView(row);}) : await this.initializeDefault();
+    const value = id ? await this.run(({ctx}) => {const row = ctx.workspaceRegistry.get(WorkspaceId(id)); return row && workspaceView(row);}) : await this.initializeDefault() ?? await this.run(async ({ctx}) => {const row = await ctx.workspaceRegistry.resolveByPath(ROOT); return row && workspaceView(row);});
     if (!value) throw new RemoteError('workspace/not-found', 'Select an existing Workspace', {workspaceId: WorkspaceId(id ?? 'default')});
     return value;
   }

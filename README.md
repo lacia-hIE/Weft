@@ -98,7 +98,7 @@ flowchart LR
 | 私有 R2 | 已构建 npm 插件包的不可变代码与审核产物 | 按安装记录和产物摘要读取 |
 | 容器本地磁盘 | `node_modules`、`.venv`、常见缓存与临时文件 | 容器替换后需要重建 |
 
-D1 管理环境之外的平台目录；DO SQLite 让配置、业务状态与拥有它的环境或会话放在一起；R2 承载编译产物。当前项目的持久工作区使用 Computer 的 DO 存储后端，源码和 `.git` 保存在 WorkspaceDO 中。
+D1 管理环境之外的平台目录；DO SQLite 让配置、业务状态与拥有它的环境或会话放在一起；R2 承载编译产物。设置表单和工作区登记使用真实原版 SettingsForms、WorkspaceRegistry 与 StorageDomain；整份配置 YAML 原子提交，会话列表使用可重建摘要。当前项目的持久工作区使用 Computer 的 DO 存储后端，源码和 `.git` 保存在 WorkspaceDO 中。
 
 DO 的内存实例也可能重建。Weft 持久保存的是会话、配置和服务记录；正在执行的 Linux 进程、PTY 与普通 JavaScript 内存变量不属于这些持久记录。
 

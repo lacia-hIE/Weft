@@ -1,13 +1,23 @@
 import {readFileSync} from 'node:fs';
 import {resolve} from 'node:path';
 
-/** Original environment services; only Node filesystem and revision persistence seams change. */
+/** Original environment services with scoped filesystem, point reads and durable revisions. */
 export const nativeEnvironmentPlatform = {
   name: 'harness-native-environment-platform',
   setup(builder) {
     builder.onLoad({filter: /packages\/workspace\/workspace\/src\/(index|entity|paths)\.ts$/}, ({path}) => {
-      const source = readFileSync(path, 'utf8');
+      let source = readFileSync(path, 'utf8');
       if (!source.includes("from 'node:fs/promises'")) throw new Error('Workspace filesystem seam changed');
+      if (path.endsWith('/index.ts')) {
+        const reads = [
+          ['    const headers = await this.listStoredHeaders()\n    await this.indexHeaders(headers)\n    const header = this.headers.get(id)', '    const snapshot = await this.ctx.sessionPersistence.stat(id)\n    if (snapshot !== undefined) await this.indexHeader(snapshot.header)\n    const header = this.headers.get(id)'],
+          ['    await this.indexHeaders(await this.listStoredHeaders())\n    return this.headers.has(id)', '    const snapshot = await this.ctx.sessionPersistence.stat(id)\n    if (snapshot !== undefined) await this.indexHeader(snapshot.header)\n    return this.headers.has(id)'],
+        ];
+        for (const [before, after] of reads) {
+          if (!source.includes(before) || source.indexOf(before) !== source.lastIndexOf(before)) throw new Error('Workspace header read seam changed');
+          source = source.replace(before, after);
+        }
+      }
       return {contents: source.replace("from 'node:fs/promises'", `from ${JSON.stringify(resolve('packages/native-environment/src/workspace-fs.ts'))}`), loader: 'ts', resolveDir: resolve(path, '..')};
     });
     builder.onLoad({filter: /packages\/settings\/settings\/src\/index\.ts$/}, ({path}) => {

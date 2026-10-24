@@ -89,4 +89,3 @@ export class DurableAgentRevisions<T extends {revision: number}> {
     return this.storage.sql.exec('INSERT INTO weft_agent_revisions VALUES (?,?,?) ON CONFLICT DO NOTHING RETURNING revision', agentId, value.revision, JSON.stringify(value)).toArray().length === 1;
   }
 }
-

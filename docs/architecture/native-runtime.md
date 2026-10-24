@@ -31,9 +31,9 @@ D1 只管理环境之外的平台抽象，目前保存环境目录与租户归�
 | SessionDO SQLite | 会话日志、投影、Inbox、冻结预设、提醒和会话插件状态 |
 | WorkspaceDO / Computer | 文件、附件、执行任务与转换缓存 |
 
-`packages/environment-storage` 提供当前环境的 SQLite 持久化适配器，不持有 D1 或租户路由。设置与预设发布共用写入队列，设置校验在本地事务读取的最新修订号上进行；工作区多行修改使用 `storage.transactionSync`，失败后数据库一起回滚，不维护另一份提交前缓存。预设按需查询当前版本，冷启动不再载入完整历史。
+`packages/environment-storage` 提供当前环境的 SQLite 持久化适配器，不持有 D1 或租户路由。设置与预设发布共用写入队列，设置校验在本地事务读取的最新修订号上进行；整份配置文档以 `storage.transactionSync` 原子提交，并在成功后记录文件版本和通知。工作区由原版 StorageDomain 与恢复标记管理。预设按需查询当前版本，冷启动不再载入完整历史。
 
-原版设置协议、Config schema、配置 YAML 与插件生命周期行为保持一致。`NativeSettings` 和 `NativeWorkspaces` 继续承担当前 Cloudflare 平台适配，并不宣称已替换为原版 SettingsForms 或 WorkspaceRegistry 的完整实现。后续向原版服务收敛时，优先复用现有的 `StorageBackend / StorageDomain` 和环境文件、会话读取服务，不恢复 D1 业务副本。
+原版设置协议、Config schema、配置 YAML 与插件生命周期行为保持一致。真实 SettingsForms 和 WorkspaceRegistry / Commands / Feed 已接入：Cloudflare 适配集中在 ConfigEditor 持久化、修订号、文件系统和会话读取端口，不恢复 D1 业务副本。服务归属与缓存一致性见[原版环境服务](native-environment-services.md)。
 
 本轮使用新的 `harness-v2` 对象与浏览器存储地址，不导入旧配置、日志或文件卷。D1 迁移 `0007` 删除旧环境内部四类表，保留平台环境目录。完整边界、重置和验证见[环境数据归属](environment-storage.md)。
 

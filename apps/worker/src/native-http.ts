@@ -479,7 +479,7 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
       }
       case 'session/list': {
         sessionRemote.methods[endpoint].input({strict: true}).create().parse(payload.args);
-        value = sessionRemote.methods[endpoint].result.create().parse(await (await control.nativeSessionList(owner)).json());
+        value = sessionRemote.methods[endpoint].result.create().parse(await (await control.fetch(new Request('https://environment.internal/native-list', {method: 'POST', body: JSON.stringify({operation: 'native-session-list', scope: owner}), signal: request.signal}))).json());
         break;
       }
       case 'session/search': {

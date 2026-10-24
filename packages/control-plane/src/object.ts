@@ -577,15 +577,19 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
     for (const row of items) if (row.sessionId !== root && this.nativeSessionRoot(scope, row.sessionId) !== root) throw new Error('Summary ownership mismatch');
     const accepted = this.summaryStore().put(root, raw.revision, items);
     if (accepted && emit) for (const row of items) {
-      this.nativeEvents.emit('api-session/added', [row]);
-      this.nativeEvents.emit('api-session/status', [row.sessionId, row.running]);
+      this.nativeEvent(scope, 'api-session/added', [row]);
+      this.nativeEvent(scope, 'api-session/status', [row.sessionId, row.running]);
     }
     return items;
   }
   async nativeSyncSessionSummaries(scope: ControlScope, root: string, text: string): Promise<void> {this.storeSummaries(scope, root, text, true);}
   /** Only missing or still-active roots require a source RPC. Cold completed lists read local SQLite. */
   async nativeSessionList(scope: ControlScope): Promise<Response> {
+    return this.listNativeSessions(scope);
+  }
+  private async listNativeSessions(scope: ControlScope, signal?: AbortSignal): Promise<Response> {
     this.scope(scope);
+    signal?.throwIfAborted();
     const cached = this.summaryStore().read();
     const groups = await mapConcurrent(this.sessions().list(), async record => {
       const value = cached.get(record.id);
@@ -593,7 +597,7 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
       const source = {...scope, sessionId: record.id};
       const text = await (await this.env.SESSIONS.getByName(sessionAddress(source)).nativeReadSummaryGroup(source)).text();
       return this.storeSummaries(scope, record.id, text, false);
-    });
+    }, signal);
     return Response.json({items: groups.flat()});
   }
   private nativeWorkspaces: NativeWorkspaces | undefined;
@@ -681,6 +685,7 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
       if (known && (known.parent_id !== parentId || known.root_id !== rootId)) throw new Error('Native child owner cannot change');
       this.ctx.storage.sql.exec('INSERT INTO native_child_owners VALUES (?,?,?) ON CONFLICT(id) DO NOTHING', childId, parentId, rootId);
     });
+    this.summaryStore().remove(rootId);
   }
   nativeDefaultModel(scope: ControlScope) {
     this.scope(scope);
@@ -703,6 +708,10 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
   }
   override async fetch(request: Request): Promise<Response> {
     const raw: unknown = await request.json();
+    if (typeof raw === 'object' && raw !== null && 'operation' in raw && raw.operation === 'native-session-list') {
+      const body = z.object({operation: z.literal('native-session-list'), scope: environmentScopeSchema}).strict().parse(raw);
+      return this.listNativeSessions(body.scope, request.signal);
+    }
     if (typeof raw === 'object' && raw !== null && 'operation' in raw && raw.operation === 'native-session-search') {
       const body = z.object({operation: z.literal('native-session-search'), scope: environmentScopeSchema, query: z.string()}).strict().parse(raw);
       this.scope(body.scope);
@@ -733,7 +742,7 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
       const owner = body.scope;
       const source = this.nativeControl.open(abort.signal, async () => {
         const projections: Record<string, SessionProjectionBaseline> = {};
-        const value = sessionRemote.methods['session/list'].result.create().parse(await (await this.nativeSessionList(owner)).json());
+        const value = sessionRemote.methods['session/list'].result.create().parse(await (await this.listNativeSessions(owner, abort.signal)).json());
         for (const item of value.items) if (item.projections?.kind === 'sequenced') projections[item.sessionId] = {asOfSeq: item.projections.asOfSeq, values: item.projections.values};
         return {type: 'baseline', value: {projections}};
       });
