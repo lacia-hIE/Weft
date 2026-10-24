@@ -87,7 +87,7 @@ export async function resolveEnvironmentRequest(
         // its own Boot Graph and installed plugins, changing only the mount.
         const mount=`/v1/tenants/${principal.tenantId}/environments/${record.id}/local/web/`;
         let html=await response.text();html=html.replace(/<base\b[^>]*>/gi,'');
-        html=html.replace(/<head(?:\s[^>]*)?>/i,head=>`${head}<base href="${mount}">`);
+        html=html.replace(/<head(?:\s[^>]*)?>/i,head=>`${head}<base href="${mount}"><script src="/assets/local-host-bootstrap.js" data-tenant="${principal.tenantId}" data-environment="${record.id}"></script>`);
         return {request,response:new Response(html,{headers:response.headers})};
       }
       return {request,response};

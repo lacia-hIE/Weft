@@ -22,7 +22,7 @@ export async function apply(ctx,config={}) {
     const response=await fetch(ctx.connection.authenticatedUrl(origin+'/'),{redirect:'manual',signal:AbortSignal.timeout(15_000)});
     await response.body?.cancel();
     const cookie=response.headers.getSetCookie().map(value=>value.split(';',1)[0]).join('; ');
-    if(response.status!==302||!cookie)throw new Error('Native DSH browser authentication failed');return cookie;
+    if(![302,303].includes(response.status)||!cookie)throw new Error('Native DSH browser authentication failed');return cookie;
   };
   ctx.effect(()=>connectLocalHost({settings,save,origin,authorize,version,onStatus:status=>ctx.logger.info(`Weft local Host: ${status}`)}),'weft-local-host-connection');
 }

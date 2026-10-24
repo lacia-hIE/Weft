@@ -24,9 +24,7 @@ test('published local DSH runs native Files, Git, PTY and restores the workbench
   await page.keyboard.type("printf '\\nLOCAL_CHANGED_FILE\\n' >> notes.md; git status --porcelain");await page.keyboard.press('Enter');
   await expect(screen).toContainText('M notes.md');
   // Native Files consumes the same on-disk directory used by the terminal.
-  const files=page.locator('[data-sidebar-right-guide-entry="files"]');
-  if(await files.isVisible())await files.click();
-  else await page.getByRole('button',{name:'Workspace files',exact:true}).click();
+  await page.keyboard.press('Control+Alt+p');
   const note=page.locator(`[data-files-path="${project}/notes.md"]`);await expect(note).toBeVisible();await note.getByRole('button').click();
   await expect(page.getByText('LOCAL_CHANGED_FILE',{exact:true})).toBeVisible();
   await page.reload();await expect(page.getByText('LOCAL_CHANGED_FILE',{exact:true})).toBeVisible({timeout:45_000});

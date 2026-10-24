@@ -92,6 +92,7 @@ if (Object.values(bootstrap.metafile.outputs).some(output => output.imports.some
 Object.assign(web.metafile.outputs, bootstrap.metafile.outputs);
 Object.assign(web.metafile.inputs, bootstrap.metafile.inputs);
 const assets = {};
+await build({entryPoints:['apps/web/src/local-host-bootstrap.ts'],outfile:'dist/web/local-host-bootstrap.js',bundle:true,format:'iife',platform:'browser',target:'es2022',minify:true});
 const primitives = web.metafile.outputs['dist/web/ui-runtime/primitives.js'].exports;
 const dockkit = web.metafile.outputs['dist/web/ui-runtime/dockkit.js'].exports;
 writeFileSync('.generated/browser-capabilities.ts',`export const primitiveExports: string[]=${JSON.stringify(primitives)};\nexport const dockkitExports: string[]=${JSON.stringify(dockkit)};\n`);
