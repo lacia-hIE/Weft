@@ -11,7 +11,7 @@ import { handleNativeRequest } from './native-http.ts';
 import { TenantDO, EnvironmentDO, controlFor, controlScope } from '../../../packages/control-plane/src/object.ts';
 import type { AgentRevision } from '../../../packages/control-plane/src/contracts.ts';
 import { id } from '../../../packages/control-plane/src/contracts.ts';
-import upstream from '../../../upstream.lock.json';
+import {supportsAgentRuntime} from '../../../packages/harness-runtime/src/revision.ts';
 import { serveUi } from './ui-http.ts';
 import { WorkspaceDO } from '../../../packages/workspace/src/object.ts';
 import {createNativeFileHost, type NativeFileEndpoint} from '../../../packages/native-files/src/index.ts';
@@ -201,7 +201,7 @@ export class SessionDO extends DurableObject<Env> {
       const stored = this.ctx.storage.sql.exec<{workspace_id: string; agent_document: string; presentation: number}>('SELECT workspace_id,agent_document,presentation FROM weft_session_config WHERE id=1').toArray()[0];
       if (!stored || stored.presentation !== 1 || !stored.agent_document) throw new RemoteError('session/not-found', 'Native Session not found', {sessionId: SessionId(scope.sessionId)});
       const profile = JSON.parse(stored.agent_document) as AgentRevision;
-      if (profile.upstream !== upstream.commit) throw new Error('Agent runtime revision unavailable');
+      if (!supportsAgentRuntime(profile.upstream)) throw new Error('Agent runtime revision unavailable');
       const runtime = await sessionRuntime(this.env, this.ctx.storage, scope, profile, stored.workspace_id, profile.spec.persona, true, await this.getReader(), {}, this.nativeCwd(scope.sessionId), false);
       const owner = controlScope(scope.tenantId, scope.environmentId);
       const pluginsReady = Promise.withResolvers<void>();
@@ -364,7 +364,7 @@ export class SessionDO extends DurableObject<Env> {
       const control = controlFor(this.env, owner);
       const {value: profile} = await (await control.nativeProfile(owner, preset, revision)).json() as {value?: AgentRevision};
       if (!profile) throw new RemoteError('agent-preset/not-found', 'Unknown preset', {agentPreset: preset, available: await control.nativePresetIds(owner)});
-      if (profile.upstream !== upstream.commit) throw new Error('Agent runtime revision unavailable');
+      if (!supportsAgentRuntime(profile.upstream)) throw new Error('Agent runtime revision unavailable');
       const stored = this.ctx.storage.sql.exec<{agent_document: string}>('SELECT agent_document FROM weft_session_config WHERE id=1').one();
       const current = JSON.parse(stored.agent_document) as AgentRevision;
       if (current.spec.id === profile.spec.id && current.revision === profile.revision && JSON.stringify(current.spec) === JSON.stringify(profile.spec)) return profile.spec.id;
@@ -439,7 +439,7 @@ export class SessionDO extends DurableObject<Env> {
             profile = await controlFor(this.env, controlScope(scope.tenantId, scope.environmentId)).agent(controlScope(scope.tenantId, scope.environmentId), agentBinding.id, agentBinding.revision);
             if (!profile) return { ok: false, requestId, error: { code: 'AGENT_NOT_FOUND', message: 'Agent revision not found', status: 404 } };
           }
-          if (profile && profile.upstream !== upstream.commit) return { ok: false, requestId, error: { code: 'RUNTIME_REVISION_UNAVAILABLE', message: 'This agent revision belongs to another Harness runtime; publish a reviewed revision after migration', status: 409 } };
+          if (profile && !supportsAgentRuntime(profile.upstream)) return { ok: false, requestId, error: { code: 'RUNTIME_REVISION_UNAVAILABLE', message: 'This agent revision belongs to another Harness runtime; publish a reviewed revision after migration', status: 409 } };
           if (workspaceId !== undefined) workspaceIdSchema.parse(workspaceId);
           if (stored && workspaceId !== undefined && workspaceId !== stored.workspace_id) {
             return { ok: false, requestId, error: { code: 'WORKSPACE_MISMATCH', message: 'Session is already bound to another workspace', status: 409 } };
@@ -488,7 +488,7 @@ export class SessionDO extends DurableObject<Env> {
       // Without a binding the environment resolves its default preset in the same call.
       const {value: profile} = await (await control.nativeProfile(owner, binding?.id, binding?.revision)).json() as {value?: AgentRevision};
       if (!profile) throw new RemoteError('agent-preset/not-found', 'Unknown preset', {agentPreset: binding?.id ?? await control.nativePresetDefault(owner), available: await control.nativePresetIds(owner)});
-      if (profile.upstream !== upstream.commit) throw new Error('Agent runtime revision unavailable');
+      if (!supportsAgentRuntime(profile.upstream)) throw new Error('Agent runtime revision unavailable');
       const attachedWorkspace = workspaceId ?? profile.spec.workspaceId;
       workspaceIdSchema.parse(attachedWorkspace);
       const reader = await this.getReader();
@@ -533,7 +533,7 @@ export class SessionDO extends DurableObject<Env> {
     const scope = this.assertScope(input);
     await this.exclusive(async () => {
       if (this.ctx.storage.sql.exec('SELECT id FROM weft_session_config WHERE id=1').toArray().length || readSessionSnapshot(this.ctx.storage, SessionId(scope.sessionId))) throw new RemoteError('gateway/internal', 'Fork Session identity was already used', {});
-      if (fork.profile.upstream !== upstream.commit) throw new Error('Agent runtime revision unavailable');
+      if (!supportsAgentRuntime(fork.profile.upstream)) throw new Error('Agent runtime revision unavailable');
       workspaceIdSchema.parse(fork.workspaceId);
       const directory = workspacePath(fork.cwd);
       const runtime = await sessionRuntime(this.env, this.ctx.storage, scope, fork.profile, fork.workspaceId, fork.profile.spec.persona, true, await this.getReader(), {}, directory, false);

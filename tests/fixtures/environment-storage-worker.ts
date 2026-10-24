@@ -63,6 +63,11 @@ export class SessionDO extends BaseSessionDO {
     return inspectLifecycle(this.fixtureRaw);
   }
 
+  fixtureRevision(commit:string):void {
+    const row=this.fixtureRaw.sql.exec<{agent_document:string}>('SELECT agent_document FROM weft_session_config WHERE id=1').one();
+    const profile=JSON.parse(row.agent_document);profile.upstream=commit;
+    this.fixtureRaw.sql.exec('UPDATE weft_session_config SET agent_document=? WHERE id=1',JSON.stringify(profile));
+  }
   override async nativeReadSummaryGroup(scope: SessionScope): Promise<Response> {
     this.ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS fixture_summary_reads (id INTEGER PRIMARY KEY,count INTEGER NOT NULL)');
     this.ctx.storage.sql.exec('INSERT INTO fixture_summary_reads VALUES (1,1) ON CONFLICT(id) DO UPDATE SET count=count+1');
@@ -164,6 +169,11 @@ async function inspectLifecycle(storage:DurableObjectStorage):Promise<Response> 
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    if(new URL(request.url).pathname==='/_fixture/session-revision') {
+      const {scope,commit}=await request.json() as {scope:SessionScope;commit:string};
+      await (env.SESSIONS.getByName(sessionAddress(scope)) as DurableObjectStub<SessionDO>).fixtureRevision(commit);
+      return Response.json({ok:true});
+    }
     if(new URL(request.url).pathname==='/_fixture/lifecycle') {
       const {scope,kind,action}=await request.json() as {action?:string;scope:SessionScope&WorkspaceScope;kind:'session'|'workspace'|'environment'};
       if(kind==='session')return (env.SESSIONS.getByName(sessionAddress(scope)) as DurableObjectStub<SessionDO>).fixtureLifecycle(action);

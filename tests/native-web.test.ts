@@ -71,3 +71,44 @@ test('web_search queries DeepSeek with the environment model key resolved throug
   assert.match(result, /SearchResultAlpha/);
   assert.deepEqual(searchKeys, ['web-fixture'], 'the search request carries the key saved in the environment Models settings');
 });
+
+test('rc.2 Search and Fetch APIs use native settings and credentials, and reject credential redirects',{timeout:120_000},async()=>{
+  const calls:{path:string;key:string;body:any}[]=[];
+  let redirect=false;
+  const base=webModel('weft release','web_search');
+  const runtime=createRuntime(undefined,{browser:true,bindings:{MODEL_BACKEND:'deepseek',DEEPSEEK_API_KEY:'web-fixture',DEEPSEEK_BASE_URL:'https://web-model.test/anthropic'},outbound:async(request,miniflare)=>{
+    const url=new URL(request.url);
+    if(url.origin==='https://web-api.test'){
+      calls.push({path:url.pathname,key:request.headers.get('authorization')??'',body:await request.json()});
+      if(redirect)return new Response('',{status:302,headers:{location:'https://must-not-receive-key.test/'}});
+      return url.pathname==='/v1/search'?Response.json({results:[{url:'https://page.test/api',title:'NativeSearchAPI',snippet:'Direct API result',date:null}]}):Response.json({content:'# Native Fetch API\nOriginalMarkdown'});
+    }
+    if(url.origin==='https://must-not-receive-key.test')throw new Error('Credential redirect was followed');
+    return base.outbound(request,miniflare);
+  }});
+  const api=nativeClient(()=>runtime);
+  async function run(id:string,tool:'web_search'|'web_fetch'){
+    // The model fixture selects the requested tool independently of prior turns.
+    nextTool=tool;
+    await api.call('session/create',{request:{sessionId:id}});
+    const stream=await api.follow(id);await stream.next();const results:unknown[]=[];
+    try{await api.call('session/prompt',{request:{sessionId:id,requestId:crypto.randomUUID(),mode:'queue',content:[{type:'text',text:'weft release'}]}});
+      for(;;){const frame=await stream.next();if(frame.type!=='event')continue;if(frame.event.type==='tool/result')results.push(frame.event);if(frame.event.type==='turn/end')return JSON.stringify(results);}
+    }finally{await stream.close();}
+  }
+  // Select the fixture's tool per fresh Session while retaining its API routing.
+  let nextTool:'web_search'|'web_fetch'='web_search';
+  const searchModel=base.outbound,fetchModel=webModel('https://page.test/api','web_fetch').outbound;
+  base.outbound=(request,miniflare)=> (nextTool==='web_fetch'?fetchModel:searchModel)(request,miniflare);
+  try{
+    await api.call('credentials/set',{ref:'WEB_API_KEY',value:'direct-api-key'});
+    await api.call('settings/update',{ns:'web-deepseek-api',patch:{apiKeyEnv:'WEB_API_KEY',baseURL:'https://web-api.test/v1',count:4}});
+    await api.call('settings/update',{ns:'web',patch:{searchProvider:'deepseek-search-api',fetchProvider:'deepseek-fetch-api'}});
+    assert.doesNotMatch(JSON.stringify(await api.call('settings/describe',{})),/direct-api-key/);
+    assert.match(await run('api-search','web_search'),/NativeSearchAPI/);
+    assert.equal(calls[0]!.path,'/v1/search');assert.equal(calls[0]!.key,'Bearer direct-api-key');assert.equal(calls[0]!.body.count,4);assert.equal(calls[0]!.body.ori_question,'weft release');
+    assert.match(await run('api-fetch','web_fetch'),/OriginalMarkdown/);
+    assert.equal(calls[1]!.path,'/v1/fetch');assert.equal(calls[1]!.body.url,'https://page.test/api');
+    redirect=true;const rejected=await run('api-redirect','web_search');assert.match(rejected,/302/);assert.doesNotMatch(rejected,/Credential redirect was followed/);
+  }finally{await runtime.dispose();}
+});
