@@ -37,6 +37,7 @@ export class EnvironmentSettings {
   private readonly ready: Promise<Context>;
   private syncWork: Promise<unknown> = Promise.resolve();
   private applied = -1;
+  private description: {revision: number; value: SettingsDescriptor[]} | undefined;
   constructor(private readonly documents: DurableSettingsDocuments, private readonly definitions: readonly SettingsEntryDefinition[], validate: (id: string, user: Section) => void) {
     this.ready = (async () => {
       const ctx = new Context();
@@ -85,7 +86,12 @@ export class EnvironmentSettings {
     this.syncWork = pending.catch(() => {});
     return pending;
   }
-  async describe(): Promise<SettingsDescriptor[]> {await this.sync(); return (await this.ready).settings.describe({redactSecrets: true});}
+  async describe(): Promise<SettingsDescriptor[]> {
+    await this.sync();
+    const revision = this.documents.revision;
+    if (this.description?.revision !== revision) this.description = {revision, value: (await this.ready).settings.describe({redactSecrets: true})};
+    return structuredClone(this.description.value);
+  }
   async update(method: 'update' | 'replace' | 'mutate', ns: string, value: unknown, expected?: number): Promise<void> {
     await this.sync();
     const service = (await this.ready).settings;

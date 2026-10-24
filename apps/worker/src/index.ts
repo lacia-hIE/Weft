@@ -139,7 +139,7 @@ export class SessionDO extends DurableObject<Env> {
     const reader = await (this.readerPromise ??= this.createReader(sessionId => {
       const scope = this.ownerScope;
       if (!scope || scope.sessionId !== sessionId) throw new Error('Root promotion address mismatch');
-      this.ctx.waitUntil(this.getNativeHost(scope).then(() => {}).catch(async error => {
+      this.ctx.waitUntil(this.getNativeHost(scope).then(() => this.publishNativeSummary(scope)).catch(async error => {
         const owner = controlScope(scope.tenantId, scope.environmentId);
         await controlFor(this.env, owner).nativeEvent(owner, 'api-session/error', [sessionId, turnFailure(error).message]);
       }));

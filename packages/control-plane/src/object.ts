@@ -583,7 +583,7 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
     return items;
   }
   async nativeSyncSessionSummaries(scope: ControlScope, root: string, text: string): Promise<void> {this.storeSummaries(scope, root, text, true);}
-  /** Only missing or still-active roots require a source RPC. Cold completed lists read local SQLite. */
+  /** Missing, running or resident-Agent roots require a source RPC; stable idle summaries are local. */
   async nativeSessionList(scope: ControlScope): Promise<Response> {
     return this.listNativeSessions(scope);
   }

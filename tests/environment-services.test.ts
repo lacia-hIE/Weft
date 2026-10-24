@@ -89,23 +89,28 @@ test('completed session lists use a rebuildable local summary index across resta
   const stats = (samples: number[]) => {const sorted=[...samples].sort((a,b)=>a-b); return {samples: sorted.length, p50Ms: sorted[Math.ceil(sorted.length*.5)-1], p95Ms: sorted[Math.ceil(sorted.length*.95)-1]};};
   try {
     for (const sessionId of ids) await api.call('session/create', {request: {sessionId}});
+    await api.call('session/prompt', {request: {sessionId: ids[0]!, requestId: crypto.randomUUID(), mode: 'queue', content: [{type: 'text', text: 'Complete a turn before the cold list'}]}});
+    assert.equal((await runtime.dispatchFetch(url('alpha', `/v1/tenants/${owner.tenantId}/environments/default/sessions/${ids[0]}/events`))).status, 200);
+    await runtime.dispose(); runtime = createRuntime(directory, options);
+    const settled = await api.call<SessionListValue>('session/list', {_request: {}});
+    assert.ok(settled.items.every(row=>!row.agentAvailable && !row.running), 'old process availability is verified after restart');
     const before = await counts();
     const warm: number[] = [];
     for (let index=0;index<8;index++) {
-      const sample=await measure(()=>api.call<SessionListValue>('session/list', {}));
+      const sample=await measure(()=>api.call<SessionListValue>('session/list', {_request: {}}));
       assert.equal(sample.value.items.length, ids.length); warm.push(sample.ms);
     }
     assert.deepEqual(await counts(), before, 'warm completed lists issue no per-session summary RPCs');
     await runtime.dispose(); runtime = createRuntime(directory, options);
-    const cold = await measure(()=>api.call<SessionListValue>('session/list', {}));
+    const cold = await measure(()=>api.call<SessionListValue>('session/list', {_request: {}}));
     assert.equal(cold.value.items.length, ids.length);
     assert.deepEqual(await counts(), before, 'a cold EnvironmentDO reads its persisted derived index');
     await runtime.dispatchFetch(url('alpha', '/_fixture/environment-storage'), {method: 'POST', body: JSON.stringify({scope: owner, operation: 'clear-summaries'})});
-    const rebuilt = await api.call<SessionListValue>('session/list', {});
+    const rebuilt = await api.call<SessionListValue>('session/list', {_request: {}});
     assert.deepEqual(rebuilt, cold.value);
     assert.deepEqual(await counts(), before.map(value=>value+1), 'missing summaries rebuild once from authoritative logs');
     await api.call('session/rename', {request: {sessionId: ids[0]!, title: 'Updated source title'}});
-    assert.match(JSON.stringify((await api.call<SessionListValue>('session/list', {})).items.find(row=>row.sessionId===ids[0])), /Updated source title/);
+    assert.match(JSON.stringify((await api.call<SessionListValue>('session/list', {_request: {}})).items.find(row=>row.sessionId===ids[0])), /Updated source title/);
     const settings: number[] = [];
     for (let index=0;index<5;index++) settings.push((await measure(()=>api.call('settings/describe', {}))).ms);
     const admission: number[] = [];

@@ -67,7 +67,8 @@ test('native Workspace commands, real directories, membership, pins, archival an
     assert.match(await read.text(), /real Computer bytes/);
     const adopted = await api.call<WorkspaceCreateValue>('workspace/create', {request: {path}});
     assert.notEqual(adopted.workspace.workspaceId, project.workspace.workspaceId);
-    assert.deepEqual(adopted.workspace.sessionIds, [session.sessionId]);
+    assert.deepEqual(adopted.workspace.sessionIds, [], 'the original Registry creates a new empty registration');
+    assert.match(JSON.stringify(await api.call('session/list', {_request: {}})), /project-session/, 'removing the registration retains the session log');
     const control = await api.stream<SessionControlFrame>('session/control', {});
     try {
       assert.equal((await control.next()).type, 'baseline');
