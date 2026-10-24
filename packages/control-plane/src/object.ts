@@ -146,18 +146,22 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
     if(action==='resume'){
       this.lifecycle.transition('active',operation);
       const builder=(this.ctx.exports as unknown as {PluginBuilderDO?:DurableObjectNamespace<import('../../package-install/src/builder.ts').PluginBuilderDO>}).PluginBuilderDO;
-      if(builder)await builder.getByName(this.ctx.id.toString()).activate(operation);
+      if(typeof builder?.getByName==='function')await builder.getByName(this.ctx.id.toString()).activate(operation);
+      const at=await this.ctx.storage.get<number>('weft_paused_alarm');
+      if(at!==undefined){await this.ctx.storage.setAlarm(Math.max(at,Date.now()+1000));await this.ctx.storage.delete('weft_paused_alarm');}
       return Response.json({resumed:true});
     }
+    const at=await this.lifecycle.raw.getAlarm();
     this.lifecycle.transition('suspended',operation);
     return this.lifecycle.maintenance(async()=>{
+      if(at!==null && await this.ctx.storage.get('weft_paused_alarm')===undefined)await this.ctx.storage.put('weft_paused_alarm',at);
       this.nativeEvents.close();this.nativeControl.close();this.lifecycle.closeStreams();
       await this.nativeWorkspaces?.dispose();this.nativeWorkspaces=undefined;
       await this.nativeSearch?.dispose();this.nativeSearch=undefined;
       await this.market?.dispose();this.market=undefined;
       await this.modelWorld?.dispose();this.modelWorld=undefined;
       const builder=(this.ctx.exports as unknown as {PluginBuilderDO?:DurableObjectNamespace<import('../../package-install/src/builder.ts').PluginBuilderDO>}).PluginBuilderDO;
-      if(builder)await builder.getByName(this.ctx.id.toString()).retire(operation);
+      if(typeof builder?.getByName==='function')await builder.getByName(this.ctx.id.toString()).retire(operation);
       await this.lifecycle.drain();await this.ctx.storage.deleteAlarm();
       if(action==='delete'){await this.lifecycle.purge(operation);return Response.json({deleted:true});}
       this.ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_environment_resources (kind TEXT NOT NULL,id TEXT NOT NULL,PRIMARY KEY(kind,id)) STRICT');
@@ -1204,10 +1208,15 @@ export class TenantDO extends DurableObject<TenantEnvironment> {
       if(!record||record.status==='deleted')return Response.json({error:'环境不存在'},{status:404});
       if(record.status && !['ready','paused'].includes(record.status))return Response.json({error:'请等待当前操作完成后再重命名'},{status:409});
       record.name=parsed.data.name;record.updatedAt=new Date().toISOString();
-      await this.writeCatalogue(tenantId,record);
-      this.ctx.storage.sql.exec('UPDATE weft_environment_copy_jobs SET document=? WHERE id=?',JSON.stringify({tenantId,record}),record.id);
       const old=this.ctx.storage.sql.exec<{document:string}>('SELECT document FROM weft_environment_lifecycle_jobs WHERE id=?',record.id).toArray()[0];
-      if(old){const job=JSON.parse(old.document) as EnvironmentLifecycleJob;job.record=record;this.ctx.storage.sql.exec('UPDATE weft_environment_lifecycle_jobs SET document=? WHERE id=?',JSON.stringify(job),record.id);}
+      const job:EnvironmentLifecycleJob=old?JSON.parse(old.document):{tenantId,record,cursor:0};job.record=record;
+      // Commit the rename before updating D1, so a cold recovery cannot restore
+      // an older name from a completed copy/lifecycle journal.
+      this.ctx.storage.transactionSync(()=>{
+        this.ctx.storage.sql.exec('INSERT INTO weft_environment_lifecycle_jobs VALUES (?,?,1,?) ON CONFLICT(id) DO UPDATE SET document=excluded.document',record.id,record.lifecycle?.revision??0,JSON.stringify(job));
+        this.ctx.storage.sql.exec('UPDATE weft_environment_copy_jobs SET document=? WHERE id=?',JSON.stringify({tenantId,record}),record.id);
+      });
+      await this.writeCatalogue(tenantId,record);
       return Response.json(record);
     });
   }

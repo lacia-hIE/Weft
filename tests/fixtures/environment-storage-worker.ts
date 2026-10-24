@@ -77,7 +77,7 @@ export class SessionDO extends BaseSessionDO {
 /** Real application environment, deliberately given no usable D1 binding. */
 export class EnvironmentDO extends BaseEnvironmentDO {
   private readonly fixtureRaw:DurableObjectStorage;
-  async fixtureLifecycle():Promise<Response>{return inspectLifecycle(this.fixtureRaw);}
+  async fixtureLifecycle(action?:string):Promise<Response>{if(action==='alarm')await this.fixtureRaw.setAlarm(Date.now()+3_600_000);return inspectLifecycle(this.fixtureRaw);}
 
   constructor(ctx: DurableObjectState, env: Env) {
     const localOnly = {...env, CONFIG_DB: undefined};
@@ -168,7 +168,7 @@ export default {
       const {scope,kind,action}=await request.json() as {action?:string;scope:SessionScope&WorkspaceScope;kind:'session'|'workspace'|'environment'};
       if(kind==='session')return (env.SESSIONS.getByName(sessionAddress(scope)) as DurableObjectStub<SessionDO>).fixtureLifecycle(action);
       if(kind==='workspace')return (env.WORKSPACES.getByName(workspaceAddress(scope)) as DurableObjectStub<WorkspaceDO>).fixtureLifecycle(action);
-      return (env.ENVIRONMENTS.getByName(environmentAddress({tenantId:scope.tenantId,environmentId:scope.environmentId??'default'})) as DurableObjectStub<EnvironmentDO>).fixtureLifecycle();
+      return (env.ENVIRONMENTS.getByName(environmentAddress({tenantId:scope.tenantId,environmentId:scope.environmentId??'default'})) as DurableObjectStub<EnvironmentDO>).fixtureLifecycle(action);
     }
     if(new URL(request.url).pathname==='/_fixture/workspace-copy') {
       const {scope,operation}=await request.json() as {scope:WorkspaceScope;operation:string};

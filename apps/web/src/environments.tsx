@@ -60,12 +60,12 @@ export function Environments({user}: {user: {id: string; email: string}}): React
   const yamlError = useMemo(() => advanced ? syntaxError(configuration) : undefined, [advanced, configuration]);
   const load = async () => setEnvironments((await api<{environments: EnvironmentRecord[]}>("environments")).environments);
   useEffect(() => {void load().catch(error => setError(String(error)));}, []);
-  const copying=environments?.some(row=>['copying','pausing','resuming','deleting'].includes(row.status??'ready'))??false;
+  const pending=environments?.some(row=>['copying','pausing','resuming','deleting'].includes(row.status??'ready'))??false;
   useEffect(()=>{
-    if(!copying) return;
+    if(!pending) return;
     const timer=setInterval(()=>{void load().catch(error=>setError(String(error)));},2000);
     return ()=>clearInterval(timer);
-  },[copying]);
+  },[pending]);
   async function copy(source: EnvironmentRecord, name:string, requestId:string): Promise<void> {
     if(copyBusy || !name.trim()) return;
     setCopyBusy(true);setCopyError('');

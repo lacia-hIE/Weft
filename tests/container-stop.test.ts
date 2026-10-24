@@ -60,14 +60,14 @@ test('workspace stop coalesces requests, gates new connections, syncs before des
       const kv = new Map<string, unknown>();
       const sql = sqlStorage(db);
       const storage = {sql, transactionSync: <T>(callback: () => T) => callback(), sync: async () => {},
-        get: async (key: string) => kv.get(key), put: async (key: string, value: unknown) => {kv.set(key, value);}, delete: async (key: string) => kv.delete(key)};
+        get: async (key: string) => kv.get(key), put: async (key: string | Record<string,unknown>, value?: unknown) => {if(typeof key==='string')kv.set(key,value);else for(const [name,item] of Object.entries(key))kv.set(name,item);}, delete: async (key: string) => kv.delete(key), deleteAlarm: async()=>{}};
       const container = {running: options.running ?? true, destroy: async () => {calls.push('destroy'); container.running = false;}};
       const containerHost = new host.WorkspaceContainerBasicDO({storage, container} as never, {});
       const state = {storage, id: {toString: () => host.workspaceAddress(scope), equals: (id: string) => id === host.workspaceAddress(scope)},
         exports: Object.fromEntries(['WorkspaceContainerBasicDO', 'WorkspaceContainerStandard1DO', 'WorkspaceContainerStandard2DO'].map(name => [name, {getByName: () => containerHost}])),
         waitUntil: (_promise: Promise<unknown>) => {}};
       const workspace = new host.WorkspaceDO(state as never, {WORKSPACES: {idFromName: (id: string) => id}, SESSIONS: {getByName: () => ({nativeStopContainerProcesses: async () => {calls.push('cancel'); await options.pause;}})}} as never);
-      Reflect.set(workspace, 'files', {synchronize: async () => {calls.push('sync'); if (options.syncFails) throw new Error('file sync refused'); return [];}});
+      Reflect.set(workspace, 'files', {synchronize: async () => {calls.push('sync'); if (options.syncFails) throw new Error('file sync refused'); return [];},close:async()=>{calls.push('close-files');}});
       Reflect.set(workspace, 'containerConnection', {close: async () => {calls.push('close');}, closed: Promise.resolve()});
       return {workspace, containerHost, container, calls, db};
     };
@@ -121,6 +121,19 @@ test('workspace stop coalesces requests, gates new connections, syncs before des
         assert.equal((await workspace.stopContainer(scope, [])).status, 200);
         assert.equal((await workspace.containerState(scope)).status, 'stopped');
       } finally {db.close();}
+    });
+    await t.test('environment pause synchronizes, retires all hosts and rejects old operations after resume',async()=>{
+      const {workspace,containerHost,container,calls,db}=make();
+      try {
+        await workspace.nativeLifecycle(scope,'freeze',1);
+        assert.equal(container.running,false);assert.ok(calls.indexOf('sync')<calls.indexOf('destroy'));
+        await assert.rejects(containerHost.start({env:{},enableInternet:true}),/stopped/);
+        assert.throws(()=>workspace.containerState(scope),/suspended/);
+        await workspace.nativeLifecycle(scope,'resume',2);
+        assert.equal((await workspace.containerState(scope)).status,'stopped');
+        await assert.rejects(containerHost.retire(1),/Stale/);
+        await assert.rejects(workspace.nativeLifecycle(scope,'freeze',1),/Stale/);
+      }finally{db.close();}
     });
     await t.test('legacy command cleanup releases its keepalive without waiting for an output reader', async () => {
       const {workspace, calls, db} = make();

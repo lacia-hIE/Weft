@@ -61,7 +61,8 @@ export class LifecycleGate {
   closeStreams():void {for(const close of [...this.streams])close();}
   async drain():Promise<void> {
     let timer:ReturnType<typeof setTimeout>|undefined;
-    try {await Promise.race([Promise.allSettled([...this.pending]),new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('Environment operations are still stopping; retry')),15_000);})]);}
+    const settle=async()=>{while(this.pending.size)await Promise.allSettled([...this.pending]);};
+    try {await Promise.race([settle(),new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('Environment operations are still stopping; retry')),15_000);})]);}
     finally {clearTimeout(timer);}
   }
   async purge(operation:number):Promise<void> {

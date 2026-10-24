@@ -43,7 +43,7 @@ test('environment rename, pause recovery, resume and deletion preserve isolation
     await bucket.put(owned,'private-artifact');await bucket.put(other,'other-artifact');
     assert.equal((await request(`/${environment}`,'PATCH',{name:'Renamed environment'})).status,200);
     assert.equal((await request(`/${environment}`,'PATCH',{name:' '})).status,400);
-    await fixture('session','alarm');
+    await fixture('session','alarm');await fixture('environment','alarm');
     await fixture('workspace','fail-freeze');
     assert.equal((await request(`/${environment}/lifecycle`,'POST',{action:'suspend'})).status,202);
     const interrupted=await wait('pausing',true);assert.match(interrupted!.lifecycle!.error!,/Injected pause interruption/);
@@ -59,7 +59,7 @@ test('environment rename, pause recovery, resume and deletion preserve isolation
     assert.equal((await request(`/${environment}`,'PATCH',{name:'Renamed while paused'})).status,200);
     assert.equal((await request(`/${environment}/lifecycle`,'POST',{action:'resume'})).status,202);
     await wait('ready');
-    assert.ok((await fixture('session')).alarm!>Date.now());
+    assert.ok((await fixture('session')).alarm!>Date.now());assert.ok((await fixture('environment')).alarm!>Date.now());
     assert.match(JSON.stringify(await api.call('credentials/describe',{refs:['LIFECYCLE_KEY']})),/"configured":true/);
     assert.match(JSON.stringify(await api.call('session/list',{})),/history/);
     for(const workspace of ['default','extra']){

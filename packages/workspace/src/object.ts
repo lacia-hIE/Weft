@@ -119,7 +119,7 @@ export class WorkspaceDO extends DurableObject<Env> {
   }
   private lifecycleHosts():ContainerHostActivity[] {
     const namespaces=this.ctx.exports as unknown as Record<string,DurableObjectNamespace|undefined>;
-    return Object.values(CONTAINER_HOSTS).flatMap(name=>namespaces?.[name]?[namespaces[name]!.getByName(this.ctx.id.toString()) as unknown as ContainerHostActivity]:[]);
+    return Object.values(CONTAINER_HOSTS).flatMap(name=>typeof namespaces?.[name]?.getByName==='function'?[namespaces[name]!.getByName(this.ctx.id.toString()) as unknown as ContainerHostActivity]:[]);
   }
   async releaseCopy(input:WorkspaceScope,copyId:string):Promise<void> {
     const scope=workspaceScopeSchema.parse(input);
