@@ -6,10 +6,8 @@ import type { Principal } from "../../../packages/tenant/src/index.ts";
 import { assertSameOrigin, HttpError, readJson } from "./http.ts";
 
 /**
- * Environments are never removed, so an environment the registry confirmed
- * stays valid; this isolate reuses the confirmation briefly instead of asking
- * the tenant object on every request. Keys carry the tenant, and only found
- * environments are kept.
+ * Only ready environments are cached. Copying/failed drafts always consult the
+ * catalogue so publication is visible immediately after completion.
  */
 const confirmed = new Map<string, {record: EnvironmentRecord; at: number}>();
 const CONFIRMATION_MS = 60_000;
@@ -66,7 +64,7 @@ export async function resolveEnvironmentRequest(
   const record = await knownEnvironment(tenant, principal.tenantId, match[2]);
   if (!record) throw new HttpError(404, "Environment not found");
   if (!match[3] && request.method === "GET")
-    return { request, response: Response.json(record) };
+    return { request, response: Response.json(record,{headers:{'cache-control':'private, no-store'}}) };
   if(match[3]==='/copy') {
     if(request.method!=='POST') throw new HttpError(405,'Method not allowed');
     assertSameOrigin(request);

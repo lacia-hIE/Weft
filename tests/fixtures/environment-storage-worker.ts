@@ -1,5 +1,6 @@
 import application, {EnvironmentDO as BaseEnvironmentDO, SessionDO as BaseSessionDO, WorkspaceDO as BaseWorkspaceDO, type Env} from '../../apps/worker/src/index.ts';
 import {Workspace} from '@cloudflare/computer';
+import {Buffer} from 'node:buffer';
 import {workspaceAddress,type WorkspaceScope} from '../../packages/workspace/src/protocol.ts';
 import {sessionAddress, type SessionScope} from '../../packages/tenant/src/index.ts';
 import {environmentAddress} from '../../packages/control-plane/src/object.ts';
@@ -18,7 +19,7 @@ export class WorkspaceDO extends BaseWorkspaceDO {
       provider.mkdirSync('/workspace/.weft/attachments/v1',{recursive:true});
       provider.mkdirSync('/workspace/.dsh/spill',{recursive:true});
       const bytes=new Uint8Array(3*1024*1024+17);for(let i=0;i<bytes.length;i++)bytes[i]=i%251;
-      provider.writeFileSync('/workspace/project/数据.bin',bytes);
+      provider.writeFileSync('/workspace/project/数据.bin',Buffer.from(bytes));
       provider.writeFileSync('/workspace/project/run.sh','#!/bin/sh\necho copied\n');provider.chmodSync('/workspace/project/run.sh',0o755);
       provider.writeFileSync('/workspace/project/.git/config','[core]\n repositoryformatversion = 0\n');
       provider.writeFileSync('/workspace/.env','PROJECT=value');

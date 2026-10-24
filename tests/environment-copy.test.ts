@@ -6,6 +6,10 @@ import {tmpdir} from 'node:os';
 import {setTimeout} from 'node:timers/promises';
 import {createRuntime,tenantId,url} from './helpers/miniflare.ts';
 import {nativeClient} from './helpers/native.ts';
+import {Response} from 'miniflare';
+import {buildPackage} from '../apps/plugin-builder/server.mjs';
+import {packageFixture} from './helpers/package-fixture.ts';
+import type {Installation,Artifact} from '../packages/package-install/src/contracts.ts';
 import type {EnvironmentRecord,TenantState} from '../packages/control-plane/src/contracts.ts';
 import type {SettingsDescribeValue} from '@deepseek-ai/dsh-settings/types';
 
@@ -72,4 +76,33 @@ test('environment copying keeps a fixed file/configuration cut, resumes after fa
     assert.equal((await request(`/${requestId}/workspaces/default/files`,'PUT',{path:'/workspace/project/run.sh',content:'target only',expectedVersion:read.value.version})).status,200);
     const original=await (await request('/default/workspaces/default/files?path=/workspace/project/run.sh')).json() as {value:{content:string}};assert.equal(original.value.content,'changed after snapshot');
   } finally {await runtime.dispose();await rm(directory,{recursive:true,force:true});}
+});
+
+test('copied package artifacts have independent ownership and require a new exact approval',{timeout:120_000},async()=>{
+  const fixture=packageFixture();
+  const runtime=createRuntime(undefined,{browser:true,configureModel:false,packages:true,
+    outbound:async request=>request.url===fixture.manifest.dist.tarball?new Response(fixture.bytes):Response.json(fixture.manifest),
+    packageBuilder:async request=>Response.json(await buildPackage(JSON.parse(await request.text()))),
+  });
+  const base=`/v1/tenants/${tenantId('alpha')}/environments`,api=nativeClient(()=>runtime),requestId=crypto.randomUUID();
+  const operation=(environment:string,body?:object)=>runtime.dispatchFetch(url('alpha',`${base}/${environment}/native/package-installations`),body?{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}:{});
+  try {
+    await api.call('pluginManager/installBundle',{spec:`${fixture.name}@${fixture.version}`,options:{requestId:crypto.randomUUID()}});
+    const row=(await (await operation('default')).json() as {installations:Installation[]}).installations[0]!;
+    assert.equal((await operation('default',{operation:'approve',name:row.name,digest:row.digest})).status,200);
+    const started=await runtime.dispatchFetch(url('alpha',base+'/default/copy'),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:'Package copy',requestId})});assert.equal(started.status,202);
+    let ready=false;
+    for(let i=0;i<600;i++){
+      const record=await (await runtime.dispatchFetch(url('alpha',base+'/'+requestId))).json() as EnvironmentRecord;
+      if(record.status==='failed')throw new Error(record.copy!.error);
+      if(record.status==='ready'){ready=true;break;}await setTimeout(50);
+    }
+    assert.ok(ready);
+    const copied=(await (await operation(requestId)).json() as {installations:Installation[]}).installations[0]!;
+    assert.equal(copied.digest,row.digest);assert.equal(copied.enabled,false);assert.equal(copied.approved,false);
+    await api.call('pluginManager/removeBundle',{name:row.name});
+    const review=await operation(requestId,{operation:'review',name:row.name,digest:row.digest});assert.equal(review.status,200);
+    const artifact=await review.json() as Artifact;assert.equal(artifact.name,fixture.name);assert.deepEqual(artifact.lock,fixture.input.lock);
+    assert.equal((await operation(requestId,{operation:'approve',name:row.name,digest:row.digest})).status,200);
+  }finally{await runtime.dispose();}
 });

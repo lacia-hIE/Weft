@@ -2,7 +2,7 @@ import {createHash} from 'node:crypto';
 import type {Workspace} from '@cloudflare/computer';
 import {workspacePath} from './protocol.ts';
 
-interface Entry {path: string; kind: string; mode: number; size: number; offset: number; bytes: ArrayBuffer | null}
+type Entry = {path: string; kind: string; mode: number; size: number; offset: number; bytes: ArrayBuffer | null};
 /** A committed Computer-volume cut. This is the pinned dofs storage adapter,
  * never an export of tasks, private attachments or container runtime tables. */
 export class WorkspaceCopy {
@@ -57,7 +57,7 @@ export class WorkspaceCopy {
       if(seq!==next) throw new Error('Workspace copy page is out of order');
       if(entry.kind==='dir') this.provider.mkdirSync(path,{recursive:true});
       else {
-        if(entry.offset===0) this.provider.writeFileSync(path,new Uint8Array());
+        if(entry.offset===0) this.provider.writeFileSync(path,'');
         const fd=this.provider.openSync(path,'r+');
         try {this.provider.writeSync(fd,bytes,0,bytes.length,entry.offset);} finally {this.provider.closeSync(fd);}
         if(entry.offset+bytes.length===entry.size) this.provider.chmodSync(path,entry.mode);

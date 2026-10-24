@@ -231,7 +231,17 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
     return Response.json({initialized: true});
   }
   /** Persist a retryable, configuration-only cut beside the committed file snapshot. */
-  async nativeCopySnapshot(scope: ControlScope, copyId: string): Promise<Response> {
+  private readonly copyCaptures=new Map<string,Promise<Response>>();
+  nativeCopySnapshot(scope: ControlScope, copyId: string): Promise<Response> {
+    this.scope(scope);id.parse(copyId);
+    let pending=this.copyCaptures.get(copyId);
+    if(!pending) {
+      pending=this.captureCopy(scope,copyId);this.copyCaptures.set(copyId,pending);
+      void pending.finally(()=>this.copyCaptures.delete(copyId)).catch(()=>{});
+    }
+    return pending.then(response=>response.clone());
+  }
+  private async captureCopy(scope: ControlScope, copyId: string): Promise<Response> {
     this.scope(scope); id.parse(copyId);
     this.ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_environment_copies (id TEXT PRIMARY KEY, document TEXT NOT NULL) STRICT');
     const saved=this.ctx.storage.sql.exec<{document:string}>('SELECT document FROM weft_environment_copies WHERE id=?',copyId).toArray()[0];
@@ -1138,7 +1148,7 @@ export class TenantDO extends DurableObject<TenantEnvironment> {
     const jobs=this.ctx.storage.sql.exec<{document:string;cleanup:number}>('SELECT document,cleanup FROM weft_environment_copy_jobs').toArray();
     for(const job of jobs) {
       const {tenantId,record}=JSON.parse(job.document) as {tenantId:string;record:EnvironmentRecord};
-      if(job.cleanup) {await this.cleanupCopy(tenantId,record);continue;}
+      if(job.cleanup) {await this.saveCopy(tenantId,record,1);await this.cleanupCopy(tenantId,record);continue;}
       if(record.status!=='copying' || !record.copy) continue;
       await this.ctx.storage.setAlarm(Date.now()+30_000);
       await this.performCopy(tenantId,record);

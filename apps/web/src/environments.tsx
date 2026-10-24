@@ -51,6 +51,7 @@ export function Environments({user}: {user: {id: string; email: string}}): React
   const [copyRequest,setCopyRequest]=useState('');
   const [copyError,setCopyError]=useState('');
   const [copyBusy,setCopyBusy]=useState(false);
+  const [copyRetry,setCopyRetry]=useState(false);
   const yamlError = useMemo(() => advanced ? syntaxError(configuration) : undefined, [advanced, configuration]);
   const load = async () => setEnvironments((await api<{environments: EnvironmentRecord[]}>("environments")).environments);
   useEffect(() => {void load().catch(error => setError(String(error)));}, []);
@@ -112,7 +113,7 @@ export function Environments({user}: {user: {id: string; email: string}}): React
               </>)}
               {environment.status==='failed' && <p className="home-copy-error" role="alert">{environment.copy?.error}</p>}
               <div className="home-card-actions">
-                {environment.status==='failed' && environment.copy ? <Button variant="ghost" size="sm" disabled={copyBusy} onClick={()=>{setCopySource({id:environment.copy!.sourceId,name:environment.name,createdAt:'',updatedAt:''});setCopyName(environment.name);setCopyRequest(environment.copy!.requestId);setCopyError('');}}>重试复制</Button> : environment.status!=='copying' && <Button variant="ghost" size="sm" onClick={()=>{setCopySource(environment);setCopyName(`${environment.name} 副本`.slice(0,80));setCopyRequest(crypto.randomUUID());setCopyError('');}}>复制</Button>}
+                {environment.status==='failed' && environment.copy ? <Button variant="ghost" size="sm" disabled={copyBusy} onClick={()=>{setCopyRetry(true);setCopySource({id:environment.copy!.sourceId,name:environment.name,createdAt:'',updatedAt:''});setCopyName(environment.name);setCopyRequest(environment.copy!.requestId);setCopyError('');}}>重试复制</Button> : environment.status!=='copying' && <Button variant="ghost" size="sm" onClick={()=>{setCopyRetry(false);setCopySource(environment);setCopyName(`${environment.name} 副本`.slice(0,80));setCopyRequest(crypto.randomUUID());setCopyError('');}}>复制</Button>}
               </div>
               </div>
             ))}
@@ -136,7 +137,7 @@ export function Environments({user}: {user: {id: string; email: string}}): React
         footer={<><Button variant="outline" disabled={copyBusy} onClick={()=>setCopySource(undefined)}>取消</Button><Button type="submit" form="copy-environment" variant="primary" disabled={copyBusy||!copyName.trim()}>{copyBusy?'正在提交…':'复制环境'}</Button></>}>
         <form id="copy-environment" className="home-create-form" aria-busy={copyBusy} onSubmit={event=>{event.preventDefault();if(copySource)void copy(copySource,copyName,copyRequest);}}>
           <label className="home-field-label" htmlFor="copy-environment-name">新环境名称</label>
-          <Input id="copy-environment-name" data-modal-autofocus value={copyName} disabled={copyBusy} maxLength={80} onChange={event=>setCopyName(event.target.value)} />
+          <Input id="copy-environment-name" data-modal-autofocus value={copyName} disabled={copyBusy||copyRetry} maxLength={80} onChange={event=>setCopyName(event.target.value)} />
           <p className="home-copy-description">不复制会话历史、受管模型密钥、账号授权或运行中的任务。第三方插件需要重新确认启用。工作区中的 .env 等文件会随文件一起复制；容器内尚未持久化的依赖不包含在内。</p>
           {copyError&&<p className="home-error" role="alert">{copyError}</p>}
         </form>
