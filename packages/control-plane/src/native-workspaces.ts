@@ -70,14 +70,14 @@ export class NativeWorkspaces {
     if (id && cwd) throw new RemoteError('gateway/bad-request', 'workspaceId and cwd are exclusive', {});
     if (cwd) return this.run(async ({commands}) => (await commands.create({path: cwd})).workspace);
     const value = id ? await this.run(({ctx}) => {const row = ctx.workspaceRegistry.get(WorkspaceId(id)); return row && workspaceView(row);}) : await this.initializeDefault();
-    if (!value) throw new RemoteError('workspace/not-found', 'Select an existing Workspace', {workspaceId: id ?? 'default'});
+    if (!value) throw new RemoteError('workspace/not-found', 'Select an existing Workspace', {workspaceId: WorkspaceId(id ?? 'default')});
     return value;
   }
   async owning(sessionId: string): Promise<string | undefined> {return this.run(({ctx}) => ctx.workspaceRegistry.list().find(row => row.sessionIds.includes(SessionId(sessionId)))?.id);}
   async attach(id: string, sessionId: string): Promise<void> {
     return this.run(async ({ctx}) => {
       const row = ctx.workspaceRegistry.get(WorkspaceId(id));
-      if (!row) throw new RemoteError('workspace/not-found', 'Workspace not found', {workspaceId: id});
+      if (!row) throw new RemoteError('workspace/not-found', 'Workspace not found', {workspaceId: WorkspaceId(id)});
       try {await row.attachSession(SessionId(sessionId));}
       catch (error) {throw new RemoteError('session/workspace-attach-failed', 'Session directory does not match its Workspace', {sessionId: SessionId(sessionId), workspaceId: id}, {cause: error});}
     });

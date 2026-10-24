@@ -90,36 +90,3 @@ export class DurableAgentRevisions<T extends {revision: number}> {
   }
 }
 
-export type WorkspaceRow = { id: string; path: string; document: string };
-export interface WorkspaceTransaction {
-  state(): string;
-  storeState(document: string): void;
-  get(id: string): WorkspaceRow | undefined;
-  count(): number;
-  save(row: WorkspaceRow): void;
-  delete(id: string): void;
-}
-
-/** Native workspace records commit atomically in their owning environment. */
-export class DurableWorkspaceRegistry {
-  constructor(private readonly storage: DurableObjectStorage, initialState: string) {
-    storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_workspace_registry_state (id INTEGER PRIMARY KEY CHECK(id=1), document TEXT NOT NULL) STRICT');
-    storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_workspace_registry (id TEXT PRIMARY KEY, path TEXT NOT NULL UNIQUE, document TEXT NOT NULL) STRICT');
-    storage.sql.exec('INSERT OR IGNORE INTO weft_workspace_registry_state VALUES (1,?)', initialState);
-  }
-
-  state(): string { return this.storage.sql.exec<{document: string}>('SELECT document FROM weft_workspace_registry_state WHERE id=1').one().document; }
-  get(id: string): WorkspaceRow | undefined { return this.storage.sql.exec<WorkspaceRow>('SELECT id,path,document FROM weft_workspace_registry WHERE id=?', id).toArray()[0]; }
-  get count(): number { return this.storage.sql.exec<{count: number}>('SELECT COUNT(*) AS count FROM weft_workspace_registry').one().count; }
-
-  async transaction<T>(operation: (tx: WorkspaceTransaction) => T): Promise<T> {
-    return this.storage.transactionSync(() => operation({
-      state: () => this.state(),
-      storeState: document => { this.storage.sql.exec('UPDATE weft_workspace_registry_state SET document=? WHERE id=1', document); },
-      get: id => this.get(id),
-      count: () => this.count,
-      save: row => { this.storage.sql.exec('INSERT INTO weft_workspace_registry VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET path=excluded.path,document=excluded.document', row.id, row.path, row.document); },
-      delete: id => { this.storage.sql.exec('DELETE FROM weft_workspace_registry WHERE id=?', id); },
-    }));
-  }
-}

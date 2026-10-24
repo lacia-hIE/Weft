@@ -6,11 +6,38 @@ import {join} from 'node:path';
 import {performance} from 'node:perf_hooks';
 import {createRuntime, tenantId, url} from './helpers/miniflare.ts';
 import {nativeClient} from './helpers/native.ts';
-import type {SettingsDescribeValue, SettingsNamespaceView} from '@deepseek-ai/dsh-settings/types';
+import type {SettingsDescribeValue} from '@deepseek-ai/dsh-settings/types';
 import type {SessionListValue} from '@deepseek-ai/dsh-api-session-controller/types';
+import type {WorkspaceValue, WorkspaceFollowFrame} from '@deepseek-ai/dsh-api-workspace-controller/types';
 
 const options = {browser: true, configureModel: false, scriptPath: 'dist/environment-storage-worker.js'};
 const owner = {tenantId: tenantId('alpha'), environmentId: 'default'};
+
+test('the original WorkspaceRegistry adopts the local registry identity and repairs an interrupted domain mutation', {timeout: 90_000}, async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'weft-original-workspace-'));
+  let runtime = createRuntime(directory, options);
+  const api = nativeClient(() => runtime);
+  const fixture = async (operation: string) => {
+    const response = await runtime.dispatchFetch(url('alpha', '/_fixture/environment-storage'), {method: 'POST', body: JSON.stringify({scope: owner, operation})});
+    assert.equal(response.status, 200);
+  };
+  try {
+    await fixture('seed-local-workspace');
+    const initial = await api.call<WorkspaceValue>('workspace/initializeDefault', {});
+    assert.equal(initial.workspace.workspaceId, 'kept-id');
+    assert.equal(initial.workspace.title, 'Kept workspace');
+    await fixture('interrupt-workspace');
+    await runtime.dispose(); runtime = createRuntime(directory, options);
+    const stream = await api.stream<WorkspaceFollowFrame>('workspace/follow', {});
+    try {
+      const frame = await stream.next();
+      assert.equal(frame.type, 'baseline');
+      if (frame.type !== 'baseline') throw new Error('Missing native Workspace baseline');
+      assert.deepEqual(frame.value.items.map(row=>row.workspaceId), ['kept-id']);
+    } finally {await stream.close();}
+    assert.deepEqual(await api.call('workspace/initializeDefault', {}), initial);
+  } finally {await runtime.dispose(); await rm(directory, {recursive: true, force: true});}
+});
 
 test('a multi-entry configuration document rolls back on a storage fault and retries the same file version', {timeout: 120_000}, async () => {
   const runtime = createRuntime(undefined, options), api = nativeClient(() => runtime);
