@@ -85,4 +85,7 @@ export interface EnvironmentRecord {
   name: string;
   createdAt: string;
   updatedAt: string;
+  status?: 'copying' | 'failed' | 'ready';
+  copy?: {sourceId: string; requestId: string; phase: 'snapshot' | 'files' | 'configuration' | 'done'; completed: number; total: number; error?: string};
 }
+export const environmentCopySchema = z.object({name:z.string().trim().min(1).max(80),requestId:z.uuid()}).strict();

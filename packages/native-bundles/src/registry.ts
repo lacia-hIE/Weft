@@ -12,6 +12,13 @@ export class OfficialBundleRegistry {
     return this.storage.sql.exec<{document: string}>('SELECT document FROM weft_official_bundles ORDER BY name').toArray().map(row => JSON.parse(row.document) as BundleState);
   }
   bundles() {return optionalBundleInfo(this.list());}
+  importConfiguration(rows: BundleState[]): void {
+    for(const row of rows) {
+      const bundle=shippedBundle(row.name);
+      if(!bundle || bundle.digest!==row.digest || bundle.version!==row.version) throw new Error('Copied official bundle is unavailable in this deployment');
+      this.storage.sql.exec('INSERT INTO weft_official_bundles VALUES (?,?) ON CONFLICT(name) DO UPDATE SET document=excluded.document',row.name,JSON.stringify(row));
+    }
+  }
   inspect(spec: string): PluginSpecInspection | undefined {
     if (!namesOfficialBundle(spec)) return undefined;
     const bundle = shippedBundle(spec);

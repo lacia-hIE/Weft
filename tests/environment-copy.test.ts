@@ -1,0 +1,75 @@
+import assert from 'node:assert/strict';
+import {test} from 'node:test';
+import {mkdtemp,rm} from 'node:fs/promises';
+import {join} from 'node:path';
+import {tmpdir} from 'node:os';
+import {setTimeout} from 'node:timers/promises';
+import {createRuntime,tenantId,url} from './helpers/miniflare.ts';
+import {nativeClient} from './helpers/native.ts';
+import type {EnvironmentRecord,TenantState} from '../packages/control-plane/src/contracts.ts';
+import type {SettingsDescribeValue} from '@deepseek-ai/dsh-settings/types';
+
+test('environment copying keeps a fixed file/configuration cut, resumes after failure and restart, and excludes history and credentials',{timeout:240_000},async()=>{
+  const directory=await mkdtemp(join(tmpdir(),'weft-copy-'));
+  const options={browser:true,configureModel:false,scriptPath:'dist/environment-storage-worker.js'};
+  let runtime=createRuntime(directory,options);
+  const base=`/v1/tenants/${tenantId('alpha')}/environments`;
+  const source=nativeClient(()=>runtime);
+  const requestId=crypto.randomUUID();
+  const request=(path:string,method='GET',body?:unknown)=>runtime.dispatchFetch(url('alpha',base+path),{method,...(body===undefined?{}:{headers:{'content-type':'application/json'},body:JSON.stringify(body)})});
+  const fixture=(environmentId:string,operation:string)=>runtime.dispatchFetch(url('alpha','/_fixture/workspace-copy'),{method:'POST',body:JSON.stringify({scope:{tenantId:tenantId('alpha'),environmentId,workspaceId:'default'},operation})});
+  const wait=async(status:string)=>{
+    for(let i=0;i<1200;i++){
+      const row=await (await request('/'+requestId)).json() as EnvironmentRecord;
+      if(row.status===status)return row;
+      if(row.status==='failed' && status!=='failed')throw new Error(row.copy?.error);
+      await setTimeout(50);
+    }
+    throw new Error('Environment copy did not settle');
+  };
+  try {
+    await source.call('settings/update',{ns:'agent-loop',patch:{maxParallelToolCalls:3}});
+    await source.call('credentials/set',{ref:'COPY_KEY',value:'source-only-secret'});
+    await source.call('session/create',{request:{sessionId:'source-history'}});
+    const initial=await (await request('/default/state')).json() as TenantState;
+    const minimal=initial.agents.find(row=>row.spec.id==='minimal')!;
+    assert.equal((await request('/default/agents','POST',{spec:{...minimal.spec,id:'project-preset',name:'Project preset'},expectedRevision:0})).status,200);
+    await source.call('settings/update',{ns:'agent-preset-registry',patch:{selectedDefault:'project-preset'}});
+    assert.equal((await request('/default/client-plugins','POST',{id:'copy-panel',name:'Copy panel',source:'export function apply(ctx) {}'})).status,200);
+    await fixture('default','seed');await fixture(requestId,'fail');
+    const workspace=await source.call<{workspace:{workspaceId:string}}>('workspace/create',{request:{path:'/workspace/project'}});
+    await source.call('workspace/rename',{request:{workspaceId:workspace.workspace.workspaceId,title:'Project workspace'}});
+    const first=await request('/default/copy','POST',{name:'Project copy',requestId});
+    assert.equal(first.status,202,await first.clone().text());
+    assert.equal((await request('/'+requestId+'/state')).status,409,'draft is not usable');
+    const failed=await wait('failed');assert.match(failed.copy!.error!,/Injected copy interruption/);
+    assert.equal((await request('/default/copy','POST',{name:'Different name',requestId})).status,409);
+    assert.equal((await runtime.dispatchFetch(url('beta',base+'/default/copy'),{method:'POST',body:JSON.stringify({name:'Stolen',requestId:crypto.randomUUID()})})).status,403);
+    // After the cut, both source bytes and configuration can change independently.
+    await source.call('settings/update',{ns:'agent-loop',patch:{maxParallelToolCalls:7}});
+    const oldFile=await (await request('/default/workspaces/default/files?path=/workspace/project/run.sh')).json() as {value:{version:string}};
+    assert.equal((await request('/default/workspaces/default/files','PUT',{path:'/workspace/project/run.sh',content:'changed after snapshot',expectedVersion:oldFile.value.version})).status,200);
+    await runtime.dispose();runtime=createRuntime(directory,options);
+    assert.equal((await request('/default/copy','POST',{name:'Project copy',requestId})).status,202);
+    const ready=await wait('ready');assert.equal(ready.copy!.phase,'done');
+    const target=nativeClient(()=>runtime,requestId);
+    const settings=await target.call<SettingsDescribeValue>('settings/describe',{});
+    assert.equal((settings.namespaces.find(row=>row.ns==='agent-loop')!.value as {maxParallelToolCalls:number}).maxParallelToolCalls,3);
+    assert.equal(JSON.stringify(await target.call('credentials/describe',{refs:['COPY_KEY']})).includes('"configured":false'),true);
+    const state=await (await request('/'+requestId+'/state')).json() as TenantState;
+    assert.deepEqual(state.sessions,[]);
+    assert.equal(state.agents.find(row=>row.spec.id==='project-preset')!.spec.name,'Project preset');
+    assert.equal(state.clientPlugins.find(row=>row.id==='copy-panel')!.enabled,false);
+    assert.equal((settings.namespaces.find(row=>row.ns==='agent-preset-registry')!.value as {selectedDefault:string}).selectedDefault,'project-preset');
+    const inspected=await (await fixture(requestId,'inspect')).json() as {length:number;first:number;last:number;mode:number;count:number;private:boolean;spill:boolean};
+    assert.equal(inspected.length,3*1024*1024+17);assert.equal(inspected.first,0);assert.equal(inspected.last,(inspected.length-1)%251);assert.equal(inspected.mode,0o755);assert.ok(inspected.count>5000);assert.equal(inspected.private,false);assert.equal(inspected.spill,false);
+    const read=await (await request(`/${requestId}/workspaces/default/files?path=/workspace/project/run.sh`)).json() as {value:{content:string;version:string}};
+    assert.match(read.value.content,/echo copied/);
+    const stream=await target.stream<{type:string;value:{items:{title:string;sessionIds:string[]}[]}}>('workspace/follow',{});
+    try {const frame=await stream.next();assert.ok(frame.value.items.some(row=>row.title==='Project workspace'));assert.ok(frame.value.items.every(row=>row.sessionIds.length===0));}finally{await stream.close();}
+    assert.equal((await request('/default/copy','POST',{name:'Project copy',requestId})).status,200);
+    const list=await (await request('')).json() as {environments:EnvironmentRecord[]};assert.equal(list.environments.filter(row=>row.id===requestId).length,1);
+    assert.equal((await request(`/${requestId}/workspaces/default/files`,'PUT',{path:'/workspace/project/run.sh',content:'target only',expectedVersion:read.value.version})).status,200);
+    const original=await (await request('/default/workspaces/default/files?path=/workspace/project/run.sh')).json() as {value:{content:string}};assert.equal(original.value.content,'changed after snapshot');
+  } finally {await runtime.dispose();await rm(directory,{recursive:true,force:true});}
+});

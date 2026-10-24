@@ -4,12 +4,14 @@ import { FsError } from '@deepseek-ai/dsh-fs';
 import { ROOT, MAX_FILE_BYTES, SPILL_ROOT as SWEEP_ROOT, workspacePath, type FileInfo, type FileRead, type WriteResult, type SearchResult, type WorkspaceOperation } from './protocol.ts';
 import {ComputerImageVariants} from '../../native-attachments/src/image-variants.ts';
 import {ComputerAttachmentFiles, ATTACHMENT_PRIVATE_ROOT} from '../../native-attachments/src/storage.ts';
+import {WorkspaceCopy} from './copy.ts';
 
 /** Computer owns file bytes; Weft owns monotone versions and the exposed capability boundary. */
 export class WorkspaceStore {
   private readonly computer: Workspace;
   readonly attachments: ComputerAttachmentFiles;
   readonly imageVariants: ComputerImageVariants;
+  readonly copies: WorkspaceCopy;
   constructor(private readonly storage: DurableObjectStorage, execution?: {backends: WorkspaceRegisteredBackend[]; observer: WorkspaceObserver}) {
     storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_workspace_schema (version INTEGER NOT NULL)');
     const versions = storage.sql.exec<{ version: number }>('SELECT version FROM weft_workspace_schema').toArray();
@@ -22,6 +24,7 @@ export class WorkspaceStore {
     });
     this.computer = new Workspace({ storage, output: false, ...(execution ? {backends: execution.backends, observer: execution.observer} : {}) });
     this.computer.provider().mkdirSync(ROOT, { recursive: true });
+    this.copies = new WorkspaceCopy(storage, this.computer.provider());
     // Shell scratch space; the execution policy allows writes there besides the workspace volume.
     if (execution) this.computer.provider().mkdirSync('/tmp', { recursive: true });
     this.attachments = new ComputerAttachmentFiles(storage, this.computer.provider(), path => {this.version(path);});

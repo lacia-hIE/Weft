@@ -15,6 +15,31 @@ export class PackageInstaller {
   private operation: Promise<void> | undefined;
   constructor(private readonly owner: Owner) {this.registry = new PackageRegistry(owner.state.storage);}
   list() {return {available: Boolean(this.owner.bucket), installations: this.registry.list(), jobs: this.registry.jobs()};}
+  async snapshotArtifacts(target: {tenantId:string;environmentId:string}, rows: Installation[]): Promise<void> {
+    for(const row of rows) {
+      if(row.needsReinstall) throw new Error(`Reinstall ${row.name} before copying this environment`);
+      const object=await this.owner.bucket?.get(artifactKey(this.owner.scope,row.digest));
+      if(!object) throw new Error(`Plugin artifact missing: ${row.name}`);
+      const text=await object.text();
+      if(await sha256(text)!==row.digest) throw new Error('Plugin artifact integrity mismatch');
+      await this.owner.bucket!.put(artifactKey(target,row.digest),text,{httpMetadata:{contentType:'application/json'}});
+    }
+  }
+  /** Immutable artifacts acquire independent ownership; approvals do not transfer. */
+  async copyFrom(source: {tenantId:string;environmentId:string}, rows: Installation[]): Promise<void> {
+    for(const row of rows) {
+      if(row.needsReinstall) throw new Error(`Reinstall ${row.name} before copying this environment`);
+      const object=await this.owner.bucket?.get(artifactKey(source,row.digest));
+      if(!object) throw new Error(`Plugin artifact missing: ${row.name}`);
+      const text=await object.text();
+      if(await sha256(text)!==row.digest) throw new Error('Plugin artifact integrity mismatch');
+      const artifact=artifactSchema.parse(JSON.parse(text));
+      await this.owner.validate(artifact);
+      await this.owner.bucket!.put(artifactKey(this.owner.scope,row.digest),text,{httpMetadata:{contentType:'application/json'}});
+      this.registry.save({...row,enabled:false,approved:false,installedAt:Date.now()});
+    }
+    await this.owner.state.storage.sync();
+  }
   async inspect(spec: string) {
     try {
       const {manifest} = await inspectPackage(spec, AbortSignal.timeout(20_000));

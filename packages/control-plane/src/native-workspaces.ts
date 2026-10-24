@@ -66,6 +66,15 @@ export class NativeWorkspaces {
   async initializeDefault(): Promise<WorkspaceView | undefined> {
     return this.run(async ({ctx}) => {const value = await ctx.workspaceRegistry.initializeDefault(async () => ROOT); return value && workspaceView(value);});
   }
+  configuration(): Promise<{path: string; title: string}[]> {return this.run(({ctx})=>ctx.workspaceRegistry.list().map(row=>({path:row.path,title:row.title})));}
+  async importConfiguration(rows: {path:string;title:string}[]): Promise<void> {
+    await this.run(async ({commands})=>{
+      for(const row of rows) {
+        const {workspace}=await commands.create({path:workspacePath(row.path)});
+        await commands.rename({workspaceId:workspace.workspaceId,title:row.title});
+      }
+    });
+  }
   async resolve(id?: string, cwd?: string): Promise<WorkspaceView> {
     if (id && cwd) throw new RemoteError('gateway/bad-request', 'workspaceId and cwd are exclusive', {});
     if (cwd) return this.run(async ({commands}) => (await commands.create({path: cwd})).workspace);

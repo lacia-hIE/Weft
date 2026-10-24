@@ -46,9 +46,30 @@ export function Environments({user}: {user: {id: string; email: string}}): React
   const [creating, setCreating] = useState(false);
   const [advanced, setAdvanced] = useState(false);
   const [configuration, setConfiguration] = useState(INITIAL_CONFIGURATION);
+  const [copySource,setCopySource]=useState<EnvironmentRecord>();
+  const [copyName,setCopyName]=useState('');
+  const [copyRequest,setCopyRequest]=useState('');
+  const [copyError,setCopyError]=useState('');
+  const [copyBusy,setCopyBusy]=useState(false);
   const yamlError = useMemo(() => advanced ? syntaxError(configuration) : undefined, [advanced, configuration]);
   const load = async () => setEnvironments((await api<{environments: EnvironmentRecord[]}>("environments")).environments);
   useEffect(() => {void load().catch(error => setError(String(error)));}, []);
+  const copying=environments?.some(row=>row.status==='copying')??false;
+  useEffect(()=>{
+    if(!copying) return;
+    const timer=setInterval(()=>{void load().catch(error=>setError(String(error)));},2000);
+    return ()=>clearInterval(timer);
+  },[copying]);
+  async function copy(source: EnvironmentRecord, name:string, requestId:string): Promise<void> {
+    if(copyBusy || !name.trim()) return;
+    setCopyBusy(true);setCopyError('');
+    try {
+      const record=await post<EnvironmentRecord>(`environments/${source.id}/copy`,{name,requestId});
+      setEnvironments(rows=>[...(rows??[]).filter(row=>row.id!==record.id),record].sort((a,b)=>a.id.localeCompare(b.id)));
+      setCopySource(undefined);
+    } catch(error) {setCopyError(error instanceof Error?error.message:'复制失败，请重试');}
+    finally {setCopyBusy(false);}
+  }
   async function create(): Promise<void> {
     if (busy || !name.trim() || yamlError) return;
     setBusy(true); setCreateError('');
@@ -80,14 +101,20 @@ export function Environments({user}: {user: {id: string; email: string}}): React
           {environments === undefined
             ? [0, 1].map(index => <div key={index} className="home-card home-card-loading" aria-hidden />)
             : environments.map(environment => (
-              <a key={environment.id} className="home-card" aria-label={`进入 ${environment.name}`} href={`/agents/${environment.id}`}>
+              <div key={environment.id} className="home-card-frame">
+              {React.createElement(environment.status==='copying'||environment.status==='failed'?'div':'a', {className:'home-card',...(environment.status==='copying'||environment.status==='failed'?{}:{'aria-label':`进入 ${environment.name}`,href:`/agents/${environment.id}`})}, <>
                 <span className="home-card-mark" aria-hidden><FishLogo size={18} /></span>
                 <span className="home-card-body">
                   <span className="home-card-title"><strong>{environment.name}</strong>{environment.id === 'default' && <Tag tone="outline">默认</Tag>}</span>
                   <span className="home-card-meta"><code>{environment.id}</code><span>更新于 {updated.format(new Date(environment.updatedAt))}</span></span>
                 </span>
-                <span className="home-card-open" aria-hidden>进入工作台 →</span>
-              </a>
+                <span className="home-card-open">{environment.status==='copying' ? `正在复制${environment.copy?.phase==='files'&&environment.copy.total ? ` · ${Math.floor(environment.copy.completed/environment.copy.total*100)}%` : '…'}` : environment.status==='failed' ? '复制未完成' : '进入工作台 →'}</span>
+              </>)}
+              {environment.status==='failed' && <p className="home-copy-error" role="alert">{environment.copy?.error}</p>}
+              <div className="home-card-actions">
+                {environment.status==='failed' && environment.copy ? <Button variant="ghost" size="sm" disabled={copyBusy} onClick={()=>{setCopySource({id:environment.copy!.sourceId,name:environment.name,createdAt:'',updatedAt:''});setCopyName(environment.name);setCopyRequest(environment.copy!.requestId);setCopyError('');}}>重试复制</Button> : environment.status!=='copying' && <Button variant="ghost" size="sm" onClick={()=>{setCopySource(environment);setCopyName(`${environment.name} 副本`.slice(0,80));setCopyRequest(crypto.randomUUID());setCopyError('');}}>复制</Button>}
+              </div>
+              </div>
             ))}
         </section>
       </main>
@@ -103,6 +130,15 @@ export function Environments({user}: {user: {id: string; email: string}}): React
             </div>
           </DisclosureRow>
           {createError && <p className="home-error" role="alert">{createError}</p>}
+        </form>
+      </Modal>
+      <Modal open={Boolean(copySource)} title="复制环境" closeLabel="关闭" description="复制配置、预设、插件声明和工作区文件，创建独立的新环境。" className="home-create-dialog" onClose={()=>{if(!copyBusy)setCopySource(undefined);}}
+        footer={<><Button variant="outline" disabled={copyBusy} onClick={()=>setCopySource(undefined)}>取消</Button><Button type="submit" form="copy-environment" variant="primary" disabled={copyBusy||!copyName.trim()}>{copyBusy?'正在提交…':'复制环境'}</Button></>}>
+        <form id="copy-environment" className="home-create-form" aria-busy={copyBusy} onSubmit={event=>{event.preventDefault();if(copySource)void copy(copySource,copyName,copyRequest);}}>
+          <label className="home-field-label" htmlFor="copy-environment-name">新环境名称</label>
+          <Input id="copy-environment-name" data-modal-autofocus value={copyName} disabled={copyBusy} maxLength={80} onChange={event=>setCopyName(event.target.value)} />
+          <p className="home-copy-description">不复制会话历史、受管模型密钥、账号授权或运行中的任务。第三方插件需要重新确认启用。工作区中的 .env 等文件会随文件一起复制；容器内尚未持久化的依赖不包含在内。</p>
+          {copyError&&<p className="home-error" role="alert">{copyError}</p>}
         </form>
       </Modal>
     </div>

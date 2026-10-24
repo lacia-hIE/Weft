@@ -97,6 +97,25 @@ export class WorkspaceDO extends DurableObject<Env> {
   /** The Workspace RPC surface for this object's own shell Dynamic Worker (via `WorkspaceServiceProxy`). */
   __getWorkspaceStub() { return this.files.stub(); }
 
+  /** Private environment-copy port; only committed volume files participate. */
+  async copySnapshot(input: WorkspaceScope, copyId: string, operation: 'capture' | 'release' | 'next' | 'page', seq = 0): Promise<Response> {
+    const scope = workspaceScopeSchema.parse(input);
+    if (!this.ctx.id.equals(this.env.WORKSPACES.idFromName(workspaceAddress(scope)))) throw new Error('Workspace scope mismatch');
+    if (!/^[a-zA-Z0-9_-]{1,80}$/.test(copyId)) throw new Error('Invalid copy identity');
+    if(operation==='release') {this.files.copies.release(copyId);return Response.json({released:true});}
+    if(operation==='page') return this.files.copies.page(copyId,seq);
+    if(operation==='next') return Response.json({next:this.files.copies.next(copyId)});
+    const host=this.containerHost();
+    if(host && (await host.state()).running) await this.syncProcesses(scope,true);
+    return Response.json({count:this.files.copies.capture(copyId)});
+  }
+  async copyAccept(input: WorkspaceScope, copyId: string, seq: number, page: Response): Promise<void> {
+    const scope=workspaceScopeSchema.parse(input);
+    if(!this.ctx.id.equals(this.env.WORKSPACES.idFromName(workspaceAddress(scope)))) throw new Error('Workspace scope mismatch');
+    if(!/^[a-zA-Z0-9_-]{1,80}$/.test(copyId)) throw new Error('Invalid copy identity');
+    await this.files.copies.accept(copyId,seq,page);
+  }
+
   async javascript(input: WorkspaceScope, owner: string, request: unknown): Promise<Response> {
     const scope = workspaceScopeSchema.parse(input);
     if (!this.ctx.id.equals(this.env.WORKSPACES.idFromName(workspaceAddress(scope)))) throw new Error('Workspace scope mismatch');

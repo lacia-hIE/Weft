@@ -1,10 +1,43 @@
-import application, {EnvironmentDO as BaseEnvironmentDO, SessionDO as BaseSessionDO, type Env} from '../../apps/worker/src/index.ts';
+import application, {EnvironmentDO as BaseEnvironmentDO, SessionDO as BaseSessionDO, WorkspaceDO as BaseWorkspaceDO, type Env} from '../../apps/worker/src/index.ts';
+import {Workspace} from '@cloudflare/computer';
+import {workspaceAddress,type WorkspaceScope} from '../../packages/workspace/src/protocol.ts';
 import {sessionAddress, type SessionScope} from '../../packages/tenant/src/index.ts';
 import {environmentAddress} from '../../packages/control-plane/src/object.ts';
 import type {ControlScope, AgentRevision} from '../../packages/control-plane/src/contracts.ts';
 import {ConfigWriteQueue, DurableSettingsDocuments, DurableAgentRevisions} from '../../packages/environment-storage/src/index.ts';
 
 export * from '../../apps/worker/src/index.ts';
+
+export class WorkspaceDO extends BaseWorkspaceDO {
+  async fixtureCopy(operation:string): Promise<Response> {
+    this.ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS fixture_copy_fault (id INTEGER PRIMARY KEY)');
+    const provider=new Workspace({storage:this.ctx.storage,output:false}).provider();
+    if(operation==='fail') this.ctx.storage.sql.exec('INSERT OR IGNORE INTO fixture_copy_fault VALUES (1)');
+    if(operation==='seed') {
+      provider.mkdirSync('/workspace/project/.git',{recursive:true});
+      provider.mkdirSync('/workspace/.weft/attachments/v1',{recursive:true});
+      provider.mkdirSync('/workspace/.dsh/spill',{recursive:true});
+      const bytes=new Uint8Array(3*1024*1024+17);for(let i=0;i<bytes.length;i++)bytes[i]=i%251;
+      provider.writeFileSync('/workspace/project/数据.bin',bytes);
+      provider.writeFileSync('/workspace/project/run.sh','#!/bin/sh\necho copied\n');provider.chmodSync('/workspace/project/run.sh',0o755);
+      provider.writeFileSync('/workspace/project/.git/config','[core]\n repositoryformatversion = 0\n');
+      provider.writeFileSync('/workspace/.env','PROJECT=value');
+      provider.writeFileSync('/workspace/.weft/attachments/v1/private','private-session-attachment');
+      provider.writeFileSync('/workspace/.dsh/spill/private','private-session-output');
+      for(let i=0;i<5010;i++)provider.writeFileSync(`/workspace/project/file-${String(i).padStart(5,'0')}`,'x');
+    }
+    if(operation==='inspect') {
+      const bytes=provider.readFileSync('/workspace/project/数据.bin') as Uint8Array;
+      return Response.json({length:bytes.length,first:bytes[0],last:bytes.at(-1),mode:provider.statSync('/workspace/project/run.sh').mode&0o777,count:provider.readdirSync('/workspace/project').length,private:provider.existsSync('/workspace/.weft/attachments/v1/private'),spill:provider.existsSync('/workspace/.dsh/spill/private'),snapshots:this.ctx.storage.sql.exec<{count:number}>('SELECT COUNT(*) AS count FROM weft_copy_volumes').one().count});
+    }
+    return Response.json({ok:true});
+  }
+  override async copyAccept(scope:WorkspaceScope,copyId:string,seq:number,page:Response):Promise<void> {
+    this.ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS fixture_copy_fault (id INTEGER PRIMARY KEY)');
+    if(seq===3 && this.ctx.storage.sql.exec('DELETE FROM fixture_copy_fault WHERE id=1 RETURNING id').toArray().length) throw new Error('Injected copy interruption');
+    return super.copyAccept(scope,copyId,seq,page);
+  }
+}
 
 export class SessionDO extends BaseSessionDO {
   override async nativeReadSummaryGroup(scope: SessionScope): Promise<Response> {
@@ -94,6 +127,10 @@ export class EnvironmentDO extends BaseEnvironmentDO {
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    if(new URL(request.url).pathname==='/_fixture/workspace-copy') {
+      const {scope,operation}=await request.json() as {scope:WorkspaceScope;operation:string};
+      return (env.WORKSPACES.getByName(workspaceAddress(scope)) as DurableObjectStub<WorkspaceDO>).fixtureCopy(operation);
+    }
     if (new URL(request.url).pathname === '/_fixture/summary-reads') {
       const scope = await request.json() as SessionScope;
       const target = env.SESSIONS.getByName(sessionAddress(scope)) as DurableObjectStub<SessionDO>;

@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import {
   environmentCreateSchema,
+  environmentCopySchema,
   environmentScopeSchema,
   type ControlScope,
   type EnvironmentScope,
@@ -15,6 +16,7 @@ import {
   type TenantState,
 } from "./contracts.ts";
 import { validatePlugins } from "../../plugin-runtime/src/catalog.ts";
+import type {EnvironmentCopyConfiguration} from './environment-copy.ts';
 import { compileClientPlugin } from "../../client-plugins/src/compiler.ts";
 import upstream from "../../../upstream.lock.json";
 import { z } from 'zod';
@@ -227,6 +229,62 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
     await this.writeSettingsDocument(scope);
     await this.ctx.storage.sync();
     return Response.json({initialized: true});
+  }
+  /** Persist a retryable, configuration-only cut beside the committed file snapshot. */
+  async nativeCopySnapshot(scope: ControlScope, copyId: string): Promise<Response> {
+    this.scope(scope); id.parse(copyId);
+    this.ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_environment_copies (id TEXT PRIMARY KEY, document TEXT NOT NULL) STRICT');
+    const saved=this.ctx.storage.sql.exec<{document:string}>('SELECT document FROM weft_environment_copies WHERE id=?',copyId).toArray()[0];
+    if(saved) return Response.json(JSON.parse(saved.document));
+    await this.syncSettingsDocument(scope);
+    const workspaces=await this.workspaces(scope).configuration();
+    const revision=this.settings(scope).revision;
+    const data: EnvironmentCopyConfiguration={version:1,configuration:this.settings(scope).document(),presets:this.agents().current(),
+      seeds:this.ctx.storage.sql.exec<{id:string;revision:number}>('SELECT id,revision FROM official_preset_seeds').toArray(),workspaces,
+      bundles:this.officialBundles().list(),packages:this.packages(scope).registry.list(),clients:(await this.state(scope)).clientPlugins};
+    const volume=this.documentVolume(scope),files=this.env.WORKSPACES.getByName(workspaceAddress(volume));
+    const {count}=await (await files.copySnapshot(volume,copyId,'capture')).json() as {count:number};
+    await this.packages(scope).snapshotArtifacts({...scope,environmentId:copyId},data.packages);
+    const currentWorkspaces=await this.workspaces(scope).configuration(),currentClients=(await this.state(scope)).clientPlugins;
+    if(this.settings(scope).revision!==revision || JSON.stringify(currentWorkspaces)!==JSON.stringify(workspaces) || JSON.stringify(currentClients)!==JSON.stringify(data.clients) || JSON.stringify(this.officialBundles().list())!==JSON.stringify(data.bundles) || JSON.stringify(this.packages(scope).registry.list())!==JSON.stringify(data.packages)) {
+      await files.copySnapshot(volume,copyId,'release');
+      throw new Error('Environment configuration changed during snapshot creation; retry the copy');
+    }
+    const value={data,count};
+    this.ctx.storage.sql.exec('INSERT INTO weft_environment_copies VALUES (?,?) ON CONFLICT DO NOTHING',copyId,JSON.stringify(value));
+    await this.ctx.storage.sync();
+    return Response.json(value);
+  }
+  async nativeCopyImport(scope: ControlScope, text: string): Promise<void> {
+    this.scope(scope);
+    const data=JSON.parse(text) as EnvironmentCopyConfiguration;
+    if(data.version!==1) throw new Error('Unsupported environment configuration snapshot');
+    // Target is unpublished while these idempotent service imports run.
+    await this.packages(scope).copyFrom(scope,data.packages);
+    this.ctx.storage.transactionSync(()=>{
+      for(const row of data.presets) this.agents().publish(row.spec.id,row);
+      // Default seeded revision may already exist: replace it with the source's
+      // exact current declaration; no Sessions exist in a provisioning target.
+      for(const row of data.presets) this.ctx.storage.sql.exec('UPDATE weft_agent_revisions SET document=? WHERE agent_id=? AND revision=?',JSON.stringify(row),row.spec.id,row.revision);
+      for(const seed of data.seeds) this.ctx.storage.sql.exec('INSERT INTO official_preset_seeds VALUES (?,?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision',seed.id,seed.revision);
+      this.officialBundles().importConfiguration(data.bundles);
+      for(const row of data.clients) {
+        const module=compileClientPlugin(row.source);
+        const document=JSON.stringify({...row,enabled:false});
+        this.ctx.storage.sql.exec('INSERT INTO client_revisions VALUES (?,?,?) ON CONFLICT(revision) DO UPDATE SET document=excluded.document,module=excluded.module',row.revision,document,module);
+        this.ctx.storage.sql.exec('INSERT INTO client_plugins VALUES (?,?,0) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,enabled=0',row.id,row.revision);
+      }
+    });
+    await this.settings(scope).replaceDocument(data.configuration);
+    await this.workspaces(scope).importConfiguration(data.workspaces);
+    await this.writeSettingsDocument(scope);
+    await this.ctx.storage.sync();
+  }
+  async nativeCopyRelease(scope: ControlScope, copyId: string): Promise<void> {
+    this.scope(scope);id.parse(copyId);
+    const volume=this.documentVolume(scope);
+    await this.env.WORKSPACES.getByName(workspaceAddress(volume)).copySnapshot(volume,copyId,'release');
+    this.ctx.storage.sql.exec('DELETE FROM weft_environment_copies WHERE id=?',copyId);
   }
   /**
    * The configuration document lives in the environment's default workspace,
@@ -1056,6 +1114,106 @@ export function controlFor(env: HarnessEnvironment, scope: ControlScope) {
 
 /** Tenant catalogue only; every Harness runs in an EnvironmentDO. */
 export class TenantDO extends DurableObject<TenantEnvironment> {
+  private copyWork: Promise<void> | undefined;
+  constructor(ctx: DurableObjectState, env: TenantEnvironment) {
+    super(ctx,env);
+    ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_environment_copy_jobs (id TEXT PRIMARY KEY, document TEXT NOT NULL, cleanup INTEGER NOT NULL DEFAULT 0) STRICT');
+  }
+  override async alarm(): Promise<void> {await (this.copyWork ?? this.recoverCopies());}
+  private launchCopies(): void {
+    if(this.copyWork) return;
+    const pending=this.recoverCopies(); this.copyWork=pending;
+    this.ctx.waitUntil(pending.finally(()=>{if(this.copyWork===pending)this.copyWork=undefined;}));
+  }
+  private async saveCopy(tenantId: string, record: EnvironmentRecord, cleanup=0): Promise<void> {
+    this.ctx.storage.sql.exec('INSERT INTO weft_environment_copy_jobs VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET document=excluded.document,cleanup=excluded.cleanup',record.id,JSON.stringify({tenantId,record}),cleanup);
+    await this.serialized(async ()=>{
+      await this.env.CONFIG_DB.prepare('INSERT INTO environments (tenant_id,environment_id,document) VALUES (?,?,?) ON CONFLICT(tenant_id,environment_id) DO UPDATE SET document=excluded.document').bind(tenantId,record.id,JSON.stringify(record)).run();
+      const rows=await this.environmentRows(tenantId);
+      this.registry=Promise.resolve(rows.some(row=>row.id===record.id)?rows.map(row=>row.id===record.id?structuredClone(record):row):[...rows,structuredClone(record)]);
+    });
+  }
+  private async recoverCopies(): Promise<void> {
+    try {
+    const jobs=this.ctx.storage.sql.exec<{document:string;cleanup:number}>('SELECT document,cleanup FROM weft_environment_copy_jobs').toArray();
+    for(const job of jobs) {
+      const {tenantId,record}=JSON.parse(job.document) as {tenantId:string;record:EnvironmentRecord};
+      if(job.cleanup) {await this.cleanupCopy(tenantId,record);continue;}
+      if(record.status!=='copying' || !record.copy) continue;
+      await this.ctx.storage.setAlarm(Date.now()+30_000);
+      await this.performCopy(tenantId,record);
+    }
+    } finally {
+      const pending=this.ctx.storage.sql.exec('SELECT id FROM weft_environment_copy_jobs WHERE cleanup=1 OR json_extract(document,\'$.record.status\')=\'copying\' LIMIT 1').toArray().length;
+      if(pending) await this.ctx.storage.setAlarm(Date.now()+30_000);else await this.ctx.storage.deleteAlarm();
+    }
+  }
+  private async cleanupCopy(tenantId:string,record:EnvironmentRecord): Promise<void> {
+    if(!record.copy) return;
+    const scope={tenantId,environmentId:record.copy.sourceId};
+    await this.env.ENVIRONMENTS.getByName(environmentAddress(scope)).nativeCopyRelease(scope,record.id);
+    this.ctx.storage.sql.exec('UPDATE weft_environment_copy_jobs SET cleanup=0 WHERE id=?',record.id);
+  }
+  private async performCopy(tenantId:string,record:EnvironmentRecord): Promise<void> {
+    const copy=record.copy!;
+    const source={tenantId,environmentId:copy.sourceId},target={tenantId,environmentId:record.id};
+    try {
+      const origin=this.env.ENVIRONMENTS.getByName(environmentAddress(source));
+      const snapshot=await (await origin.nativeCopySnapshot(source,record.id)).json() as {data:EnvironmentCopyConfiguration;count:number};
+      const sourceVolume={...source,workspaceId:'default'},targetVolume={...target,workspaceId:'default'};
+      const from=this.env.WORKSPACES.getByName(workspaceAddress(sourceVolume)),to=this.env.WORKSPACES.getByName(workspaceAddress(targetVolume));
+      let {next}=await (await to.copySnapshot(targetVolume,record.id,'next')).json() as {next:number};
+      copy.phase='files';copy.total=snapshot.count;copy.completed=next;delete copy.error;
+      await this.saveCopy(tenantId,record);
+      for(;next<snapshot.count;next++) {
+        const page=await from.copySnapshot(sourceVolume,record.id,'page',next);
+        await to.copyAccept(targetVolume,record.id,next,page);
+        copy.completed=next+1;
+        if((next+1)%32===0) {await this.saveCopy(tenantId,record);await this.ctx.storage.setAlarm(Date.now()+30_000);}
+      }
+      copy.phase='configuration';await this.saveCopy(tenantId,record);
+      await this.env.ENVIRONMENTS.getByName(environmentAddress(target)).nativeCopyImport(target,JSON.stringify(snapshot.data));
+      record.status='ready';record.updatedAt=new Date().toISOString();copy.phase='done';
+      await this.saveCopy(tenantId,record,1);
+      await this.cleanupCopy(tenantId,record);
+    } catch(error) {
+      // Cleanup errors after publication must never turn a usable target into a failed draft.
+      if(record.status==='ready') {await this.ctx.storage.setAlarm(Date.now()+30_000);return;}
+      record.status='failed';copy.error=(error instanceof Error?error.message:'Environment copy failed').slice(0,500);
+      await this.saveCopy(tenantId,record);
+    }
+  }
+  async copyEnvironment(tenantId:string,sourceId:string,input:unknown): Promise<Response> {
+    this.scope(tenantId);id.parse(sourceId);
+    const parsed=environmentCopySchema.safeParse(input);
+    if(!parsed.success) return Response.json({error:'Invalid environment copy request'},{status:400});
+    const response=await this.serialized(async()=>{
+      const rows=await this.environmentRows(tenantId),source=rows.find(row=>row.id===sourceId);
+      if(!source) return Response.json({error:'Environment not found'},{status:404});
+      if(source.status && source.status!=='ready') return Response.json({error:'Wait until the source environment is ready'},{status:409});
+      const existing=rows.find(row=>row.id===parsed.data.requestId);
+      if(existing) {
+        if(existing.copy?.requestId!==parsed.data.requestId || existing.copy.sourceId!==sourceId || existing.name!==parsed.data.name) return Response.json({error:'Copy request identity was reused'},{status:409});
+        if(existing.status==='ready') return Response.json(existing);
+        existing.status='copying';delete existing.copy.error;
+        this.ctx.storage.sql.exec('INSERT INTO weft_environment_copy_jobs VALUES (?,?,0) ON CONFLICT(id) DO UPDATE SET document=excluded.document',existing.id,JSON.stringify({tenantId,record:existing}));
+        await this.env.CONFIG_DB.prepare('UPDATE environments SET document=? WHERE tenant_id=? AND environment_id=?').bind(JSON.stringify(existing),tenantId,existing.id).run();
+        this.registry=Promise.resolve(rows.map(row=>row.id===existing.id?existing:row));
+        return Response.json(existing,{status:202});
+      }
+      if(rows.length>=64) return Response.json({error:'Environment limit reached'},{status:409});
+      const now=new Date().toISOString();
+      const record:EnvironmentRecord={id:parsed.data.requestId,name:parsed.data.name,createdAt:now,updatedAt:now,status:'copying',copy:{sourceId,requestId:parsed.data.requestId,phase:'snapshot',completed:0,total:0}};
+      // Journal the reservation first. Recovery can repair a missing D1 row after a crash.
+      await this.ctx.storage.setAlarm(Date.now()+30_000);
+      this.ctx.storage.sql.exec('INSERT INTO weft_environment_copy_jobs VALUES (?,?,0)',record.id,JSON.stringify({tenantId,record}));
+      await this.env.CONFIG_DB.prepare('INSERT INTO environments (tenant_id,environment_id,document) VALUES (?,?,?)').bind(tenantId,record.id,JSON.stringify(record)).run();
+      this.registry=Promise.resolve([...rows,record].sort((a,b)=>a.id.localeCompare(b.id)));
+      return Response.json(record,{status:202});
+    });
+    if(response.ok) {await this.ctx.storage.setAlarm(Date.now()+30_000);this.launchCopies();}
+    return response;
+  }
   private scope(scope: string): void {
     if (
       !this.ctx.id.equals(this.env.TENANTS.idFromName(tenantAddress(scope)))
@@ -1078,6 +1236,10 @@ export class TenantDO extends DurableObject<TenantEnvironment> {
   private environmentRows(tenantId: string): Promise<EnvironmentRecord[]> {
     const load = async () => {
       const db = this.env.CONFIG_DB;
+      for(const row of this.ctx.storage.sql.exec<{document:string}>('SELECT document FROM weft_environment_copy_jobs').toArray()) {
+        const job=JSON.parse(row.document) as {tenantId:string;record:EnvironmentRecord};
+        if(job.tenantId===tenantId) await db.prepare('INSERT INTO environments (tenant_id,environment_id,document) VALUES (?,?,?) ON CONFLICT DO NOTHING').bind(tenantId,job.record.id,JSON.stringify(job.record)).run();
+      }
       const now = new Date().toISOString();
       const fallback: EnvironmentRecord = {id: "default", name: "我的 Harness", createdAt: now, updatedAt: now};
       await db.prepare('INSERT INTO environments (tenant_id, environment_id, document) VALUES (?, ?, ?) ON CONFLICT DO NOTHING').bind(tenantId, 'default', JSON.stringify(fallback)).run();
@@ -1109,7 +1271,7 @@ export class TenantDO extends DurableObject<TenantEnvironment> {
     return this.serialized(async () => {
       const rows = await this.environmentRows(tenantId);
       const environmentId = parsed.data.id ?? crypto.randomUUID();
-      if (rows.some((row) => row.id === environmentId))
+      if (rows.some((row) => row.id === environmentId) || this.ctx.storage.sql.exec('SELECT id FROM weft_environment_copy_jobs WHERE id=?',environmentId).toArray().length)
         return Response.json({ error: "Environment already exists" }, { status: 409 });
       if (rows.length >= 64)
         return Response.json({ error: "Environment limit reached" }, { status: 409 });

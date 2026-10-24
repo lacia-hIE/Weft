@@ -18,7 +18,7 @@ async function knownEnvironment(tenant: DurableObjectStub<TenantDO>, tenantId: s
   const cached = confirmed.get(key);
   if (cached && Date.now() - cached.at < CONFIRMATION_MS) return structuredClone(cached.record);
   const record = await tenant.environment(tenantId, environmentId);
-  if (record) {
+  if (record && (!record.status || record.status==='ready')) {
     if (confirmed.size >= 1024) confirmed.clear();
     confirmed.set(key, {record: structuredClone(record), at: Date.now()});
   }
@@ -67,6 +67,12 @@ export async function resolveEnvironmentRequest(
   if (!record) throw new HttpError(404, "Environment not found");
   if (!match[3] && request.method === "GET")
     return { request, response: Response.json(record) };
+  if(match[3]==='/copy') {
+    if(request.method!=='POST') throw new HttpError(405,'Method not allowed');
+    assertSameOrigin(request);
+    return {request,response:await tenant.copyEnvironment(principal.tenantId,record.id,await readJson(request,4096))};
+  }
+  if(record.status && record.status!=='ready') return {request,response:Response.json({error:'Environment copy is not ready',environment:record},{status:409,headers:{'cache-control':'private, no-store'}})};
   url.pathname = `/v1/tenants/${principal.tenantId}${match[3] ?? ""}`;
   return { request: new Request(url, request), environmentId: record.id };
 }
