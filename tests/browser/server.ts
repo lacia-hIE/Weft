@@ -101,7 +101,7 @@ const server = createSecureServer({key: readFileSync(keyFile), cert: readFileSyn
     response.end(String(error));
   }
 });
-const sockets=new WebSocketServer({noServer:true,maxPayload:128*1024});
+const sockets=new WebSocketServer({noServer:true,maxPayload:16*1024*1024});
 server.on('upgrade',(request,socket,head)=>{
   void (async()=>{
     const headers=new Headers();for(const [key,value] of Object.entries(request.headers))if(value&&key!=='host')headers.set(key,Array.isArray(value)?value.join(', '):String(value));

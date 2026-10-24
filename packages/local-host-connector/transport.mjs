@@ -1,5 +1,5 @@
 import WebSocket from 'ws';
-const PROTOCOL='weft-local-host/1',CHUNK=32*1024,MAX_FRAME=128*1024,MAX_ACTIVE=64;
+const PROTOCOL='weft-local-host/1',CHUNK=32*1024,MAX_FRAME=16*1024*1024,MAX_MUX_FRAME=4*1024*1024,MAX_ACTIVE=64;
 const allowed=value=>{if(typeof value!=='string')return false;const path=value.split('?')[0];return path.startsWith('/')&&!path.startsWith('//')&&!/[\\\r\n\0]/.test(path)&&!/%(?:2f|5c|2e)/i.test(path)&&!path.split(/[/?#]/).includes('..')&&(path==='/'||path.startsWith('/api/')||path.startsWith('/plugins/')||path.startsWith('/assets/'));};
 const headersAllowed=new Set(['content-type','accept','range','if-none-match','if-modified-since']);
 const replyHeaders=new Set(['content-type','content-disposition','etag','last-modified','accept-ranges','content-range']);
@@ -37,7 +37,7 @@ export function connectLocalHost({settings,save,origin,authorize,version,onStatu
 }
 export function runTunnel(socket,{origin,cookie,signal,onOpen=()=>{}}) {
   const active=new Map(),clients=new Map();let heartbeat;
-  const send=frame=>{if(socket.readyState!==WebSocket.OPEN)throw new Error('Tunnel unavailable');if(socket.bufferedAmount>1024*1024){socket.close(1013,'Relay overloaded');throw new Error('Tunnel overloaded');}socket.send(JSON.stringify(frame));};
+  const send=frame=>{if(socket.readyState!==WebSocket.OPEN)throw new Error('Tunnel unavailable');if(socket.bufferedAmount>32*1024*1024){socket.close(1013,'Relay overloaded');throw new Error('Tunnel overloaded');}socket.send(JSON.stringify(frame));};
   const release=id=>{const state=active.get(id);if(state){active.delete(id);clearTimeout(state.timer);state.abort.abort();state.ack?.();void state.writer?.abort().catch(()=>{});}};
   const sendBody=async(id,body,state)=>{
     const reader=body?.getReader();try{if(reader)for(;;){const chunk=await reader.read();if(chunk.done)break;for(let offset=0;offset<chunk.value.length;offset+=CHUNK){
@@ -66,7 +66,7 @@ export function runTunnel(socket,{origin,cookie,signal,onOpen=()=>{}}) {
   const openClient=id=>{
     if(active.has(id)||clients.has(id)||active.size+clients.size>=MAX_ACTIVE)throw new Error('Connection limit');
     const target=new URL('/api/remote.mux',origin);target.protocol=target.protocol==='https:'?'wss:':'ws:';
-    const local=new WebSocket(target,{headers:{cookie},maxPayload:MAX_FRAME,followRedirects:false,handshakeTimeout:15_000});
+    const local=new WebSocket(target,{headers:{cookie},maxPayload:MAX_MUX_FRAME,followRedirects:false,handshakeTimeout:15_000});
     const state={local,queue:[],size:0};clients.set(id,state);
     local.on('open',()=>{for(const text of state.queue)local.send(text);state.queue=[];state.size=0;});
     local.on('message',(data,binary)=>{if(binary){local.close(1003);return;}try{send({type:'ws-data',id,text:data.toString()});}catch{local.terminate();}});
@@ -86,7 +86,7 @@ export function runTunnel(socket,{origin,cookie,signal,onOpen=()=>{}}) {
         if(frame.type==='request')request(frame);
         else if(frame.type==='ws-open')openClient(frame.id);
         else if(frame.type==='ws-data'){
-          const client=clients.get(frame.id);if(!client)return;if(typeof frame.text!=='string'||frame.text.length>64*1024)throw new Error('Invalid socket data');
+          const client=clients.get(frame.id);if(!client)return;if(typeof frame.text!=='string'||Buffer.byteLength(frame.text)>MAX_MUX_FRAME)throw new Error('Invalid socket data');
           if(client.local.readyState===WebSocket.OPEN){if(client.local.bufferedAmount>1024*1024){client.local.terminate();return;}client.local.send(frame.text);}
           else {client.size+=frame.text.length;if(client.size>1024*1024)throw new Error('Socket overflow');client.queue.push(frame.text);}
         }else if(frame.type==='ws-close')clients.get(frame.id)?.local.terminate();

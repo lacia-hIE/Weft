@@ -78,7 +78,7 @@ test('outbound connector carries binary uploads, native HTTP responses, cancella
     assert.equal((await runtime.dispatchFetch(url('beta',base+'/local/web/'))).status,403);
     const stream=await runtime.dispatchFetch(url('alpha',base+'/local/web/api/remote.mux'),{headers:{upgrade:'websocket'}});assert.equal(stream.status,101);stream.webSocket!.accept();
     const incoming=new Promise<string>(resolve=>stream.webSocket!.addEventListener('message',event=>resolve(String(event.data)),{once:true}));
-    stream.webSocket!.send('native terminal uplink');assert.equal(await incoming,'native terminal uplink');stream.webSocket!.close();
+    const largeFrame='native terminal uplink'+'x'.repeat(180_000);stream.webSocket!.send(largeFrame);assert.equal(await incoming,largeFrame);stream.webSocket!.close();
     const aborted=new AbortController();const pending=runtime.dispatchFetch(url('alpha',base+'/local/web/api/slow'),{signal:aborted.signal});setTimeout(()=>aborted.abort(),50);await pending.catch(()=>{});
     await runtime.dispatchFetch(url('alpha',base+'/local/pairing'),{method:'DELETE'});assert.equal((await runtime.dispatchFetch(url('alpha',base+'/local/web/'))).status,503);
   }finally{control?.abort();await task;for(const socket of nativeSockets.clients)socket.terminate();nativeSockets.close();server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));await runtime.dispose();}

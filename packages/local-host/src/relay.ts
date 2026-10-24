@@ -1,6 +1,7 @@
 /** Carrier only: the native Host owns RPC, sessions, files and plugin resources. */
 export const LOCAL_PROTOCOL = 'weft-local-host/1';
-export const MAX_FRAME = 128 * 1024;
+export const MAX_FRAME = 16 * 1024 * 1024;
+const MAX_MUX_FRAME=4*1024*1024;
 export const CHUNK_BYTES = 32 * 1024;
 const LIMIT = 64;
 type SocketIdentity={role:'host'|'browser';environmentId:string;id?:string;hostId?:string};
@@ -78,6 +79,7 @@ export class LocalHostRelay {
     const identity=socket.deserializeAttachment() as SocketIdentity;
     if(typeof data!=='string'||data.length>MAX_FRAME){socket.close(1009,'Frame limit');this.closed(socket);return;}
     if(identity.role==='browser') {
+      if(new TextEncoder().encode(data).length>MAX_MUX_FRAME){socket.close(1009,'Native Mux frame limit');this.closed(socket);return;}
       const host=this.host(identity.environmentId);if(!host||(host.deserializeAttachment() as SocketIdentity).id!==identity.hostId){socket.close(1011,'Local Host offline');return;}
       host.send(JSON.stringify({type:'ws-data',id:identity.id,text:data}));return;
     }
