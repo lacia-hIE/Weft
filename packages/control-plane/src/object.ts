@@ -1239,7 +1239,7 @@ export class TenantDO extends DurableObject<TenantEnvironment> {
       if(record.status==='deleted')return Response.json(record,{status:action==='delete'?200:410});
       if(action==='delete'&&environmentId==='default')return Response.json({error:'默认环境不能删除，可暂停或重命名'},{status:409});
       if(record.status==='copying'||rows.some(row=>row.status==='copying'&&row.copy?.sourceId===environmentId))return Response.json({error:'环境正在参与复制，请完成后重试'},{status:409});
-      const pending=record.lifecycle&&record.lifecycle.phase!=='done';
+      const pending=record.lifecycle&&(['pausing','resuming','deleting'].includes(record.status??'')||record.lifecycle.phase!=='done');
       if(pending){
         if(record.lifecycle!.action!==action)return Response.json({error:'请先完成当前环境操作'},{status:409});
         const stored=this.ctx.storage.sql.exec<{document:string}>('SELECT document FROM weft_environment_lifecycle_jobs WHERE id=?',environmentId).one();

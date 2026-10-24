@@ -22,6 +22,7 @@ test('environment rename, pause recovery, resume and deletion preserve isolation
     for(let i=0;i<600;i++){
       const response=await request('/'+environment);if(status==='deleted'&&response.status===410)return;
       const record=await response.json() as EnvironmentRecord;
+      if(status==='deleted'){const racing=await request(`/${environment}/lifecycle`,'POST',{action:'resume'});assert.ok([409,410].includes(racing.status),'deletion remains exclusive through catalogue finalization');}
       if(error&&record.lifecycle?.error)return record;
       if(record.status===status && !error)return record;
       if(record.lifecycle?.error && !error)throw new Error(record.lifecycle.error);
