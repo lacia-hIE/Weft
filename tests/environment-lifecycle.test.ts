@@ -61,7 +61,7 @@ test('environment rename, pause recovery, resume and deletion preserve isolation
     await wait('ready');
     assert.ok((await fixture('session')).alarm!>Date.now());assert.ok((await fixture('environment')).alarm!>Date.now());
     assert.match(JSON.stringify(await api.call('credentials/describe',{refs:['LIFECYCLE_KEY']})),/"configured":true/);
-    assert.match(JSON.stringify(await api.call('session/list',{})),/history/);
+    assert.match(JSON.stringify(await api.call('session/list',{_request:{}})),/history/);
     for(const workspace of ['default','extra']){
       const file=await (await request(`/${environment}/workspaces/${workspace}/files?path=/workspace/kept.txt`)).json() as {value:{content:string}};
       assert.equal(file.value.content,workspace);
@@ -73,7 +73,8 @@ test('environment rename, pause recovery, resume and deletion preserve isolation
     assert.equal((await request('','POST',{id:environment,name:'reused'})).status,409);
     for(const kind of ['environment','workspace','session'] as const){const inspected=await fixture(kind);assert.equal(inspected.lifecycle.mode,'deleted');assert.deepEqual(inspected.tables,['weft_lifecycle']);assert.equal(inspected.alarm,null);}
     assert.deepEqual((await fixture('workspace',undefined,environment,'extra')).tables,['weft_lifecycle']);
-    assert.equal(await bucket.get(owned),null);assert.equal(await (await bucket.get(other))!.text(),'other-artifact');
+    const currentBucket=await runtime.getR2Bucket('PLUGIN_ARTIFACTS','alpha');
+    assert.equal(await currentBucket.get(owned),null);assert.equal(await (await currentBucket.get(other))!.text(),'other-artifact');
     await restart();
     assert.equal((await request(`/${environment}/state`)).status,410);
     const rows=(await (await request('')).json() as {environments:EnvironmentRecord[]}).environments;

@@ -126,7 +126,7 @@ export class SessionDO extends DurableObject<Env> {
   private lifecycleRegistered=false;
   private lifecycleAdmit(input:unknown):Promise<void>|void {
     const scope=scopeSchema.parse(input);
-    if(!this.ctx.id.equals(this.env.SESSIONS.idFromName(sessionAddress(scope))))throw new Error('Session scope mismatch');
+    if(!this.ctx.id.equals(this.env.SESSIONS.idFromName(sessionAddress(scope))))throw new Error('Session scope does not match the addressed object');
     if(this.lifecycleRegistered)return;
     if(!this.lifecycleRegistration){const pending=Promise.resolve(controlFor(this.env,controlScope(scope.tenantId,scope.environmentId)).nativeRegisterResource(controlScope(scope.tenantId,scope.environmentId),'session',scope.sessionId));this.lifecycleRegistration=pending;void pending.catch(()=>{if(this.lifecycleRegistration===pending)this.lifecycleRegistration=undefined;});}
     void this.lifecycleRegistration.then(()=>{this.lifecycleRegistered=true;},()=>{});return this.lifecycleRegistration;

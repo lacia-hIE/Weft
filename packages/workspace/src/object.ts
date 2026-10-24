@@ -105,8 +105,11 @@ export class WorkspaceDO extends DurableObject<Env> {
     lifecycle.finishBoot();
   }
   private lifecycleAdmit(input:unknown):Promise<void>|void {
-    const scope=workspaceScopeSchema.parse(input);
-    if(!this.ctx.id.equals(this.env.WORKSPACES.idFromName(workspaceAddress(scope))))throw new Error('Workspace scope mismatch');
+    const parsed=workspaceScopeSchema.safeParse(input);
+    // Let each endpoint preserve its existing structured scope error. Invalid
+    // callers must never register a resource in a different environment.
+    if(!parsed.success || !this.ctx.id.equals(this.env.WORKSPACES.idFromName(workspaceAddress(parsed.data))))return;
+    const scope=parsed.data;
     if(this.lifecycleRegistered || !this.env.ENVIRONMENTS)return;
     if(!this.lifecycleRegistration){
       const owner={tenantId:scope.tenantId,environmentId:scope.environmentId??'default'};
