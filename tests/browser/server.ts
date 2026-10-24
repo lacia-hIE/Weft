@@ -104,13 +104,13 @@ const server = createSecureServer({key: readFileSync(keyFile), cert: readFileSyn
 const sockets=new WebSocketServer({noServer:true,maxPayload:128*1024});
 server.on('upgrade',(request,socket,head)=>{
   void (async()=>{
-    const headers=new Headers();for(const [key,value] of Object.entries(request.headers))if(value&&key!=='host')headers.set(key,Array.isArray(value)?value.join(', '):value);
+    const headers=new Headers();for(const [key,value] of Object.entries(request.headers))if(value&&key!=='host')headers.set(key,Array.isArray(value)?value.join(', '):String(value));
     if(headers.has('origin'))headers.set('origin','http://alpha.local');
     const result=await runtime.dispatchFetch('http://alpha.local'+request.url,{headers:[...headers]});
     if(result.status!==101||!result.webSocket){socket.write(`HTTP/1.1 ${result.status} Rejected\r\nConnection: close\r\n\r\n`);socket.destroy();return;}
     const remote=result.webSocket;remote.accept();
     sockets.handleUpgrade(request,socket,head,local=>{
-      local.on('message',(data,binary)=>remote.send(binary?data as Buffer:data.toString()));
+      local.on('message',(data,binary)=>{if(binary)local.close(1003);else remote.send(data.toString());});
       remote.addEventListener('message',event=>{if(local.readyState===NodeWebSocket.OPEN)local.send(event.data as string);});
       remote.addEventListener('close',()=>local.close());local.on('close',()=>remote.close());local.on('error',()=>remote.close());
     });
