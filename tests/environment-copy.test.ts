@@ -48,7 +48,7 @@ test('environment copying keeps a fixed file/configuration cut, resumes after fa
     assert.equal((await request('/'+requestId+'/state')).status,409,'draft is not usable');
     const failed=await wait('failed');assert.match(failed.copy!.error!,/Injected copy interruption/);
     assert.equal((await request('/default/copy','POST',{name:'Different name',requestId})).status,409);
-    assert.equal((await runtime.dispatchFetch(url('beta',base+'/default/copy'),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:'Stolen',requestId:crypto.randomUUID()})})).status,403);
+    assert.equal((await runtime.dispatchFetch(url('alpha',base.replace(tenantId('alpha'),tenantId('beta'))+'/default/copy'),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:'Stolen',requestId:crypto.randomUUID()})})).status,403);
     // After the cut, both source bytes and configuration can change independently.
     await source.call('settings/update',{ns:'agent-loop',patch:{maxParallelToolCalls:7}});
     const oldFile=await (await request('/default/workspaces/default/files?path=/workspace/project/run.sh')).json() as {value:{version:string}};
