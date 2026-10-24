@@ -8,7 +8,7 @@ import { handleWorkspaceRequest } from './workspace-http.ts';
 import { resolveEnvironmentRequest } from "./environment-http.ts";
 import { handleControlRequest } from './control-http.ts';
 import { handleNativeRequest } from './native-http.ts';
-import { TenantDO, EnvironmentDO, controlFor, controlScope } from '../../../packages/control-plane/src/object.ts';
+import { TenantDO, EnvironmentDO, controlFor, controlScope,tenantAddress } from '../../../packages/control-plane/src/object.ts';
 import type { AgentRevision } from '../../../packages/control-plane/src/contracts.ts';
 import { id } from '../../../packages/control-plane/src/contracts.ts';
 import {supportsAgentRuntime} from '../../../packages/harness-runtime/src/revision.ts';
@@ -1025,6 +1025,8 @@ export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     try {
       let pathname = new URL(request.url).pathname;
+      const device=/^\/v1\/local-hosts\/([a-zA-Z0-9_-]{1,80})\/([a-zA-Z0-9_-]{1,80})\/(pair|connect)$/.exec(pathname);
+      if(device)return env.TENANTS.getByName(tenantAddress(device[1]!)).localDevice(device[1]!,device[2]!,request);
       const accessDenied = (code: string) => {
         console.warn('weft.access.denied', {path: pathname, code});
         return Response.json({error: 'Cloudflare Access user login required', code}, {status: 401, headers: {'cache-control': 'private, no-store'}});

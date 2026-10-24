@@ -1,4 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
+import {LocalHostRelay,LOCAL_PROTOCOL,newKey,hashKey} from '../../local-host/src/relay.ts';
 import {
   environmentCreateSchema,
   environmentCopySchema,
@@ -1189,8 +1190,11 @@ export function controlFor(env: HarnessEnvironment, scope: ControlScope) {
 /** Tenant catalogue only; every Harness runs in an EnvironmentDO. */
 export class TenantDO extends DurableObject<TenantEnvironment> {
   private copyWork: Promise<void> | undefined;
+  private readonly localRelay:LocalHostRelay;
   constructor(ctx: DurableObjectState, env: TenantEnvironment) {
     super(ctx,env);
+    this.localRelay=new LocalHostRelay(ctx);
+    ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_local_hosts (id TEXT PRIMARY KEY,pair_hash TEXT,pair_expires INTEGER,token_hash TEXT) STRICT');
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_environment_copy_jobs (id TEXT PRIMARY KEY, document TEXT NOT NULL, cleanup INTEGER NOT NULL DEFAULT 0) STRICT');
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_environment_lifecycle_jobs (id TEXT PRIMARY KEY,revision INTEGER NOT NULL,complete INTEGER NOT NULL,document TEXT NOT NULL) STRICT');
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_lifecycle_sequence (id INTEGER PRIMARY KEY,revision INTEGER NOT NULL) STRICT');
@@ -1237,6 +1241,14 @@ export class TenantDO extends DurableObject<TenantEnvironment> {
       const rows=await this.environmentRows(tenantId),record=rows.find(row=>row.id===environmentId);
       if(!record)return Response.json({error:'环境不存在'},{status:404});
       if(record.status==='deleted')return Response.json(record,{status:action==='delete'?200:410});
+      if(record.kind==='local'){
+        if(action!=='delete')return Response.json({error:'本地环境请在本机管理运行状态'},{status:409});
+        this.localRelay.disconnect(environmentId);this.ctx.storage.sql.exec('DELETE FROM weft_local_hosts WHERE id=?',environmentId);
+        record.status='deleted';record.updatedAt=new Date().toISOString();delete record.local;
+        const journal=this.ctx.storage.sql.exec<{document:string}>('SELECT document FROM weft_environment_lifecycle_jobs WHERE id=?',environmentId).toArray()[0];
+        if(journal){const job=JSON.parse(journal.document) as EnvironmentLifecycleJob;job.record=record;this.ctx.storage.sql.exec('UPDATE weft_environment_lifecycle_jobs SET document=?,complete=1 WHERE id=?',JSON.stringify(job),environmentId);}
+        await this.writeCatalogue(tenantId,record);return Response.json(record);
+      }
       if(action==='delete'&&environmentId==='default')return Response.json({error:'默认环境不能删除，可暂停或重命名'},{status:409});
       if(record.status==='copying'||rows.some(row=>row.status==='copying'&&row.copy?.sourceId===environmentId))return Response.json({error:'环境正在参与复制，请完成后重试'},{status:409});
       const pending=record.lifecycle&&(['pausing','resuming','deleting'].includes(record.status??'')||record.lifecycle.phase!=='done');
@@ -1393,6 +1405,7 @@ export class TenantDO extends DurableObject<TenantEnvironment> {
     const response=await this.serialized(async()=>{
       const rows=await this.environmentRows(tenantId),source=rows.find(row=>row.id===sourceId);
       if(!source) return Response.json({error:'Environment not found'},{status:404});
+      if(source.kind==='local')return Response.json({error:'本地环境请在本机复制'},{status:409});
       if(source.status && source.status!=='ready') return Response.json({error:'Wait until the source environment is ready'},{status:409});
       const existing=rows.find(row=>row.id===parsed.data.requestId);
       if(existing) {
@@ -1462,7 +1475,7 @@ export class TenantDO extends DurableObject<TenantEnvironment> {
   }
   async environments(tenantId: string): Promise<EnvironmentRecord[]> {
     this.scope(tenantId);
-    return (await this.environmentRows(tenantId)).filter(row=>row.status!=='deleted');
+    return (await this.environmentRows(tenantId)).filter(row=>row.status!=='deleted').map(row=>this.localRecord(row));
   }
   async environment(
     tenantId: string,
@@ -1470,7 +1483,7 @@ export class TenantDO extends DurableObject<TenantEnvironment> {
   ): Promise<EnvironmentRecord | undefined> {
     this.scope(tenantId);
     id.parse(environmentId);
-    return (await this.environmentRows(tenantId)).find((row) => row.id === environmentId);
+    const row=(await this.environmentRows(tenantId)).find((row) => row.id === environmentId);return row?this.localRecord(row):undefined;
   }
   async createEnvironment(tenantId: string, input: unknown): Promise<Response> {
     this.scope(tenantId);
@@ -1485,12 +1498,13 @@ export class TenantDO extends DurableObject<TenantEnvironment> {
       if (rows.filter(row=>row.status!=='deleted').length >= 64)
         return Response.json({ error: "Environment limit reached" }, { status: 409 });
       if (parsed.data.configuration !== undefined) {
+        if(parsed.data.kind==='local')return Response.json({error:'本地配置由本地 DSH 管理'},{status:400});
         const scope = {tenantId, environmentId};
         const initialized = await this.env.ENVIRONMENTS.getByName(environmentAddress(scope)).nativeInitializeEnvironment(scope, parsed.data.configuration);
         if (!initialized.ok) return initialized;
       }
       const now = new Date().toISOString();
-      const record: EnvironmentRecord = {id: environmentId, name: parsed.data.name, createdAt: now, updatedAt: now};
+      const record: EnvironmentRecord = {id: environmentId, name: parsed.data.name, createdAt: now, updatedAt: now,...(parsed.data.kind==='local'?{kind:'local' as const}:{})};
       const result = await this.env.CONFIG_DB.prepare('INSERT INTO environments (tenant_id, environment_id, document) VALUES (?, ?, ?) ON CONFLICT DO NOTHING')
         .bind(tenantId, record.id, JSON.stringify(record)).run();
       if (result.meta.changes !== 1) {
@@ -1501,6 +1515,56 @@ export class TenantDO extends DurableObject<TenantEnvironment> {
       return Response.json(record, { status: 201 });
     });
   }
+  private localRecord(row:EnvironmentRecord):EnvironmentRecord {
+    if(row.kind!=='local')return row;
+    return {...row,local:{online:Boolean(this.localRelay.host(row.id)),paired:Boolean(this.ctx.storage.sql.exec('SELECT id FROM weft_local_hosts WHERE id=? AND token_hash IS NOT NULL',row.id).toArray().length)}};
+  }
+  async localPairing(tenantId:string,environmentId:string,revoke=false):Promise<Response> {
+    this.scope(tenantId);id.parse(environmentId);
+    return this.serialized(async()=>{
+      const row=await this.environment(tenantId,environmentId);
+      if(row?.kind!=='local'||row.status==='deleted')return new Response('Local environment not found',{status:404});
+      this.localRelay.disconnect(environmentId);
+      if(revoke){this.ctx.storage.sql.exec('DELETE FROM weft_local_hosts WHERE id=?',environmentId);return Response.json({revoked:true});}
+      const key=newKey(),digest=await hashKey(key),expires=Date.now()+10*60_000;
+      this.ctx.storage.sql.exec('INSERT INTO weft_local_hosts VALUES (?,?,?,NULL) ON CONFLICT(id) DO UPDATE SET pair_hash=excluded.pair_hash,pair_expires=excluded.pair_expires,token_hash=NULL',environmentId,digest,expires);
+      return Response.json({pairingKey:key,expiresAt:expires,protocol:LOCAL_PROTOCOL},{headers:{'cache-control':'private, no-store'}});
+    });
+  }
+  /** Device carrier authenticates independently of browser Access; only these two routes are public at the edge. */
+  async localDevice(tenantId:string,environmentId:string,request:Request):Promise<Response> {
+    this.scope(tenantId);id.parse(environmentId);
+    if(request.headers.has('origin'))return new Response('Device endpoint',{status:403});
+    const key=request.headers.get('authorization')?.match(/^Bearer ([a-f0-9]{64})$/)?.[1];
+    if(!key)return new Response('Unauthorized',{status:401});
+    const digest=await hashKey(key);
+    if(new URL(request.url).pathname.endsWith('/pair')&&request.method==='POST')return this.serialized(async()=>{
+      const row=await this.environment(tenantId,environmentId);
+      const stored=this.ctx.storage.sql.exec<{pair_hash:string|null;pair_expires:number|null}>('SELECT pair_hash,pair_expires FROM weft_local_hosts WHERE id=?',environmentId).toArray()[0];
+      if(row?.kind!=='local'||row.status==='deleted'||stored?.pair_hash!==digest||(stored.pair_expires??0)<Date.now())return new Response('Invalid or expired pairing key',{status:401});
+      const token=newKey(),tokenHash=await hashKey(token);
+      this.ctx.storage.sql.exec('UPDATE weft_local_hosts SET token_hash=?,pair_hash=NULL,pair_expires=NULL WHERE id=?',tokenHash,environmentId);
+      return Response.json({token,protocol:LOCAL_PROTOCOL},{headers:{'cache-control':'no-store'}});
+    });
+    if(!new URL(request.url).pathname.endsWith('/connect')||request.method!=='GET'||request.headers.get('upgrade')?.toLowerCase()!=='websocket')return new Response('Not found',{status:404});
+    // Serialize with revocation: an in-flight handshake cannot survive a revoke.
+    return this.serialized(async()=>{
+      const row=await this.environment(tenantId,environmentId);
+      const stored=this.ctx.storage.sql.exec<{token_hash:string|null}>('SELECT token_hash FROM weft_local_hosts WHERE id=?',environmentId).toArray()[0];
+      if(row?.kind!=='local'||row.status==='deleted'||stored?.token_hash!==digest)return new Response('Unauthorized',{status:401});
+      if(request.headers.get('x-weft-protocol')!==LOCAL_PROTOCOL||request.headers.get('x-dsh-version')!=='0.2.1-rc.2')return new Response('Incompatible local Host version',{status:409});
+      return this.localRelay.acceptHost(environmentId);
+    });
+  }
+  async localProxy(tenantId:string,environmentId:string,request:Request,path:string):Promise<Response> {
+    this.scope(tenantId);id.parse(environmentId);
+    const row=await this.environment(tenantId,environmentId);
+    if(row?.kind!=='local'||row.status==='deleted')return new Response('Not found',{status:404});
+    return this.localRelay.proxy(environmentId,request,path);
+  }
+  override webSocketMessage(socket:WebSocket,message:string|ArrayBuffer):void {this.localRelay.message(socket,message);}
+  override webSocketClose(socket:WebSocket):void {this.localRelay.closed(socket);}
+  override webSocketError(socket:WebSocket):void {this.localRelay.closed(socket);}
 }
 
 /** Each named Harness environment has a separate SQLite object and Cordis state. */

@@ -73,6 +73,27 @@ export async function resolveEnvironmentRequest(
   }
   if (!match[3] && request.method === "GET")
     return { request, response: Response.json(record,{headers:{'cache-control':'private, no-store'}}) };
+  if(record.kind==='local'){
+    const suffix=match[3]??'';
+    if(suffix==='/local/pairing'&&['POST','DELETE'].includes(request.method)){
+      assertSameOrigin(request);return {request,response:await tenant.localPairing(principal.tenantId,record.id,request.method==='DELETE')};
+    }
+    if(suffix.startsWith('/local/web/')){
+      assertSameOrigin(request);
+      const path=suffix.slice('/local/web'.length)+url.search;
+      const response=await tenant.localProxy(principal.tenantId,record.id,request,path);
+      if(response.status===200&&path==='/'&&request.method==='GET'&&response.headers.get('content-type')?.startsWith('text/html')){
+        // The native frontend already uses relative asset and API URLs. Keep
+        // its own Boot Graph and installed plugins, changing only the mount.
+        const mount=`/v1/tenants/${principal.tenantId}/environments/${record.id}/local/web/`;
+        let html=await response.text();html=html.replace(/<base\b[^>]*>/gi,'');
+        html=html.replace(/<head(?:\s[^>]*)?>/i,head=>`${head}<base href="${mount}">`);
+        return {request,response:new Response(html,{headers:response.headers})};
+      }
+      return {request,response};
+    }
+    return {request,response:Response.json({error:'此环境由本地 DSH 管理'},{status:409})};
+  }
   if(match[3]==='/copy') {
     if(request.method!=='POST') throw new HttpError(405,'Method not allowed');
     assertSameOrigin(request);

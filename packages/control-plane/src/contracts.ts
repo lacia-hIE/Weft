@@ -78,13 +78,15 @@ export const environmentScopeSchema = z
 export type EnvironmentScope = z.infer<typeof environmentScopeSchema>;
 export type ControlScope = EnvironmentScope;
 export const environmentCreateSchema = z
-  .object({ id: id.optional(), name: z.string().trim().min(1).max(80), configuration: z.string().max(65_536).optional() })
+  .object({ id: id.optional(), name: z.string().trim().min(1).max(80), configuration: z.string().max(65_536).optional(), kind:z.enum(['cloud','local']).optional() })
   .strict();
 export interface EnvironmentRecord {
   id: string;
   name: string;
   createdAt: string;
   updatedAt: string;
+  kind?:'cloud'|'local';
+  local?:{online:boolean;paired:boolean};
   status?: 'copying' | 'failed' | 'ready' | 'pausing' | 'paused' | 'resuming' | 'deleting' | 'deleted';
   copy?: {sourceId: string; requestId: string; phase: 'snapshot' | 'files' | 'configuration' | 'done'; completed: number; total: number; error?: string};
   lifecycle?:{action:'suspend'|'resume'|'delete';revision:number;phase:string;error?:string};

@@ -132,6 +132,8 @@ for (const [path, asset] of Object.entries(assets)) {
   writeFileSync(target, asset.body);
 }
 const paths = Object.keys(assets);
+execFileSync(process.execPath,[resolve('scripts/package-local-host.mjs')],{stdio:'inherit'});
+paths.push('/downloads/weft-dsh-local-host-0.1.0.tgz');
 const revisions = {};
 if (existsSync('.generated/official-web-assets/harness/boot.json')) {
   const graph = JSON.parse(readFileSync('.generated/official-web-assets/harness/boot.json', 'utf8'));
