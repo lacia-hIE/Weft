@@ -52,6 +52,7 @@ export class NativeStreamHub<T> {
   emit(frame: T): void {
     for (const observer of this.observers) this.push(observer, frame);
   }
+  close():void {for(const observer of this.observers){observer.closed=true;observer.queue.length=0;observer.wake?.();}this.observers.clear();}
 
   private push(observer: Observer<T>, frame: T): void {
     if (observer.closed) return;
@@ -91,6 +92,7 @@ export class NativeEventHub {
   private readonly stream = new NativeStreamHub<RemoteEventDownlinkFrame>();
   private readonly clients = new Map<RemoteEventClientId, (frame: RemoteEventDownlinkFrame) => void>();
   private readonly pending = new Map<RemoteEventId, PendingWaterfall>();
+  close():void {for(const pending of this.pending.values())pending.settle({kind:'rejected',error:{name:'AbortError',message:'Environment stopped'}});this.clients.clear();this.stream.close();}
 
   open(signal: AbortSignal): AsyncIterable<RemoteEventDownlinkFrame> {
     const clientId = crypto.randomUUID() as RemoteEventClientId;

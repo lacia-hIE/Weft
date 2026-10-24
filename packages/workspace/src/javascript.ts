@@ -31,6 +31,11 @@ const missing = (error: unknown) => /not found|no such execution|unknown executi
 export class WorkspaceJavaScript {
   private readonly computers = new Map<string, Workspace>();
   private readonly connections = new Map<string, WorkspaceModuleBackendHandle>();
+  async stopAll():Promise<void> {
+    for(const job of this.storage.sql.exec<Job>("SELECT * FROM weft_javascript_jobs WHERE state IN ('running','waiting')").toArray())await this.cancel(job);
+    for(const computer of this.computers.values())await computer.close();
+    this.computers.clear();this.connections.clear();
+  }
   constructor(private readonly storage: DurableObjectStorage, private readonly loader: WorkerLoader | undefined, private readonly observer: WorkspaceObserver, private readonly wake: () => Promise<void>) {
     storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_javascript_jobs (id TEXT PRIMARY KEY, owner TEXT NOT NULL, backend TEXT NOT NULL, cwd TEXT NOT NULL, root TEXT NOT NULL, writable INTEGER NOT NULL, created_at INTEGER NOT NULL, state TEXT NOT NULL)');
     const columns = new Set(storage.sql.exec<{name: string}>('PRAGMA table_info(weft_javascript_jobs)').toArray().map(row => row.name));

@@ -26,6 +26,7 @@ import { credentialRef } from '@deepseek-ai/dsh-credentials';
 import { openEnvironmentStream } from '../../native-environment/src/index.ts';
 import { MarketWorld } from '../../native-environment/src/market.ts';
 import { ConfigWriteQueue, DurableAgentRevisions, DurableSettingsDocuments } from '../../environment-storage/src/index.ts';
+import {LifecycleGate,guardLifecycle} from '../../environment-storage/src/lifecycle.ts';
 import { DurableSessionIndex } from './session-index.ts';
 import {DurableSessionSummaries} from './session-summaries.ts';
 import type { HarnessHomeFacts } from '../../native-environment/src/harness-home.ts';
@@ -123,6 +124,41 @@ export const tenantAddress = (tenantId: string): string =>
 
 /** Environment-local Harness configuration, revisions and discoverable sessions. */
 abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
+  protected readonly lifecycle:LifecycleGate;
+  nativeRegisterResource(scope:ControlScope,kind:'session'|'workspace',resourceId:string):void {
+    this.scope(scope);id.parse(resourceId);
+    this.ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_environment_resources (kind TEXT NOT NULL,id TEXT NOT NULL,PRIMARY KEY(kind,id)) STRICT');
+    this.ctx.storage.sql.exec('INSERT OR IGNORE INTO weft_environment_resources VALUES (?,?)',kind,resourceId);
+  }
+  async nativeLifecycle(scope:ControlScope,action:'freeze'|'resume'|'delete',operation:number):Promise<Response> {
+    this.lifecycle.maintenance(()=>this.scope(scope));
+    if(this.lifecycle.mode==='deleted') {if(action==='delete')return Response.json({deleted:true});throw new Error('Environment was deleted');}
+    if(action==='resume'){
+      this.lifecycle.transition('active',operation);
+      const builder=(this.ctx.exports as unknown as {PluginBuilderDO?:DurableObjectNamespace<import('../../package-install/src/builder.ts').PluginBuilderDO>}).PluginBuilderDO;
+      if(builder)await builder.getByName(this.ctx.id.toString()).activate(operation);
+      return Response.json({resumed:true});
+    }
+    this.lifecycle.transition('suspended',operation);
+    return this.lifecycle.maintenance(async()=>{
+      this.nativeEvents.close();this.nativeControl.close();this.lifecycle.closeStreams();
+      await this.nativeWorkspaces?.dispose();this.nativeWorkspaces=undefined;
+      await this.nativeSearch?.dispose();this.nativeSearch=undefined;
+      await this.market?.dispose();this.market=undefined;
+      await this.modelWorld?.dispose();this.modelWorld=undefined;
+      const builder=(this.ctx.exports as unknown as {PluginBuilderDO?:DurableObjectNamespace<import('../../package-install/src/builder.ts').PluginBuilderDO>}).PluginBuilderDO;
+      if(builder)await builder.getByName(this.ctx.id.toString()).retire(operation);
+      await this.lifecycle.drain();await this.ctx.storage.deleteAlarm();
+      if(action==='delete'){await this.lifecycle.purge(operation);return Response.json({deleted:true});}
+      this.ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_environment_resources (kind TEXT NOT NULL,id TEXT NOT NULL,PRIMARY KEY(kind,id)) STRICT');
+      const resources=this.ctx.storage.sql.exec<{kind:string;id:string}>('SELECT kind,id FROM weft_environment_resources').toArray();
+      const records=this.sessions().list();
+      const sessions=[...new Set([...records.map(row=>row.id),...resources.filter(row=>row.kind==='session').map(row=>row.id)])];
+      const volumes=[...new Set(['default',...records.map(row=>row.workspaceId),...resources.filter(row=>row.kind==='workspace').map(row=>row.id)])];
+      this.lifecycle.transition('suspended',operation,true);
+      return Response.json({sessions,volumes});
+    });
+  }
   private nativeSearch: NativeSessionSearch | undefined;
   private sessionSearch(scope: ControlScope): NativeSessionSearch {
     this.scope(scope);
@@ -295,10 +331,12 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
     await this.ctx.storage.sync();
   }
   async nativeCopyRelease(scope: ControlScope, copyId: string): Promise<void> {
-    this.scope(scope);id.parse(copyId);
+    return this.lifecycle.maintenance(async()=>{
+    this.scope(scope);id.parse(copyId);if(this.lifecycle.mode==='deleted')return;
     const volume=this.documentVolume(scope);
     await this.env.WORKSPACES.getByName(workspaceAddress(volume)).copySnapshot(volume,copyId,'release');
     this.snapshotStore().delete(copyId);
+    });
   }
   /**
    * The configuration document lives in the environment's default workspace,
@@ -496,7 +534,7 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
     if (request.operation === 'review') return Response.json(await packages.artifact(request.name, request.digest, false));
     return Response.json(packages.list());
   }
-  override async alarm(): Promise<void> {await this.packages(environmentScopeOf(this.ctx.id.name)).recover();}
+  override async alarm(): Promise<void> {if(this.lifecycle.mode==='active')await this.lifecycle.run(()=>this.packages(environmentScopeOf(this.ctx.id.name)).recover());}
   async nativePreset(scope: ControlScope, endpoint: CompositionEndpoint, args: unknown): Promise<Response> {
     await this.syncSettingsDocument(scope);
     const defaultId = await this.nativePresetDefault(scope);
@@ -719,7 +757,10 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
   private agentRevisions: DurableAgentRevisions<AgentRevision> | undefined;
   private sessionRecords: DurableSessionIndex<SessionRecord> | undefined;
   constructor(ctx: DurableObjectState, env: HarnessEnvironment) {
+    const lifecycle=new LifecycleGate(ctx.storage);ctx=lifecycle.state(ctx);
     super(ctx, env);
+    this.lifecycle=lifecycle;
+    if(lifecycle.mode==='deleted'){lifecycle.finishBoot();return;}
     // Every environment-owned record is local; activation never waits for D1.
     environmentScopeOf(ctx.id.name);
     void ctx.blockConcurrencyWhile(async () => {
@@ -737,6 +778,7 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
       "CREATE TABLE IF NOT EXISTS client_revisions (revision TEXT PRIMARY KEY, document TEXT NOT NULL, module TEXT NOT NULL)",
     );
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_harness_home (id INTEGER PRIMARY KEY CHECK (id = 1), anonymous_user_id TEXT NOT NULL)');
+    lifecycle.finishBoot();
   }
   /** This environment's harness home facts, minting its random anonymous id on first use. */
   async nativeHarnessHome(scope: ControlScope): Promise<HarnessHomeFacts> {
@@ -1330,3 +1372,4 @@ export class EnvironmentDO extends HarnessStateDO {
       throw new Error("Environment object scope mismatch");
   }
 }
+guardLifecycle(EnvironmentDO);

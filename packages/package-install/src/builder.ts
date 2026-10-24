@@ -5,6 +5,7 @@ export class PluginBuilderDO extends DurableObject {
   private tail: Promise<unknown> = Promise.resolve();
   build(input: string): Promise<Response> {
     const next = this.tail.catch(() => {}).then(async () => {
+      if(await this.ctx.storage.get('retired'))throw new Error('Environment builder is stopped');
       if (input.length > 18 * 1024 * 1024) throw new Error('Build input too large');
       const container = this.ctx.container;
       if (!container) throw new Error('Plugin builder container is unavailable');
@@ -28,4 +29,13 @@ export class PluginBuilderDO extends DurableObject {
     this.tail = next;
     return next;
   }
+  retire(operation:number):Promise<void> {
+    const pending=this.tail.catch(()=>{}).then(async()=>{
+      const old=await this.ctx.storage.get<number>('retired');if(old && old>operation)throw new Error('Stale builder operation');
+      await this.ctx.storage.put('retired',operation);
+      if(this.ctx.container?.running)await this.ctx.container.destroy();
+      await this.ctx.storage.delete('build-secret');
+    });this.tail=pending;return pending;
+  }
+  async activate(operation:number):Promise<void>{const old=await this.ctx.storage.get<number>('retired');if(old && old>operation)throw new Error('Stale builder operation');await this.ctx.storage.delete('retired');}
 }

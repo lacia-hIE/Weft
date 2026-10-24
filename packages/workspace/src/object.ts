@@ -22,8 +22,10 @@ import {AttachmentError, type FileAttachmentRef} from '@deepseek-ai/dsh-attachme
 import {attachmentOperationSchema, ATTACHMENT_ROOT, UPLOAD_CHUNK_BYTES} from '../../native-attachments/src/storage.ts';
 import type {ImageVariantRecord} from '../../native-attachments/src/image-variants.ts';
 import {storedFilePath} from '../../../.generated/official-file-reference.ts';
+import {LifecycleGate,guardLifecycle} from '../../environment-storage/src/lifecycle.ts';
+import {DATA_LAYOUT_VERSION} from '../../tenant/src/layout.ts';
 
-interface Env { WORKSPACES: DurableObjectNamespace<WorkspaceDO>; SESSIONS: DurableObjectNamespace<SessionDO>; LOADER?: WorkerLoader; AI?: Ai }
+interface Env { WORKSPACES: DurableObjectNamespace<WorkspaceDO>; SESSIONS: DurableObjectNamespace<SessionDO>; ENVIRONMENTS:DurableObjectNamespace<import('../../control-plane/src/object.ts').EnvironmentDO>; LOADER?: WorkerLoader; AI?: Ai }
 
 /** The selector of the container backend, beside Computer's default `worker-shell`. */
 export const CONTAINER_SHELL = 'container-shell';
@@ -34,27 +36,32 @@ const DEFAULT_INSTANCE: ContainerInstance = 'basic';
 
 /** No unscoped Computer stub is exposed to clients or model tools. */
 export class WorkspaceDO extends DurableObject<Env> {
-  private readonly javascriptTasks: WorkspaceJavaScript;
-  private readonly documents: WorkerDocuments;
-  private readonly files: WorkspaceStore;
+  private readonly lifecycle:LifecycleGate;
+  private lifecycleRegistration:Promise<void>|undefined;
+  private readonly javascriptTasks!: WorkspaceJavaScript;
+  private readonly documents!: WorkerDocuments;
+  private readonly files!: WorkspaceStore;
   /**
    * The workspace's Linux container, where the deployment provides one; its
    * WorkspaceContainerDO hosts it. It mounts the same volume at /workspace;
    * Weft's private attachment area stays local to the container disk, so it is
    * neither readable from the container nor synced back.
    */
-  private readonly containerHost: () => ContainerHostActivity | undefined;
-  private readonly container: LegacyContainerBackend | undefined;
+  private readonly containerHost!: () => ContainerHostActivity | undefined;
+  private readonly container!: LegacyContainerBackend | undefined;
   private readonly watchers = new Map<string, {path: string; invalidate(): void; close(endStream?: boolean): void}>();
   /** The sandbox of every running shell execution, by execution id. */
   private readonly sandboxes = new Map<string, ShellSandbox>();
   private processSyncTail: Promise<unknown> = Promise.resolve();
-  private readonly admission: ContainerAdmission;
+  private readonly admission!: ContainerAdmission;
   private containerConnection: BackendHandle | undefined;
   private readonly containerRuns = new Map<string, {run: Promise<WorkspaceRuntimeExecHandle<'utf8'>>; release(): void}>();
   private stopping: Promise<Response> | undefined;
   constructor(ctx: DurableObjectState, env: Env) {
+    const lifecycle=new LifecycleGate(ctx.storage);ctx=lifecycle.state(ctx);
     super(ctx, env);
+    this.lifecycle=lifecycle;
+    if(lifecycle.mode==='deleted'){lifecycle.finishBoot();return;}
     this.admission = new ContainerAdmission(ctx.storage.sql);
     // Shell commands run in just-bash inside a Dynamic Worker whose filesystem calls come back
     // here through `WorkspaceServiceProxy`; public egress serves its curl command.
@@ -93,6 +100,35 @@ export class WorkspaceDO extends DurableObject<Env> {
     this.files = new WorkspaceStore(ctx.storage, shell ? {backends, observer} : undefined);
     this.javascriptTasks = new WorkspaceJavaScript(ctx.storage, env.LOADER, observer, () => ctx.storage.setAlarm(Date.now() + 30000));
     this.documents = new WorkerDocuments(env.AI, new SQLiteDocumentCache(ctx.storage.sql));
+    lifecycle.finishBoot();
+  }
+  private lifecycleAdmit(input:unknown):Promise<void> {
+    const scope=workspaceScopeSchema.parse(input);
+    if(!this.ctx.id.equals(this.env.WORKSPACES.idFromName(workspaceAddress(scope))))throw new Error('Workspace scope mismatch');
+    if(!this.lifecycleRegistration){
+      const owner={tenantId:scope.tenantId,environmentId:scope.environmentId??'default'};
+      const parent=this.env.ENVIRONMENTS.getByName(JSON.stringify([DATA_LAYOUT_VERSION,'environment',owner.tenantId,owner.environmentId]));
+      const pending=Promise.resolve(parent.nativeRegisterResource(owner,'workspace',scope.workspaceId));this.lifecycleRegistration=pending;
+      void pending.catch(()=>{if(this.lifecycleRegistration===pending)this.lifecycleRegistration=undefined;});
+    }
+    return this.lifecycleRegistration;
+  }
+  async nativeLifecycle(input:WorkspaceScope,action:'freeze'|'resume'|'delete',operation:number):Promise<void> {
+    const scope=workspaceScopeSchema.parse(input);
+    if(!this.ctx.id.equals(this.env.WORKSPACES.idFromName(workspaceAddress(scope))))throw new Error('Workspace scope mismatch');
+    if(this.lifecycle.mode==='deleted'){if(action==='delete')return;throw new Error('Workspace was deleted');}
+    if(action==='resume'){this.lifecycle.transition('active',operation);return;}
+    // The parent is already fenced. Keep the local Computer bridge available
+    // only while cancelling executions and committing the container's final pull.
+    this.lifecycle.transition('active',operation);
+    await this.lifecycle.maintenance(async()=>{
+      await this.javascriptTasks.stopAll();
+      await Promise.all([...this.sandboxes.keys()].map(id=>this.killExec(scope,id)));
+      if(this.container){const result=await this.stopContainer(scope,[]);if(!result.ok)throw new Error((await result.json() as {error:string}).error);}
+      this.lifecycle.closeStreams();for(const watcher of this.watchers.values())watcher.close();this.watchers.clear();
+      await this.lifecycle.drain();await this.ctx.storage.deleteAlarm();
+      if(action==='delete')await this.lifecycle.purge(operation);else this.lifecycle.transition('suspended',operation,true);
+    });
   }
   /** The Workspace RPC surface for this object's own shell Dynamic Worker (via `WorkspaceServiceProxy`). */
   __getWorkspaceStub() { return this.files.stub(); }
@@ -125,8 +161,11 @@ export class WorkspaceDO extends DurableObject<Env> {
     return Response.json(status);
   }
   override async alarm(): Promise<void> {
+    if(this.lifecycle.mode!=='active')return;
+    return this.lifecycle.run(async()=>{
     await this.javascriptTasks.recover();
     await this.scheduleJavaScriptAlarm();
+    });
   }
   private async scheduleJavaScriptAlarm(): Promise<void> {
     const next = this.javascriptTasks.nextAlarm();
@@ -484,3 +523,4 @@ export class WorkspaceDO extends DurableObject<Env> {
     this.watchers.get(watchId)?.close();
   }
 }
+guardLifecycle(WorkspaceDO,(owner,args)=>owner.lifecycleAdmit(args[0]));

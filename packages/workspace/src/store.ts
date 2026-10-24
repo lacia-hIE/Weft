@@ -33,6 +33,7 @@ export class WorkspaceStore {
 
   /** The Computer runtime that executes shell commands against these same files. */
   get runtime() { return this.computer.runtime; }
+  close():Promise<void>{return this.computer.close();}
 
   /** Sync changes made by the independent process daemon; keep Weft file versions authoritative. */
   async synchronize(backend: string, pull: boolean): Promise<string[]> {

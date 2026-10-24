@@ -21,6 +21,7 @@ import uploadRemote from '../../../.generated/official-remotes/packages/client/f
 import {agentRemoteFor} from './agent-remotes.ts';
 import {invokeAgentRemote, openRemoteStream} from '../../../packages/harness-runtime/src/remote-dispatch.ts';
 import {UplinkQueue} from '../../../packages/harness-runtime/src/uplink.ts';
+import {LifecycleGate,guardLifecycle} from '../../../packages/environment-storage/src/lifecycle.ts';
 import {openPermissionWorld} from '../../../packages/native-environment/src/permissions.ts';
 import {readScheduleCatalog, drainDueReminders} from '../../../packages/native-schedule/src/index.ts';
 import questionRemote from '../../../.generated/official-remotes/packages/interaction/user-questions/typert.remote-client.js';
@@ -120,6 +121,40 @@ function latestCompletedPrefixBoundary(events: readonly SessionEvent[]): number 
 }
 
 export class SessionDO extends DurableObject<Env> {
+  private readonly lifecycle:LifecycleGate;
+  private lifecycleRegistration:Promise<void>|undefined;
+  private lifecycleAdmit(input:unknown):Promise<void> {
+    const scope=scopeSchema.parse(input);
+    if(!this.ctx.id.equals(this.env.SESSIONS.idFromName(sessionAddress(scope))))throw new Error('Session scope mismatch');
+    if(!this.lifecycleRegistration){const pending=Promise.resolve(controlFor(this.env,controlScope(scope.tenantId,scope.environmentId)).nativeRegisterResource(controlScope(scope.tenantId,scope.environmentId),'session',scope.sessionId));this.lifecycleRegistration=pending;void pending.catch(()=>{if(this.lifecycleRegistration===pending)this.lifecycleRegistration=undefined;});}
+    return this.lifecycleRegistration;
+  }
+  async nativeLifecycle(input:SessionScope,action:'freeze'|'resume'|'wake'|'delete',operation:number):Promise<void> {
+    const scope=this.lifecycle.maintenance(()=>this.assertScope(input));
+    if(this.lifecycle.mode==='deleted'){if(action==='delete')return;throw new Error('Session was deleted');}
+    if(action==='resume'){this.lifecycle.transition('active',operation);return;}
+    if(action==='wake'){
+      this.lifecycle.transition('active',operation);
+      return this.lifecycle.maintenance(async()=>{const at=await this.ctx.storage.get<number>('weft_paused_alarm');if(at!==undefined){await this.ctx.storage.setAlarm(Math.max(at,Date.now()+1000));await this.ctx.storage.delete('weft_paused_alarm');}});
+    }
+    const at=await this.lifecycle.raw.getAlarm();
+    this.lifecycle.transition('suspended',operation);
+    await this.lifecycle.maintenance(async()=>{
+      if(at!==null && await this.ctx.storage.get('weft_paused_alarm')===undefined)await this.ctx.storage.put('weft_paused_alarm',at);
+      this.lifecycle.closeStreams();
+      for(const abort of this.requests.values())abort.abort();
+      for(const queue of this.uplinks.values())queue.end();this.uplinks.clear();
+      await Promise.all([...this.fileObservers.values()].map(stop=>stop()));this.fileObservers.clear();
+      const pending=this.nativeHostPromise;
+      const host=this.nativeHost ?? await pending?.catch(()=>undefined);
+      if(host){for(const agent of host.ctx.agents.list())agent.cancel({kind:'user'},{keepInbox:true});await host.dispose();}
+      this.nativeHost=undefined;this.nativeHostPromise=undefined;this.installedPackages=undefined;
+      const reader=await this.readerPromise?.catch(()=>undefined);
+      if(reader){await reader.activeRuntime()?.ctx.fiber.dispose();await reader.ctx.fiber.dispose();}this.readerPromise=undefined;
+      await this.lifecycle.drain();await this.ctx.storage.deleteAlarm();
+      if(action==='delete')await this.lifecycle.purge(operation);else this.lifecycle.transition('suspended',operation,true);
+    });
+  }
   private readerPromise: Promise<Awaited<ReturnType<typeof createSessionReader>>> | undefined;
   private ownerScope: SessionScope | undefined;
   private readonly fileObservers = new Map<string, () => Promise<void>>();
@@ -286,10 +321,14 @@ export class SessionDO extends DurableObject<Env> {
   }
 
   constructor(ctx: DurableObjectState, env: Env) {
+    const lifecycle=new LifecycleGate(ctx.storage);ctx=lifecycle.state(ctx);
     super(ctx, env);
+    this.lifecycle=lifecycle;
+    if(lifecycle.mode==='deleted'){lifecycle.finishBoot();return;}
     initializeSessionStorage(ctx.storage);
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_session_config (id INTEGER PRIMARY KEY CHECK(id=1), workspace_id TEXT, agent_document TEXT, presentation INTEGER NOT NULL DEFAULT 0)');
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_pending_preset (id INTEGER PRIMARY KEY CHECK(id=1), document TEXT NOT NULL)');
+    lifecycle.finishBoot();
   }
 
   private assertScope(input: SessionScope): SessionScope {
@@ -736,12 +775,16 @@ export class SessionDO extends DurableObject<Env> {
   }
   /** Schedule reminders wake the native root; the original runtime delivers what is due. */
   override async alarm(): Promise<void> {
+    if(this.lifecycle.mode!=='active')return;
+    return this.lifecycle.run(async()=>{
     const row = this.ctx.storage.sql.exec<{name: string}>("SELECT name FROM sqlite_master WHERE type='table' AND name='weft_alarm_scope'").toArray().length
       ? this.ctx.storage.sql.exec<{scope: string}>('SELECT scope FROM weft_alarm_scope WHERE id=1').toArray()[0] : undefined;
     if (!row) return;
+    await this.lifecycleAdmit(JSON.parse(row.scope));
     const scope = this.assertScope(JSON.parse(row.scope) as SessionScope);
     const host = await this.getNativeHost(scope);
     await drainDueReminders(host.ctx);
+    });
   }
 
   async nativeScheduleCatalog(input: SessionScope): Promise<unknown[]> {
@@ -973,6 +1016,7 @@ export class SessionDO extends DurableObject<Env> {
     });
   }
 }
+guardLifecycle(SessionDO,(owner,args)=>owner.lifecycleAdmit(args[0]));
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
