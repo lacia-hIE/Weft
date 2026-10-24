@@ -24,7 +24,7 @@ test('a retained alpha.4 Session and custom preset continue under rc.2 across re
     const stream=await api.follow(sessionId);const snapshot=await stream.next();assert.equal(snapshot.type,'snapshot');
     try {
       await api.call('session/prompt',{request:{sessionId,requestId:crypto.randomUUID(),mode:'queue',content:[{type:'text',text}]}});
-      for(;;){const frame=await stream.next();if(frame.type==='event'&&frame.event.type==='turn/end'){assert.equal(frame.event.data.reason?.kind,'completed');break;}}
+      for(;;){const frame=await stream.next();if(frame.type==='event'&&frame.event.type==='turn/end'){assert.equal((frame.event.data as {reason?:{kind:string}}).reason?.kind,'completed');break;}}
     }finally{await stream.close();}
   };
   const page=async()=>{const stream=await api.follow(sessionId);try{const frame=await stream.next();if(frame.type!=='snapshot')throw new Error('Missing snapshot');return frame.records.map(record=>record.event);}finally{await stream.close();}};
