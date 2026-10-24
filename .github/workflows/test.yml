@@ -39,6 +39,8 @@ jobs:
       - run: tar -xzf build.tgz
       - name: Install the exact published native Host
         run: npm install --prefix .generated/local-dsh --no-audit --no-fund @deepseek-ai/dsh@0.2.1-rc.2
+      - name: Native profile package manager
+        run: npm install --global pnpm@11.28.5
       - run: npx playwright install --with-deps chromium
       - name: Native local Host through the production relay
         run: npx playwright test tests/browser/local-host-native.spec.ts

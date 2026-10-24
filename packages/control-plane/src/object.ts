@@ -1562,6 +1562,15 @@ export class TenantDO extends DurableObject<TenantEnvironment> {
     if(row?.kind!=='local'||row.status==='deleted')return new Response('Not found',{status:404});
     return this.localRelay.proxy(environmentId,request,path);
   }
+  /** Use Fetch for upgrades: native WebSocket responses retain their carrier. */
+  override async fetch(request:Request):Promise<Response> {
+    const url=new URL(request.url);
+    const device=/^\/v1\/local-hosts\/([a-zA-Z0-9_-]{1,80})\/([a-zA-Z0-9_-]{1,80})\/(pair|connect)$/.exec(url.pathname);
+    if(device)return this.localDevice(device[1]!,device[2]!,request);
+    const browser=/^\/v1\/tenants\/([a-zA-Z0-9_-]{1,80})\/environments\/([a-zA-Z0-9_-]{1,80})\/local\/web(\/.*)$/.exec(url.pathname);
+    if(browser)return this.localProxy(browser[1]!,browser[2]!,request,browser[3]!+url.search);
+    return new Response('Not found',{status:404});
+  }
   override webSocketMessage(socket:WebSocket,message:string|ArrayBuffer):void {this.localRelay.message(socket,message);}
   override webSocketClose(socket:WebSocket):void {this.localRelay.closed(socket);}
   override webSocketError(socket:WebSocket):void {this.localRelay.closed(socket);}

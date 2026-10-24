@@ -24,7 +24,7 @@ test('local pairing is single-use, tenant-bound, revocable and survives catalogu
     assert.equal((await call(base+'/copy','POST',{name:'Copy',requestId:crypto.randomUUID()})).status,409);
     assert.equal((await call(base+'/local/web/')).status,503);
     const connect=(key:string)=>runtime.dispatchFetch(url('anonymous',`/v1/local-hosts/${tenant}/laptop/connect`),{headers:{upgrade:'websocket',authorization:'Bearer '+key,'x-weft-protocol':'weft-local-host/1','x-dsh-version':'0.2.1-rc.2'}});
-    const attached=await connect(token);assert.equal(attached.status,101);attached.webSocket!.accept();
+    const attached=await connect(token);assert.equal(attached.status,101,attached.status===101?'':await attached.text());attached.webSocket!.accept();
     assert.equal((await(await call(base)).json() as {local:{online:boolean}}).local.online,true);
     assert.equal((await call(base+'/local/pairing','DELETE')).status,200);
     assert.equal((await connect(token)).status,401);
@@ -58,7 +58,7 @@ test('outbound connector carries binary uploads, native HTTP responses, cancella
     const {pairingKey}=await(await post(base+'/local/pairing',{})).json() as {pairingKey:string};
     const {token}=await(await runtime.dispatchFetch(url('anonymous',`/v1/local-hosts/${tenant}/local-wire/pair`),{method:'POST',headers:{authorization:'Bearer '+pairingKey}})).json() as {token:string};
     const response=await runtime.dispatchFetch(url('anonymous',`/v1/local-hosts/${tenant}/local-wire/connect`),{headers:{upgrade:'websocket',authorization:'Bearer '+token,'x-weft-protocol':'weft-local-host/1','x-dsh-version':'0.2.1-rc.2'}});
-    assert.equal(response.status,101);const ws=response.webSocket!;ws.accept();
+    assert.equal(response.status,101,response.status===101?'':await response.text());const ws=response.webSocket!;ws.accept();
     const bridge=Object.assign(new EventEmitter(),{readyState:1,bufferedAmount:0,send:(text:string)=>ws.send(text),terminate:()=>ws.close(),close:()=>ws.close(),ping:()=>{bridge.emit('pong');}});
     ws.addEventListener('message',event=>bridge.emit('message',Buffer.from(String(event.data)),false));ws.addEventListener('close',()=>bridge.emit('close'));
     control=new AbortController();task=runTunnel(bridge,{origin,cookie:'local-cookie=private',signal:control.signal});

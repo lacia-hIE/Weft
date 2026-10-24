@@ -32,6 +32,11 @@ Weft 适合希望自行托管 Web 编程助手、通过浏览器访问远程工�
 | Worker 数据与文档处理 | 可恢复的 JavaScript 任务、原版审批流程，以及通过 Cloudflare Workers AI 将 Office、PDF、图片等内容提取为 Markdown |
 | Cordis 插件 | 从 npm 安装原版 bundle，或在创造模式下由 Agent 编写插件，审核后加载 |
 | 用户隔离 | 使用 Cloudflare Access 身份，将数据与运行权限限定在所属用户和环境 |
+| 本地 DSH 环境 | 安装原生 Host 连接插件，通过出站连接在 Web 使用本机的会话、插件、文件与终端；支持 DSH `0.2.1-rc.2` |
+
+本地模式从首页「连接本地 DSH」开始，下载连接配置和原生 `dsh.bundle.patch` 插件包。
+本机运行原版 `dsh web`，网页加载该 Host 自己的工作台与客户端插件；Weft 负责身份、环境登记和中继。
+部署者需先配置设备端点的 Access 路由，详见[本地环境接入](docs/deployment/local-host.md)。
 
 ## 如何把本地环境搬到 Cloudflare
 

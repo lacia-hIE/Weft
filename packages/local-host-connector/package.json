@@ -4,7 +4,7 @@
   "description": "Connect a local DSH Host to your Weft environment",
   "type": "module",
   "main": "index.mjs",
-  "exports": {".": "./index.mjs", "./dsh.bundle.patch.yml": "./dsh.bundle.patch.yml"},
+  "exports": {".": "./index.mjs", "./dsh.bundle.patch.yml": "./dsh.bundle.patch.yml", "./package.json": "./package.json"},
   "files": ["index.mjs", "transport.mjs", "dsh.bundle.patch.yml", "README.md"],
   "engines": {"node": ">=22.19.0", "dsh": "0.2.1-rc.2"},
   "dependencies": {"ws": "8.21.3"},

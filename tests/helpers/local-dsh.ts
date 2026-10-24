@@ -17,10 +17,16 @@ export async function startLocalDsh(runtime:Miniflare,certificate:string):Promis
   if((await post(`/v1/tenants/${tenant}/environments`,{id:'native-local-ci',name:'Native local CI',kind:'local'})).status!==201)throw new Error('Could not register local fixture');
   const {pairingKey}=await(await post(base+'/local/pairing',{})).json() as {pairingKey:string};
   const file=join(root,'connection.json');writeFileSync(file,JSON.stringify({endpoint:`https://127.0.0.1:4173/v1/local-hosts/${tenant}/native-local-ci`,pairingKey}),{mode:0o600});
-  const patch=join(root,'connector.patch.yml');writeFileSync(patch,JSON.stringify([{insert:[{id:'weft-local-host',name:resolve('packages/local-host-connector/index.mjs'),config:{connectionFile:file}}]}]));
+  const executable=resolve('.generated/local-dsh/node_modules/.bin/dsh');
+  const environment={...process.env,DSH_HOME:join(root,'home'),DSH_AGENTS_HOME:join(root,'agents'),WEFT_LOCAL_HOST_CONFIG:file,NODE_EXTRA_CA_CERTS:certificate};
   const output=openSync('.generated/local-dsh-native.log','w');
-  const child:ChildProcess=spawn(resolve('.generated/local-dsh/node_modules/.bin/dsh'),['--profile','web','--patch',patch,'--no-open','--port',String(port)],{cwd:project,env:{...process.env,DSH_HOME:join(root,'home'),DSH_AGENTS_HOME:join(root,'agents'),NODE_EXTRA_CA_CERTS:certificate},stdio:['ignore',output,output]});
-  closeSync(output);let failed:Error|undefined;child.on('error',error=>{failed=error;});
+  try{execFileSync(executable,['plugin','--profile','web','add',resolve('dist/public/downloads/weft-dsh-local-host-0.1.0.tgz')],{cwd:project,env:environment,stdio:['ignore',output,output],timeout:120_000});}finally{closeSync(output);}
+  // Retain useful diagnostics without uploading native launch credentials.
+  let trace=readFileSync('.generated/local-dsh-native.log','utf8');
+  const log=(chunk:Buffer)=>{trace=(trace+chunk.toString()).slice(-2*1024*1024);writeFileSync('.generated/local-dsh-native.log',trace.replace(/([?&]token=)[^\s\x1b"<>]+/g,'$1[redacted]'),{mode:0o600});};
+  const child:ChildProcess=spawn(executable,['--profile','web','--no-open','--port',String(port)],{cwd:project,env:environment,stdio:['ignore','pipe','pipe']});
+  child.stdout?.on('data',log);child.stderr?.on('data',log);
+  let failed:Error|undefined;child.on('error',error=>{failed=error;});
   const stop=async()=>{if(child.exitCode!==null)return;child.kill('SIGTERM');await Promise.race([new Promise<void>(resolve=>child.once('exit',()=>resolve())),new Promise<void>(resolve=>setTimeout(()=>{child.kill('SIGKILL');resolve();},5000))]);};
   try{
     for(let attempt=0;attempt<180;attempt++){

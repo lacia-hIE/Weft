@@ -1026,7 +1026,7 @@ export default {
     try {
       let pathname = new URL(request.url).pathname;
       const device=/^\/v1\/local-hosts\/([a-zA-Z0-9_-]{1,80})\/([a-zA-Z0-9_-]{1,80})\/(pair|connect)$/.exec(pathname);
-      if(device)return env.TENANTS.getByName(tenantAddress(device[1]!)).localDevice(device[1]!,device[2]!,request);
+      if(device)return env.TENANTS.getByName(tenantAddress(device[1]!)).fetch(request);
       const accessDenied = (code: string) => {
         console.warn('weft.access.denied', {path: pathname, code});
         return Response.json({error: 'Cloudflare Access user login required', code}, {status: 401, headers: {'cache-control': 'private, no-store'}});

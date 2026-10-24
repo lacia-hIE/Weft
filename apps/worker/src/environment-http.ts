@@ -81,8 +81,8 @@ export async function resolveEnvironmentRequest(
     if(suffix.startsWith('/local/web/')){
       assertSameOrigin(request);
       const path=suffix.slice('/local/web'.length)+url.search;
-      const response=await tenant.localProxy(principal.tenantId,record.id,request,path);
-      if(response.status===200&&path==='/'&&request.method==='GET'&&response.headers.get('content-type')?.startsWith('text/html')){
+      const response=await tenant.fetch(request);
+      if(response.status===200&&path.split('?')[0]==='/'&&request.method==='GET'&&response.headers.get('content-type')?.startsWith('text/html')){
         // The native frontend already uses relative asset and API URLs. Keep
         // its own Boot Graph and installed plugins, changing only the mount.
         const mount=`/v1/tenants/${principal.tenantId}/environments/${record.id}/local/web/`;
