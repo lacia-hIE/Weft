@@ -61,7 +61,7 @@ export class WorkspaceDO extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     const lifecycle=new LifecycleGate(ctx.storage);
     super(ctx, env);
-    ctx=lifecycle.state(ctx);this.ctx=ctx;
+    this.ctx=lifecycle.state(this.ctx);ctx=this.ctx;
     this.lifecycle=lifecycle;
     if(lifecycle.mode==='deleted'){lifecycle.finishBoot();return;}
     this.admission = new ContainerAdmission(ctx.storage.sql);

@@ -69,7 +69,7 @@ export class LifecycleGate {
     await this.raw.deleteAlarm();await this.raw.deleteAll();
     this.schema();this.mode='deleted';this.operation=operation;this.epoch++;this.persist();await this.raw.sync();
   }
-  state(ctx:DurableObjectState):DurableObjectState {
+  state<Props>(ctx:DurableObjectState<Props>):DurableObjectState<Props> {
     const sql=new Proxy(ctx.storage.sql,{get:(target,key)=>{const value=Reflect.get(target,key,target);return typeof value==='function'?(...args:unknown[])=>{this.assert();return Reflect.apply(value,target,args);}:value;}});
     const storage=new Proxy(ctx.storage,{get:(target,key)=>{if(key==='sql')return sql;const value=Reflect.get(target,key,target);return typeof value==='function'?(...args:unknown[])=>{this.assert();return Reflect.apply(value,target,args);}:value;}});
     return new Proxy(ctx,{get:(target,key)=>{
@@ -85,7 +85,7 @@ export class LifecycleGate {
 export function guardLifecycle(type:{prototype:object},admit?:(owner:any,args:unknown[])=>Promise<void>|void):void {
   const skipped=new Set(['constructor','nativeLifecycle','nativeCopyRelease','nativeRegisterResource','releaseCopy','alarm']);
   let prototype=type.prototype;
-  while(prototype && Object.getPrototypeOf(prototype)!==Object.prototype){
+  while(prototype && prototype!==Object.prototype){
     for(const name of Object.getOwnPropertyNames(prototype)){
       if(skipped.has(name))continue;
       const descriptor=Object.getOwnPropertyDescriptor(prototype,name);

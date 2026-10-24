@@ -11,6 +11,17 @@ import {DurableCopySnapshots} from '../../packages/control-plane/src/environment
 export * from '../../apps/worker/src/index.ts';
 
 export class WorkspaceDO extends BaseWorkspaceDO {
+  private readonly fixtureRaw:DurableObjectStorage;
+  constructor(ctx:DurableObjectState,env:Env){super(ctx,env);this.fixtureRaw=ctx.storage;}
+  async fixtureLifecycle(action?:string):Promise<Response>{
+    if(action==='fail-freeze')await this.fixtureRaw.put('fixture-fail-freeze',true);
+    return inspectLifecycle(this.fixtureRaw);
+  }
+  override async nativeLifecycle(scope:WorkspaceScope,action:'freeze'|'resume'|'delete',operation:number):Promise<void>{
+    if(action==='freeze'&&await this.fixtureRaw.get('fixture-fail-freeze')){await this.fixtureRaw.delete('fixture-fail-freeze');throw new Error('Injected pause interruption');}
+    return super.nativeLifecycle(scope,action,operation);
+  }
+
   async fixtureCopy(operation:string): Promise<Response> {
     this.ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS fixture_copy_fault (id INTEGER PRIMARY KEY)');
     const provider=new Workspace({storage:this.ctx.storage,output:false}).provider();
@@ -45,6 +56,13 @@ export class WorkspaceDO extends BaseWorkspaceDO {
 }
 
 export class SessionDO extends BaseSessionDO {
+  private readonly fixtureRaw:DurableObjectStorage;
+  constructor(ctx:DurableObjectState,env:Env){super(ctx,env);this.fixtureRaw=ctx.storage;}
+  async fixtureLifecycle(action?:string):Promise<Response>{
+    if(action==='alarm')await this.fixtureRaw.setAlarm(Date.now()+3_600_000);
+    return inspectLifecycle(this.fixtureRaw);
+  }
+
   override async nativeReadSummaryGroup(scope: SessionScope): Promise<Response> {
     this.ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS fixture_summary_reads (id INTEGER PRIMARY KEY,count INTEGER NOT NULL)');
     this.ctx.storage.sql.exec('INSERT INTO fixture_summary_reads VALUES (1,1) ON CONFLICT(id) DO UPDATE SET count=count+1');
@@ -58,9 +76,12 @@ export class SessionDO extends BaseSessionDO {
 
 /** Real application environment, deliberately given no usable D1 binding. */
 export class EnvironmentDO extends BaseEnvironmentDO {
+  private readonly fixtureRaw:DurableObjectStorage;
+  async fixtureLifecycle():Promise<Response>{return inspectLifecycle(this.fixtureRaw);}
+
   constructor(ctx: DurableObjectState, env: Env) {
     const localOnly = {...env, CONFIG_DB: undefined};
-    super(ctx, localOnly);
+    super(ctx, localOnly);this.fixtureRaw=ctx.storage;
   }
 
   async fixture(scope: ControlScope, operation: string, document?: string): Promise<Response> {
@@ -137,8 +158,18 @@ export class EnvironmentDO extends BaseEnvironmentDO {
   }
 }
 
+async function inspectLifecycle(storage:DurableObjectStorage):Promise<Response> {
+  return Response.json({tables:storage.sql.exec<{name:string}>("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE '_cf_%' ORDER BY name").toArray().map(row=>row.name),lifecycle:storage.sql.exec('SELECT mode,operation FROM weft_lifecycle').one(),alarm:await storage.getAlarm()});
+}
+
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    if(new URL(request.url).pathname==='/_fixture/lifecycle') {
+      const {scope,kind,action}=await request.json() as {action?:string;scope:SessionScope&WorkspaceScope;kind:'session'|'workspace'|'environment'};
+      if(kind==='session')return (env.SESSIONS.getByName(sessionAddress(scope)) as DurableObjectStub<SessionDO>).fixtureLifecycle(action);
+      if(kind==='workspace')return (env.WORKSPACES.getByName(workspaceAddress(scope)) as DurableObjectStub<WorkspaceDO>).fixtureLifecycle(action);
+      return (env.ENVIRONMENTS.getByName(environmentAddress(scope)) as DurableObjectStub<EnvironmentDO>).fixtureLifecycle();
+    }
     if(new URL(request.url).pathname==='/_fixture/workspace-copy') {
       const {scope,operation}=await request.json() as {scope:WorkspaceScope;operation:string};
       return (env.WORKSPACES.getByName(workspaceAddress(scope)) as DurableObjectStub<WorkspaceDO>).fixtureCopy(operation);

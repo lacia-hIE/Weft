@@ -1,0 +1,38 @@
+import {test,expect} from '@playwright/test';
+
+test('native environment actions rename, pause, resume and delete through confirmed controls',async({page,request})=>{
+  const {tenantId}=await (await request.get('/v1/me')).json();
+  const id='lifecycle-ui-'+crypto.randomUUID().slice(0,8),base=`/v1/tenants/${tenantId}/environments`;
+  expect((await request.post(base,{data:{id,name:id}})).status()).toBe(201);
+  await page.goto('/');
+  const card=page.locator('.home-card-frame').filter({hasText:id});
+  await card.getByRole('button',{name:'更多操作'}).click();
+  await page.getByRole('menuitem',{name:'重命名',exact:true}).click();
+  let dialog=page.getByRole('dialog',{name:'重命名环境',exact:true});
+  const renamed='Renamed '+id;
+  await dialog.getByLabel('环境名称',{exact:true}).fill(renamed);
+  await dialog.getByRole('button',{name:'保存',exact:true}).click();
+  await expect(page.getByRole('link',{name:`进入 ${renamed}`,exact:true})).toBeVisible();
+  await card.getByRole('button',{name:'更多操作'}).click();
+  await page.getByRole('menuitem',{name:'暂停环境',exact:true}).click();
+  dialog=page.getByRole('dialog',{name:'暂停环境',exact:true});
+  await expect(dialog).toContainText('保留配置、会话与工作区文件');
+  await dialog.getByRole('button',{name:'暂停环境',exact:true}).click();
+  await expect(card).toContainText('已暂停',{timeout:60_000});
+  await page.reload();await expect(card).toContainText('已暂停');
+  await expect(card.getByRole('link')).toHaveCount(0);
+  await card.getByRole('button',{name:'更多操作'}).click();
+  await page.getByRole('menuitem',{name:'恢复环境',exact:true}).click();
+  await expect(card.getByRole('link')).toBeVisible({timeout:60_000});
+  await card.getByRole('button',{name:'更多操作'}).click();
+  await page.getByRole('menuitem',{name:'删除环境',exact:true}).click();
+  dialog=page.getByRole('dialog',{name:'删除环境',exact:true});
+  const remove=dialog.getByRole('button',{name:'删除环境',exact:true});await expect(remove).toBeDisabled();
+  await dialog.getByLabel('输入环境名称确认删除').fill(renamed);await remove.click();
+  await expect(card).toHaveCount(0,{timeout:60_000});
+  await page.reload();await expect(card).toHaveCount(0);
+  expect((await request.get(`${base}/${id}/state`)).status()).toBe(410);
+  const defaultRecord=await (await request.get(`${base}/default`)).json();
+  await page.getByRole('button',{name:`${defaultRecord.name} 的更多操作`,exact:true}).click();
+  await expect(page.getByRole('menuitem',{name:'删除环境（默认环境不可删除）',exact:true})).toBeDisabled();
+});
