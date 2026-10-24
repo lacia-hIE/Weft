@@ -47,37 +47,43 @@ export class LocalHostRelay {
     }
     if(this.pending.size>=LIMIT)return new Response('Request limit',{status:429});
     const id=crypto.randomUUID();
+    const reader=request.body?.getReader();
     const result=new Promise<Response>((resolve,reject)=>{
       const abort=()=>this.fail(id,new Error('Request cancelled'));
       const timer=setTimeout(()=>this.fail(id,new Error('Local Host response timed out')),30_000);
-      this.pending.set(id,{socket,resolve,reject,timer,abort,cleanup:()=>request.signal.removeEventListener('abort',abort)});request.signal.addEventListener('abort',abort,{once:true});
+      this.pending.set(id,{socket,resolve,reject,timer,abort,cleanup:()=>{request.signal.removeEventListener('abort',abort);void reader?.cancel().catch(()=>{});}});
+      request.signal.addEventListener('abort',abort,{once:true});
     });
-    const cleanup=()=>{const p=this.pending.get(id);if(p){clearTimeout(p.timer);request.signal.removeEventListener('abort',p.abort);this.pending.delete(id);}};
-    // A response can arrive before an upload finishes; always observe the result.
     void result.catch(()=>{});
     try {
       socket.send(JSON.stringify({type:'request',id,method:request.method,path,headers:safeHeaders(request.headers)}));
-      const reader=request.body?.getReader();
-      try {if(reader)for(;;){const chunk=await reader.read();if(chunk.done)break;for(let offset=0;offset<chunk.value.length;offset+=CHUNK_BYTES){
-        const p=this.pending.get(id);if(!p)throw new Error('Request ended');
-        await new Promise<void>((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('Upload timed out')),30_000);p.ack=()=>{clearTimeout(timer);resolve();};socket.send(JSON.stringify({type:'chunk',id,body:encode(chunk.value.subarray(offset,offset+CHUNK_BYTES))}));});
-      }}}finally{reader?.releaseLock();}
-      socket.send(JSON.stringify({type:'end',id}));
+      // Upload and response run concurrently: a native early error (for example
+      // a rejected file admission) must not deadlock behind the remaining body.
+      const upload=(async()=>{
+        try {if(reader)for(;;){const chunk=await reader.read();if(chunk.done)break;for(let offset=0;offset<chunk.value.length;offset+=CHUNK_BYTES){
+          const p=this.pending.get(id);if(!p)return;
+          await new Promise<void>((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('Upload timed out')),30_000);p.ack=()=>{clearTimeout(timer);resolve();};socket.send(JSON.stringify({type:'chunk',id,body:encode(chunk.value.subarray(offset,offset+CHUNK_BYTES))}));});
+        }}
+        if(this.pending.has(id))socket.send(JSON.stringify({type:'end',id}));
+        }catch{this.fail(id,new Error('Local upload failed'));}finally{reader?.releaseLock();}
+      })();
+      this.ctx.waitUntil(upload);
       const response=await result;
-      if(!response.body)cleanup();
+      if(!response.body){const p=this.pending.get(id);if(p){clearTimeout(p.timer);p.cleanup();this.pending.delete(id);}}
       return response;
-    }catch{cleanup();try{socket.send(JSON.stringify({type:'cancel',id}));}catch{}return new Response('Local Host request failed',{status:502,headers:{'cache-control':'private, no-store'}});}
+    }catch{this.fail(id,new Error('Local Host request failed'));return new Response('Local Host request failed',{status:502,headers:{'cache-control':'private, no-store'}});}
   }
+
   message(socket:WebSocket,data:string|ArrayBuffer):void {
     const identity=socket.deserializeAttachment() as SocketIdentity;
     if(typeof data!=='string'||data.length>MAX_FRAME){socket.close(1009,'Frame limit');this.closed(socket);return;}
     if(identity.role==='browser') {
-      const host=this.host(identity.environmentId);if(!host){socket.close(1011,'Local Host offline');return;}
+      const host=this.host(identity.environmentId);if(!host||(host.deserializeAttachment() as SocketIdentity).id!==identity.hostId){socket.close(1011,'Local Host offline');return;}
       host.send(JSON.stringify({type:'ws-data',id:identity.id,text:data}));return;
     }
     let frame:Frame;try{frame=JSON.parse(data) as Frame;if(typeof frame.type!=='string'||typeof frame.id!=='string')throw new Error();}catch{socket.close(1008,'Invalid frame');this.closed(socket);return;}
     if(frame.type.startsWith('ws-')){
-      const browser=this.ctx.getWebSockets('local-browser').find(s=>{const a=s.deserializeAttachment() as SocketIdentity;return a.id===frame.id&&a.environmentId===identity.environmentId;});
+      const browser=this.ctx.getWebSockets('local-browser').find(s=>{const a=s.deserializeAttachment() as SocketIdentity;return a.id===frame.id&&a.environmentId===identity.environmentId&&a.hostId===identity.id;});
       if(!browser)return;
       if(frame.type==='ws-data'&&typeof frame.text==='string')browser.send(frame.text);
       else if(frame.type==='ws-close')browser.close(1011,'Local stream ended');return;

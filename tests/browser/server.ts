@@ -8,11 +8,15 @@ import { createRuntime } from "../helpers/miniflare.ts";
 import { modelGate } from './model-gate.ts';
 import { nativePluginModel } from '../helpers/native-plugin-model.ts';
 import {nativeSubagentModel} from '../helpers/native-subagent-model.ts';
+import {WebSocketServer,WebSocket as NodeWebSocket} from 'ws';
+import {startLocalDsh} from '../helpers/local-dsh.ts';
 
 // Test-only bridge. Production serves directly from the authenticated Worker.
 // Native Access identities are supplied by Miniflare, never application headers.
 const live = process.env.WEFT_BROWSER_LIVE === "1";
 const production = process.env.WEFT_BROWSER_PRODUCTION === "1";
+const localDsh=process.env.WEFT_LOCAL_DSH_TEST==='1';
+let localFixture:ReturnType<typeof startLocalDsh>|undefined;
 const queue = process.env.WEFT_BROWSER_QUEUE === '1' ? modelGate() : undefined;
 const plugins = process.env.WEFT_BROWSER_PLUGINS === '1' ? nativePluginModel() : undefined;
 const subagents = process.env.WEFT_BROWSER_SUBAGENTS === '1' ? nativeSubagentModel() : undefined;
@@ -44,6 +48,9 @@ const cert = join(tlsDirectory, 'cert.pem'), keyFile = join(tlsDirectory, 'key.p
 execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', keyFile, '-out', cert, '-subj', '/CN=localhost', '-addext', 'subjectAltName=IP:127.0.0.1,DNS:localhost', '-days', '1'], {stdio: 'ignore'});
 const server = createSecureServer({key: readFileSync(keyFile), cert: readFileSync(cert), allowHTTP1: true}, async (request, response) => {
   try {
+    if(localDsh&&request.url==='/__test/local-host'){
+      const fixture=await localFixture;response.writeHead(200,{'content-type':'application/json'});response.end(JSON.stringify({project:fixture?.project,base:fixture?.base}));return;
+    }
     if (subagents && request.method === 'POST' && request.url === '/__test/subagent-restart') {
       restarting ??= (async () => {await runtime.dispose(); runtime = createRuntime(runtimeDirectory, modelOptions); await runtime.ready;})();
       try {await restarting;} finally {restarting = undefined;}
@@ -94,10 +101,28 @@ const server = createSecureServer({key: readFileSync(keyFile), cert: readFileSyn
     response.end(String(error));
   }
 });
+const sockets=new WebSocketServer({noServer:true,maxPayload:128*1024});
+server.on('upgrade',(request,socket,head)=>{
+  void (async()=>{
+    const headers=new Headers();for(const [key,value] of Object.entries(request.headers))if(value&&key!=='host')headers.set(key,Array.isArray(value)?value.join(', '):value);
+    if(headers.has('origin'))headers.set('origin','http://alpha.local');
+    const result=await runtime.dispatchFetch('http://alpha.local'+request.url,{headers:[...headers]});
+    if(result.status!==101||!result.webSocket){socket.write(`HTTP/1.1 ${result.status} Rejected\r\nConnection: close\r\n\r\n`);socket.destroy();return;}
+    const remote=result.webSocket;remote.accept();
+    sockets.handleUpgrade(request,socket,head,local=>{
+      local.on('message',(data,binary)=>remote.send(binary?data as Buffer:data.toString()));
+      remote.addEventListener('message',event=>{if(local.readyState===NodeWebSocket.OPEN)local.send(event.data as string);});
+      remote.addEventListener('close',()=>local.close());local.on('close',()=>remote.close());local.on('error',()=>remote.close());
+    });
+  })().catch(()=>socket.destroy());
+});
 server.listen(4173, "127.0.0.1", () => {
+  if(localDsh){localFixture=startLocalDsh(runtime,cert);void localFixture.catch(error=>console.error(error.message));}
   console.log("Browser verification server ready on 4173");
 });
 async function close(): Promise<void> {
+  if(localFixture)await(await localFixture.catch(()=>undefined))?.stop();
+  for(const socket of sockets.clients)socket.terminate();sockets.close();
   server.close();
   await restarting;
   await runtime.dispose();

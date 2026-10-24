@@ -19,6 +19,38 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  local-host:
+    name: Published local DSH
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      WEFT_LOCAL_DSH_TEST: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: build
+      - run: tar -xzf build.tgz
+      - name: Install the exact published native Host
+        run: npm install --prefix .generated/local-dsh --no-audit --no-fund @deepseek-ai/dsh@0.2.1-rc.2
+      - run: npx playwright install --with-deps chromium
+      - name: Native local Host through the production relay
+        run: npx playwright test tests/browser/local-host-native.spec.ts
+      - name: Retain native Host diagnostics and browser traces
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: local-dsh-results
+          path: |
+            .generated/local-dsh-native.log
+            test-results
+          retention-days: 7
   plugin-builder:
     name: Plugin package builder
     runs-on: ubuntu-latest

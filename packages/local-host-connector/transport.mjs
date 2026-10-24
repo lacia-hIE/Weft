@@ -1,6 +1,6 @@
 import WebSocket from 'ws';
 const PROTOCOL='weft-local-host/1',CHUNK=32*1024,MAX_FRAME=128*1024,MAX_ACTIVE=64;
-const allowed=path=>typeof path==='string'&&path.startsWith('/')&&!path.startsWith('//')&&!/[\\\r\n\0]/.test(path)&&!/%(?:2f|5c|2e)/i.test(path)&&!path.split(/[/?#]/).includes('..')&&(path==='/'||path.startsWith('/api/')||path.startsWith('/plugins/')||path.startsWith('/assets/'));
+const allowed=value=>{if(typeof value!=='string')return false;const path=value.split('?')[0];return path.startsWith('/')&&!path.startsWith('//')&&!/[\\\r\n\0]/.test(path)&&!/%(?:2f|5c|2e)/i.test(path)&&!path.split(/[/?#]/).includes('..')&&(path==='/'||path.startsWith('/api/')||path.startsWith('/plugins/')||path.startsWith('/assets/'));};
 const headersAllowed=new Set(['content-type','accept','range','if-none-match','if-modified-since']);
 const replyHeaders=new Set(['content-type','content-disposition','etag','last-modified','accept-ranges','content-range']);
 const wait=(ms,signal)=>new Promise(resolve=>{const stop=()=>{clearTimeout(timer);signal.removeEventListener('abort',stop);resolve();};const timer=setTimeout(stop,ms);signal.addEventListener('abort',stop,{once:true});if(signal.aborted)stop();});
