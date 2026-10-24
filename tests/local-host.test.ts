@@ -3,13 +3,16 @@ import {test} from 'node:test';
 import {createServer} from 'node:http';
 import {EventEmitter,once} from 'node:events';
 import {WebSocketServer} from 'ws';
+import {mkdtemp,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import {createRuntime,tenantId,url} from './helpers/miniflare.ts';
 // Node-only published plugin: no Node transport is imported by the Worker.
 // @ts-expect-error The native plugin is distributed as JavaScript.
 import {runTunnel} from '../packages/local-host-connector/transport.mjs';
 
 test('local pairing is single-use, tenant-bound, revocable and survives catalogue restart',{timeout:120_000},async()=>{
-  const runtime=createRuntime();const tenant=tenantId('alpha'),base=`/v1/tenants/${tenant}/environments/laptop`;
+  const directory=await mkdtemp(join(tmpdir(),'weft-local-pairing-'));let runtime=createRuntime(directory);const tenant=tenantId('alpha'),base=`/v1/tenants/${tenant}/environments/laptop`;
   const call=(path:string,method='GET',body?:unknown,user='alpha')=>runtime.dispatchFetch(url(user,path),{method,headers:{'content-type':'application/json'},...(body===undefined?{}:{body:JSON.stringify(body)})});
   const pair=async()=>{const r=await call(base+'/local/pairing','POST',{});assert.equal(r.status,200);return await r.json() as {pairingKey:string};};
   const device=async(key:string,owner=tenant)=>runtime.dispatchFetch(url('anonymous',`/v1/local-hosts/${owner}/laptop/pair`),{method:'POST',headers:{authorization:'Bearer '+key}});
@@ -28,11 +31,17 @@ test('local pairing is single-use, tenant-bound, revocable and survives catalogu
     assert.equal((await(await call(base)).json() as {local:{online:boolean}}).local.online,true);
     assert.equal((await call(base+'/local/pairing','DELETE')).status,200);
     assert.equal((await connect(token)).status,401);
-    await pair();assert.equal((await connect(token)).status,401);
+    const replacement=(await pair()).pairingKey;assert.equal((await connect(token)).status,401);
+    const current=await(await device(replacement)).json() as {token:string};
+    await runtime.dispose();runtime=createRuntime(directory);
+    const retained=await(await call(base)).json() as {local:{online:boolean;paired:boolean}};assert.deepEqual(retained.local,{online:false,paired:true});
+    const resumed=await connect(current.token);assert.equal(resumed.status,101);resumed.webSocket!.accept();resumed.webSocket!.close();
     assert.equal((await call(base,'PATCH',{name:'Renamed laptop'})).status,200);
     assert.equal((await call(base,'DELETE')).status,200);
+    await runtime.dispose();runtime=createRuntime(directory);
     assert.equal((await call(base)).status,410);
-  }finally{await runtime.dispose();}
+    assert.equal((await connect(current.token)).status,401);
+  }finally{await runtime.dispose();await rm(directory,{recursive:true,force:true});}
 });
 
 test('outbound connector carries binary uploads, native HTTP responses, cancellation and local plugin resources',{timeout:120_000},async()=>{

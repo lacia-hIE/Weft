@@ -90,9 +90,10 @@ export class LocalHostRelay {
     }
     const p=this.pending.get(frame.id);if(!p||(p.socket.deserializeAttachment() as SocketIdentity).id!==identity.id)return;
     try {
+      clearTimeout(p.timer);p.timer=setTimeout(()=>this.fail(frame.id,new Error('Local Host stream idle timeout')),30_000);
       if(frame.type==='ack'){const ack=p.ack;p.ack=undefined;ack?.();return;}
       if(frame.type==='response'){
-        if(p.controller)throw new Error('Duplicate response');clearTimeout(p.timer);
+        if(p.controller)throw new Error('Duplicate response');
         if(!Number.isInteger(frame.status)||Number(frame.status)<200||Number(frame.status)>599||!Array.isArray(frame.headers))throw new Error('Invalid response');
         const headers=new Headers();for(const [key,value] of frame.headers as [string,string][])if(responseHeaders.has(key.toLowerCase()))headers.set(key,value);
         headers.set('cache-control','private, no-store');headers.set('x-content-type-options','nosniff');

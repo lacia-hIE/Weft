@@ -37,7 +37,7 @@ export function connectLocalHost({settings,save,origin,authorize,version,onStatu
 }
 export function runTunnel(socket,{origin,cookie,signal,onOpen=()=>{}}) {
   const active=new Map(),clients=new Map();let heartbeat;
-  const send=frame=>{if(socket.readyState!==WebSocket.OPEN||socket.bufferedAmount>1024*1024)throw new Error('Tunnel unavailable');socket.send(JSON.stringify(frame));};
+  const send=frame=>{if(socket.readyState!==WebSocket.OPEN)throw new Error('Tunnel unavailable');if(socket.bufferedAmount>1024*1024){socket.close(1013,'Relay overloaded');throw new Error('Tunnel overloaded');}socket.send(JSON.stringify(frame));};
   const release=id=>{const state=active.get(id);if(state){active.delete(id);clearTimeout(state.timer);state.abort.abort();state.ack?.();void state.writer?.abort().catch(()=>{});}};
   const sendBody=async(id,body,state)=>{
     const reader=body?.getReader();try{if(reader)for(;;){const chunk=await reader.read();if(chunk.done)break;for(let offset=0;offset<chunk.value.length;offset+=CHUNK){
@@ -55,6 +55,7 @@ export function runTunnel(socket,{origin,cookie,signal,onOpen=()=>{}}) {
     void (async()=>{
       try{
         const response=await fetch(new URL(path,origin),{method,headers,redirect:'manual',signal:abort.signal,...(method==='POST'?{body:body.readable,duplex:'half'}:{})});
+        if(response.status===401){await response.body?.cancel();socket.close(1012,'Renew local authentication');throw new Error('Local authentication expired');}
         clearTimeout(state.timer);
         send({type:'response',id,status:response.status,headers:[...response.headers].filter(([key])=>replyHeaders.has(key))});
         await sendBody(id,response.body,state);
@@ -81,6 +82,7 @@ export function runTunnel(socket,{origin,cookie,signal,onOpen=()=>{}}) {
         if(binary||data.length>MAX_FRAME)throw new Error('Invalid frame');
         const frame=JSON.parse(data.toString());if(typeof frame.id!=='string'||frame.id.length>80)throw new Error('Invalid identity');
         const state=active.get(frame.id);
+        if(state){clearTimeout(state.timer);state.timer=setTimeout(()=>{try{send({type:'error',id:frame.id});}catch{}release(frame.id);},30_000);}
         if(frame.type==='request')request(frame);
         else if(frame.type==='ws-open')openClient(frame.id);
         else if(frame.type==='ws-data'){
