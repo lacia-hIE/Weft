@@ -10,12 +10,11 @@ test('published local DSH runs native Files, Git, PTY and restores the workbench
   await rpc('workspace/create',{request:{path:project}});
   const created=await rpc('session/create',{request:{sessionId:crypto.randomUUID(),cwd:project}});const sessionId=created.sessionId;
   await rpc('session/rename',{request:{sessionId,title:'Local browser session'}});
+  // Native account and preview notices resolve independently during boot.
+  await page.addLocatorHandler(page.getByRole('dialog',{name:'Get started',exact:true}),async dialog=>{await dialog.getByRole('button',{name:'Close',exact:true}).click();});
+  await page.addLocatorHandler(page.getByRole('dialog',{name:'Preview Notice',exact:true}),async dialog=>{await dialog.getByRole('button',{name:'Continue',exact:true}).click();});
   await page.goto('/agents/native-local-ci');
   await expect(page.getByRole('button',{name:'Plugins',exact:true})).toBeVisible({timeout:60_000});
-  const welcome=page.getByRole('dialog',{name:'Get started',exact:true});if(await welcome.isVisible())await welcome.getByRole('button',{name:'Close',exact:true}).click();
-  await page.getByRole('button',{name:'Choose workspace',exact:true}).click();
-  await page.getByRole('menuitem',{name:'project',exact:true}).click();
-  await page.getByRole('button',{name:'Continue',exact:true}).click({timeout:30_000});
   expect(page.url()).toContain('/local/web/');
   const release=await page.evaluate(()=>(globalThis as {__DSH_BOOT__?:{release:{version:string}}}).__DSH_BOOT__?.release);
   expect(release?.version).toBe('0.2.1-rc.2');

@@ -111,8 +111,8 @@ export async function startOfficialHarness(environmentId: string): Promise<void>
   const base = `/v1/tenants/${encodeURIComponent(me.tenantId)}/environments/${encodeURIComponent(environmentId)}`;
   const environment = await fetch(base);
   if (!environment.ok) throw new Error('Harness 环境不存在或无权访问');
-  const record=z.object({kind:z.string().optional()}).parse(await environment.json());
-  if(record.kind==='local'){location.replace(`${base}/local/web/`);return;}
+  const record=z.object({kind:z.string().optional(),local:z.object({online:z.boolean()}).optional()}).parse(await environment.json());
+  if(record.kind==='local'){location.replace(record.local?.online?`${base}/local/web/`:'/');return;}
   installEnvironmentStorage(me.tenantId, environmentId);
   // Native auxiliary HTTP routes are document-relative, alongside the Remote
   // transport. Give uploads, exports and capability probes the same owner scope.

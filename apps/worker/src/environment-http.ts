@@ -82,6 +82,7 @@ export async function resolveEnvironmentRequest(
       assertSameOrigin(request);
       const path=suffix.slice('/local/web'.length)+url.search;
       const response=await tenant.fetch(request);
+      if(response.status===503&&path.split('?')[0]==='/'&&request.method==='GET'&&request.headers.get('accept')?.includes('text/html'))return {request,response:Response.redirect(new URL('/',url).href,303)};
       if(response.status===200&&path.split('?')[0]==='/'&&request.method==='GET'&&response.headers.get('content-type')?.startsWith('text/html')){
         // The native frontend already uses relative asset and API URLs. Keep
         // its own Boot Graph and installed plugins, changing only the mount.

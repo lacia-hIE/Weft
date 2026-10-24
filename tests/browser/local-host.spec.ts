@@ -9,6 +9,7 @@ test('local environment uses native controls for pairing and safe removal',async
   await page.getByRole('button',{name:'关闭',exact:true}).last().click();
   const card=page.locator('.home-card-frame').filter({hasText:'My local computer'});
   await expect(card).toContainText('等待配对');await expect(card.getByRole('button',{name:'复制',exact:true})).toHaveCount(0);
+  const environmentId=await card.locator('.home-card-meta code').innerText();await page.goto('/agents/'+environmentId);await expect(page).toHaveURL('/');await expect(card).toContainText('等待配对');
   await card.getByRole('button',{name:'My local computer 的更多操作'}).click();
   await page.getByRole('menuitem',{name:'删除环境',exact:true}).click();
   await expect(page.getByRole('dialog')).toContainText('本机的 DSH 数据和进程保留');

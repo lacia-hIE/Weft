@@ -4,6 +4,7 @@ A native DSH Host plugin for **DSH 0.2.1-rc.2**, installed through the original
 `dsh.bundle.patch` mechanism. Run `dsh web` with its loopback listener. The
 connector opens an outbound TLS WebSocket to your Weft deployment; no inbound
 port or local certificate is needed with the default HTTP loopback listener.
+Install in the `dsh web` profile; a Desktop-only IPC Host is not supported in V1.
 
 1. In Weft, choose **连接本地 DSH** and generate a connection file.
 2. Save it as `~/.dsh/weft-connection.json` with permissions `0600`. Alternatively
