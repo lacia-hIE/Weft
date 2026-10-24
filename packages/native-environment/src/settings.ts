@@ -65,7 +65,6 @@ export class EnvironmentSettings {
         ctx.provide('weftSettingsPersistence', {revision: id => documents.get(id).revision});
         await ctx.plugin(SettingsForms);
         for (const row of definitions) ctx.settings.configure({auto: row.autoGenerate}, loader.resolve(row.id).fiber!);
-        this.applied = documents.revision;
         return ctx;
       } catch (error) {await ctx.fiber.dispose(); throw error;}
     })();
