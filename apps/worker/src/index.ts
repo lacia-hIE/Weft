@@ -219,14 +219,22 @@ export class SessionDO extends DurableObject<Env> {
     return workspacePath(row ? (JSON.parse(row.header_json) as {cwd?: string}).cwd ?? '/workspace' : '/workspace');
   }
   private async publishNativeSummary(scope: SessionScope): Promise<void> {
-    const {items} = await (await this.nativeSessionSummaries(scope)).json() as import('@deepseek-ai/dsh-api-session-controller/types').SessionListValue;
+    const group = await (await this.nativeReadSummaryGroup(scope)).text();
     const owner = controlScope(scope.tenantId, scope.environmentId);
     const control = controlFor(this.env, owner);
-    // Calls on one stub arrive in the order they are made, so the events need no round trip each.
-    await Promise.all(items.flatMap(row => [
-      control.nativeEvent(owner, 'api-session/added', [row]),
-      control.nativeEvent(owner, 'api-session/status', [row.sessionId, row.running]),
-    ]));
+    await control.nativeSyncSessionSummaries(owner, scope.sessionId, group);
+  }
+  private summaryWork: Promise<unknown> = Promise.resolve();
+  async nativeReadSummaryGroup(input: SessionScope): Promise<Response> {
+    const scope = this.assertScope(input);
+    const pending = this.summaryWork.then(async () => {
+      const {items} = await (await this.nativeSessionSummaries(scope)).json() as import('@deepseek-ai/dsh-api-session-controller/types').SessionListValue;
+      this.ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_summary_sequence (id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL) STRICT');
+      const revision = this.ctx.storage.sql.exec<{revision: number}>('INSERT INTO weft_summary_sequence VALUES (1,1) ON CONFLICT(id) DO UPDATE SET revision=revision+1 RETURNING revision').one().revision;
+      return Response.json({revision, items});
+    });
+    this.summaryWork = pending.catch(() => {});
+    return pending;
   }
   async nativeSessionSummaries(input: SessionScope): Promise<Response> {
     const scope = this.assertScope(input);

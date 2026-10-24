@@ -6,7 +6,7 @@ import { Config as DeepSeekConfig, resolveAdapterOptions, type Options as DeepSe
 import { AgentDefaultModelConfig } from '@deepseek-ai/dsh-agent-default-model';
 import { Config as DeveloperToolsConfig } from '@weft/upstream/packages/client/ui-settings/src/index.ts';
 import { Config as WelcomeConfig } from '@weft/upstream/packages/client/ui-settings-general/src/index.ts';
-import { plainConfig, projectForm, volatileForm, isVolatilePath } from '@weft/upstream/packages/settings/settings/src/schema.ts';
+import { plainConfig, volatileForm, isVolatilePath } from '@weft/upstream/packages/settings/settings/src/schema.ts';
 import { redactSecrets } from '@weft/upstream/packages/settings/settings/src/redact.ts';
 import type { SettingsNamespaceView, SettingsDescribeValue, SettingsPathOpView } from '@deepseek-ai/dsh-settings/types';
 import { credentialRef, type CredentialRef } from '@deepseek-ai/dsh-credentials';
@@ -24,6 +24,8 @@ import YAML from 'yaml';
 import { Config as PiAiConfig } from '@deepseek-ai/dsh-llm-pi-ai';
 import {MANAGEABLE_PROFILE_ROWS, isManageableProfileRow, type ProfileEnablement} from '../../harness-profile/src/management.ts';
 import {environmentPlugins} from '../../native-composition/src/extensions.ts';
+import {EnvironmentSettings} from '../../native-environment/src/settings.ts';
+import {SettingsConflictError} from '@deepseek-ai/dsh-settings';
 import type {Enablement} from '../../plugin-registry/src/types.ts';
 
 export const PROFILE_PLUGINS_NAMESPACE = 'weft-plugin-enablement';
@@ -95,30 +97,20 @@ function merge(base: Section, patch: Section): Section {
   for (const [key, value] of Object.entries(patch)) Object.defineProperty(result, key, {value: object(value) && object(base[key]) ? merge(base[key], value) : structuredClone(value), enumerable: true, writable: true, configurable: true});
   return result;
 }
-function editPath(value: unknown, path: readonly string[], op: SettingsPathOpView, node?: Schema): unknown {
-  const [head, ...rest] = path;
-  if (head === undefined) return op.op === 'set' ? structuredClone(op.value) : undefined;
-  if (value === undefined) value = node?.meta.default;
-  if (Array.isArray(value)) {
-    if (!/^(0|[1-9][0-9]*)$/.test(head) || Number(head) > value.length || (Number(head) === value.length && (rest.length > 0 || op.op === 'unset'))) throw new Error('Config array index is out of range');
-    const next = [...value];
-    if (rest.length === 0 && op.op === 'unset') next.splice(Number(head), 1);
-    else next[Number(head)] = editPath(value[Number(head)], rest, op, node?.inner);
-    return next;
-  }
-  const next = object(value) ? {...value} : {};
-  const child = editPath(Object.hasOwn(next, head) ? next[head] : undefined, rest, op, Object.hasOwn(node?.dict ?? {}, head) ? node?.dict?.[head] : node?.inner);
-  if (child === undefined) Reflect.deleteProperty(next, head);
-  else Object.defineProperty(next, head, {value: child, enumerable: true, writable: true, configurable: true});
-  return next;
-}
 
 /** CF profile persistence consumes the original schema, volatile forms and redaction. */
 export class NativeSettings {
   readonly credentials: DurableCredentials;
   private readonly namespaces: Namespace[];
+  private formsWorld: EnvironmentSettings | undefined;
+  private forms(): EnvironmentSettings {
+    return this.formsWorld ??= new EnvironmentSettings(this.documents, this.namespaces, (id, user) => this.check(this.namespace(id), user));
+  }
+  private cachedRevision = -1;
+  private readonly values = new Map<string, Section>();
+  get revision(): number { return this.documents.revision; }
   constructor(storage: DurableObjectStorage, private readonly host: NativeSettingsHost, private readonly documents: DurableSettingsDocuments) {
-    this.credentials = new DurableCredentials(new Context(), storage, (event, ref) => host.changed(event, [ref]));
+    this.credentials = new DurableCredentials(new Context(), storage, (event, ref) => {documents.touch(); host.changed(event, [ref]);});
     this.namespaces = [
       ...environmentPlugins.namespaces.map(row => ({...row, base: () => structuredClone(row.base), autoGenerate: false, validate: () => {}})),
       {id: MODEL_NAMESPACE, schema: DeepSeekConfig, base: () => host.providerBase(), autoGenerate: false, validate: value => {
@@ -169,20 +161,23 @@ export class NativeSettings {
     return this.documents.get(ns);
   }
   value(id: string): Section {
+    const revision = this.revision;
+    if (revision !== this.cachedRevision) {this.values.clear(); this.cachedRevision = revision;}
+    const cached = this.values.get(id);
+    if (cached) return structuredClone(cached);
     const ns = this.namespace(id);
-    return plainConfig(ns.schema(merge(ns.base(), this.row(id).user))) as Section;
+    const value = plainConfig(ns.schema(merge(ns.base(), this.row(id).user))) as Section;
+    this.values.set(id, value);
+    return structuredClone(value);
   }
-  private view(id: string): SettingsNamespaceView {
-    const ns = this.namespace(id), form = volatileForm(ns.schema);
-    if (!form) throw new Error('Namespace has no volatile configuration');
-    const {revision, user} = this.row(id);
-    const redaction = form as Schema<never>;
-    const value = redactSecrets(redaction, projectForm(form, this.value(id)));
-    const base = plainConfig(ns.schema(ns.base()));
-    return settingsRemote.methods['settings/update'].result.create().parse({ns: id, revision, autoGenerate: ns.autoGenerate, schema: form.toJSON(), value: value.value, base: redactSecrets(redaction, projectForm(form, base)).value, user: redactSecrets(redaction, projectForm(form, user)).value, secrets: value.secrets, applies: 'live'});
+  private async view(id: string): Promise<SettingsNamespaceView> {
+    const descriptor = (await this.forms().describe()).find(row => row.ns === id);
+    if (!descriptor) throw new Error('Namespace has no volatile configuration');
+    return settingsRemote.methods['settings/update'].result.create().parse(descriptor);
   }
-  describe(): SettingsDescribeValue {
-    return {writable: true, hasDocument: this.host.openDocument !== undefined, namespaces: this.namespaces.filter(ns => !ns.hidden).map(ns => this.view(ns.id))};
+  async describe(): Promise<SettingsDescribeValue> {
+    const visible = new Set(this.namespaces.filter(ns => !ns.hidden).map(ns => ns.id));
+    return {writable: true, hasDocument: this.host.openDocument !== undefined, namespaces: (await this.forms().describe()).filter(row => visible.has(row.ns)).map(row => settingsRemote.methods['settings/update'].result.create().parse(row))};
   }
   /** Reject a user section its namespace would not accept: unknown or non-live fields, schema or provider failures. */
   private check(ns: Namespace, next: Section): void {
@@ -242,12 +237,21 @@ export class NativeSettings {
     }
     return next;
   }
-  async replaceDocument(text: string): Promise<void> {
-    const next = this.validateDocument(text);
-    for (const ns of this.namespaces) {
-      const user = next.get(ns.id) ?? {};
-      if (JSON.stringify(user) !== JSON.stringify(this.row(ns.id).user)) await this.write(ns.id, undefined, () => user);
-    }
+  async replaceDocument(text: string, committed?: () => void): Promise<void> {
+    const changes = await this.documents.transaction(tx => {
+      const next = this.validateDocument(text);
+      const changes: {id: string; revision: number}[] = [];
+      for (const ns of this.namespaces) {
+        const current = tx.get(ns.id), user = next.get(ns.id) ?? {};
+        if (JSON.stringify(user) === JSON.stringify(current.user)) continue;
+        this.check(ns, user);
+        const {revision} = tx.update(ns.id, () => ({revision: current.revision + 1, user}));
+        changes.push({id: ns.id, revision});
+      }
+      committed?.();
+      return changes;
+    }).finally(() => {this.cachedRevision = -1; this.values.clear();});
+    for (const {id, revision} of changes) this.host.changed('settings/document-updated', [id, revision]);
   }
   /** Preset declarations are dependencies of the roster/default settings view. */
   async invalidate(id: string): Promise<void> {
@@ -255,7 +259,7 @@ export class NativeSettings {
     const {revision} = await this.documents.update(id, current => ({revision: current.revision + 1, user: current.user}));
     this.host.changed('settings/document-updated', [id, revision]);
   }
-  private async write(id: string, expected: number | undefined, change: (user: Section, schema: Schema) => Section): Promise<SettingsNamespaceView> {
+  private async write(id: string, expected: number | undefined, change: (user: Section, schema: Schema) => Section): Promise<void> {
     const ns = this.namespace(id);
     const {revision} = await this.documents.update(id, current => {
       if (expected !== undefined && expected !== current.revision) throw new RemoteError('settings/conflict', 'Configuration changed since it was read', {ns: id, expected, actual: current.revision});
@@ -264,7 +268,6 @@ export class NativeSettings {
       return {revision: current.revision + Number(JSON.stringify(current.user) !== JSON.stringify(next)), user: next};
     });
     this.host.changed('settings/document-updated', [id, revision]);
-    return this.view(id);
   }
   async saveMarketIndexes(indexes: string[]): Promise<void> {
     await this.write(MARKET_NAMESPACE, undefined, user => ({...user, indexes}));
@@ -312,7 +315,7 @@ export class NativeSettings {
     let subject = '';
     try {
       switch (endpoint) {
-        case 'settings/describe': settingsRemote.methods[endpoint].input({strict: true}).create().parse(raw); value = this.describe(); break;
+        case 'settings/describe': settingsRemote.methods[endpoint].input({strict: true}).create().parse(raw); value = await this.describe(); break;
         case 'settings/openSettingsDocument': {
           settingsRemote.methods[endpoint].input({strict: true}).create().parse(raw);
           if (!this.host.openDocument) throw new RemoteError('settings/rejected', 'This environment has no configuration document', {ns: ''});
@@ -324,20 +327,16 @@ export class NativeSettings {
           subject = args.ns;
           const input = 'patch' in args ? args.patch : args.section;
           if (!object(input)) throw new Error('Expected an object section');
-          value = await this.write(args.ns, args.expectedRevision, user => endpoint === 'settings/update' ? merge(user, input) : input); break;
+          await this.forms().update(endpoint === 'settings/update' ? 'update' : 'replace', args.ns, input, args.expectedRevision);
+          this.host.changed('settings/document-updated', [args.ns, this.row(args.ns).revision]);
+          value = await this.view(args.ns); break;
         }
         case 'settings/mutate': {
           const args = settingsRemote.methods[endpoint].input({strict: true}).create().parse(raw);
           subject = args.ns;
-          value = await this.write(args.ns, args.expectedRevision, (user, schema) => {
-            let next: unknown = user;
-            for (const op of args.ops) {
-              if (op.path.length && !isVolatilePath(schema, op.path)) throw new Error('Config field is not editable');
-              next = editPath(next, op.path, op, schema);
-            }
-            if (!object(next)) throw new Error('Config root must be an object');
-            return next;
-          }); break;
+          await this.forms().update('mutate', args.ns, args.ops, args.expectedRevision);
+          this.host.changed('settings/document-updated', [args.ns, this.row(args.ns).revision]);
+          value = await this.view(args.ns); break;
         }
         case 'credentials/describe': {
           const args = settingsRemote.methods[endpoint].input({strict: true}).create().parse(raw);
@@ -360,6 +359,7 @@ export class NativeSettings {
       return Response.json({value: method.result.create().parse(value)});
     } catch (error) {
       if (error instanceof RemoteError) throw error;
+      if (error instanceof SettingsConflictError) throw new RemoteError('settings/conflict', error.message, {ns: subject, expected: error.expected, actual: error.actual});
       if (endpoint.startsWith('credentials/')) throw new RemoteError('credential/rejected', 'Credential operation was rejected', {ref: subject});
       throw new RemoteError('settings/rejected', 'Configuration was rejected by the plugin schema or provider', {ns: subject});
     }

@@ -105,7 +105,8 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
     profileEnablement,
     defaultModel: selection,
     beforeAssembly: async () => {
-      context = await (await control.nativeSessionContext(owner)).json() as NativeSessionContext;
+      const updated = await (await control.nativeSessionContext(owner, context.revision)).json() as NativeSessionContext | {unchanged: true};
+      if (!('unchanged' in updated)) context = updated;
       if (models) {
         models = context.models as EnvironmentModels;
         await commitModels?.(models);

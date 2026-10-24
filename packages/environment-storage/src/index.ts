@@ -16,12 +16,21 @@ export class ConfigWriteQueue {
 }
 
 export interface SettingsDocument { revision: number; user: Record<string, unknown> }
+export interface SettingsTransaction {
+  get(ns: string): SettingsDocument;
+  update(ns: string, change: (current: SettingsDocument) => SettingsDocument): SettingsDocument;
+}
 
 /** Settings are read synchronously from the authoritative local database. */
 export class DurableSettingsDocuments {
   constructor(private readonly storage: DurableObjectStorage, private readonly queue: ConfigWriteQueue) {
     storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_settings_documents (ns TEXT PRIMARY KEY, revision INTEGER NOT NULL, document TEXT NOT NULL) STRICT');
+    storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_configuration_revision (id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL) STRICT');
+    storage.sql.exec('INSERT OR IGNORE INTO weft_configuration_revision VALUES (1,0)');
   }
+
+  get revision(): number { return this.storage.sql.exec<{revision: number}>('SELECT revision FROM weft_configuration_revision WHERE id=1').one().revision; }
+  touch(): void { this.storage.sql.exec('UPDATE weft_configuration_revision SET revision=revision+1 WHERE id=1'); }
 
   get(ns: string): SettingsDocument {
     const row = this.storage.sql.exec<{revision: number; document: string}>('SELECT revision,document FROM weft_settings_documents WHERE ns=?', ns).toArray()[0];
@@ -29,14 +38,24 @@ export class DurableSettingsDocuments {
   }
 
   update(ns: string, change: (current: SettingsDocument) => SettingsDocument): Promise<SettingsDocument> {
+    return this.transaction(tx => tx.update(ns, change));
+  }
+
+  /** Includes document version stamps; effects and notifications belong after fulfillment. */
+  transaction<T>(operation: (tx: SettingsTransaction) => T): Promise<T> {
     return this.queue.run(async () => this.storage.transactionSync(() => {
-      // The service checks expectedRevision against this transaction's value.
-      const current = this.get(ns);
-      const next = change(current);
-      if (next.revision !== current.revision || JSON.stringify(next.user) !== JSON.stringify(current.user)) {
-        this.storage.sql.exec('INSERT INTO weft_settings_documents VALUES (?,?,?) ON CONFLICT(ns) DO UPDATE SET revision=excluded.revision,document=excluded.document', ns, next.revision, JSON.stringify(next.user));
-      }
-      return this.get(ns);
+      let changed = false;
+      const value = operation({get: ns => this.get(ns), update: (ns, change) => {
+        const current = this.get(ns), revision = current.revision, before = JSON.stringify(current.user);
+        const next = change(current), document = JSON.stringify(next.user);
+        if (next.revision !== revision || document !== before) {
+          this.storage.sql.exec('INSERT INTO weft_settings_documents VALUES (?,?,?) ON CONFLICT(ns) DO UPDATE SET revision=excluded.revision,document=excluded.document', ns, next.revision, document);
+          changed = true;
+        }
+        return this.get(ns);
+      }});
+      if (changed) this.touch();
+      return value;
     }));
   }
 }

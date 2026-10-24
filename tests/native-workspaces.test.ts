@@ -20,7 +20,8 @@ test('native Workspace commands, real directories, membership, pins, archival an
     assert.deepEqual(await stream.next(), {type: 'baseline', value: {items: [], archivedSessionIds: [], pinnedSessionIds: []}});
     const root = await api.call<WorkspaceValue>('workspace/initializeDefault', {});
     assert.equal(root.workspace.path, '/workspace');
-    assert.equal((await stream.next()).type, 'replace');
+    assert.equal((await stream.next()).type, 'upsert');
+    assert.equal((await stream.next()).type, 'order');
     const path = await api.call<string>('directoryPicker/createDirectory', {path: '/workspace', name: 'project'});
     assert.equal(path, '/workspace/project');
     const listing = await api.call<{entries: {path: string}[]}>('directoryPicker/list', {});

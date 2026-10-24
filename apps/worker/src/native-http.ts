@@ -479,12 +479,7 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
       }
       case 'session/list': {
         sessionRemote.methods[endpoint].input({strict: true}).create().parse(payload.args);
-        const records = await control.sessionIndex(owner);
-        const groups = await mapConcurrent(records, async record => {
-          const target = session(record.id);
-          return sessionRemote.methods[endpoint].result.create().parse(await (await target.stub.nativeSessionSummaries(target.scope)).json()).items;
-        }, request.signal, SESSION_FAN_OUT);
-        value = {items: groups.flat()};
+        value = sessionRemote.methods[endpoint].result.create().parse(await (await control.nativeSessionList(owner)).json());
         break;
       }
       case 'session/search': {

@@ -23,8 +23,9 @@ import { sessionReadPorts } from '../../native-query/src/ports.ts';
 import { credentialRef } from '@deepseek-ai/dsh-credentials';
 import { openEnvironmentStream } from '../../native-environment/src/index.ts';
 import { MarketWorld } from '../../native-environment/src/market.ts';
-import { ConfigWriteQueue, DurableAgentRevisions, DurableSettingsDocuments, DurableWorkspaceRegistry } from '../../environment-storage/src/index.ts';
+import { ConfigWriteQueue, DurableAgentRevisions, DurableSettingsDocuments } from '../../environment-storage/src/index.ts';
 import { DurableSessionIndex } from './session-index.ts';
+import {DurableSessionSummaries} from './session-summaries.ts';
 import type { HarnessHomeFacts } from '../../native-environment/src/harness-home.ts';
 import { EnvironmentModelWorld } from '../../native-models/src/environment.ts';
 import { credentialRefFor, type EnvironmentModels } from '../../native-models/src/index.ts';
@@ -53,6 +54,7 @@ export const SETTINGS_DOCUMENT_EVENT = 'weft/settings-document';
 
 /** What a Session world reads from its environment when it opens and before each turn. */
 export interface NativeSessionContext {
+  revision: number;
   models: ReturnType<NativeSettings['modelSections']>;
   /** Whether each credential reference the model settings name has a value. */
   credentials: Record<string, boolean>;
@@ -233,6 +235,7 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
    * configuration when every row passes, and a form edit rewrites the file.
    */
   private documentWork: Promise<unknown> = Promise.resolve();
+  private documentSync: Promise<void> | undefined;
   private documentVolume(scope: ControlScope) { return {...scope, workspaceId: 'default'}; }
   private async documentCall<T>(scope: ControlScope, operation: WorkspaceOperation): Promise<T | undefined> {
     const volume = this.documentVolume(scope);
@@ -272,21 +275,24 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
   /** Take in the document's edits, once per file version. */
   private syncSettingsDocument(scope: ControlScope): Promise<void> {
     if (this.documentVersion() === undefined) return Promise.resolve();
-    return this.serialDocument(async () => {
+    if (this.documentSync) return this.documentSync;
+    const pending = this.serialDocument(async () => {
       const known = this.documentVersion();
       const info = await this.documentCall<{version: string}>(scope, {type: 'stat', path: SETTINGS_DOCUMENT_PATH});
       if (!info || info.version === known) return;
       const file = await this.documentCall<{version: string; content: string}>(scope, {type: 'read', path: SETTINGS_DOCUMENT_PATH});
       if (!file) return;
-      this.rememberDocument(file.version);
       try {
-        await this.settings(scope).replaceDocument(file.content);
+        await this.settings(scope).replaceDocument(file.content, () => this.rememberDocument(file.version));
       } catch (error) {
         await this.documentCall(scope, {type: 'write', path: SETTINGS_DOCUMENT_ERROR_PATH, content: `${new Date().toISOString()}: the configuration in profile.yml was not applied and the previous configuration stays in effect.\n${error instanceof Error ? error.message : String(error)}\n`});
         return;
       }
       await this.documentCall(scope, {type: 'write', path: SETTINGS_DOCUMENT_ERROR_PATH, content: ''});
     });
+    this.documentSync = pending;
+    void pending.finally(() => {if (this.documentSync === pending) this.documentSync = undefined;}).catch(() => {});
+    return pending;
   }
   private presetDefault(scope: ControlScope): string {
     const value = this.settings(scope).value(PRESET_NAMESPACE);
@@ -298,10 +304,11 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
    * a world opens and starts each turn with this instead of a call per setting.
    * Credentials are reported as set or unset, never their values.
    */
-  async nativeSessionContext(scope: ControlScope): Promise<Response> {
+  async nativeSessionContext(scope: ControlScope, knownRevision?: number): Promise<Response> {
     this.scope(scope);
     await this.syncSettingsDocument(scope);
     const settings = this.settings(scope);
+    if (knownRevision === settings.revision) return Response.json({unchanged: true, revision: knownRevision});
     const models = settings.modelSections();
     const providers = models.piAi.providers !== null && typeof models.piAi.providers === 'object' ? Object.keys(models.piAi.providers) : [];
     const refs = new Set(['deepseek-official', ...providers].flatMap(provider => credentialRefFor(models as EnvironmentModels, provider) ?? []));
@@ -312,6 +319,7 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
     }
     const permission = settings.value(PERMISSION_NAMESPACE).defaultPreset;
     const context: NativeSessionContext = {
+      revision: settings.revision,
       models, credentials, harnessHome: await this.nativeHarnessHome(scope),
       loop: settings.value(LOOP_NAMESPACE) as {maxParallelToolCalls: number}, subagents: settings.value(SUBAGENT_NAMESPACE),
       ...(typeof permission === 'string' ? {permissionDefault: permission} : {}),
@@ -558,6 +566,36 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
   }
   private readonly nativeEvents = new NativeEventHub();
   private readonly nativeControl = new NativeStreamHub<SessionControlFrame>();
+  private summaries: DurableSessionSummaries | undefined;
+  private summaryStore(): DurableSessionSummaries {return this.summaries ??= new DurableSessionSummaries(this.ctx.storage.sql);}
+  private storeSummaries(scope: ControlScope, root: string, text: string, emit: boolean) {
+    this.scope(scope);
+    if (!this.sessions().has(id.parse(root))) throw new Error('Summary root is not registered');
+    const raw = JSON.parse(text) as {revision: number; items: unknown};
+    if (!Number.isSafeInteger(raw.revision) || raw.revision < 1) throw new Error('Invalid summary revision');
+    const {items} = sessionRemote.methods['session/list'].result.create().parse({items: raw.items});
+    for (const row of items) if (row.sessionId !== root && this.nativeSessionRoot(scope, row.sessionId) !== root) throw new Error('Summary ownership mismatch');
+    const accepted = this.summaryStore().put(root, raw.revision, items);
+    if (accepted && emit) for (const row of items) {
+      this.nativeEvents.emit('api-session/added', [row]);
+      this.nativeEvents.emit('api-session/status', [row.sessionId, row.running]);
+    }
+    return items;
+  }
+  async nativeSyncSessionSummaries(scope: ControlScope, root: string, text: string): Promise<void> {this.storeSummaries(scope, root, text, true);}
+  /** Only missing or still-active roots require a source RPC. Cold completed lists read local SQLite. */
+  async nativeSessionList(scope: ControlScope): Promise<Response> {
+    this.scope(scope);
+    const cached = this.summaryStore().read();
+    const groups = await mapConcurrent(this.sessions().list(), async record => {
+      const value = cached.get(record.id);
+      if (value && !value.active) return value.items;
+      const source = {...scope, sessionId: record.id};
+      const text = await (await this.env.SESSIONS.getByName(sessionAddress(source)).nativeReadSummaryGroup(source)).text();
+      return this.storeSummaries(scope, record.id, text, false);
+    });
+    return Response.json({items: groups.flat()});
+  }
   private nativeWorkspaces: NativeWorkspaces | undefined;
   private workspaces(scope: ControlScope): NativeWorkspaces {
     this.scope(scope);
@@ -568,15 +606,10 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
       return {scope: address, stub: this.env.SESSIONS.getByName(sessionAddress(address))};
     };
     const volume = {...owner, workspaceId: 'default'};
-    if (!this.workspaceRegistry) throw new Error('Environment Workspace registry is not loaded');
-    return this.nativeWorkspaces = new NativeWorkspaces(this.workspaceRegistry, {
+    const target = (sessionId: string) => {const root = this.nativeSessionRoot(owner, sessionId) ?? sessionId; const scope = {...owner, sessionId: root}; return {scope, stub: this.env.SESSIONS.getByName(sessionAddress(scope))};};
+    return this.nativeWorkspaces = new NativeWorkspaces(this.ctx.storage, {
+      persistence: sessionReadPorts(async () => this.nativeSessionIds(owner), target),
       files: operation => this.env.WORKSPACES.getByName(workspaceAddress(volume)).call(volume, operation),
-      header: async id => {const target=session(id); return target.stub.nativeHeader(target.scope);},
-      headers: async () => {
-        const records = await this.sessionIndex(scope);
-        const values = await mapConcurrent(records, async row => {const target=session(row.id); return target.stub.nativeHeader(target.scope);});
-        return values.filter(value => value !== undefined);
-      },
       activity: async id => {const target=session(id); return await (await target.stub.nativeWorkspaceActivity(target.scope)).json() as import('@deepseek-ai/dsh-workspace/types').SessionActivity[];},
       stop: async id => {const target=session(id); await target.stub.nativeWorkspaceStop(target.scope);},
     });
@@ -607,7 +640,6 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
   private readonly configWrites = new ConfigWriteQueue();
   private agentRevisions: DurableAgentRevisions<AgentRevision> | undefined;
   private sessionRecords: DurableSessionIndex<SessionRecord> | undefined;
-  private workspaceRegistry: DurableWorkspaceRegistry | undefined;
   constructor(ctx: DurableObjectState, env: HarnessEnvironment) {
     super(ctx, env);
     // Every environment-owned record is local; activation never waits for D1.
@@ -617,7 +649,6 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
       this.sessionRecords = new DurableSessionIndex<SessionRecord>(ctx.storage.sql);
       this.settingsDocuments = new DurableSettingsDocuments(ctx.storage, this.configWrites);
       this.agentRevisions = new DurableAgentRevisions<AgentRevision>(ctx.storage);
-      this.workspaceRegistry = new DurableWorkspaceRegistry(ctx.storage, JSON.stringify({initialized: true, workspaceIds: [], archivedSessionIds: [], pinnedSessionIds: []}));
       await this.seedAgents();
     });
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS native_child_owners (id TEXT PRIMARY KEY, parent_id TEXT NOT NULL, root_id TEXT NOT NULL)');
@@ -702,13 +733,8 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
       const owner = body.scope;
       const source = this.nativeControl.open(abort.signal, async () => {
         const projections: Record<string, SessionProjectionBaseline> = {};
-        const records = await this.sessionIndex(body.scope);
-        await mapConcurrent(records, async row => {
-          const scope = {...owner, sessionId: row.id};
-          const raw: unknown = await (await this.env.SESSIONS.getByName(sessionAddress(scope)).nativeSessionSummaries(scope)).json();
-          const value = sessionRemote.methods['session/list'].result.create().parse(raw);
-          for (const item of value.items) if (item.projections?.kind === 'sequenced') projections[item.sessionId] = {asOfSeq: item.projections.asOfSeq, values: item.projections.values};
-        }, abort.signal);
+        const value = sessionRemote.methods['session/list'].result.create().parse(await (await this.nativeSessionList(owner)).json());
+        for (const item of value.items) if (item.projections?.kind === 'sequenced') projections[item.sessionId] = {asOfSeq: item.projections.asOfSeq, values: item.projections.values};
         return {type: 'baseline', value: {projections}};
       });
       const codec = sessionRemote.methods['session/control'].result.create();
@@ -857,6 +883,7 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
     const previous = this.sessions().get(record.id);
     if (previous) record = {...record, title: previous.title || record.title};
     this.sessions().put(record);
+    this.summaryStore().remove(record.id);
   }
   async sessionIndex(scope: ControlScope): Promise<SessionRecord[]> {
     this.scope(scope);

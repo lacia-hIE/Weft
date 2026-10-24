@@ -1,9 +1,22 @@
-import application, {EnvironmentDO as BaseEnvironmentDO, type Env} from '../../apps/worker/src/index.ts';
+import application, {EnvironmentDO as BaseEnvironmentDO, SessionDO as BaseSessionDO, type Env} from '../../apps/worker/src/index.ts';
+import {sessionAddress, type SessionScope} from '../../packages/tenant/src/index.ts';
 import {environmentAddress} from '../../packages/control-plane/src/object.ts';
 import type {ControlScope, AgentRevision} from '../../packages/control-plane/src/contracts.ts';
 import {ConfigWriteQueue, DurableSettingsDocuments, DurableAgentRevisions, DurableWorkspaceRegistry} from '../../packages/environment-storage/src/index.ts';
 
 export * from '../../apps/worker/src/index.ts';
+
+export class SessionDO extends BaseSessionDO {
+  override async nativeReadSummaryGroup(scope: SessionScope): Promise<Response> {
+    this.ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS fixture_summary_reads (id INTEGER PRIMARY KEY,count INTEGER NOT NULL)');
+    this.ctx.storage.sql.exec('INSERT INTO fixture_summary_reads VALUES (1,1) ON CONFLICT(id) DO UPDATE SET count=count+1');
+    return super.nativeReadSummaryGroup(scope);
+  }
+  async fixtureSummaryReads(): Promise<number> {
+    this.ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS fixture_summary_reads (id INTEGER PRIMARY KEY,count INTEGER NOT NULL)');
+    return this.ctx.storage.sql.exec<{count: number}>('SELECT count FROM fixture_summary_reads WHERE id=1').toArray()[0]?.count ?? 0;
+  }
+}
 
 /** Real application environment, deliberately given no usable D1 binding. */
 export class EnvironmentDO extends BaseEnvironmentDO {
@@ -15,6 +28,12 @@ export class EnvironmentDO extends BaseEnvironmentDO {
   async fixture(scope: ControlScope, operation: string, document?: string): Promise<Response> {
     // The normal entrypoint never exposes this fixture or these raw writes.
     if (!this.ctx.id.equals(this.env.ENVIRONMENTS.idFromName(environmentAddress(scope)))) throw new Error('Fixture scope mismatch');
+    if (operation === 'fail-document') {
+      this.ctx.storage.sql.exec("CREATE TRIGGER reject_document BEFORE UPDATE ON weft_settings_documents WHEN NEW.ns='agent-loop' BEGIN SELECT RAISE(ABORT, 'injected document failure'); END");
+      return Response.json({installed: true});
+    }
+    if (operation === 'allow-document') {this.ctx.storage.sql.exec('DROP TRIGGER reject_document'); return Response.json({removed: true});}
+    if (operation === 'clear-summaries') {this.ctx.storage.sql.exec('DELETE FROM weft_session_summaries'); return Response.json({cleared: true});}
     if (operation === 'seed-presets') {
       const revisions = JSON.parse(document!) as AgentRevision[];
       this.ctx.storage.transactionSync(() => {
@@ -56,6 +75,11 @@ export class EnvironmentDO extends BaseEnvironmentDO {
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    if (new URL(request.url).pathname === '/_fixture/summary-reads') {
+      const scope = await request.json() as SessionScope;
+      const target = env.SESSIONS.getByName(sessionAddress(scope)) as DurableObjectStub<SessionDO>;
+      return Response.json({reads: await target.fixtureSummaryReads()});
+    }
     if (new URL(request.url).pathname === '/_fixture/environment-storage') {
       const input = await request.json() as {scope: ControlScope; operation: string; document?: string};
       const target = env.ENVIRONMENTS.getByName(environmentAddress(input.scope)) as DurableObjectStub<EnvironmentDO>;
