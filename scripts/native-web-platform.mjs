@@ -44,6 +44,12 @@ export const nativeWebPlatform = {
       if (!source.includes(before) || !source.includes('if (!response.ok) {')) throw new Error('Upstream DeepSeek search transport changed; review the workerd redirect policy');
       return {contents: source.replace(before, "method: 'POST',\n        redirect: 'manual',"), loader: 'ts', resolveDir: resolve(path, '..')};
     });
+    builder.onLoad({filter: /packages\/web\/web-deepseek-api\/src\/transport\.ts$/}, ({path}) => {
+      const source = readFileSync(path, 'utf8');
+      const before = "redirect: 'error',";
+      if (!source.includes(before) || !source.includes('if (!response.ok) {')) throw new Error('Upstream DeepSeek web API transport changed; review the workerd redirect policy');
+      return {contents: source.replace(before, "redirect: 'manual',"), loader: 'ts', resolveDir: resolve(path, '..')};
+    });
     // workerd has no DOMParser; turndown's own Node build parses HTML with domino.
     builder.onResolve({filter: /^turndown$/}, () => ({path: require.resolve('turndown/lib/turndown.cjs.js')}));
     builder.onResolve({filter: /^@mixmark-io\/domino$/}, () => ({path: require.resolve('@mixmark-io/domino')}));

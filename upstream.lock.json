@@ -1,6 +1,6 @@
 {
   "repository": "https://github.com/deepseek-ai/deepseek-harness.git",
-  "commit": "86a402200d95fecef4529d969836f1fe13c6cb0d",
+  "commit": "687f282e8625c6b8d11ff58211a90524be2e4317",
   "directory": "deepseek-harness",
   "policy": "Use pinned source without editing the checkout; keep platform adaptations in Weft."
 }

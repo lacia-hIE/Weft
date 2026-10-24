@@ -56,6 +56,7 @@ export const LOADED: Record<string, {world: 'session'; phase: ProfilePhase; nati
   'web-fetch-http': {world: 'session', phase: 'late', native: true},
   // Its base URL follows the environment's DeepSeek endpoint through the environment's row configuration.
   'web-search-deepseek': {world: 'session', phase: 'late', native: true},
+  'web-deepseek-api': {world: 'session', phase: 'late', native: true},
   'repeat-tool-reminder': {world: 'session', phase: 'late', native: true},
   'spill-policy': {world: 'session', phase: 'late', native: true},
 };
