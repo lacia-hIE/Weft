@@ -16,7 +16,7 @@ import {
   type TenantState,
 } from "./contracts.ts";
 import { validatePlugins } from "../../plugin-runtime/src/catalog.ts";
-import type {EnvironmentCopyConfiguration} from './environment-copy.ts';
+import {DurableCopySnapshots,type EnvironmentCopyConfiguration} from './environment-copy.ts';
 import { compileClientPlugin } from "../../client-plugins/src/compiler.ts";
 import upstream from "../../../upstream.lock.json";
 import { z } from 'zod';
@@ -232,6 +232,8 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
   }
   /** Persist a retryable, configuration-only cut beside the committed file snapshot. */
   private readonly copyCaptures=new Map<string,Promise<Response>>();
+  private copySnapshots:DurableCopySnapshots|undefined;
+  private snapshotStore():DurableCopySnapshots {return this.copySnapshots??=new DurableCopySnapshots(this.ctx.storage);}
   nativeCopySnapshot(scope: ControlScope, copyId: string): Promise<Response> {
     this.scope(scope);id.parse(copyId);
     let pending=this.copyCaptures.get(copyId);
@@ -243,9 +245,8 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
   }
   private async captureCopy(scope: ControlScope, copyId: string): Promise<Response> {
     this.scope(scope); id.parse(copyId);
-    this.ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_environment_copies (id TEXT PRIMARY KEY, document TEXT NOT NULL) STRICT');
-    const saved=this.ctx.storage.sql.exec<{document:string}>('SELECT document FROM weft_environment_copies WHERE id=?',copyId).toArray()[0];
-    if(saved) return Response.json(JSON.parse(saved.document));
+    const saved=this.snapshotStore().get(copyId);
+    if(saved) return Response.json(JSON.parse(saved));
     await this.syncSettingsDocument(scope);
     const workspaces=await this.workspaces(scope).configuration();
     const revision=this.settings(scope).revision;
@@ -264,7 +265,7 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
       throw new Error('Environment configuration changed during snapshot creation; retry the copy');
     }
     const value={data,count};
-    this.ctx.storage.sql.exec('INSERT INTO weft_environment_copies VALUES (?,?) ON CONFLICT DO NOTHING',copyId,JSON.stringify(value));
+    this.snapshotStore().put(copyId,JSON.stringify(value));
     await this.ctx.storage.sync();
     return Response.json(value);
   }
@@ -297,7 +298,7 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
     this.scope(scope);id.parse(copyId);
     const volume=this.documentVolume(scope);
     await this.env.WORKSPACES.getByName(workspaceAddress(volume)).copySnapshot(volume,copyId,'release');
-    this.ctx.storage.sql.exec('DELETE FROM weft_environment_copies WHERE id=?',copyId);
+    this.snapshotStore().delete(copyId);
   }
   /**
    * The configuration document lives in the environment's default workspace,
@@ -1132,11 +1133,18 @@ export class TenantDO extends DurableObject<TenantEnvironment> {
     super(ctx,env);
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_environment_copy_jobs (id TEXT PRIMARY KEY, document TEXT NOT NULL, cleanup INTEGER NOT NULL DEFAULT 0) STRICT');
   }
-  override async alarm(): Promise<void> {await (this.copyWork ?? this.recoverCopies());}
+  override async alarm(): Promise<void> {
+    await this.copyWork?.catch(()=>{});
+    await this.runCopyBatch();
+  }
   private launchCopies(): void {
-    if(this.copyWork) return;
+    this.ctx.waitUntil(this.runCopyBatch());
+  }
+  private runCopyBatch():Promise<void> {
+    if(this.copyWork) return this.copyWork;
     const pending=this.recoverCopies(); this.copyWork=pending;
-    this.ctx.waitUntil(pending.finally(()=>{if(this.copyWork===pending)this.copyWork=undefined;}));
+    void pending.finally(()=>{if(this.copyWork===pending)this.copyWork=undefined;}).catch(()=>{});
+    return pending;
   }
   private async saveCopy(tenantId: string, record: EnvironmentRecord, cleanup=0): Promise<void> {
     this.ctx.storage.sql.exec('INSERT INTO weft_environment_copy_jobs VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET document=excluded.document,cleanup=excluded.cleanup',record.id,JSON.stringify({tenantId,record}),cleanup);
@@ -1148,7 +1156,7 @@ export class TenantDO extends DurableObject<TenantEnvironment> {
   }
   private async recoverCopies(): Promise<void> {
     try {
-    const jobs=this.ctx.storage.sql.exec<{document:string;cleanup:number}>('SELECT document,cleanup FROM weft_environment_copy_jobs').toArray();
+    const jobs=this.ctx.storage.sql.exec<{document:string;cleanup:number}>('SELECT document,cleanup FROM weft_environment_copy_jobs WHERE cleanup=1 OR json_extract(document,\'$.record.status\')=\'copying\' ORDER BY cleanup,rowid LIMIT 1').toArray();
     for(const job of jobs) {
       const {tenantId,record}=JSON.parse(job.document) as {tenantId:string;record:EnvironmentRecord};
       if(job.cleanup) {await this.saveCopy(tenantId,record,1);await this.cleanupCopy(tenantId,record);continue;}
@@ -1157,8 +1165,8 @@ export class TenantDO extends DurableObject<TenantEnvironment> {
       await this.performCopy(tenantId,record);
     }
     } finally {
-      const pending=this.ctx.storage.sql.exec('SELECT id FROM weft_environment_copy_jobs WHERE cleanup=1 OR json_extract(document,\'$.record.status\')=\'copying\' LIMIT 1').toArray().length;
-      if(pending) await this.ctx.storage.setAlarm(Date.now()+30_000);else await this.ctx.storage.deleteAlarm();
+      const pending=this.ctx.storage.sql.exec<{cleanup:number}>('SELECT cleanup FROM weft_environment_copy_jobs WHERE cleanup=1 OR json_extract(document,\'$.record.status\')=\'copying\' ORDER BY cleanup,rowid LIMIT 1').toArray()[0];
+      if(pending) await this.ctx.storage.setAlarm(Date.now()+(pending.cleanup?30_000:10));else await this.ctx.storage.deleteAlarm();
     }
   }
   private async cleanupCopy(tenantId:string,record:EnvironmentRecord): Promise<void> {
@@ -1172,19 +1180,23 @@ export class TenantDO extends DurableObject<TenantEnvironment> {
     const source={tenantId,environmentId:copy.sourceId},target={tenantId,environmentId:record.id};
     try {
       const origin=this.env.ENVIRONMENTS.getByName(environmentAddress(source));
-      const snapshot=await (await origin.nativeCopySnapshot(source,record.id)).json() as {data:EnvironmentCopyConfiguration;count:number};
+      const count=copy.total || (await (await origin.nativeCopySnapshot(source,record.id)).json() as {count:number}).count;
       const sourceVolume={...source,workspaceId:'default'},targetVolume={...target,workspaceId:'default'};
       const from=this.env.WORKSPACES.getByName(workspaceAddress(sourceVolume)),to=this.env.WORKSPACES.getByName(workspaceAddress(targetVolume));
       let {next}=await (await to.copySnapshot(targetVolume,record.id,'next')).json() as {next:number};
-      copy.phase='files';copy.total=snapshot.count;copy.completed=next;delete copy.error;
+      copy.phase='files';copy.total=count;copy.completed=next;delete copy.error;
       await this.saveCopy(tenantId,record);
-      for(;next<snapshot.count;next++) {
+      const end=Math.min(next+128,count);
+      for(;next<end;next++) {
         const page=await from.copySnapshot(sourceVolume,record.id,'page',next);
         await to.copyAccept(targetVolume,record.id,next,page);
         copy.completed=next+1;
         if((next+1)%32===0) {await this.saveCopy(tenantId,record);await this.ctx.storage.setAlarm(Date.now()+30_000);}
       }
+      if(next<count) {await this.saveCopy(tenantId,record);return;}
       copy.phase='configuration';await this.saveCopy(tenantId,record);
+      const snapshot=await (await origin.nativeCopySnapshot(source,record.id)).json() as {data:EnvironmentCopyConfiguration;count:number};
+      if(snapshot.count!==count)throw new Error('Environment copy snapshot changed unexpectedly');
       await this.env.ENVIRONMENTS.getByName(environmentAddress(target)).nativeCopyImport(target,JSON.stringify(snapshot.data));
       record.status='ready';record.updatedAt=new Date().toISOString();copy.phase='done';
       await this.saveCopy(tenantId,record,1);

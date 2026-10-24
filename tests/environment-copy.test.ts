@@ -32,6 +32,8 @@ test('environment copying keeps a fixed file/configuration cut, resumes after fa
     throw new Error('Environment copy did not settle');
   };
   try {
+    const large=await runtime.dispatchFetch(url('alpha','/_fixture/environment-storage'),{method:'POST',body:JSON.stringify({scope:{tenantId:tenantId('alpha'),environmentId:'default'},operation:'copy-snapshot-storage'})});
+    assert.deepEqual(await large.json(),{equal:true,removed:true},'large Unicode configuration snapshots survive SQLite row boundaries');
     await source.call('settings/update',{ns:'agent-loop',patch:{maxParallelToolCalls:3}});
     await source.call('credentials/set',{ref:'COPY_KEY',value:'source-only-secret'});
     await source.call('session/create',{request:{sessionId:'source-history'}});

@@ -6,6 +6,7 @@ import {sessionAddress, type SessionScope} from '../../packages/tenant/src/index
 import {environmentAddress} from '../../packages/control-plane/src/object.ts';
 import type {ControlScope, AgentRevision} from '../../packages/control-plane/src/contracts.ts';
 import {ConfigWriteQueue, DurableSettingsDocuments, DurableAgentRevisions} from '../../packages/environment-storage/src/index.ts';
+import {DurableCopySnapshots} from '../../packages/control-plane/src/environment-copy.ts';
 
 export * from '../../apps/worker/src/index.ts';
 
@@ -63,6 +64,13 @@ export class EnvironmentDO extends BaseEnvironmentDO {
   }
 
   async fixture(scope: ControlScope, operation: string, document?: string): Promise<Response> {
+    if(operation==='copy-snapshot-storage') {
+      const store=new DurableCopySnapshots(this.ctx.storage),text='x'.repeat(65_535)+'😀'+'z'.repeat(2*1024*1024);
+      store.put('large-config',text);
+      const equal=store.get('large-config')===text;
+      store.delete('large-config');
+      return Response.json({equal,removed:store.get('large-config')===undefined});
+    }
     // The normal entrypoint never exposes this fixture or these raw writes.
     if (!this.ctx.id.equals(this.env.ENVIRONMENTS.idFromName(environmentAddress(scope)))) throw new Error('Fixture scope mismatch');
     if (operation === 'fail-document') {
