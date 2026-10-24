@@ -5,22 +5,10 @@ import { id } from "../../../packages/control-plane/src/contracts.ts";
 import type { Principal } from "../../../packages/tenant/src/index.ts";
 import { assertSameOrigin, HttpError, readJson } from "./http.ts";
 
-/**
- * Only ready environments are cached. Copying/failed drafts always consult the
- * catalogue so publication is visible immediately after completion.
- */
-const confirmed = new Map<string, {record: EnvironmentRecord; at: number}>();
-const CONFIRMATION_MS = 60_000;
 async function knownEnvironment(tenant: DurableObjectStub<TenantDO>, tenantId: string, environmentId: string): Promise<EnvironmentRecord | undefined> {
-  const key = JSON.stringify([tenantId, environmentId]);
-  const cached = confirmed.get(key);
-  if (cached && Date.now() - cached.at < CONFIRMATION_MS) return structuredClone(cached.record);
-  const record = await tenant.environment(tenantId, environmentId);
-  if (record && (!record.status || record.status==='ready')) {
-    if (confirmed.size >= 1024) confirmed.clear();
-    confirmed.set(key, {record: structuredClone(record), at: Date.now()});
-  }
-  return record;
+  // TenantDO already caches the authoritative catalogue locally. Cross-isolate
+  // existence caches cannot safely authorize a paused/deleted environment.
+  return tenant.environment(tenantId,environmentId);
 }
 
 /** Resolve the authenticated environment before any resource is addressed. */
@@ -34,7 +22,16 @@ export async function resolveEnvironmentRequest(
     /^\/v1\/tenants\/([^/]+)\/environments(?:\/([^/]+)(\/.*)?)?$/.exec(
       url.pathname,
     );
-  if (!match) return { request };
+  if (!match) {
+    const legacy=/^\/v1\/tenants\/([^/]+)\//.exec(url.pathname);
+    if(legacy){
+      if(legacy[1]!==principal.tenantId)throw new HttpError(403,'Tenant access denied');
+      const tenant=env.TENANTS.getByName(tenantAddress(principal.tenantId));
+      const record=await knownEnvironment(tenant,principal.tenantId,'default');
+      if(record?.status && record.status!=='ready')return {request,response:Response.json({error:'默认环境当前不可用',environment:record},{status:409})};
+    }
+    return {request};
+  }
   if (match[1] !== principal.tenantId)
     throw new HttpError(403, "Tenant access denied");
   const tenant = env.TENANTS.getByName(tenantAddress(principal.tenantId));
@@ -63,6 +60,17 @@ export async function resolveEnvironmentRequest(
     throw new HttpError(400, "Invalid environment identity");
   const record = await knownEnvironment(tenant, principal.tenantId, match[2]);
   if (!record) throw new HttpError(404, "Environment not found");
+  if(!match[3]&&request.method==='DELETE'){
+    assertSameOrigin(request);return {request,response:await tenant.lifecycleEnvironment(principal.tenantId,record.id,{action:'delete'})};
+  }
+  if(record.status==='deleted')return {request,response:Response.json({error:'环境已删除'},{status:410})};
+  if(!match[3]&&request.method==='PATCH'){
+    assertSameOrigin(request);return {request,response:await tenant.renameEnvironment(principal.tenantId,record.id,await readJson(request,4096))};
+  }
+  if(match[3]==='/lifecycle'){
+    if(request.method!=='POST')throw new HttpError(405,'Method not allowed');
+    assertSameOrigin(request);return {request,response:await tenant.lifecycleEnvironment(principal.tenantId,record.id,await readJson(request,4096))};
+  }
   if (!match[3] && request.method === "GET")
     return { request, response: Response.json(record,{headers:{'cache-control':'private, no-store'}}) };
   if(match[3]==='/copy') {
@@ -70,7 +78,7 @@ export async function resolveEnvironmentRequest(
     assertSameOrigin(request);
     return {request,response:await tenant.copyEnvironment(principal.tenantId,record.id,await readJson(request,4096))};
   }
-  if(record.status && record.status!=='ready') return {request,response:Response.json({error:'Environment copy is not ready',environment:record},{status:409,headers:{'cache-control':'private, no-store'}})};
+  if(record.status && record.status!=='ready') return {request,response:Response.json({error:'环境当前不可用，请在首页查看状态',environment:record},{status:409,headers:{'cache-control':'private, no-store'}})};
   url.pathname = `/v1/tenants/${principal.tenantId}${match[3] ?? ""}`;
   return { request: new Request(url, request), environmentId: record.id };
 }

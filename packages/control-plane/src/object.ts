@@ -2,6 +2,8 @@ import { DurableObject } from "cloudflare:workers";
 import {
   environmentCreateSchema,
   environmentCopySchema,
+  environmentRenameSchema,
+  environmentLifecycleSchema,
   environmentScopeSchema,
   type ControlScope,
   type EnvironmentScope,
@@ -17,6 +19,7 @@ import {
 } from "./contracts.ts";
 import { validatePlugins } from "../../plugin-runtime/src/catalog.ts";
 import {DurableCopySnapshots,type EnvironmentCopyConfiguration} from './environment-copy.ts';
+import type {EnvironmentLifecycleJob} from './environment-lifecycle.ts';
 import { compileClientPlugin } from "../../client-plugins/src/compiler.ts";
 import upstream from "../../../upstream.lock.json";
 import { z } from 'zod';
@@ -126,9 +129,16 @@ export const tenantAddress = (tenantId: string): string =>
 abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
   protected readonly lifecycle:LifecycleGate;
   nativeRegisterResource(scope:ControlScope,kind:'session'|'workspace',resourceId:string):void {
+    this.lifecycle.maintenance(()=>{
     this.scope(scope);id.parse(resourceId);
+    if(this.lifecycle.mode==='deleted')throw new Error('Environment was deleted');
     this.ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_environment_resources (kind TEXT NOT NULL,id TEXT NOT NULL,PRIMARY KEY(kind,id)) STRICT');
+    if(this.lifecycle.mode!=='active'){
+      if(this.ctx.storage.sql.exec('SELECT id FROM weft_environment_resources WHERE kind=? AND id=?',kind,resourceId).toArray().length)return;
+      throw new Error('Environment is stopped');
+    }
     this.ctx.storage.sql.exec('INSERT OR IGNORE INTO weft_environment_resources VALUES (?,?)',kind,resourceId);
+    });
   }
   async nativeLifecycle(scope:ControlScope,action:'freeze'|'resume'|'delete',operation:number):Promise<Response> {
     this.lifecycle.maintenance(()=>this.scope(scope));
@@ -155,6 +165,8 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
       const records=this.sessions().list();
       const sessions=[...new Set([...records.map(row=>row.id),...resources.filter(row=>row.kind==='session').map(row=>row.id)])];
       const volumes=[...new Set(['default',...records.map(row=>row.workspaceId),...resources.filter(row=>row.kind==='workspace').map(row=>row.id)])];
+      for(const root of sessions)this.ctx.storage.sql.exec("INSERT OR IGNORE INTO weft_environment_resources VALUES ('session',?)",root);
+      for(const volume of volumes)this.ctx.storage.sql.exec("INSERT OR IGNORE INTO weft_environment_resources VALUES ('workspace',?)",volume);
       this.lifecycle.transition('suspended',operation,true);
       return Response.json({sessions,volumes});
     });
@@ -333,8 +345,9 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
   async nativeCopyRelease(scope: ControlScope, copyId: string): Promise<void> {
     return this.lifecycle.maintenance(async()=>{
     this.scope(scope);id.parse(copyId);if(this.lifecycle.mode==='deleted')return;
+    await this.copyCaptures.get(copyId)?.catch(()=>undefined);
     const volume=this.documentVolume(scope);
-    await this.env.WORKSPACES.getByName(workspaceAddress(volume)).copySnapshot(volume,copyId,'release');
+    await this.env.WORKSPACES.getByName(workspaceAddress(volume)).releaseCopy(volume,copyId);
     this.snapshotStore().delete(copyId);
     });
   }
@@ -757,8 +770,9 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
   private agentRevisions: DurableAgentRevisions<AgentRevision> | undefined;
   private sessionRecords: DurableSessionIndex<SessionRecord> | undefined;
   constructor(ctx: DurableObjectState, env: HarnessEnvironment) {
-    const lifecycle=new LifecycleGate(ctx.storage);ctx=lifecycle.state(ctx);
+    const lifecycle=new LifecycleGate(ctx.storage);
     super(ctx, env);
+    ctx=lifecycle.state(ctx);this.ctx=ctx;
     this.lifecycle=lifecycle;
     if(lifecycle.mode==='deleted'){lifecycle.finishBoot();return;}
     // Every environment-owned record is local; activation never waits for D1.
@@ -1174,6 +1188,110 @@ export class TenantDO extends DurableObject<TenantEnvironment> {
   constructor(ctx: DurableObjectState, env: TenantEnvironment) {
     super(ctx,env);
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_environment_copy_jobs (id TEXT PRIMARY KEY, document TEXT NOT NULL, cleanup INTEGER NOT NULL DEFAULT 0) STRICT');
+    ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_environment_lifecycle_jobs (id TEXT PRIMARY KEY,revision INTEGER NOT NULL,complete INTEGER NOT NULL,document TEXT NOT NULL) STRICT');
+    ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_lifecycle_sequence (id INTEGER PRIMARY KEY,revision INTEGER NOT NULL) STRICT');
+  }
+  private async writeCatalogue(tenantId:string,record:EnvironmentRecord):Promise<void> {
+    await this.env.CONFIG_DB.prepare('INSERT INTO environments (tenant_id,environment_id,document) VALUES (?,?,?) ON CONFLICT(tenant_id,environment_id) DO UPDATE SET document=excluded.document').bind(tenantId,record.id,JSON.stringify(record)).run();
+    const rows=await this.environmentRows(tenantId);
+    this.registry=Promise.resolve(rows.some(row=>row.id===record.id)?rows.map(row=>row.id===record.id?structuredClone(record):row):[...rows,structuredClone(record)]);
+  }
+  async renameEnvironment(tenantId:string,environmentId:string,input:unknown):Promise<Response> {
+    this.scope(tenantId);id.parse(environmentId);
+    const parsed=environmentRenameSchema.safeParse(input);if(!parsed.success)return Response.json({error:'环境名称无效'},{status:400});
+    return this.serialized(async()=>{
+      const record=(await this.environmentRows(tenantId)).find(row=>row.id===environmentId);
+      if(!record||record.status==='deleted')return Response.json({error:'环境不存在'},{status:404});
+      if(record.status && !['ready','paused'].includes(record.status))return Response.json({error:'请等待当前操作完成后再重命名'},{status:409});
+      record.name=parsed.data.name;record.updatedAt=new Date().toISOString();
+      await this.writeCatalogue(tenantId,record);
+      this.ctx.storage.sql.exec('UPDATE weft_environment_copy_jobs SET document=? WHERE id=?',JSON.stringify({tenantId,record}),record.id);
+      const old=this.ctx.storage.sql.exec<{document:string}>('SELECT document FROM weft_environment_lifecycle_jobs WHERE id=?',record.id).toArray()[0];
+      if(old){const job=JSON.parse(old.document) as EnvironmentLifecycleJob;job.record=record;this.ctx.storage.sql.exec('UPDATE weft_environment_lifecycle_jobs SET document=? WHERE id=?',JSON.stringify(job),record.id);}
+      return Response.json(record);
+    });
+  }
+  private async saveLifecycle(job:EnvironmentLifecycleJob,complete=false):Promise<boolean> {
+    return this.serialized(async()=>{
+      const revision=job.record.lifecycle!.revision;
+      if(!this.ctx.storage.sql.exec('SELECT id FROM weft_environment_lifecycle_jobs WHERE id=? AND revision=?',job.record.id,revision).toArray().length)return false;
+      this.ctx.storage.sql.exec('UPDATE weft_environment_lifecycle_jobs SET complete=?,document=? WHERE id=? AND revision=?',Number(complete),JSON.stringify(job),job.record.id,revision);
+      this.ctx.storage.sql.exec('UPDATE weft_environment_copy_jobs SET cleanup=0,document=? WHERE id=?',JSON.stringify({tenantId:job.tenantId,record:job.record}),job.record.id);
+      await this.writeCatalogue(job.tenantId,job.record);return true;
+    });
+  }
+  async lifecycleEnvironment(tenantId:string,environmentId:string,input:unknown):Promise<Response> {
+    this.scope(tenantId);id.parse(environmentId);
+    const parsed=environmentLifecycleSchema.safeParse(input);if(!parsed.success)return Response.json({error:'环境操作无效'},{status:400});
+    const action=parsed.data.action;
+    const response=await this.serialized(async()=>{
+      const rows=await this.environmentRows(tenantId),record=rows.find(row=>row.id===environmentId);
+      if(!record)return Response.json({error:'环境不存在'},{status:404});
+      if(record.status==='deleted')return Response.json(record,{status:action==='delete'?200:410});
+      if(action==='delete'&&environmentId==='default')return Response.json({error:'默认环境不能删除，可暂停或重命名'},{status:409});
+      if(record.status==='copying'||rows.some(row=>row.status==='copying'&&row.copy?.sourceId===environmentId))return Response.json({error:'环境正在参与复制，请完成后重试'},{status:409});
+      const pending=record.lifecycle&&record.lifecycle.phase!=='done';
+      if(pending){
+        if(record.lifecycle!.action!==action)return Response.json({error:'请先完成当前环境操作'},{status:409});
+        const stored=this.ctx.storage.sql.exec<{document:string}>('SELECT document FROM weft_environment_lifecycle_jobs WHERE id=?',environmentId).one();
+        const job=JSON.parse(stored.document) as EnvironmentLifecycleJob;delete job.record.lifecycle!.error;
+        this.ctx.storage.sql.exec('UPDATE weft_environment_lifecycle_jobs SET document=? WHERE id=?',JSON.stringify(job),environmentId);
+        await this.writeCatalogue(tenantId,job.record);return Response.json(job.record,{status:202});
+      }
+      if((action==='suspend'&&record.status==='paused')||(action==='resume'&&(!record.status||record.status==='ready')))return Response.json(record);
+      if(action!=='delete'&&record.status==='failed')return Response.json({error:'未完成的副本只能重试复制或删除'},{status:409});
+      const revision=this.ctx.storage.sql.exec<{revision:number}>('INSERT INTO weft_lifecycle_sequence VALUES (1,1) ON CONFLICT(id) DO UPDATE SET revision=revision+1 RETURNING revision').one().revision;
+      record.status=action==='suspend'?'pausing':action==='resume'?'resuming':'deleting';
+      record.lifecycle={action,revision,phase:'environment'};record.updatedAt=new Date().toISOString();
+      const job:EnvironmentLifecycleJob={tenantId,record,cursor:0};
+      await this.ctx.storage.setAlarm(Date.now()+30_000);
+      this.ctx.storage.sql.exec('INSERT INTO weft_environment_lifecycle_jobs VALUES (?,?,0,?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,complete=0,document=excluded.document',environmentId,revision,JSON.stringify(job));
+      this.ctx.storage.sql.exec('UPDATE weft_environment_copy_jobs SET document=? WHERE id=?',JSON.stringify({tenantId,record}),environmentId);
+      await this.writeCatalogue(tenantId,record);return Response.json(record,{status:202});
+    });
+    if(response.ok){await this.ctx.storage.setAlarm(Date.now()+30_000);this.launchCopies();}return response;
+  }
+  private async performLifecycle(job:EnvironmentLifecycleJob):Promise<void> {
+    const {record,tenantId}=job,operation=record.lifecycle!,scope={tenantId,environmentId:record.id};
+    const environment=this.env.ENVIRONMENTS.getByName(environmentAddress(scope));
+    const next=async(phase:string)=>{operation.phase=phase;job.cursor=0;delete operation.error;return this.saveLifecycle(job);};
+    try {
+      if(operation.phase==='environment'){
+        job.resources=await (await environment.nativeLifecycle(scope,'freeze',operation.revision)).json() as {sessions:string[];volumes:string[]};
+        await next(operation.action==='resume'?'volumes':'sessions');return;
+      }
+      const resources=job.resources!;
+      if(operation.phase==='sessions'||operation.phase==='wake'){
+        const end=Math.min(job.cursor+8,resources.sessions.length);
+        for(;job.cursor<end;job.cursor++){
+          const address={...scope,sessionId:resources.sessions[job.cursor]!};
+          await this.env.SESSIONS.getByName(sessionAddress(address)).nativeLifecycle(address,operation.phase==='wake'?'wake':operation.action==='delete'?'delete':operation.action==='resume'?'resume':'freeze',operation.revision);
+        }
+        if(job.cursor<resources.sessions.length){await this.saveLifecycle(job);return;}
+        await next(operation.phase==='wake'?'done':operation.action==='resume'?'activate':'volumes');return;
+      }
+      if(operation.phase==='volumes'){
+        const end=Math.min(job.cursor+4,resources.volumes.length);
+        for(;job.cursor<end;job.cursor++){
+          const address={...scope,workspaceId:resources.volumes[job.cursor]!};
+          await this.env.WORKSPACES.getByName(workspaceAddress(address)).nativeLifecycle(address,operation.action==='delete'?'delete':operation.action==='resume'?'resume':'freeze',operation.revision);
+        }
+        if(job.cursor<resources.volumes.length){await this.saveLifecycle(job);return;}
+        await next(operation.action==='resume'?'sessions':operation.action==='delete'?'artifacts':'done');return;
+      }
+      if(operation.phase==='activate'){await environment.nativeLifecycle(scope,'resume',operation.revision);await next('wake');return;}
+      if(operation.phase==='artifacts'){
+        if(record.copy){const original={tenantId,environmentId:record.copy.sourceId};await this.env.ENVIRONMENTS.getByName(environmentAddress(original)).nativeCopyRelease(original,record.id);}
+        const prefix=`packages/${encodeURIComponent(JSON.stringify(scope))}/`,bucket=this.env.PLUGIN_ARTIFACTS;
+        if(bucket){const page=await bucket.list({prefix,limit:128});if(page.objects.length){await bucket.delete(page.objects.map(row=>row.key));await this.saveLifecycle(job);return;}}
+        await environment.nativeLifecycle(scope,'delete',operation.revision);await next('done');return;
+      }
+      if(operation.phase==='done'){
+        record.status=operation.action==='delete'?'deleted':operation.action==='suspend'?'paused':'ready';record.updatedAt=new Date().toISOString();
+        if(record.status==='deleted'){record.name='已删除环境';delete record.copy;}
+        delete operation.error;await this.saveLifecycle(job,true);
+      }
+    } catch(error){operation.error=(error instanceof Error?error.message:'环境操作失败').slice(0,500);await this.saveLifecycle(job);}
   }
   override async alarm(): Promise<void> {
     await this.copyWork?.catch(()=>{});
@@ -1189,8 +1307,11 @@ export class TenantDO extends DurableObject<TenantEnvironment> {
     return pending;
   }
   private async saveCopy(tenantId: string, record: EnvironmentRecord, cleanup=0): Promise<void> {
-    this.ctx.storage.sql.exec('INSERT INTO weft_environment_copy_jobs VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET document=excluded.document,cleanup=excluded.cleanup',record.id,JSON.stringify({tenantId,record}),cleanup);
     await this.serialized(async ()=>{
+      const current=(await this.environmentRows(tenantId)).find(row=>row.id===record.id);
+      if(current?.lifecycle && (current.lifecycle.phase!=='done'||current.status!=='ready'))throw new Error('Environment copy is closed by a lifecycle operation');
+      if(current){record.name=current.name;if(current.lifecycle)record.lifecycle=current.lifecycle;if(current.updatedAt>record.updatedAt)record.updatedAt=current.updatedAt;}
+      this.ctx.storage.sql.exec('INSERT INTO weft_environment_copy_jobs VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET document=excluded.document,cleanup=excluded.cleanup',record.id,JSON.stringify({tenantId,record}),cleanup);
       await this.env.CONFIG_DB.prepare('INSERT INTO environments (tenant_id,environment_id,document) VALUES (?,?,?) ON CONFLICT(tenant_id,environment_id) DO UPDATE SET document=excluded.document').bind(tenantId,record.id,JSON.stringify(record)).run();
       const rows=await this.environmentRows(tenantId);
       this.registry=Promise.resolve(rows.some(row=>row.id===record.id)?rows.map(row=>row.id===record.id?structuredClone(record):row):[...rows,structuredClone(record)]);
@@ -1198,6 +1319,8 @@ export class TenantDO extends DurableObject<TenantEnvironment> {
   }
   private async recoverCopies(): Promise<void> {
     try {
+    const lifecycle=this.ctx.storage.sql.exec<{document:string}>('SELECT document FROM weft_environment_lifecycle_jobs WHERE complete=0 ORDER BY rowid LIMIT 1').toArray()[0];
+    if(lifecycle){await this.performLifecycle(JSON.parse(lifecycle.document));return;}
     const jobs=this.ctx.storage.sql.exec<{document:string;cleanup:number}>('SELECT document,cleanup FROM weft_environment_copy_jobs WHERE cleanup=1 OR json_extract(document,\'$.record.status\')=\'copying\' ORDER BY cleanup,rowid LIMIT 1').toArray();
     for(const job of jobs) {
       const {tenantId,record}=JSON.parse(job.document) as {tenantId:string;record:EnvironmentRecord};
@@ -1207,8 +1330,12 @@ export class TenantDO extends DurableObject<TenantEnvironment> {
       await this.performCopy(tenantId,record);
     }
     } finally {
+      const lifecycle=this.ctx.storage.sql.exec<{document:string}>('SELECT document FROM weft_environment_lifecycle_jobs WHERE complete=0 ORDER BY rowid LIMIT 1').toArray()[0];
+      if(lifecycle){const job=JSON.parse(lifecycle.document) as EnvironmentLifecycleJob;await this.ctx.storage.setAlarm(Date.now()+(job.record.lifecycle?.error?30_000:10));}
+      else {
       const pending=this.ctx.storage.sql.exec<{cleanup:number}>('SELECT cleanup FROM weft_environment_copy_jobs WHERE cleanup=1 OR json_extract(document,\'$.record.status\')=\'copying\' ORDER BY cleanup,rowid LIMIT 1').toArray()[0];
       if(pending) await this.ctx.storage.setAlarm(Date.now()+(pending.cleanup?30_000:10));else await this.ctx.storage.deleteAlarm();
+      }
     }
   }
   private async cleanupCopy(tenantId:string,record:EnvironmentRecord): Promise<void> {
@@ -1261,14 +1388,16 @@ export class TenantDO extends DurableObject<TenantEnvironment> {
       const existing=rows.find(row=>row.id===parsed.data.requestId);
       if(existing) {
         if(existing.copy?.requestId!==parsed.data.requestId || existing.copy.sourceId!==sourceId || existing.name!==parsed.data.name) return Response.json({error:'Copy request identity was reused'},{status:409});
-        if(existing.status==='ready') return Response.json(existing);
+        if(existing.status==='deleted'||existing.status==='deleting')return Response.json({error:'Environment was deleted'},{status:410});
+        if(existing.copy.phase==='done') return Response.json(existing);
+        if(existing.lifecycle&&existing.lifecycle.phase!=='done')return Response.json({error:'Environment lifecycle operation is in progress'},{status:409});
         existing.status='copying';delete existing.copy.error;
         this.ctx.storage.sql.exec('INSERT INTO weft_environment_copy_jobs VALUES (?,?,0) ON CONFLICT(id) DO UPDATE SET document=excluded.document',existing.id,JSON.stringify({tenantId,record:existing}));
         await this.env.CONFIG_DB.prepare('UPDATE environments SET document=? WHERE tenant_id=? AND environment_id=?').bind(JSON.stringify(existing),tenantId,existing.id).run();
         this.registry=Promise.resolve(rows.map(row=>row.id===existing.id?existing:row));
         return Response.json(existing,{status:202});
       }
-      if(rows.length>=64) return Response.json({error:'Environment limit reached'},{status:409});
+      if(rows.filter(row=>row.status!=='deleted').length>=64) return Response.json({error:'Environment limit reached'},{status:409});
       const now=new Date().toISOString();
       const record:EnvironmentRecord={id:parsed.data.requestId,name:parsed.data.name,createdAt:now,updatedAt:now,status:'copying',copy:{sourceId,requestId:parsed.data.requestId,phase:'snapshot',completed:0,total:0}};
       // Journal the reservation first. Recovery can repair a missing D1 row after a crash.
@@ -1307,6 +1436,10 @@ export class TenantDO extends DurableObject<TenantEnvironment> {
         const job=JSON.parse(row.document) as {tenantId:string;record:EnvironmentRecord};
         if(job.tenantId===tenantId) await db.prepare('INSERT INTO environments (tenant_id,environment_id,document) VALUES (?,?,?) ON CONFLICT DO NOTHING').bind(tenantId,job.record.id,JSON.stringify(job.record)).run();
       }
+      for(const row of this.ctx.storage.sql.exec<{document:string}>('SELECT document FROM weft_environment_lifecycle_jobs').toArray()){
+        const job=JSON.parse(row.document) as EnvironmentLifecycleJob;
+        if(job.tenantId===tenantId)await db.prepare('INSERT INTO environments (tenant_id,environment_id,document) VALUES (?,?,?) ON CONFLICT(tenant_id,environment_id) DO UPDATE SET document=excluded.document').bind(tenantId,job.record.id,JSON.stringify(job.record)).run();
+      }
       const now = new Date().toISOString();
       const fallback: EnvironmentRecord = {id: "default", name: "我的 Harness", createdAt: now, updatedAt: now};
       await db.prepare('INSERT INTO environments (tenant_id, environment_id, document) VALUES (?, ?, ?) ON CONFLICT DO NOTHING').bind(tenantId, 'default', JSON.stringify(fallback)).run();
@@ -1320,7 +1453,7 @@ export class TenantDO extends DurableObject<TenantEnvironment> {
   }
   async environments(tenantId: string): Promise<EnvironmentRecord[]> {
     this.scope(tenantId);
-    return this.environmentRows(tenantId);
+    return (await this.environmentRows(tenantId)).filter(row=>row.status!=='deleted');
   }
   async environment(
     tenantId: string,
@@ -1340,7 +1473,7 @@ export class TenantDO extends DurableObject<TenantEnvironment> {
       const environmentId = parsed.data.id ?? crypto.randomUUID();
       if (rows.some((row) => row.id === environmentId) || this.ctx.storage.sql.exec('SELECT id FROM weft_environment_copy_jobs WHERE id=?',environmentId).toArray().length)
         return Response.json({ error: "Environment already exists" }, { status: 409 });
-      if (rows.length >= 64)
+      if (rows.filter(row=>row.status!=='deleted').length >= 64)
         return Response.json({ error: "Environment limit reached" }, { status: 409 });
       if (parsed.data.configuration !== undefined) {
         const scope = {tenantId, environmentId};

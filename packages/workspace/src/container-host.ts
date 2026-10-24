@@ -37,6 +37,7 @@ class WorkspaceContainerHost extends DurableObject {
   private api(): LegacyWorkspaceContainerAPI { return new LegacyWorkspaceContainerAPI(this.ctx); }
   start(spec: ContainerLaunchSpec): Promise<ContainerRuntimeInfo> {
     return this.lifecycle(async () => {
+      if(await this.ctx.storage.get('weft_retired'))throw new Error('Environment container is stopped');
       if (await this.ctx.storage.get('weft_stopping') !== undefined) throw new Error('The workspace container is stopping');
       return this.launch(spec);
     });
@@ -50,6 +51,7 @@ class WorkspaceContainerHost extends DurableObject {
   }
   restart(spec: ContainerLaunchSpec): Promise<ContainerRuntimeInfo> {
     return this.lifecycle(async () => {
+      if(await this.ctx.storage.get('weft_retired'))throw new Error('Environment container is stopped');
       if (await this.ctx.storage.get('weft_stopping') !== undefined) throw new Error('The workspace container is stopping');
       const api = this.api();
       const info = await api.restart(spec);
@@ -59,6 +61,17 @@ class WorkspaceContainerHost extends DurableObject {
     });
   }
   state() {return {available: this.ctx.container !== undefined, running: this.ctx.container?.running === true};}
+  retire(operation:number):Promise<void> {
+    return this.lifecycle(async()=>{
+      const old=await this.ctx.storage.get<number>('weft_lifecycle_revision')??0;if(operation<old)throw new Error('Stale container lifecycle operation');
+      await this.ctx.storage.put({weft_lifecycle_revision:operation,weft_retired:true});
+      if(this.ctx.container?.running)await this.ctx.container.destroy();
+      await this.ctx.storage.delete('weft_process_secret');await this.ctx.storage.delete('weft_stopping');
+    });
+  }
+  activate(operation:number):Promise<void> {
+    return this.lifecycle(async()=>{const old=await this.ctx.storage.get<number>('weft_lifecycle_revision')??0;if(operation<old)throw new Error('Stale container lifecycle operation');await this.ctx.storage.put('weft_lifecycle_revision',operation);await this.ctx.storage.delete('weft_retired');});
+  }
   beginStop(epoch: number): Promise<void> {
     return this.lifecycle(async () => {await this.ctx.storage.put('weft_stopping', epoch);});
   }
@@ -121,7 +134,7 @@ export const CONTAINER_HOSTS = {
 
 type ContainerHostStub = Pick<WorkspaceContainerHost, 'start' | 'restart' | 'adoptForStop' | 'exitInfo' | 'status' | 'interceptOutboundHttp' | 'interceptAllOutboundHttp' | 'fetchPort'>;
 /** The host methods the workspace itself calls. */
-export type ContainerHostActivity = Pick<WorkspaceContainerHost, 'touch' | 'state' | 'beginStop' | 'destroyForStop' | 'finishStop'>;
+export type ContainerHostActivity = Pick<WorkspaceContainerHost, 'touch' | 'state' | 'beginStop' | 'destroyForStop' | 'finishStop' | 'retire' | 'activate'>;
 
 /**
  * The container host the backend drives, over RPC to the workspace's host

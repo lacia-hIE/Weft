@@ -123,11 +123,13 @@ function latestCompletedPrefixBoundary(events: readonly SessionEvent[]): number 
 export class SessionDO extends DurableObject<Env> {
   private readonly lifecycle:LifecycleGate;
   private lifecycleRegistration:Promise<void>|undefined;
-  private lifecycleAdmit(input:unknown):Promise<void> {
+  private lifecycleRegistered=false;
+  private lifecycleAdmit(input:unknown):Promise<void>|void {
     const scope=scopeSchema.parse(input);
     if(!this.ctx.id.equals(this.env.SESSIONS.idFromName(sessionAddress(scope))))throw new Error('Session scope mismatch');
+    if(this.lifecycleRegistered)return;
     if(!this.lifecycleRegistration){const pending=Promise.resolve(controlFor(this.env,controlScope(scope.tenantId,scope.environmentId)).nativeRegisterResource(controlScope(scope.tenantId,scope.environmentId),'session',scope.sessionId));this.lifecycleRegistration=pending;void pending.catch(()=>{if(this.lifecycleRegistration===pending)this.lifecycleRegistration=undefined;});}
-    return this.lifecycleRegistration;
+    void this.lifecycleRegistration.then(()=>{this.lifecycleRegistered=true;},()=>{});return this.lifecycleRegistration;
   }
   async nativeLifecycle(input:SessionScope,action:'freeze'|'resume'|'wake'|'delete',operation:number):Promise<void> {
     const scope=this.lifecycle.maintenance(()=>this.assertScope(input));
@@ -321,8 +323,9 @@ export class SessionDO extends DurableObject<Env> {
   }
 
   constructor(ctx: DurableObjectState, env: Env) {
-    const lifecycle=new LifecycleGate(ctx.storage);ctx=lifecycle.state(ctx);
+    const lifecycle=new LifecycleGate(ctx.storage);
     super(ctx, env);
+    ctx=lifecycle.state(ctx);this.ctx=ctx;
     this.lifecycle=lifecycle;
     if(lifecycle.mode==='deleted'){lifecycle.finishBoot();return;}
     initializeSessionStorage(ctx.storage);

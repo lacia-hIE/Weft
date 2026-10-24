@@ -85,7 +85,10 @@ export interface EnvironmentRecord {
   name: string;
   createdAt: string;
   updatedAt: string;
-  status?: 'copying' | 'failed' | 'ready';
+  status?: 'copying' | 'failed' | 'ready' | 'pausing' | 'paused' | 'resuming' | 'deleting' | 'deleted';
   copy?: {sourceId: string; requestId: string; phase: 'snapshot' | 'files' | 'configuration' | 'done'; completed: number; total: number; error?: string};
+  lifecycle?:{action:'suspend'|'resume'|'delete';revision:number;phase:string;error?:string};
 }
+export const environmentRenameSchema=z.object({name:z.string().trim().min(1).max(80)}).strict();
+export const environmentLifecycleSchema=z.object({action:z.enum(['suspend','resume','delete'])}).strict();
 export const environmentCopySchema = z.object({name:z.string().trim().min(1).max(80),requestId:z.uuid()}).strict();

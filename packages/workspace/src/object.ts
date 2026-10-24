@@ -25,7 +25,7 @@ import {storedFilePath} from '../../../.generated/official-file-reference.ts';
 import {LifecycleGate,guardLifecycle} from '../../environment-storage/src/lifecycle.ts';
 import {DATA_LAYOUT_VERSION} from '../../tenant/src/layout.ts';
 
-interface Env { WORKSPACES: DurableObjectNamespace<WorkspaceDO>; SESSIONS: DurableObjectNamespace<SessionDO>; ENVIRONMENTS:DurableObjectNamespace<import('../../control-plane/src/object.ts').EnvironmentDO>; LOADER?: WorkerLoader; AI?: Ai }
+interface Env { WORKSPACES: DurableObjectNamespace<WorkspaceDO>; SESSIONS: DurableObjectNamespace<SessionDO>; ENVIRONMENTS?:DurableObjectNamespace<import('../../control-plane/src/object.ts').EnvironmentDO>; LOADER?: WorkerLoader; AI?: Ai }
 
 /** The selector of the container backend, beside Computer's default `worker-shell`. */
 export const CONTAINER_SHELL = 'container-shell';
@@ -38,6 +38,7 @@ const DEFAULT_INSTANCE: ContainerInstance = 'basic';
 export class WorkspaceDO extends DurableObject<Env> {
   private readonly lifecycle:LifecycleGate;
   private lifecycleRegistration:Promise<void>|undefined;
+  private lifecycleRegistered=false;
   private readonly javascriptTasks!: WorkspaceJavaScript;
   private readonly documents!: WorkerDocuments;
   private readonly files!: WorkspaceStore;
@@ -58,8 +59,9 @@ export class WorkspaceDO extends DurableObject<Env> {
   private readonly containerRuns = new Map<string, {run: Promise<WorkspaceRuntimeExecHandle<'utf8'>>; release(): void}>();
   private stopping: Promise<Response> | undefined;
   constructor(ctx: DurableObjectState, env: Env) {
-    const lifecycle=new LifecycleGate(ctx.storage);ctx=lifecycle.state(ctx);
+    const lifecycle=new LifecycleGate(ctx.storage);
     super(ctx, env);
+    ctx=lifecycle.state(ctx);this.ctx=ctx;
     this.lifecycle=lifecycle;
     if(lifecycle.mode==='deleted'){lifecycle.finishBoot();return;}
     this.admission = new ContainerAdmission(ctx.storage.sql);
@@ -102,29 +104,43 @@ export class WorkspaceDO extends DurableObject<Env> {
     this.documents = new WorkerDocuments(env.AI, new SQLiteDocumentCache(ctx.storage.sql));
     lifecycle.finishBoot();
   }
-  private lifecycleAdmit(input:unknown):Promise<void> {
+  private lifecycleAdmit(input:unknown):Promise<void>|void {
     const scope=workspaceScopeSchema.parse(input);
     if(!this.ctx.id.equals(this.env.WORKSPACES.idFromName(workspaceAddress(scope))))throw new Error('Workspace scope mismatch');
+    if(this.lifecycleRegistered || !this.env.ENVIRONMENTS)return;
     if(!this.lifecycleRegistration){
       const owner={tenantId:scope.tenantId,environmentId:scope.environmentId??'default'};
       const parent=this.env.ENVIRONMENTS.getByName(JSON.stringify([DATA_LAYOUT_VERSION,'environment',owner.tenantId,owner.environmentId]));
       const pending=Promise.resolve(parent.nativeRegisterResource(owner,'workspace',scope.workspaceId));this.lifecycleRegistration=pending;
+      void pending.then(()=>{this.lifecycleRegistered=true;},()=>{});
       void pending.catch(()=>{if(this.lifecycleRegistration===pending)this.lifecycleRegistration=undefined;});
     }
     return this.lifecycleRegistration;
+  }
+  private lifecycleHosts():ContainerHostActivity[] {
+    const namespaces=this.ctx.exports as unknown as Record<string,DurableObjectNamespace|undefined>;
+    return Object.values(CONTAINER_HOSTS).flatMap(name=>namespaces?.[name]?[namespaces[name]!.getByName(this.ctx.id.toString()) as unknown as ContainerHostActivity]:[]);
+  }
+  async releaseCopy(input:WorkspaceScope,copyId:string):Promise<void> {
+    const scope=workspaceScopeSchema.parse(input);
+    if(!this.ctx.id.equals(this.env.WORKSPACES.idFromName(workspaceAddress(scope))))throw new Error('Workspace scope mismatch');
+    if(this.lifecycle.mode==='deleted')return;
+    this.lifecycle.maintenance(()=>this.files.copies.release(copyId));
   }
   async nativeLifecycle(input:WorkspaceScope,action:'freeze'|'resume'|'delete',operation:number):Promise<void> {
     const scope=workspaceScopeSchema.parse(input);
     if(!this.ctx.id.equals(this.env.WORKSPACES.idFromName(workspaceAddress(scope))))throw new Error('Workspace scope mismatch');
     if(this.lifecycle.mode==='deleted'){if(action==='delete')return;throw new Error('Workspace was deleted');}
-    if(action==='resume'){this.lifecycle.transition('active',operation);return;}
+    if(action==='resume'){this.lifecycle.transition('active',operation);await Promise.all(this.lifecycleHosts().map(host=>host.activate(operation)));return;}
     // The parent is already fenced. Keep the local Computer bridge available
     // only while cancelling executions and committing the container's final pull.
     this.lifecycle.transition('active',operation);
     await this.lifecycle.maintenance(async()=>{
       await this.javascriptTasks.stopAll();
       await Promise.all([...this.sandboxes.keys()].map(id=>this.killExec(scope,id)));
-      if(this.container){const result=await this.stopContainer(scope,[]);if(!result.ok)throw new Error((await result.json() as {error:string}).error);}
+      if(this.container){const result=await this.stopContainer(scope,[]);if(!result.ok&&action!=='delete')throw new Error((await result.json() as {error:string}).error);}
+      await Promise.all(this.lifecycleHosts().map(host=>host.retire(operation)));
+      await this.files.close();
       this.lifecycle.closeStreams();for(const watcher of this.watchers.values())watcher.close();this.watchers.clear();
       await this.lifecycle.drain();await this.ctx.storage.deleteAlarm();
       if(action==='delete')await this.lifecycle.purge(operation);else this.lifecycle.transition('suspended',operation,true);

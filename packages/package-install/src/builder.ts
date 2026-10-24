@@ -31,11 +31,16 @@ export class PluginBuilderDO extends DurableObject {
   }
   retire(operation:number):Promise<void> {
     const pending=this.tail.catch(()=>{}).then(async()=>{
-      const old=await this.ctx.storage.get<number>('retired');if(old && old>operation)throw new Error('Stale builder operation');
-      await this.ctx.storage.put('retired',operation);
+      const old=await this.ctx.storage.get<number>('lifecycle-revision');if(old && old>operation)throw new Error('Stale builder operation');
+      await this.ctx.storage.put({'retired':operation,'lifecycle-revision':operation});
       if(this.ctx.container?.running)await this.ctx.container.destroy();
       await this.ctx.storage.delete('build-secret');
     });this.tail=pending;return pending;
   }
-  async activate(operation:number):Promise<void>{const old=await this.ctx.storage.get<number>('retired');if(old && old>operation)throw new Error('Stale builder operation');await this.ctx.storage.delete('retired');}
+  activate(operation:number):Promise<void> {
+    const pending=this.tail.catch(()=>{}).then(async()=>{
+      const old=await this.ctx.storage.get<number>('lifecycle-revision');if(old && old>operation)throw new Error('Stale builder operation');
+      await this.ctx.storage.put('lifecycle-revision',operation);await this.ctx.storage.delete('retired');
+    });this.tail=pending;return pending;
+  }
 }

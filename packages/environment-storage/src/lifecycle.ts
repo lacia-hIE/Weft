@@ -82,8 +82,8 @@ export class LifecycleGate {
 }
 
 /** Keep public RPC and internal async callbacks on the same generation. */
-export function guardLifecycle(type:{prototype:object},admit?:(owner:any,args:unknown[])=>Promise<void>):void {
-  const skipped=new Set(['constructor','nativeLifecycle','nativeCopyRelease','alarm']);
+export function guardLifecycle(type:{prototype:object},admit?:(owner:any,args:unknown[])=>Promise<void>|void):void {
+  const skipped=new Set(['constructor','nativeLifecycle','nativeCopyRelease','nativeRegisterResource','releaseCopy','alarm']);
   let prototype=type.prototype;
   while(prototype && Object.getPrototypeOf(prototype)!==Object.prototype){
     for(const name of Object.getOwnPropertyNames(prototype)){
@@ -94,7 +94,9 @@ export function guardLifecycle(type:{prototype:object},admit?:(owner:any,args:un
       Object.defineProperty(type.prototype,name,{...descriptor,value:function(this:{lifecycle:LifecycleGate},...args:unknown[]){
         const nested=contexts.getStore()?.gate===this.lifecycle;
         return this.lifecycle.run(()=>{
-          if(admit && !nested && !contexts.getStore()?.maintenance && args[0] && typeof args[0]==='object' && 'tenantId' in args[0])return admit(this,args).then(()=>{this.lifecycle.assert();return method.apply(this,args);});
+          if(admit && !nested && !contexts.getStore()?.maintenance && args[0] && typeof args[0]==='object' && 'tenantId' in args[0]){
+            const pending=admit(this,args);if(pending)return pending.then(()=>{this.lifecycle.assert();return method.apply(this,args);});
+          }
           return method.apply(this,args);
         });
       }});

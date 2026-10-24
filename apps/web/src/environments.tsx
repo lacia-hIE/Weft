@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState, type ReactNode } from "react";
 import YAML from 'yaml';
 import { api, post } from "./api.ts";
-import { BrandWordmark, Button, DisclosureRow, FishLogo, Input, Modal, Tag, IconCodeOutlineRegular, IconPlusOutlineRegular, IconUserOutlineRegular } from "./runtime/primitives.ts";
+import { BrandWordmark, Button, DisclosureRow, FishLogo, Input, Menu, Modal, Tag, IconCodeOutlineRegular, IconPlusOutlineRegular, IconUserOutlineRegular } from "./runtime/primitives.ts";
 import {ConfigField} from '@weft/upstream/packages/client/ui-primitives/src/ConfigField.tsx';
 import type { EnvironmentRecord } from "../../../packages/control-plane/src/contracts.ts";
 import "./environments.css";
@@ -52,10 +52,15 @@ export function Environments({user}: {user: {id: string; email: string}}): React
   const [copyError,setCopyError]=useState('');
   const [copyBusy,setCopyBusy]=useState(false);
   const [copyRetry,setCopyRetry]=useState(false);
+  const [openMenu,setOpenMenu]=useState<string>();
+  const [edit,setEdit]=useState<{environment:EnvironmentRecord;action:'rename'|'suspend'|'delete'}>();
+  const [editValue,setEditValue]=useState('');
+  const [editError,setEditError]=useState('');
+  const [editBusy,setEditBusy]=useState(false);
   const yamlError = useMemo(() => advanced ? syntaxError(configuration) : undefined, [advanced, configuration]);
   const load = async () => setEnvironments((await api<{environments: EnvironmentRecord[]}>("environments")).environments);
   useEffect(() => {void load().catch(error => setError(String(error)));}, []);
-  const copying=environments?.some(row=>row.status==='copying')??false;
+  const copying=environments?.some(row=>['copying','pausing','resuming','deleting'].includes(row.status??'ready'))??false;
   useEffect(()=>{
     if(!copying) return;
     const timer=setInterval(()=>{void load().catch(error=>setError(String(error)));},2000);
@@ -70,6 +75,31 @@ export function Environments({user}: {user: {id: string; email: string}}): React
       setCopySource(undefined);
     } catch(error) {setCopyError(error instanceof Error?error.message:'复制失败，请重试');}
     finally {setCopyBusy(false);}
+  }
+  function startEdit(environment:EnvironmentRecord,action:'rename'|'suspend'|'delete'):void {
+    setOpenMenu(undefined);setEdit({environment,action});setEditValue(action==='rename'?environment.name:'');setEditError('');
+  }
+  async function change(environment:EnvironmentRecord,action:'rename'|'suspend'|'resume'|'delete'):Promise<void> {
+    if(editBusy)return;
+    setEditBusy(true);setEditError('');setError('');
+    try {
+      const path=`environments/${environment.id}`;
+      const record=action==='rename'?await api<EnvironmentRecord>(path,{method:'PATCH',body:JSON.stringify({name:editValue.trim()})}):action==='delete'?await api<EnvironmentRecord>(path,{method:'DELETE'}):await post<EnvironmentRecord>(`${path}/lifecycle`,{action});
+      setEnvironments(rows=>(rows??[]).map(row=>row.id===record.id?record:row).filter(row=>row.status!=='deleted'));
+      setEdit(undefined);
+    } catch(error) {const message=error instanceof Error?error.message:'操作失败，请重试';if(edit)setEditError(message);else setError(message);}
+    finally {setEditBusy(false);}
+  }
+  function statusLabel(environment:EnvironmentRecord):string {
+    switch(environment.status){
+      case 'copying':return `正在复制${environment.copy?.phase==='files'&&environment.copy.total?` · ${Math.floor(environment.copy.completed/environment.copy.total*100)}%`:'…'}`;
+      case 'failed':return '复制未完成';
+      case 'pausing':return '正在暂停…';
+      case 'paused':return '已暂停';
+      case 'resuming':return '正在恢复…';
+      case 'deleting':return '正在删除…';
+      default:return '进入工作台 →';
+    }
   }
   async function create(): Promise<void> {
     if (busy || !name.trim() || yamlError) return;
@@ -103,22 +133,39 @@ export function Environments({user}: {user: {id: string; email: string}}): React
             ? [0, 1].map(index => <div key={index} className="home-card home-card-loading" aria-hidden />)
             : environments.map(environment => (
               <div key={environment.id} className="home-card-frame">
-              {React.createElement(environment.status==='copying'||environment.status==='failed'?'div':'a', {className:'home-card',...(environment.status==='copying'||environment.status==='failed'?{}:{'aria-label':`进入 ${environment.name}`,href:`/agents/${environment.id}`})}, <>
+              {React.createElement(environment.status&&environment.status!=='ready'?'div':'a', {className:'home-card',...(environment.status&&environment.status!=='ready'?{}:{'aria-label':`进入 ${environment.name}`,href:`/agents/${environment.id}`})}, <>
                 <span className="home-card-mark" aria-hidden><FishLogo size={18} /></span>
                 <span className="home-card-body">
                   <span className="home-card-title"><strong>{environment.name}</strong>{environment.id === 'default' && <Tag tone="outline">默认</Tag>}</span>
                   <span className="home-card-meta"><code>{environment.id}</code><span>更新于 {updated.format(new Date(environment.updatedAt))}</span></span>
                 </span>
-                <span className="home-card-open">{environment.status==='copying' ? `正在复制${environment.copy?.phase==='files'&&environment.copy.total ? ` · ${Math.floor(environment.copy.completed/environment.copy.total*100)}%` : '…'}` : environment.status==='failed' ? '复制未完成' : '进入工作台 →'}</span>
+                <span className="home-card-open">{statusLabel(environment)}</span>
               </>)}
               {environment.status==='failed' && <p className="home-copy-error" role="alert">{environment.copy?.error}</p>}
+              {environment.lifecycle?.error && <p className="home-copy-error" role="alert">{environment.lifecycle.error} <Button variant="ghost" size="sm" disabled={editBusy} onClick={()=>void change(environment,environment.lifecycle!.action)}>重试操作</Button></p>}
               <div className="home-card-actions">
-                {environment.status==='failed' && environment.copy ? <Button variant="ghost" size="sm" disabled={copyBusy} onClick={()=>{setCopyRetry(true);setCopySource({id:environment.copy!.sourceId,name:environment.name,createdAt:'',updatedAt:''});setCopyName(environment.name);setCopyRequest(environment.copy!.requestId);setCopyError('');}}>重试复制</Button> : environment.status!=='copying' && <Button variant="ghost" size="sm" onClick={()=>{setCopyRetry(false);setCopySource(environment);setCopyName(`${environment.name} 副本`.slice(0,80));setCopyRequest(crypto.randomUUID());setCopyError('');}}>复制</Button>}
+                {environment.status==='failed' && environment.copy ? <Button variant="ghost" size="sm" disabled={copyBusy} onClick={()=>{setCopyRetry(true);setCopySource({id:environment.copy!.sourceId,name:environment.name,createdAt:'',updatedAt:''});setCopyName(environment.name);setCopyRequest(environment.copy!.requestId);setCopyError('');}}>重试复制</Button> : (!environment.status||environment.status==='ready') && <Button variant="ghost" size="sm" onClick={()=>{setCopyRetry(false);setCopySource(environment);setCopyName(`${environment.name} 副本`.slice(0,80));setCopyRequest(crypto.randomUUID());setCopyError('');}}>复制</Button>}
+                <Menu open={openMenu===environment.id} align="end" portal
+                  anchor={<Button variant="ghost" size="sm" aria-label={`${environment.name} 的更多操作`} aria-haspopup="menu" aria-expanded={openMenu===environment.id} onClick={()=>setOpenMenu(openMenu===environment.id?undefined:environment.id)}>更多操作</Button>}
+                  items={[
+                    {id:'rename',label:'重命名',disabled:Boolean(environment.status&&!['ready','paused'].includes(environment.status))},
+                    {id:environment.status==='paused'?'resume':'suspend',label:environment.status==='paused'?'恢复环境':'暂停环境',disabled:Boolean(environment.status&&!['ready','paused'].includes(environment.status))},
+                    {id:'separator',type:'separator'},
+                    {id:'delete',label:environment.id==='default'?'删除环境（默认环境不可删除）':'删除环境',danger:true,disabled:environment.id==='default'||Boolean(environment.status&&!['ready','paused','failed'].includes(environment.status))},
+                  ]}
+                  onClose={()=>setOpenMenu(undefined)} onSelect={action=>{setOpenMenu(undefined);if(action==='resume')void change(environment,'resume');else if(action==='rename'||action==='suspend'||action==='delete')startEdit(environment,action);}} />
               </div>
               </div>
             ))}
         </section>
       </main>
+      <Modal open={Boolean(edit)} title={edit?.action==='rename'?'重命名环境':edit?.action==='suspend'?'暂停环境':'删除环境'} closeLabel="关闭" className="home-create-dialog" onClose={()=>{if(!editBusy)setEdit(undefined);}}
+        footer={<><Button variant="outline" disabled={editBusy} onClick={()=>setEdit(undefined)}>取消</Button><Button type="submit" form="edit-environment" variant="primary" className={edit?.action==='delete'?'home-danger':undefined} disabled={editBusy||(edit?.action==='rename'?!editValue.trim():edit?.action==='delete'?editValue!==edit.environment.name:false)}>{editBusy?'正在提交…':edit?.action==='rename'?'保存':edit?.action==='suspend'?'暂停环境':'删除环境'}</Button></>}>
+        <form id="edit-environment" className="home-create-form" aria-busy={editBusy} onSubmit={event=>{event.preventDefault();if(edit)void change(edit.environment,edit.action);}}>
+          {edit?.action==='rename'?<><label className="home-field-label" htmlFor="edit-environment-name">环境名称</label><Input id="edit-environment-name" data-modal-autofocus value={editValue} disabled={editBusy} maxLength={80} onChange={event=>setEditValue(event.target.value)} /></>:edit?.action==='suspend'?<p className="home-copy-description">暂停「{edit.environment.name}」会停止智能体、终端和后台任务，保留配置、会话与工作区文件。恢复后可以重新进入环境，终端命令需要重新运行。</p>:<><p className="home-copy-description">删除「{edit?.environment.name}」会永久清除配置、密钥、会话、插件与工作区文件，并停止后台运行。此操作无法撤销。</p><label className="home-field-label" htmlFor="delete-environment-confirm">输入环境名称确认删除</label><Input id="delete-environment-confirm" data-modal-autofocus value={editValue} disabled={editBusy} onChange={event=>setEditValue(event.target.value)} autoComplete="off" /></>}
+          {editError&&<p className="home-error" role="alert">{editError}</p>}
+        </form>
+      </Modal>
       <Modal open={creating} title="创建环境" closeLabel="关闭" description="为新的环境命名，或使用 YAML 自定义初始配置。" className="home-create-dialog" onClose={() => {if (!busy) setCreating(false);}}
         footer={<><Button variant="outline" disabled={busy} onClick={() => setCreating(false)}>取消</Button><Button type="submit" form="create-environment" variant="primary" disabled={busy || !name.trim() || Boolean(yamlError)}>{busy ? '正在创建…' : '创建环境'}</Button></>}>
         <form id="create-environment" className="home-create-form" aria-busy={busy} onSubmit={event => {event.preventDefault(); void create();}}>

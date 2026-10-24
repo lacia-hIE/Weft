@@ -124,7 +124,10 @@ body {
 }
 .home-card-frame { position: relative; min-width: 0; }
 .home-card-frame .home-card { height: 100%; }
-.home-card-actions { position: absolute; bottom: 10px; right: 10px; }
+.home-card-actions { display: flex; justify-content: flex-end; gap: 4px; padding: 0 10px 10px; }
+.home-card-frame { display: flex; flex-direction: column; border: 0.5px solid var(--dsw-alias-border-l3); border-radius: 16px; }
+.home-card-frame .home-card { border: 0; flex: 1; }
+.home-danger { --dsw-alias-button-primary-bg: var(--dsw-alias-bg-error); color: var(--dsw-alias-label-error); }
 .home-copy-description { margin: 0; font-size: 12px; color: var(--dsw-alias-label-secondary); }
 .home-copy-error { margin: 0; padding: 0 16px 44px; overflow-wrap: anywhere; font-size: 12px; color: var(--dsw-alias-label-error); }
 .home-card-frame:has(.home-copy-error) .home-card { height: auto; }
