@@ -21,7 +21,7 @@ export class MuxChannel {
         const bytes=new TextEncoder().encode(text);
         if(bytes.length>this.maxMessageBytes)throw new Error('Native message limit');
         const queue=this.outgoing.get(id)??[];
-        if(queue.length>=32||(!this.outgoing.has(id)&&this.outgoing.size>=64))throw new Error('Mux queue limit');
+        if(queue.length>=1024||(!this.outgoing.has(id)&&this.outgoing.size>=64))throw new Error('Mux queue limit');
         this.reserve(bytes.length);
         const state={bytes,message:crypto.randomUUID(),seq:0,offset:0,resolve,reject,timer:undefined};queue.push(state);this.outgoing.set(id,queue);
         if(queue.length===1)this.next(id);

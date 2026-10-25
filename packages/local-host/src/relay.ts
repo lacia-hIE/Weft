@@ -32,7 +32,7 @@ export class LocalHostRelay {
     let channel=this.channels.get(key);
     if(!channel){
       const browser=(id:string)=>this.ctx.getWebSockets('local-browser').find(peer=>{const a=peer.deserializeAttachment() as SocketIdentity;return a.id===id&&a.hostId===key&&a.environmentId===identity.environmentId;});
-      channel=new MuxChannel(frame=>socket.send(JSON.stringify(frame)),(id,text)=>{const peer=browser(id);if(!peer)throw new Error('Browser closed');peer.send(text);},id=>{browser(id)?.close(1013,'Local stream interrupted');try{socket.send(JSON.stringify({type:'ws-close',id}));}catch{}});
+      channel=new MuxChannel(frame=>socket.send(JSON.stringify(frame)),(id,text)=>{const peer=browser(id);if(!peer)throw new Error('Browser closed');peer.send(text);},(id,error)=>{console.warn('Weft browser stream closed:',error.message);browser(id)?.close(1013,'Local stream interrupted');try{socket.send(JSON.stringify({type:'ws-close',id}));}catch{}});
       this.channels.set(key,channel);
     }
     return channel;

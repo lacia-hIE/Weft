@@ -48,7 +48,7 @@ export function runTunnel(socket,{origin,cookie,signal,protocol='weft-local-host
     while(local.readyState===WebSocket.CONNECTING||local.bufferedAmount>1024*1024){if(signal.aborted||Date.now()>deadline||local.readyState>WebSocket.OPEN)throw new Error('Native consumer unavailable');await wait(10,signal);}
     if(local.readyState!==WebSocket.OPEN)throw new Error('Native stream closed');
     await new Promise((resolve,reject)=>local.send(text,error=>error?reject(error):resolve()));
-  },id=>{clients.get(id)?.local.terminate();try{send({type:'ws-close',id});}catch{}});
+  },(id,error)=>{console.warn('Weft native stream closed:',error.message);clients.get(id)?.local.terminate();try{send({type:'ws-close',id});}catch{}});
   const release=id=>{const state=active.get(id);if(state){active.delete(id);clearTimeout(state.timer);state.abort.abort();state.ack?.();void state.writer?.abort().catch(()=>{});}};
   const sendBody=async(id,body,state)=>{
     const reader=body?.getReader();try{if(reader)for(;;){const chunk=await reader.read();if(chunk.done)break;for(let offset=0;offset<chunk.value.length;offset+=CHUNK){
