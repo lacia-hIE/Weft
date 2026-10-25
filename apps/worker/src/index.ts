@@ -232,6 +232,7 @@ export class SessionDO extends DurableObject<Env> {
         this.installedPackages = new InstalledPackageRuntime(ctx, this.ctx, this.env.LOADER, scope, {
           list: async () => ((await (await controlFor(this.env, owner).nativePackageList(owner)).json()) as {installations: Installation[]}).installations,
           artifact: async (name, digest) => await (await controlFor(this.env, owner).nativePackageArtifact(owner, name, digest)).json() as Artifact,
+          failed: (name, digest) => controlFor(this.env, owner).nativePackageFailure(owner, name, digest),
           capability: (pluginId, runId) => {
             const exported = this.ctx.exports as unknown as {PluginCapabilities(options: {props: {scope: SessionScope; pluginId: string; runId: string}}): Fetcher};
             return exported.PluginCapabilities({props: {scope, pluginId, runId}});

@@ -1,6 +1,6 @@
 import {createServer} from 'node:http';
 import {mkdtemp, mkdir, writeFile, readFile, realpath, rm} from 'node:fs/promises';
-import {resolve, join, dirname, posix} from 'node:path';
+import {resolve, join, dirname, relative, extname} from 'node:path';
 import {tmpdir} from 'node:os';
 import {gunzipSync} from 'node:zlib';
 import {timingSafeEqual} from 'node:crypto';
@@ -10,6 +10,8 @@ import {applyEntryPatches} from './patch.mjs';
 import {pathToFileURL} from 'node:url';
 
 const MAX_BODY = 18 * 1024 * 1024;
+const assetExtensions = ['png','jpg','jpeg','gif','webp','avif','svg','ico','woff','woff2','ttf','otf','wasm','txt'];
+const assetPrefix = '__WEFT_ASSET__/';
 const safeName = /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/;
 const text = (bytes, start, length) => bytes.subarray(start, start + length).toString('utf8').replace(/\0.*$/s, '');
 const canonical = value => JSON.stringify(value && typeof value === 'object' ? Array.isArray(value) ? value.map(item => JSON.parse(canonical(item))) : Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => [key, JSON.parse(canonical(item))])) : value);
@@ -124,25 +126,68 @@ export async function buildPackage(input) {
       if (!selected.length) return;
       const imports = selected.map((row,i) => `import * as m${i} from ${JSON.stringify(half === 'client' ? row.packageName+'/client' : row.name)};`).join('\n');
       const table = selected.map((row,i) => `${JSON.stringify(row.name)}:m${i}`).join(',');
-      const output = await build({stdin: {contents: imports+`\nexport const modules={${table}};`, resolveDir: root}, absWorkingDir: root,
+      const assets = {};
+      const collectAssets = output => {
+        for (const file of output.outputFiles) {
+          if (file.path.endsWith('.js') || file.path.endsWith('.css')) continue;
+          const name = relative(join(root,'output'), file.path);
+          if (!/^assets\/[A-Z0-9]+\.[a-z0-9]+$/i.test(name) || !assetExtensions.includes(extname(name).slice(1))) throw new Error('Unsupported Client asset');
+          if (file.contents.length > 1048576) throw new Error('Client asset exceeds 1 MiB');
+          assets[name] = Buffer.from(file.contents).toString('base64');
+        }
+        if (Object.keys(assets).length > 128 || Object.values(assets).reduce((size, value) => size + Buffer.from(value,'base64').length, 0) > 4194304) throw new Error('Client assets exceed 128 files or 4 MiB');
+      };
+      const options = {absWorkingDir: root,
         bundle: true, write: false, format: 'iife', globalName: '__bundle', outdir: join(root,'output'), platform: 'browser', target: 'es2022', minify: true,
+        publicPath: assetPrefix, assetNames: 'assets/[hash]', loader: Object.fromEntries(assetExtensions.map(ext=>['.'+ext,'file'])),
         conditions: [half === 'host' ? 'workerd' : 'browser','import'], logLevel: 'silent', plugins: [{name: 'native-platform', setup(builder) {
-          builder.onLoad({filter: /.*/, namespace: 'file'}, async args => {const path=await realpath(args.path);if (!path.startsWith(root+'/')) return {errors:[{text:'Plugin import escaped build root'}]};});
+          builder.onResolve({filter: /\?(?:inline|raw|url)$/}, async args => {
+            const suffix = args.path.slice(args.path.lastIndexOf('?'));
+            const resolved = await builder.resolve(args.path.slice(0,-suffix.length), {resolveDir: args.resolveDir, kind: args.kind});
+            return {...resolved, suffix};
+          });
+          builder.onLoad({filter: /.*/, namespace: 'file'}, async args => {
+            const path=await realpath(args.path);
+            if (!path.startsWith(root+'/')) return {errors:[{text:'Plugin import escaped build root'}]};
+            const ext = extname(path).slice(1), css = ext === 'css';
+            if (half === 'host' && (css || assetExtensions.includes(ext) || args.suffix)) return {errors:[{text:'CSS and static assets require a Client entry'}]};
+            if (args.suffix === '?raw') return {contents: await readFile(path,'utf8'), loader:'text'};
+            if (args.suffix === '?inline') {
+              if (!css) return {errors:[{text:'Only CSS supports ?inline; use ?raw for text'}]};
+              const output = await build({...options, entryPoints:[path]});
+              collectAssets(output);
+              const sheet = output.outputFiles.find(file=>file.path.endsWith('.css'))?.text;
+              if (sheet === undefined || Buffer.byteLength(sheet)>1048576) throw new Error('Inline CSS exceeds 1 MiB');
+              return {contents:`export default __runtime.css(${JSON.stringify(sheet)});`,loader:'js'};
+            }
+            if (args.suffix === '?url' && !assetExtensions.includes(ext)) return {errors:[{text:'Unsupported URL asset type'}]};
+            if (css) return {contents:await readFile(path,'utf8'),loader:path.endsWith('.module.css')?'local-css':'css',resolveDir:dirname(path)};
+          });
           builder.onResolve({filter: /^(?:node:|cloudflare:|https?:|data:)/}, args=>({errors:[{text:'Unsupported import: '+args.path}]}));
-          builder.onResolve({filter: /^(?:react|@deepseek-ai\/cordis|@deepseek-ai\/dsh-tools)$/}, args=>({path: args.path, namespace:'native-platform'}));
+          builder.onResolve({filter: /^(?:react(?:\/jsx(?:-dev)?-runtime)?|@deepseek-ai\/cordis|@deepseek-ai\/dsh-tools|@deepseek-ai\/dsh-client-ui-primitives)$/}, args=>({path: args.path, namespace:'native-platform'}));
           builder.onLoad({filter: /.*/, namespace:'native-platform'}, args => {
             if (args.path==='react') return half==='client' ? {contents:'export default __runtime.React;'+reactExports.map(name=>`export const ${name}=__runtime.React.${name};`).join('')} : {errors:[{text:'React requires a Client entry'}]};
+            if (args.path.startsWith('react/')) return half==='client' ? {contents:'export const Fragment=__runtime.React.Fragment;export function jsx(type,{children,...props},key){return __runtime.React.createElement(type,{...props,key},children)};export const jsxs=jsx;export const jsxDEV=jsx;'} : {errors:[{text:'React requires a Client entry'}]};
+            if (args.path==='@deepseek-ai/dsh-client-ui-primitives') return half==='client' ? {contents:'module.exports=__runtime.ui;',loader:'js'} : {errors:[{text:'UI primitives require a Client entry'}]};
             const exports=args.path==='@deepseek-ai/cordis' ? cordisExports : ['defineTool'];
             const namespace=args.path==='@deepseek-ai/cordis' ? 'cordis' : 'tools';
             return {contents:exports.map(name=>`export const ${name}=__runtime.${namespace}.${name};`).join('')};
           });
-        }}]});
-      const js=output.outputFiles.find(file=>file.path.endsWith('.js'))?.text;
+        }}]};
+      const output = await build({...options, stdin: {contents: imports+`\nexport const modules={${table}};`, resolveDir: root}});
+      collectAssets(output);
+      const js=output.outputFiles.find(file=>file.path.endsWith('.js'))?.text.replace(/"__WEFT_ASSET__\/(assets\/[A-Z0-9]+\.[a-z0-9]+)"/gi, (_,path)=>`__runtime.asset(${JSON.stringify(path)})`);
       if (!js || Buffer.byteLength(js)>1048576) throw new Error('Compiled bundle exceeds 1 MiB');
-      if (output.outputFiles.some(file=>file.path.endsWith('.css'))) throw new Error('CSS imports require an unsupported Client asset loader');
+      const css=output.outputFiles.find(file=>file.path.endsWith('.css'))?.text;
+      if (css !== undefined) {
+        if (half !== 'client' || Buffer.byteLength(css)>1048576) throw new Error('Client stylesheet exceeds 1 MiB');
+        result.css=css.replaceAll(assetPrefix,'./');
+      }
+      if (Object.keys(assets).length) result.assets=assets;
       const selection = new Set(selected.map(row=>row.name));
       const selectRows = list => list.filter(row=>row.group || selection.has(row.name)).map(row=>row.group ? {...row, config:selectRows(row.config)} : row);
       result[half]=`export default async function(__runtime){${js}\nreturn __runtime.compose(${JSON.stringify(half==='client' ? selected.map((row,i)=>({id:'client-'+i,name:row.name,config:{}})) : selectRows(rows))},__bundle.modules);}`;
+      if (half === 'client') result.client += `\nexport const stylesheet=${Boolean(css)};`;
     };
     const clients=[];
     for (const row of leaves) {

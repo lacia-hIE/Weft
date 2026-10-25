@@ -28,3 +28,45 @@ test('legacy installation records remain removable and cannot reuse approvals or
     assert.deepEqual(registry.bundles().map(bundle=>bundle.name),[native.name]);
   } finally {db.close();}
 });
+
+test('version switches revoke first, restore on failure and recover interrupted receipts without transferring grants', async()=>{
+  const {PackageInstaller}=await import('../packages/package-install/src/host.ts');
+  const {sha256}=await import('../packages/package-install/src/contracts.ts');
+  const db=new DatabaseSync(':memory:');let revokeFails=false,changed=0;
+  const objects=new Map<string,string>();
+  const storage={sql:{exec(query:string,...bindings:(string|number|null)[]){return {toArray:()=>db.prepare(query).all(...bindings)};}},
+    sync:async()=>{},setAlarm:async()=>{},transactionSync:(callback:()=>unknown)=>callback()};
+  const owner={state:{storage} as unknown as DurableObjectState,scope:{tenantId:'fixture',environmentId:'fixture'},
+    bucket:{get:async(key:string)=>objects.has(key)?{text:async()=>objects.get(key)!}:null} as unknown as R2Bucket,
+    build:async()=>{throw new Error('not used');},validate:async()=>{},changed:async()=>{changed++;},
+    revoke:async()=>{assert.equal(installer.registry.get('fixture')!.enabled,false);if(revokeFails)throw new Error('Release failed');}};
+  const installer=new PackageInstaller(owner);
+  async function receipt(version:string):Promise<Installation>{
+    const artifact={name:'fixture',version,description:'',patch:[],rows:[],permissions:{files:'write' as const,tools:true,timer:true,client:true},lock:[]};
+    const body=JSON.stringify(artifact),digest=await sha256(body);
+    const {artifactKey}=await import('../packages/package-install/src/contracts.ts');objects.set(artifactKey(owner.scope,digest),body);
+    return {...artifact,digest,enabled:true,approved:true,installedAt:1};
+  }
+  try{
+    const old=await receipt('1.0.0'),candidate={...await receipt('1.1.0'),approved:false,enabled:false};
+    installer.registry.save({...old,candidate});
+    await installer.approve('fixture',candidate.digest);
+    // Roll back to make a second, fault-injected switch from the same old version.
+    await installer.rollback('fixture',candidate.digest);
+    revokeFails=true;
+    await assert.rejects(installer.approve('fixture',candidate.digest),/Release failed/);
+    assert.equal(installer.registry.get('fixture')!.digest,old.digest);assert.equal(installer.registry.get('fixture')!.enabled,true);
+    revokeFails=false;
+    await installer.approve('fixture',candidate.digest,{...candidate.permissions,files:'read',client:false});
+    assert.equal(installer.registry.get('fixture')!.permissions.files,'read');assert.equal(installer.registry.get('fixture')!.permissions.client,false);
+    assert.equal(await installer.failed('fixture',old.digest,'client'),false);
+    assert.equal(await installer.failed('fixture',candidate.digest,'host'),true);
+    assert.equal(installer.registry.get('fixture')!.digest,old.digest);
+    const interrupted={...installer.registry.get('fixture')!,enabled:false,switching:{enabled:true}};
+    installer.registry.save(interrupted);
+    await installer.recover();
+    assert.equal(installer.registry.get('fixture')!.enabled,true);assert.equal(installer.registry.get('fixture')!.switching,undefined);
+    assert.match(installer.registry.get('fixture')!.lastError!,/interrupted/);
+    assert.ok(changed>=5);
+  }finally{db.close();}
+});

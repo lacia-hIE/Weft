@@ -33,3 +33,14 @@ export function packageFixture(options: {name?: string; version?: string; files?
   return {name, version, manifest: {...manifest, dist: {tarball, integrity}}, bytes,
     input: {name, version, declarationRaw, declaration: declarationSchema.parse(declarationRaw), lock, packages: [{name, version, bytes: bytes.toString('base64')}]}};
 }
+
+/** Real CSS Modules, inline CSS, native controls and shared CSS/JS asset references. */
+export function styledPackageFixture(version = '1.2.3') {
+  return packageFixture({version,files:{
+    'client.js': `import React from 'react';import {Button} from '@deepseek-ai/dsh-client-ui-primitives';import css from './card.module.css';import './global.css';import inline from './inline.css?inline';import icon from './icon.svg';export function apply(ctx){ctx.effect(()=>{const element=document.createElement('div');element.className=css.card;element.dataset.styledFixture='true';element.textContent='Styled plugin ${version}';const image=document.createElement('img');image.alt='Plugin icon';image.src=icon;element.append(image);const style=document.createElement('style');style.textContent=inline;document.head.append(style);document.body.append(element);return()=>{element.remove();style.remove()}});if(!React.createElement||!Button)throw new Error('Native UI instance missing')}`,
+    'card.module.css': '.card { color: rgb(17, 34, 51); background-image: url(./icon.svg); }',
+    'global.css': '[data-styled-fixture] { border-top: 3px solid rgb(12, 34, 56); }',
+    'inline.css': '[data-styled-fixture] { border-bottom: 2px solid rgb(65, 43, 21); --fixture-icon: url(./icon.svg); }',
+    'icon.svg': '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><path fill="red" d="M0 0h8v8H0z"/></svg>',
+  }});
+}

@@ -540,17 +540,39 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
     if (client && !packages.registry.get(name)?.permissions.client) throw new Error('Client module permission is not granted');
     return Response.json(await packages.artifact(name, digest));
   }
+  async nativePackageResource(scope: ControlScope, digest: string, path: string, name?: string): Promise<Response> {
+    const packages = this.packages(scope);
+    const row = packages.registry.list().find(row => row.digest === digest && (!name || row.name === name));
+    if (!row?.permissions.client) throw new Error('Client module permission is not granted');
+    const artifact = await packages.artifact(row.name, digest);
+    if (!packages.registry.get(row.name)?.permissions.client) throw new Error('Client module permission is not granted');
+    const headers = {'cache-control': 'private, no-store', 'x-content-type-options': 'nosniff', 'cross-origin-resource-policy': 'same-origin'};
+    if (path === 'client.js' && artifact.client) return new Response(artifact.client, {headers: {...headers, 'content-type':'text/javascript; charset=utf-8'}});
+    if (path === 'client.css' && artifact.css !== undefined) return new Response(artifact.css, {headers: {...headers, 'content-type':'text/css; charset=utf-8'}});
+    const {assetPath, assetTypes} = await import('../../package-install/src/contracts.ts');
+    const value = artifact.assets?.[path];
+    if (!assetPath.test(path) || value === undefined) return new Response(null, {status:404, headers});
+    const extension = path.slice(path.lastIndexOf('.') + 1) as keyof typeof assetTypes;
+    return new Response(Uint8Array.from(atob(value), char=>char.charCodeAt(0)), {headers: {...headers, 'content-type':assetTypes[extension], 'content-security-policy':"sandbox; default-src 'none'; style-src 'unsafe-inline'"}});
+  }
+  async nativePackageFailure(scope: ControlScope, name: string, digest: string): Promise<boolean> {
+    return this.packages(scope).failed(name, digest, 'host');
+  }
   async nativePackageOperation(scope: ControlScope, raw: unknown): Promise<Response> {
     const request = z.discriminatedUnion('operation', [
       z.object({operation: z.literal('list')}).strict(),
       z.object({operation: z.literal('install'), spec: z.string().max(250), requestId: z.string().max(100)}).strict(),
       z.object({operation: z.literal('approve'), name: z.string().max(214), digest: z.string().regex(/^[a-f0-9]{64}$/), permissions: permissionSchema.optional()}).strict(),
       z.object({operation: z.literal('review'), name: z.string().max(214), digest: z.string().regex(/^[a-f0-9]{64}$/)}).strict(),
+      ...(['rollback','discard','client-failed'] as const).map(operation => z.object({operation: z.literal(operation), name: z.string().max(214), digest: z.string().regex(/^[a-f0-9]{64}$/)}).strict()),
     ]).parse(raw);
     const packages = this.packages(scope);
     if (request.operation === 'install') return Response.json(await packages.start(request.spec, request.requestId), {status: 202});
     if (request.operation === 'approve') {await packages.approve(request.name, request.digest, request.permissions); return Response.json({ok: true});}
     if (request.operation === 'review') return Response.json(await packages.artifact(request.name, request.digest, false));
+    if (request.operation === 'rollback') {await packages.rollback(request.name, request.digest); return Response.json({ok:true});}
+    if (request.operation === 'discard') {await packages.discard(request.name, request.digest); return Response.json({ok:true});}
+    if (request.operation === 'client-failed') return Response.json({changed:await packages.failed(request.name, request.digest, 'client')});
     return Response.json(packages.list());
   }
   override async alarm(): Promise<void> {if(this.lifecycle.mode==='active')await this.lifecycle.run(()=>this.packages(environmentScopeOf(this.ctx.id.name)).recover());}

@@ -5,7 +5,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {Response} from 'miniflare';
 import {buildPackage} from '../apps/plugin-builder/server.mjs';
-import {packageFixture} from './helpers/package-fixture.ts';
+import {packageFixture,styledPackageFixture} from './helpers/package-fixture.ts';
 import {packageModel} from './helpers/package-model.ts';
 import {createRuntime, tenantId, url} from './helpers/miniflare.ts';
 import {nativeClient} from './helpers/native.ts';
@@ -97,4 +97,75 @@ test('native bundle approval limits writes, rejects unsupported services and kee
     const bucket=await runtime.getR2Bucket('PLUGIN_ARTIFACTS','alpha');await bucket.delete(artifactKey({tenantId:tenantId('alpha'),environmentId:'default'},row.digest));
     await api.call('session/create',{request:{sessionId:'missing-artifact'}});assert.ok((await api.call<unknown[]>('commands/list',{agentId:'missing-artifact'})).length>0);
   }finally{await runtime.dispose();}
+});
+
+test('updates preserve the running bundle, reapprove exact assets, roll back failed Hosts and survive restart', {timeout:240000}, async()=>{
+  const fixtures=[styledPackageFixture('1.2.3'),styledPackageFixture('1.2.4'),
+    packageFixture({version:'1.2.5',files:{'host.js':"export function apply(){throw new Error('Broken update fixture')}"}}),
+    packageFixture({version:'1.2.6',files:{'client.js':"import missing from 'missing-dependency';export function apply(){return missing}"}})];
+  const model=packageModel(),directory=await mkdtemp(join(tmpdir(),'weft-package-updates-'));
+  let buildCount=0;
+  const options:NonNullable<Parameters<typeof createRuntime>[1]>={packages:true,
+    bindings:{MODEL_BACKEND:'deepseek',DEEPSEEK_API_KEY:'package-fixture',DEEPSEEK_BASE_URL:'https://package-model.test/anthropic'},
+    outbound:async(request,mf)=>{
+      if(new URL(request.url).hostname==='package-model.test')return model.outbound(request,mf);
+      const tarball=fixtures.find(fixture=>fixture.manifest.dist.tarball===request.url);
+      if(tarball)return new Response(tarball.bytes);
+      const manifest=fixtures.find(fixture=>request.url.endsWith('/'+fixture.version));
+      return manifest?Response.json(manifest.manifest):new Response(null,{status:404});
+    },packageBuilder:async request=>{buildCount++;try{return Response.json(await buildPackage(JSON.parse(await request.text())));}catch(error){return Response.json({error:String(error)},{status:422});}},
+  };
+  let runtime=createRuntime(directory,options);const api=nativeClient(()=>runtime),name=fixtures[0]!.name;
+  const base=`/v1/tenants/${tenantId('alpha')}/environments/default/native`;
+  const operation=(body?:object)=>runtime.dispatchFetch(url('alpha',base+'/package-installations'),body?{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}:{});
+  const selected=async()=>(await (await operation()).json() as {installations:Installation[]}).installations[0]!;
+  const install=async(version:string)=>api.call<{application:string}>('pluginManager/installBundle',{spec:`${name}@${version}`,options:{requestId:crypto.randomUUID()}});
+  const approve=(digest:string)=>operation({operation:'approve',name,digest});
+  const asset=(digest:string,path:string,environment='default')=>runtime.dispatchFetch(url('alpha',base.replace('/default/','/'+environment+'/')+`/package-assets/${digest}/${path}`));
+  const run=async()=>{
+    const stream=await api.follow('package-updates');await stream.next();
+    try{await api.call('session/prompt',{request:{sessionId:'package-updates',requestId:crypto.randomUUID(),mode:'queue',content:[{type:'text',text:'SAVE_PACKAGE '+crypto.randomUUID()}]}});for(;;){const frame=await stream.next();if(frame.type==='event'&&frame.event.type==='turn/end')break;}}
+    finally{await stream.close();}
+  };
+  try{
+    assert.equal((await install('1.2.3')).application,'applied');const original=await selected();
+    const review=await (await operation({operation:'review',name,digest:original.digest})).json() as Artifact;
+    const image=Object.keys(review.assets!)[0]!;
+    assert.equal((await asset(original.digest,image)).status,409);
+    assert.equal((await approve(original.digest)).status,200);
+    const bytes=await asset(original.digest,image);assert.equal(bytes.status,200);assert.equal(bytes.headers.get('content-type'),'image/svg+xml');assert.match(bytes.headers.get('content-security-policy')!,/sandbox/);assert.match(await bytes.text(),/<svg/);
+    assert.equal((await asset(original.digest,'client.css')).headers.get('content-type'),'text/css; charset=utf-8');
+    assert.equal((await runtime.dispatchFetch(url('alpha',base+`/package-assets/${original.digest}/${image}`),{method:'HEAD'})).status,200);
+    assert.equal((await asset(original.digest,'assets/missing.svg')).status,404);
+    assert.equal((await runtime.dispatchFetch(url('beta',base.replace(tenantId('alpha'),tenantId('beta'))+`/package-assets/${original.digest}/${image}`))).status,409);
+    await api.call('session/create',{request:{sessionId:'package-updates'}});await run();
+    assert.equal((await install('1.2.4')).application,'applied');
+    let row=await selected();assert.equal(row.digest,original.digest);assert.equal(row.enabled,true);assert.equal(row.candidate!.approved,false);
+    const candidate=row.candidate!;
+    assert.equal((await asset(candidate.digest,image)).status,409);
+    await runtime.dispose();runtime=createRuntime(directory,options);
+    assert.equal((await selected()).candidate!.digest,candidate.digest);
+    assert.equal((await approve('0'.repeat(64))).status,409);
+    assert.equal((await approve(candidate.digest)).status,200);row=await selected();
+    assert.equal(row.version,'1.2.4');assert.equal(row.previous!.digest,original.digest);assert.equal(row.candidate,undefined);
+    assert.equal((await asset(original.digest,image)).status,409);
+    await run();
+    assert.equal((await operation({operation:'rollback',name,digest:original.digest})).status,409);
+    assert.equal((await operation({operation:'rollback',name,digest:row.digest})).status,200);
+    row=await selected();assert.equal(row.version,'1.2.3');assert.equal(row.candidate!.digest,candidate.digest);
+    assert.equal((await approve(candidate.digest)).status,200);await run();
+    assert.equal((await install('1.2.5')).application,'applied');row=await selected();const broken=row.candidate!.digest;
+    assert.equal(row.version,'1.2.4');assert.equal((await approve(broken)).status,200);
+    await run();row=await selected();assert.equal(row.version,'1.2.4');assert.equal(row.approved,true);assert.equal(row.enabled,true);assert.match(row.lastError!,/Host activation failed/);
+    assert.equal(row.candidate!.digest,broken);assert.equal(row.candidate!.approved,false);
+    assert.equal((await operation({operation:'client-failed',name,digest:broken})).status,200);assert.equal((await selected()).version,'1.2.4','late failures never roll back another version');
+    assert.equal((await operation({operation:'discard',name,digest:broken})).status,200);
+    assert.equal((await install('1.2.6')).application,'failed');assert.equal((await selected()).version,'1.2.4');assert.equal((await selected()).enabled,true);
+    assert.equal(buildCount,4);await run();
+    assert.ok(JSON.parse(model.observations.at(-1)!).tools.some((tool:{name:string})=>tool.name==='package_save'),'previous Host is usable on the next turn');
+    const current=await selected();
+    assert.equal((await operation({operation:'approve',name,digest:current.digest,permissions:{...current.permissions,client:false}})).status,200);
+    assert.equal((await asset(current.digest,image)).status,409);
+    await api.call('pluginManager/removeBundle',{name});assert.equal((await selected()),undefined);
+  }finally{await runtime.dispose();await rm(directory,{recursive:true,force:true});}
 });

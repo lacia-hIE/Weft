@@ -1,4 +1,3 @@
-import type {Artifact} from '../../../packages/package-install/src/contracts.ts';
 import type { ControlScope } from '../../../packages/control-plane/src/contracts.ts';
 import { z } from 'zod';
 import { SessionId } from '@deepseek-ai/dsh-session';
@@ -94,18 +93,18 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
       return new Response(response.body, {status: response.status, headers: {...headers, 'content-type': 'application/json'}});
     } catch {return Response.json({error: 'Task is unavailable in this Session'}, {status: 404, headers});}
   }
-  const packages = /^\/v1\/tenants\/([^/]+)\/native\/(package-installations|package-assets\/([a-f0-9]{64})\/client\.js)$/.exec(pathname);
+  const packages = /^\/v1\/tenants\/([^/]+)\/native\/(package-installations|package-assets\/([a-f0-9]{64})\/(client\.(?:js|css)|assets\/[A-Za-z0-9_-]+\.[a-z0-9]+))$/.exec(pathname);
   if (packages) {
     if (packages[1] !== principal.tenantId) throw new HttpError(403, 'Tenant access denied');
     const owner = controlScope(principal.tenantId, environmentId), control = controlFor(env, owner);
     try {
       if (packages[2]?.startsWith('package-assets/')) {
-        if (request.method !== 'GET') return new Response(null, {status: 405});
+        if (!['GET','HEAD'].includes(request.method)) return new Response(null, {status: 405});
         const name = new URL(request.url).searchParams.get('name');
-        if (!name || name.length > 214) throw new HttpError(400, 'Package name required');
-        const artifact = await (await control.nativePackageArtifact(owner, name, packages[3]!, true)).json() as Artifact;
-        if (!artifact.client) throw new HttpError(404, 'Package has no Client module');
-        return new Response(artifact.client, {headers: {'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'private, no-store', 'x-content-type-options': 'nosniff'}});
+        if (name && name.length > 214) throw new HttpError(400, 'Invalid package name');
+        const response = await control.nativePackageResource(owner, packages[3]!, packages[4]!, name ?? undefined);
+        if (request.method === 'HEAD') {await response.body?.cancel(); return new Response(null,{status:response.status,headers:response.headers});}
+        return response;
       }
       if (request.method === 'GET' && packages[2] === 'package-installations') return control.nativePackageList(owner);
       if (request.method !== 'POST') return new Response(null, {status: 405});
