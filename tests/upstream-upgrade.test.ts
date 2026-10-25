@@ -11,10 +11,11 @@ import upstream from '../upstream.lock.json';
 const previous='86a402200d95fecef4529d969836f1fe13c6cb0d';
 test('only the pinned runtime and explicitly reviewed source transition are admitted',()=>{
   assert.ok(supportsAgentRuntime(upstream.commit));assert.ok(supportsAgentRuntime(previous));
-  assert.equal(supportsAgentRuntime('an-earlier-upstream'),false);assert.equal(supportsAgentRuntime('1f81c047fc48fa190a683e469daa699857e9afe8'),false);
+  assert.ok(supportsAgentRuntime('687f282e8625c6b8d11ff58211a90524be2e4317'));
+  assert.equal(supportsAgentRuntime('an-earlier-upstream'),false);assert.equal(supportsAgentRuntime('future-unreviewed-runtime'),false);
 });
 
-test('a retained alpha.4 Session and custom preset continue under rc.2 across restart without rewriting history',{timeout:120_000},async()=>{
+for(const previous of ['86a402200d95fecef4529d969836f1fe13c6cb0d','687f282e8625c6b8d11ff58211a90524be2e4317'])test(`retained ${previous.slice(0,7)} Session and custom preset continue under rc.3 across restart without rewriting history`,{timeout:120_000},async()=>{
   const directory=await mkdtemp(join(tmpdir(),'weft-upstream-'));
   const options={browser:true,scriptPath:'dist/environment-storage-worker.js'};
   let runtime=createRuntime(directory,options);const api=nativeClient(()=>runtime);

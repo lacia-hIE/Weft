@@ -29,6 +29,11 @@ const officialModules = await officialProfilePlugin();
 const staticAttribution = {
   name: 'harness-static-attribution',
   setup(builder) {
+    builder.onLoad({filter:/packages\/llm\/llm-deepseek\/src\/listing\.ts$/},({path})=>{
+      const source=readFileSync(path,'utf8'),before="method: 'GET', redirect: 'error', signal,";
+      if(!source.includes(before)||!source.includes('if (!response.ok)'))throw new Error('Upstream model listing redirect seam changed');
+      return {contents:source.replace(before,"method: 'GET', redirect: 'manual', signal,"),loader:'ts',resolveDir:resolve(path,'..')};
+    });
     builder.onLoad({ filter: /packages\/llm\/llm\/src\/attribution\.ts$/ }, ({ path }) => {
       const original = readFileSync(path, 'utf8');
       const requireImport = "import { createRequire } from 'node:module'";

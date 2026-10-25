@@ -65,8 +65,15 @@ export function Environments({user}: {user: {id: string; email: string}}): React
   const pending=environments?.some(row=>['copying','pausing','resuming','deleting'].includes(row.status??'ready'))??false;
   useEffect(()=>{
     if(!pending&&!environments?.some(row=>row.kind==='local')) return;
-    const timer=setInterval(()=>{void load().catch(error=>setError(String(error)));},2000);
-    return ()=>clearInterval(timer);
+    let stopped=false,running=false,failures=0,timer:ReturnType<typeof setTimeout>|undefined;
+    const poll=async()=>{
+      clearTimeout(timer);if(stopped||running||document.hidden)return;running=true;
+      try{await load();failures=0;}catch(error){if(!stopped){failures++;setError(String(error));}}
+      finally{running=false;if(!stopped&&!document.hidden)timer=setTimeout(()=>void poll(),Math.min(30_000,(pending?2000:5000)*2**Math.min(failures,3)));}
+    };
+    const visibility=()=>{clearTimeout(timer);if(!document.hidden)void poll();};
+    timer=setTimeout(()=>void poll(),pending?2000:5000);document.addEventListener('visibilitychange',visibility);
+    return ()=>{stopped=true;clearTimeout(timer);document.removeEventListener('visibilitychange',visibility);};
   },[pending,Boolean(environments?.some(row=>row.kind==='local'))]);
   async function copy(source: EnvironmentRecord, name:string, requestId:string): Promise<void> {
     if(copyBusy || !name.trim()) return;

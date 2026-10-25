@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import {LocalHostRelay,LOCAL_PROTOCOL,newKey,hashKey} from '../../local-host/src/relay.ts';
+import {LocalHostRelay,LOCAL_PROTOCOL,supportsLocalProtocol,newKey,hashKey} from '../../local-host/src/relay.ts';
 import {
   environmentCreateSchema,
   environmentCopySchema,
@@ -1553,8 +1553,9 @@ export class TenantDO extends DurableObject<TenantEnvironment> {
       const row=await this.environment(tenantId,environmentId);
       const stored=this.ctx.storage.sql.exec<{token_hash:string|null}>('SELECT token_hash FROM weft_local_hosts WHERE id=?',environmentId).toArray()[0];
       if(row?.kind!=='local'||row.status==='deleted'||stored?.token_hash!==digest)return new Response('Unauthorized',{status:401});
-      if(request.headers.get('x-weft-protocol')!==LOCAL_PROTOCOL||!supportsDshVersion(request.headers.get('x-dsh-version')))return new Response(`Incompatible local Host version; supported DSH: ${SUPPORTED_DSH_VERSIONS.join(', ')}`,{status:409});
-      return this.localRelay.acceptHost(environmentId);
+      const protocol=request.headers.get('x-weft-protocol');
+      if(!supportsLocalProtocol(protocol)||!supportsDshVersion(request.headers.get('x-dsh-version')))return new Response(`Incompatible local Host version; supported DSH: ${SUPPORTED_DSH_VERSIONS.join(', ')}`,{status:409});
+      return this.localRelay.acceptHost(environmentId,protocol!);
     });
   }
   async localProxy(tenantId:string,environmentId:string,request:Request,path:string):Promise<Response> {

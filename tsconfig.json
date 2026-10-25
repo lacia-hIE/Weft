@@ -16,5 +16,5 @@
     "jsx": "react-jsx",
     "noEmit": true
   },
-  "include": ["apps/**/*.ts", "apps/**/*.tsx", "packages/**/*.ts", "tests/**/*.ts", "cloudflare.config.ts", "wrangler.config.ts"]
+  "include": ["apps/**/*.ts", "apps/**/*.tsx", "packages/**/*.ts", "packages/**/*.tsx", "tests/**/*.ts", "cloudflare.config.ts", "wrangler.config.ts"]
 }

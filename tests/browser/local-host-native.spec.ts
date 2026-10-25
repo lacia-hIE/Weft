@@ -1,18 +1,31 @@
 import {test,expect} from '@playwright/test';
-test('published local DSH runs native Files, Git, PTY and restores the workbench through Weft',async({page,request},testInfo)=>{
+test('published local DSH pairs in native settings, runs Files, Git and PTY and recovers through Weft',async({page,request,context},testInfo)=>{
+  test.setTimeout(180_000);
   test.skip(process.env.WEFT_LOCAL_DSH_TEST!=='1','Runs in the dedicated native DSH CI job');
-  const {base,project}=await(await request.get('/__test/local-host')).json() as {base:string;project:string};
+  const {base,project,localUrl,pairingCode}=await(await request.get('/__test/local-host')).json() as {base:string;project:string;localUrl:string;pairingCode:string};
   const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
   const rpc=async(method:string,args:unknown)=>{
     const result=await(await request.post(base+'/local/web/api/'+method,{data:{type:'client-request',rpcId:crypto.randomUUID(),method,payload:{args}}})).json();
     expect(result.result.ok,JSON.stringify(result)).toBe(true);return result.result.value;
   };
-  await rpc('workspace/create',{request:{path:project}});
-  const created=await rpc('session/create',{request:{sessionId:crypto.randomUUID(),cwd:project}});const sessionId=created.sessionId;
-  await rpc('session/rename',{request:{sessionId,title:'Local browser session'}});
   // Native account and preview notices resolve independently during boot.
   await page.addLocatorHandler(page.getByRole('dialog',{name:'Get started',exact:true}),async dialog=>{await dialog.getByRole('button',{name:'Close',exact:true}).click();});
   await page.addLocatorHandler(page.getByRole('dialog',{name:'Preview Notice',exact:true}),async dialog=>{await dialog.getByRole('button',{name:'Continue',exact:true}).click();});
+  await page.goto(localUrl);
+  await page.getByRole('button',{name:'Plugins',exact:true}).click({timeout:60_000});
+  await page.getByRole('button',{name:'View Weft local connection',exact:true}).click();
+  await expect(page.getByRole('status')).toHaveText('Not paired');
+  await page.getByLabel('Pairing code',{exact:true}).fill(pairingCode);
+  await page.getByRole('button',{name:'Pair and connect',exact:true}).click();
+  await expect(page.getByRole('status')).toHaveText('Connected',{timeout:45_000});
+  const snapshot=await(await request.get(new URL('/api/weft-local-host',localUrl).href)).json();
+  expect(snapshot.state).toBe('connected');expect(JSON.stringify(snapshot)).not.toContain('pairingKey');expect(JSON.stringify(snapshot)).not.toContain('token');
+  expect((await request.post(new URL('/api/weft-local-host',localUrl).href,{headers:{origin:'https://untrusted.invalid'},data:{action:'disconnect'}})).status()).toBe(403);
+  await page.getByRole('button',{name:'Stop connection',exact:true}).click();await expect(page.getByRole('status')).toHaveText('Connection stopped');
+  await page.getByRole('button',{name:'Reconnect',exact:true}).click();await expect(page.getByRole('status')).toHaveText('Connected',{timeout:30_000});
+  await rpc('workspace/create',{request:{path:project}});
+  const created=await rpc('session/create',{request:{sessionId:crypto.randomUUID(),cwd:project}});const sessionId=created.sessionId;
+  await rpc('session/rename',{request:{sessionId,title:'Local browser session'}});
   await page.goto('/agents/native-local-ci');
   await expect(page.getByRole('button',{name:'Plugins',exact:true})).toBeVisible({timeout:60_000});
   expect(page.url()).toContain('/local/web/');
@@ -32,6 +45,11 @@ test('published local DSH runs native Files, Git, PTY and restores the workbench
   const note=page.locator(`[data-files-path="${project}/notes.md"]`);await expect(note).toBeVisible();await note.getByRole('button').click();
   await expect(page.getByText('LOCAL_CHANGED_FILE',{exact:true})).toBeVisible();
   await page.reload();await expect(page.getByText('LOCAL_CHANGED_FILE',{exact:true})).toBeVisible({timeout:45_000});
+  const another=await context.newPage();await another.goto(base+'/local/web/');await expect(another.getByRole('button',{name:'Plugins',exact:true})).toBeVisible({timeout:45_000});await another.close();
+  await context.setOffline(true);await page.waitForTimeout(500);await context.setOffline(false);
+  await expect.poll(async()=>{try{return(await rpc('session/list',{_request:{}})).items.length;}catch{return 0;}}).toBeGreaterThan(0);
+  expect((await request.post('/__test/local-host/restart')).status()).toBe(204);
+  await expect(page.getByText('LOCAL_CHANGED_FILE',{exact:true})).toBeVisible({timeout:45_000});
   const sessions=await rpc('session/list',{_request:{}});expect(sessions.items.some((row:{sessionId:string})=>row.sessionId===sessionId)).toBe(true);
   await page.screenshot({path:testInfo.outputPath('local-dsh-native.png')});expect(errors).toEqual([]);
 });
