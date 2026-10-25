@@ -34,7 +34,7 @@ test('version switches revoke first, restore on failure and recover interrupted 
   const {sha256}=await import('../packages/package-install/src/contracts.ts');
   const db=new DatabaseSync(':memory:');let revokeFails=false,changed=0;
   const objects=new Map<string,string>();
-  const storage={sql:{exec(query:string,...bindings:(string|number|null)[]){return {toArray:()=>db.prepare(query).all(...bindings)};}},
+  const storage={sql:{exec(query:string,...bindings:(string|number|null)[]){const rows=db.prepare(query).all(...bindings);return {toArray:()=>rows};}},
     sync:async()=>{},setAlarm:async()=>{},transactionSync:(callback:()=>unknown)=>callback()};
   const owner={state:{storage} as unknown as DurableObjectState,scope:{tenantId:'fixture',environmentId:'fixture'},
     bucket:{get:async(key:string)=>objects.has(key)?{text:async()=>objects.get(key)!}:null} as unknown as R2Bucket,
