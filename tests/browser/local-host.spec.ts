@@ -34,7 +34,8 @@ test('the home catalogue pauses polling while hidden and refreshes when visible 
   await page.clock.install();let requests=0;
   page.on('request',request=>{if(request.method()==='GET'&&new URL(request.url()).pathname===`/v1/tenants/${tenantId}/environments`)requests++;});
   await page.goto('/');await expect(page.getByText('Polling local',{exact:true})).toBeVisible();
-  await page.clock.fastForward(6000);await expect.poll(()=>requests).toBeGreaterThan(1);
+  const refresh=page.waitForResponse(response=>response.request().method()==='GET'&&new URL(response.url()).pathname===`/v1/tenants/${tenantId}/environments`);
+  await page.clock.fastForward(6000);await(await refresh).finished();await expect.poll(()=>requests).toBeGreaterThan(1);
   await page.evaluate(()=>{Object.defineProperty(document,'hidden',{value:true,configurable:true});document.dispatchEvent(new Event('visibilitychange'));});
   const before=requests;await page.clock.fastForward(30_000);expect(requests).toBe(before);
   await page.evaluate(()=>{Object.defineProperty(document,'hidden',{value:false,configurable:true});document.dispatchEvent(new Event('visibilitychange'));});

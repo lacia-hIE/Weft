@@ -40,7 +40,7 @@ function ConnectionSettings({t}:{t:Props['t']}):ReactNode {
     try{const response=await fetch(endpoint,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action,...(action==='pair'?{code}:{})})});if(!response.ok)throw new Error();setState(await response.json() as State);setCode('');}
     catch{setError(t('failed'));}finally{setBusy(false);}
   }
-  return <div style={{display:'grid',gap:16}}>
+  return <div data-weft-local-connection style={{display:'grid',gap:16}}>
     <p role="status">{t(state.state in zh?state.state as keyof typeof zh:'connecting')}</p>
     {state.endpoint&&<p>{state.endpoint}</p>}
     {remote?<p>{t('remote')}</p>:<>

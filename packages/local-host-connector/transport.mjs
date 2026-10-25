@@ -32,6 +32,7 @@ export function connectLocalHost({settings,save,origin,authorize,version,onStatu
         const outcome=await runTunnel(socket,{origin,cookie,signal:stop.signal,protocol:PROTOCOL,onOpen:()=>{failures=0;onStatus('connected');}});
         if(outcome===401||outcome===403){onStatus('revoked');return;}
         if(outcome===409){onStatus('incompatible');return;}
+        if(!stop.signal.aborted)onStatus('retrying');
       }catch{if(!stop.signal.aborted)onStatus('retrying');}
       if(!stop.signal.aborted)await wait(Math.min(30_000,500*2**Math.min(failures++,6))*(0.5+Math.random()/2),stop.signal);
     }

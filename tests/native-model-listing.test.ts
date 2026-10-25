@@ -13,7 +13,7 @@ for(const redirect of [false,true])test(`rc.3 official model discovery uses the 
   };
   const runtime=createRuntime(undefined,{browser:true,bindings:{MODEL_BACKEND:'deepseek',DEEPSEEK_API_KEY:'model-listing-fixture',DEEPSEEK_BASE_URL:'https://api.deepseek.com/anthropic'},outbound});
   try{
-    const api=nativeClient(runtime);
+    const api=nativeClient(()=>runtime);
     const catalog=await api.call<{groups:{models:{id:string}[]}[]}>('session/modelCatalog',{});
     assert.ok(catalog.groups.flatMap(group=>group.models).some(model=>model.id==='deepseek-flash'));
     assert.ok(requests.length>0);assert.ok(requests.every(url=>url==='https://api.deepseek.com/models'));
