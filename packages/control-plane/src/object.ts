@@ -555,8 +555,8 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
     const extension = path.slice(path.lastIndexOf('.') + 1) as keyof typeof assetTypes;
     return new Response(Uint8Array.from(atob(value), char=>char.charCodeAt(0)), {headers: {...headers, 'content-type':assetTypes[extension], 'content-security-policy':"sandbox; default-src 'none'; style-src 'unsafe-inline'"}});
   }
-  async nativePackageFailure(scope: ControlScope, name: string, digest: string): Promise<boolean> {
-    return this.packages(scope).failed(name, digest, 'host');
+  async nativePackageFailure(scope: ControlScope, name: string, digest: string, activationId?: string): Promise<boolean> {
+    return this.packages(scope).failed(name, digest, 'host', activationId);
   }
   async nativePackageOperation(scope: ControlScope, raw: unknown): Promise<Response> {
     const request = z.discriminatedUnion('operation', [
@@ -564,7 +564,8 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
       z.object({operation: z.literal('install'), spec: z.string().max(250), requestId: z.string().max(100)}).strict(),
       z.object({operation: z.literal('approve'), name: z.string().max(214), digest: z.string().regex(/^[a-f0-9]{64}$/), permissions: permissionSchema.optional()}).strict(),
       z.object({operation: z.literal('review'), name: z.string().max(214), digest: z.string().regex(/^[a-f0-9]{64}$/)}).strict(),
-      ...(['rollback','discard','client-failed'] as const).map(operation => z.object({operation: z.literal(operation), name: z.string().max(214), digest: z.string().regex(/^[a-f0-9]{64}$/)}).strict()),
+      ...(['rollback','discard'] as const).map(operation => z.object({operation: z.literal(operation), name: z.string().max(214), digest: z.string().regex(/^[a-f0-9]{64}$/)}).strict()),
+      z.object({operation:z.literal('client-failed'), name:z.string().max(214), digest:z.string().regex(/^[a-f0-9]{64}$/),activationId:z.uuid().optional()}).strict(),
     ]).parse(raw);
     const packages = this.packages(scope);
     if (request.operation === 'install') return Response.json(await packages.start(request.spec, request.requestId), {status: 202});
@@ -572,7 +573,7 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
     if (request.operation === 'review') return Response.json(await packages.artifact(request.name, request.digest, false));
     if (request.operation === 'rollback') {await packages.rollback(request.name, request.digest); return Response.json({ok:true});}
     if (request.operation === 'discard') {await packages.discard(request.name, request.digest); return Response.json({ok:true});}
-    if (request.operation === 'client-failed') return Response.json({changed:await packages.failed(request.name, request.digest, 'client')});
+    if (request.operation === 'client-failed') return Response.json({changed:await packages.failed(request.name, request.digest, 'client', request.activationId)});
     return Response.json(packages.list());
   }
   override async alarm(): Promise<void> {if(this.lifecycle.mode==='active')await this.lifecycle.run(()=>this.packages(environmentScopeOf(this.ctx.id.name)).recover());}

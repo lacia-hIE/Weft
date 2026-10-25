@@ -232,7 +232,7 @@ export class SessionDO extends DurableObject<Env> {
         this.installedPackages = new InstalledPackageRuntime(ctx, this.ctx, this.env.LOADER, scope, {
           list: async () => ((await (await controlFor(this.env, owner).nativePackageList(owner)).json()) as {installations: Installation[]}).installations,
           artifact: async (name, digest) => await (await controlFor(this.env, owner).nativePackageArtifact(owner, name, digest)).json() as Artifact,
-          failed: (name, digest) => controlFor(this.env, owner).nativePackageFailure(owner, name, digest),
+          failed: (name, digest, activationId) => controlFor(this.env, owner).nativePackageFailure(owner, name, digest, activationId),
           capability: (pluginId, runId) => {
             const exported = this.ctx.exports as unknown as {PluginCapabilities(options: {props: {scope: SessionScope; pluginId: string; runId: string}}): Fetcher};
             return exported.PluginCapabilities({props: {scope, pluginId, runId}});
@@ -844,7 +844,7 @@ export class SessionDO extends DurableObject<Env> {
     if (installation) {
       const owner = controlScope(scope.tenantId, scope.environmentId);
       const current = ((await (await controlFor(this.env, owner).nativePackageList(owner)).json()) as {installations: Installation[]}).installations.find(row => row.name === installation.name);
-      if (!current?.enabled || !current.approved || current.digest !== installation.digest) throw new Error('Package capability was revoked');
+      if (!current?.enabled || !current.approved || current.digest !== installation.digest || current.activationId !== installation.activationId) throw new Error('Package capability was revoked');
       if (installation.permissions.files === 'none' || (installation.permissions.files === 'read' && ['writeText', 'editText'].includes(method))) throw new Error('Package filesystem permission denied');
     } else if (!nativePlugins(host.ctx)?.hasRun(pluginId, runId)) throw new Error('Plugin activation no longer owns this capability');
     if (!(nativePluginFsMethods as readonly string[]).includes(method)) throw new Error('Filesystem method is not bridged');

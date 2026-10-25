@@ -7,7 +7,7 @@ interface Active {
 }
 function authority(row: Installation): string {
   const p = row.permissions;
-  return JSON.stringify([row.digest, p.files, p.tools, p.timer, p.client]);
+  return JSON.stringify([row.digest, row.activationId, p.files, p.tools, p.timer, p.client]);
 }
 /** Per-Session activations; declarations, grants and module authority remain in EnvironmentDO. */
 export class InstalledPackageRuntime {
@@ -16,7 +16,7 @@ export class InstalledPackageRuntime {
   private readonly platform: NativePluginPlatform;
   private tail: Promise<unknown> = Promise.resolve();
   constructor(private readonly ctx: Context, private readonly state: DurableObjectState, loader: WorkerLoader | undefined, scope: object,
-    private readonly source: {list(): Promise<Installation[]>; artifact(name: string, digest: string): Promise<Artifact>; capability(pluginId: string, runId: string): Fetcher; failed?(name: string, digest: string): Promise<boolean>}) {
+    private readonly source: {list(): Promise<Installation[]>; artifact(name: string, digest: string): Promise<Artifact>; capability(pluginId: string, runId: string): Fetcher; failed?(name: string, digest: string, activationId?: string): Promise<boolean>}) {
     this.platform = new NativePluginPlatform(state, loader, scope, source.capability);
     this.platform.onFault((runId) => {const entry = [...this.active.values()].find(row => row.runId === runId); if (entry) state.waitUntil(this.stop(entry.installation.name));});
     ctx.effect(() => () => Promise.all([...this.active.keys()].map(name => this.stop(name))).then(() => {}), 'weft.installed-packages');
@@ -47,7 +47,7 @@ export class InstalledPackageRuntime {
           console.warn('weft.package.activation.failed', {name: installation.name, message: error instanceof Error ? error.message : String(error)});
           // Do not hold Session reconciliation while reporting to its owner:
           // the owner may be waiting for this Session to stop an old version.
-          if (this.source.failed) this.state.waitUntil(this.source.failed(installation.name, installation.digest).catch(() => {}));
+          if (this.source.failed) this.state.waitUntil(this.source.failed(installation.name, installation.digest, installation.activationId).catch(() => {}));
         }
       }
     });

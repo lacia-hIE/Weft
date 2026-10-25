@@ -60,7 +60,9 @@ test('version switches revoke first, restore on failure and recover interrupted 
     await installer.approve('fixture',candidate.digest,{...candidate.permissions,files:'read',client:false});
     assert.equal(installer.registry.get('fixture')!.permissions.files,'read');assert.equal(installer.registry.get('fixture')!.permissions.client,false);
     assert.equal(await installer.failed('fixture',old.digest,'client'),false);
-    assert.equal(await installer.failed('fixture',candidate.digest,'host'),true);
+    const activationId=installer.registry.get('fixture')!.activationId!;
+    assert.equal(await installer.failed('fixture',candidate.digest,'host',crypto.randomUUID()),false);
+    assert.equal(await installer.failed('fixture',candidate.digest,'host',activationId),true);
     assert.equal(installer.registry.get('fixture')!.digest,old.digest);
     const interrupted={...installer.registry.get('fixture')!,enabled:false,switching:{enabled:true}};
     installer.registry.save(interrupted);

@@ -146,8 +146,8 @@ export class PackageInstaller {
       const row = this.registry.get(name);
       const target = row?.digest === digest ? row : row?.candidate?.digest === digest ? row.candidate : undefined;
       if (!row || !target) throw new Error('Approval is stale');
-      const next: Installation = {...revision(target), permissions: grants ?? artifact.permissions, approved: true, enabled: true,
-        ...(target !== row ? {previous: revision(row)} : { ...(row.previous ? {previous: row.previous} : {}), ...(row.candidate ? {candidate: row.candidate} : {}) })};
+      const next: Installation = {...revision(target), activationId: crypto.randomUUID(), permissions: grants ?? artifact.permissions, approved: true, enabled: true,
+        ...(target !== row ? {previous: revision(row), rollbackOnFailure:true as const} : { ...(row.previous ? {previous: row.previous} : {}), ...(row.candidate ? {candidate: row.candidate} : {}) })};
       await this.replace(row, next);
     });
   }
@@ -169,21 +169,23 @@ export class PackageInstaller {
     return this.exclusive(async () => {
       const row = this.registry.get(name);
       if (!row || row.digest !== digest || !row.previous?.approved) throw new Error('No approved previous version is available');
+      if (row.candidate) throw new Error('Discard the pending update before restoring a previous version');
       await this.read(row.previous.digest);
-      await this.replace(row, {...row.previous, candidate: {...revision(row), approved: false, enabled: false}});
+      await this.replace(row, {...row.previous, activationId: crypto.randomUUID(), candidate: {...revision(row), approved: false, enabled: false}});
     });
   }
   /** Only an exact, still-selected activation can roll back; late failures cannot undo a later update. */
-  failed(name: string, digest: string, half: 'host' | 'client'): Promise<boolean> {
+  failed(name: string, digest: string, half: 'host' | 'client', activationId?: string): Promise<boolean> {
     return this.exclusive(async () => {
       const row = this.registry.get(name);
       if (!row || row.digest !== digest || !row.enabled || !row.approved) return false;
+      if ((row.activationId ?? digest) !== (activationId ?? digest)) return false;
       const lastError = `${half === 'host' ? 'Host' : 'Client'} activation failed for ${row.version}.`;
       let next: Installation = {...row, enabled: false, lastError};
-      if (row.previous?.approved) {
+      if (row.rollbackOnFailure && row.previous?.approved) {
         try {
           await this.read(row.previous.digest);
-          next = {...row.previous, candidate: {...revision(row), enabled: false, approved: false}, lastError};
+          next = {...row.previous, activationId: crypto.randomUUID(), candidate: {...revision(row), enabled: false, approved: false}, lastError};
         } catch {next.lastError += ' Previous artifact is unavailable; the package was disabled.';}
       }
       this.registry.save(next); await this.owner.state.storage.sync();
@@ -206,7 +208,8 @@ export class PackageInstaller {
       if (!row) throw new Error('Unknown installed package');
       if (enabled && !row.approved) throw new Error('Review and approve the exact artifact before enabling');
       if (row.enabled === enabled) return false;
-      await this.replace(row, {...row, enabled}); return true;
+      const {rollbackOnFailure:_rollback,...selected}=row;
+      await this.replace(row, {...selected, enabled, activationId:crypto.randomUUID()}); return true;
     });
   }
   remove(name: string): Promise<void> {

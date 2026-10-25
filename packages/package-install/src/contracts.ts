@@ -37,14 +37,16 @@ export interface PackageRevision {
   name: string; version: string; digest: string; enabled: boolean; approved: boolean;
   patch: Record<string, unknown>[]; rows: Record<string, unknown>[]; permissions: Permissions; description: string; installedAt: number;
   needsReinstall?: true;
+  activationId?: string;
 }
 export interface Installation extends PackageRevision {
   candidate?: PackageRevision; previous?: PackageRevision; lastError?: string;
   switching?: {enabled: boolean};
+  rollbackOnFailure?: true;
 }
 /** Revision history never recursively embeds previous revisions or transfers approvals. */
 export function revision(row: Installation): PackageRevision {
-  const {candidate: _candidate, previous: _previous, lastError: _error, switching: _switching, ...value} = row;
+  const {candidate: _candidate, previous: _previous, lastError: _error, switching: _switching, rollbackOnFailure: _rollback, ...value} = row;
   return value;
 }
 export interface InstallJob {

@@ -41,7 +41,7 @@ export function apply(ctx: ClientContext): void {
       while (dirty && !closed) {
         dirty = false;
         const snapshot = await operation<Snapshot>();
-        for (const [name, row] of active) if (!snapshot.installations.some(next => next.name === name && next.digest === row.digest && next.approved && next.enabled && next.permissions.client && JSON.stringify(next.permissions) === row.authority)) {active.delete(name); await row.fiber.dispose();}
+        for (const [name, row] of active) if (!snapshot.installations.some(next => next.name === name && next.digest === row.digest && next.approved && next.enabled && next.permissions.client && JSON.stringify([next.activationId,next.permissions]) === row.authority)) {active.delete(name); await row.fiber.dispose();}
         for (const row of snapshot.installations) {
           if (closed || !row.approved || !row.enabled || !row.permissions.client || active.has(row.name)) continue;
           try {
@@ -69,11 +69,11 @@ export function apply(ctx: ClientContext): void {
             }});
             try {await fiber.await();} catch (error) {await fiber.dispose(); throw error;}
             if (closed) {await fiber.dispose(); break;}
-            active.set(row.name, {digest: row.digest, authority: JSON.stringify(row.permissions), fiber});
+            active.set(row.name, {digest: row.digest, authority: JSON.stringify([row.activationId,row.permissions]), fiber});
           } catch (error) {
             if (closed) break;
             console.error('[weft] installed Client activation failed', row.name, error);
-            const result=await operation<{changed:boolean}>({operation:'client-failed',name:row.name,digest:row.digest});
+            const result=await operation<{changed:boolean}>({operation:'client-failed',name:row.name,digest:row.digest,activationId:row.activationId});
             if (result.changed) dirty=true;
           }
         }
@@ -123,7 +123,7 @@ function Installations({ctx, t, name}: {ctx: ClientContext; t: (key: string) => 
       h('p', null, `${t('current')}: ${row.version} · `, h('span',null,t(row.needsReinstall ? 'reinstall' : !row.approved ? 'pending' : row.enabled ? 'enabled' : 'disabled'))),
       h('div', {style:{display:'flex',gap:8,flexWrap:'wrap'}},
         h(Button, {variant:'outline', disabled: busy || row.needsReinstall, onClick:()=>showReview(row)},t('review')),
-        row.previous?.approved ? h(Button,{variant:'outline',disabled:busy,onClick:()=>void action(async()=>{await operation({operation:'rollback',name,digest:row.digest});setReview(undefined);})},`${t('rollback')} (${row.previous.version})`):null)),
+        row.previous?.approved ? h(Button,{variant:'outline',disabled:busy||Boolean(row.candidate),onClick:()=>void action(async()=>{await operation({operation:'rollback',name,digest:row.digest});setReview(undefined);})},`${t('rollback')} (${row.previous.version})`):null)),
     row.candidate ? h('section', {style:{display:'grid',gap:8},'aria-label':t('reviewUpdate')},
       h('strong',null,`${name}@${row.candidate.version}`),h('p',null,t('updating')),
       h('div',{style:{display:'flex',gap:8}},
