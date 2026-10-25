@@ -1,9 +1,9 @@
 import {createServer} from 'node:http';
 import {mkdtemp, mkdir, writeFile, readFile, realpath, rm} from 'node:fs/promises';
-import {resolve, join, dirname, relative, extname} from 'node:path';
+import {resolve, join, dirname, basename, relative, extname} from 'node:path';
 import {tmpdir} from 'node:os';
 import {gunzipSync} from 'node:zlib';
-import {timingSafeEqual} from 'node:crypto';
+import {timingSafeEqual, createHash} from 'node:crypto';
 import {build} from 'esbuild';
 import yaml from 'js-yaml';
 import {applyEntryPatches} from './patch.mjs';
@@ -127,6 +127,7 @@ export async function buildPackage(input) {
       const imports = selected.map((row,i) => `import * as m${i} from ${JSON.stringify(half === 'client' ? row.packageName+'/client' : row.name)};`).join('\n');
       const table = selected.map((row,i) => `${JSON.stringify(row.name)}:m${i}`).join(',');
       const assets = {};
+      const cssNamespace='weft_'+createHash('sha256').update(input.name+'\0'+input.version).digest('hex').slice(0,12);
       const collectAssets = output => {
         for (const file of output.outputFiles) {
           if (file.path.endsWith('.js') || file.path.endsWith('.css')) continue;
@@ -138,12 +139,23 @@ export async function buildPackage(input) {
         if (Object.keys(assets).length > 128 || Object.values(assets).reduce((size, value) => size + Buffer.from(value,'base64').length, 0) > 4194304) throw new Error('Client assets exceed 128 files or 4 MiB');
       };
       const options = {absWorkingDir: root,
-        bundle: true, write: false, format: 'iife', globalName: '__bundle', outdir: join(root,'output'), platform: 'browser', target: 'es2022', minify: true,
+        bundle: true, write: false, format: 'iife', globalName: '__bundle', outdir: join(root,'output'), platform: 'browser', target: 'es2022',
+        minifyWhitespace:true, minifySyntax:true, minifyIdentifiers:half==='host',
         publicPath: assetPrefix, assetNames: 'assets/[hash]', loader: Object.fromEntries(assetExtensions.map(ext=>['.'+ext,'file'])),
         conditions: [half === 'host' ? 'workerd' : 'browser','import'], logLevel: 'silent', plugins: [{name: 'native-platform', setup(builder) {
+          builder.onResolve({filter: /\.module\.css$/}, async args => {
+            if (args.pluginData?.scopedCss) return;
+            if (half !== 'client') return {errors:[{text:'CSS and static assets require a Client entry'}]};
+            const resolved=await builder.resolve(args.path,{resolveDir:args.resolveDir,kind:args.kind,pluginData:{scopedCss:true}});
+            if (resolved.errors.length) return resolved;
+            const path=await realpath(resolved.path);
+            if (!path.startsWith(root+'/')) return {errors:[{text:'Plugin import escaped build root'}]};
+            return {path:join(dirname(path),cssNamespace+'_'+basename(path)),namespace:'weft-css-module',pluginData:{source:path}};
+          });
+          builder.onLoad({filter: /.*/,namespace:'weft-css-module'},async args=>({contents:await readFile(args.pluginData.source,'utf8'),loader:'local-css',resolveDir:dirname(args.pluginData.source)}));
           builder.onResolve({filter: /\?(?:inline|raw|url)$/}, async args => {
             const suffix = args.path.slice(args.path.lastIndexOf('?'));
-            const resolved = await builder.resolve(args.path.slice(0,-suffix.length), {resolveDir: args.resolveDir, kind: args.kind});
+            const resolved = await builder.resolve(args.path.slice(0,-suffix.length), {resolveDir: args.resolveDir, kind: args.kind, pluginData:{scopedCss:true}});
             return {...resolved, suffix};
           });
           builder.onLoad({filter: /.*/, namespace: 'file'}, async args => {

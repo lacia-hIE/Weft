@@ -60,7 +60,7 @@ export function apply(ctx: ClientContext): void {
                     link.dataset.plugin=`installed:${row.name}`; link.dataset.pluginCss=row.digest;
                     const timer=setTimeout(()=>reject(new Error('Plugin stylesheet timed out')),15000);
                     link.onload=()=>{clearTimeout(timer);resolve();}; link.onerror=()=>{clearTimeout(timer);reject(new Error('Plugin stylesheet could not load'));};
-                    document.head.append(link);
+                    document.head.appendChild(link);
                     return ()=>{clearTimeout(timer);link.remove();reject(new Error('Plugin stylesheet activation stopped'));};
                   }, 'installed-client: stylesheet');
                 });
@@ -120,7 +120,7 @@ function Installations({ctx, t, name}: {ctx: ClientContext; t: (key: string) => 
     h('p', null, t('summary')),
     error || row.lastError || job?.phase==='failed' ? h('p', {role:'alert'}, error ?? row.lastError ?? job?.error) : null,
     h('section', {style:{display:'grid',gap:8}},
-      h('p', null, `${t('current')}: ${row.version} · ${t(row.needsReinstall ? 'reinstall' : !row.approved ? 'pending' : row.enabled ? 'enabled' : 'disabled')}`),
+      h('p', null, `${t('current')}: ${row.version} · `, h('span',null,t(row.needsReinstall ? 'reinstall' : !row.approved ? 'pending' : row.enabled ? 'enabled' : 'disabled'))),
       h('div', {style:{display:'flex',gap:8,flexWrap:'wrap'}},
         h(Button, {variant:'outline', disabled: busy || row.needsReinstall, onClick:()=>showReview(row)},t('review')),
         row.previous?.approved ? h(Button,{variant:'outline',disabled:busy,onClick:()=>void action(async()=>{await operation({operation:'rollback',name,digest:row.digest});setReview(undefined);})},`${t('rollback')} (${row.previous.version})`):null)),

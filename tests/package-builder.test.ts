@@ -42,7 +42,8 @@ test('the production builder image compiles without a network or workspace mount
 test('Client CSS Modules, inline CSS, native controls and static URLs are part of the exact artifact', async () => {
   const artifact=artifactSchema.parse(await buildPackage(styledPackageFixture().input));
   assert.match(artifact.css!, /color:#123|color:rgb\(17,34,51\)/);
-  assert.match(artifact.css!, /url\(\.\/assets\//);
+  assert.match(artifact.css!, /url\(["']?\.\/assets\//);
+  assert.match(artifact.css!, /\.weft_[a-f0-9]{12}/,'CSS Modules are namespaced across independent installed bundles');
   assert.equal(Object.keys(artifact.assets!).length,1,'CSS, inline CSS and JS deduplicate the same asset');
   assert.match(artifact.client!, /__runtime\.asset\(/);
   assert.match(artifact.client!, /__runtime\.css\(/);

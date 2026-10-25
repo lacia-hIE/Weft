@@ -15,7 +15,7 @@ export class InstalledPackageRuntime {
   private readonly failed = new Map<string, string>();
   private readonly platform: NativePluginPlatform;
   private tail: Promise<unknown> = Promise.resolve();
-  constructor(private readonly ctx: Context, state: DurableObjectState, loader: WorkerLoader | undefined, scope: object,
+  constructor(private readonly ctx: Context, private readonly state: DurableObjectState, loader: WorkerLoader | undefined, scope: object,
     private readonly source: {list(): Promise<Installation[]>; artifact(name: string, digest: string): Promise<Artifact>; capability(pluginId: string, runId: string): Fetcher; failed?(name: string, digest: string): Promise<boolean>}) {
     this.platform = new NativePluginPlatform(state, loader, scope, source.capability);
     this.platform.onFault((runId) => {const entry = [...this.active.values()].find(row => row.runId === runId); if (entry) state.waitUntil(this.stop(entry.installation.name));});
@@ -45,7 +45,9 @@ export class InstalledPackageRuntime {
           this.failed.set(installation.name, authority(installation));
           // A broken optional package must not make a Session or its built-in tools unavailable.
           console.warn('weft.package.activation.failed', {name: installation.name, message: error instanceof Error ? error.message : String(error)});
-          await this.source.failed?.(installation.name, installation.digest).catch(() => {});
+          // Do not hold Session reconciliation while reporting to its owner:
+          // the owner may be waiting for this Session to stop an old version.
+          if (this.source.failed) this.state.waitUntil(this.source.failed(installation.name, installation.digest).catch(() => {}));
         }
       }
     });

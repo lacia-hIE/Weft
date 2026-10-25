@@ -39,7 +39,7 @@ test('version switches revoke first, restore on failure and recover interrupted 
   const owner={state:{storage} as unknown as DurableObjectState,scope:{tenantId:'fixture',environmentId:'fixture'},
     bucket:{get:async(key:string)=>objects.has(key)?{text:async()=>objects.get(key)!}:null} as unknown as R2Bucket,
     build:async()=>{throw new Error('not used');},validate:async()=>{},changed:async()=>{changed++;},
-    revoke:async()=>{assert.equal(installer.registry.get('fixture')!.enabled,false);if(revokeFails)throw new Error('Release failed');}};
+    revoke:async():Promise<void>=>{assert.equal(installer.registry.get('fixture')!.enabled,false);if(revokeFails)throw new Error('Release failed');}};
   const installer=new PackageInstaller(owner);
   async function receipt(version:string):Promise<Installation>{
     const artifact={name:'fixture',version,description:'',patch:[],rows:[],permissions:{files:'write' as const,tools:true,timer:true,client:true},lock:[]};

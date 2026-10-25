@@ -8,7 +8,7 @@ import {createRuntime,tenantId,url} from './helpers/miniflare.ts';
 import {nativeClient} from './helpers/native.ts';
 import {Response} from 'miniflare';
 import {buildPackage} from '../apps/plugin-builder/server.mjs';
-import {packageFixture} from './helpers/package-fixture.ts';
+import {styledPackageFixture} from './helpers/package-fixture.ts';
 import type {Installation,Artifact} from '../packages/package-install/src/contracts.ts';
 import type {EnvironmentRecord,TenantState} from '../packages/control-plane/src/contracts.ts';
 import type {SettingsDescribeValue} from '@deepseek-ai/dsh-settings/types';
@@ -82,7 +82,7 @@ test('environment copying keeps a fixed file/configuration cut, resumes after fa
 });
 
 test('copied package artifacts have independent ownership and require a new exact approval',{timeout:120_000},async()=>{
-  const fixture=packageFixture();
+  const fixture=styledPackageFixture();
   const runtime=createRuntime(undefined,{browser:true,configureModel:false,packages:true,
     outbound:async request=>request.url===fixture.manifest.dist.tarball?new Response(fixture.bytes):Response.json(fixture.manifest),
     packageBuilder:async request=>Response.json(await buildPackage(JSON.parse(await request.text()))),
@@ -102,10 +102,10 @@ test('copied package artifacts have independent ownership and require a new exac
     }
     assert.ok(ready);
     const copied=(await (await operation(requestId)).json() as {installations:Installation[]}).installations[0]!;
-    assert.equal(copied.digest,row.digest);assert.equal(copied.enabled,false);assert.equal(copied.approved,false);
+    assert.equal(copied.digest,row.digest);assert.equal(copied.enabled,false);assert.equal(copied.approved,false);assert.equal(copied.candidate,undefined);assert.equal(copied.previous,undefined);
     await api.call('pluginManager/removeBundle',{name:row.name});
     const review=await operation(requestId,{operation:'review',name:row.name,digest:row.digest});assert.equal(review.status,200);
-    const artifact=await review.json() as Artifact;assert.equal(artifact.name,fixture.name);assert.deepEqual(artifact.lock,fixture.input.lock);
+    const artifact=await review.json() as Artifact;assert.equal(artifact.name,fixture.name);assert.deepEqual(artifact.lock,fixture.input.lock);assert.match(artifact.css!,/weft_/);assert.equal(Object.keys(artifact.assets!).length,1);
     assert.equal((await operation(requestId,{operation:'approve',name:row.name,digest:row.digest})).status,200);
   }finally{await runtime.dispose();}
 });
