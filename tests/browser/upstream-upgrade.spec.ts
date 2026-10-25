@@ -1,22 +1,29 @@
 import {test,expect} from '@playwright/test';
 import {compose} from './compose.ts';
 
-test('rc.3 native More menu opens plugins and returns to an unsent Standard draft after creating a plugin draft',async({page,request})=>{
+test('rc.3 native More menu creates an unsent plugin draft and New Session restores a draft after switching sessions',async({page,request})=>{
   const {tenantId}=await(await request.get('/v1/me')).json();
   const id='rc3-draft-'+crypto.randomUUID().slice(0,8),base=`/v1/tenants/${tenantId}/environments/${id}/native/api/`;
   expect((await request.post(`/v1/tenants/${tenantId}/environments`,{data:{id,name:id}})).status()).toBe(201);
   await page.goto('/agents/'+id);await page.getByRole('button',{name:'Continue',exact:true}).click({timeout:45_000});
   await expect(page.getByRole('button',{name:'Select model, current scripted',exact:true})).toBeVisible({timeout:45_000});
+  await compose(page,'COMPLETED_CONTEXT');await page.getByRole('button',{name:'Send message',exact:true}).click();
+  await expect(page.getByText('Tenant: '+tenantId,{exact:true})).toBeVisible({timeout:30_000});
+  const older=await page.locator('[data-conversation-content]').getAttribute('data-conversation-session');expect(older).toBeTruthy();
+  const newSession=page.getByRole('button',{name:'New session',exact:true}).filter({hasText:'New Session'}).last();
+  await newSession.click();
   await compose(page,'KEEP_UNSENT_STANDARD_DRAFT');
+  await page.locator(`[data-row-key="session:${older}"]`).click();
+  await expect(page.getByText('COMPLETED_CONTEXT',{exact:true})).toBeVisible();
+  await newSession.click();
+  await expect(page.locator('[data-composer-input][contenteditable="true"]').last()).toHaveText('KEEP_UNSENT_STANDARD_DRAFT');
   const more=page.getByRole('navigation',{name:'Global panels'}).getByRole('button',{name:'More',exact:true});
   await more.click();await page.getByRole('menuitem',{name:'Browse other plugins',exact:true}).click();
   await expect(page.getByRole('button',{name:'Plugins',exact:true})).toHaveAttribute('aria-current','page');
   await more.click();await page.getByRole('menuitem',{name:'Create your plugin',exact:true}).click();
   await expect(page.locator('[data-composer-input][contenteditable="true"]').last()).toContainText('Create a DSH plugin');
-  await page.getByRole('button',{name:'New session',exact:true}).filter({hasText:'New Session'}).last().click();
-  await expect(page.locator('[data-composer-input][contenteditable="true"]').last()).toHaveText('KEEP_UNSENT_STANDARD_DRAFT');
   const result=await(await request.post(base+'session/list',{data:{type:'client-request',rpcId:crypto.randomUUID(),method:'session/list',payload:{args:{_request:{}}}}})).json();
-  expect(result.result.ok).toBe(true);expect(result.result.value.items.every((row:{blank:boolean})=>row.blank)).toBe(true);
+  expect(result.result.ok).toBe(true);expect(result.result.value.items.filter((row:{blank:boolean})=>!row.blank)).toHaveLength(1);
 });
 
 test('rc.2 native Web search form persists Search and Fetch selection and keeps credentials out of settings',async({page,request})=>{

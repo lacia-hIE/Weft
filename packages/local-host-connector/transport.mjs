@@ -40,7 +40,7 @@ export function connectLocalHost({settings,save,origin,authorize,version,onStatu
   return async()=>{stop.abort();socket?.terminate();await task;};
 }
 export function runTunnel(socket,{origin,cookie,signal,protocol='weft-local-host/1',onOpen=()=>{}}) {
-  const active=new Map(),clients=new Map();let heartbeat;
+  const active=new Map(),clients=new Map();let heartbeat,alive=true;
   const send=frame=>{if(socket.readyState!==WebSocket.OPEN)throw new Error('Tunnel unavailable');if(socket.bufferedAmount>32*1024*1024){socket.close(1013,'Relay overloaded');throw new Error('Tunnel overloaded');}socket.send(JSON.stringify(frame));};
   const mux=new MuxChannel(send,async(id,text)=>{
     const local=clients.get(id)?.local;if(!local)throw new Error('Native stream closed');
@@ -86,10 +86,11 @@ export function runTunnel(socket,{origin,cookie,signal,protocol='weft-local-host
   return new Promise(resolve=>{
     let rejectedStatus;
     const stop=()=>socket.terminate();signal.addEventListener('abort',stop,{once:true});if(signal.aborted)stop();
-    socket.on('open',()=>{onOpen();let alive=true;socket.on('pong',()=>{alive=true;});heartbeat=setInterval(()=>{if(!alive)socket.terminate();else{alive=false;socket.ping();}},20_000);});
+    socket.on('open',()=>{onOpen();socket.on('pong',()=>{alive=true;});const ping=()=>{if(!alive)socket.terminate();else{alive=false;if(protocol===PROTOCOL)socket.send('weft:ping');else socket.ping();}};ping();heartbeat=setInterval(ping,20_000);});
     socket.on('unexpected-response',(_request,response)=>{rejectedStatus=response.statusCode;response.resume();socket.terminate();});
     socket.on('message',(data,binary)=>{
       try{
+        if(protocol===PROTOCOL&&!binary&&data.toString()==='weft:pong'){alive=true;return;}
         if(binary||data.length>MAX_FRAME)throw new Error('Invalid frame');
         const frame=JSON.parse(data.toString());if(typeof frame.id!=='string'||frame.id.length>80)throw new Error('Invalid identity');
         if(protocol===PROTOCOL&&mux.handle(frame))return;

@@ -7,7 +7,7 @@ export const MAX_FRAME = 16 * 1024 * 1024;
 const MAX_MUX_FRAME=4*1024*1024;
 export const CHUNK_BYTES = 32 * 1024;
 const LIMIT = 64;
-type SocketIdentity={role:'host'|'browser';environmentId:string;id?:string;hostId?:string;protocol?:string};
+type SocketIdentity={role:'host'|'browser';environmentId:string;id?:string;hostId?:string;protocol?:string;connectedAt?:number};
 type Frame={type:string;id:string;[key:string]:unknown};
 type Pending={socket:WebSocket;resolve:(response:Response)=>void;reject:(error:Error)=>void;controller?:ReadableStreamDefaultController<Uint8Array>;ack?:(()=>void)|undefined;responseAck?:boolean;cache:string;timer:ReturnType<typeof setTimeout>;abort:()=>void;cleanup:()=>void};
 export function localPath(path:string):boolean {
@@ -26,7 +26,7 @@ const responseHeaders=new Set(['content-type','content-disposition','etag','last
 export class LocalHostRelay {
   private readonly pending=new Map<string,Pending>();
   private readonly channels=new Map<string,MuxChannel>();
-  constructor(private readonly ctx:DurableObjectState){}
+  constructor(private readonly ctx:DurableObjectState){ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('weft:ping','weft:pong'));}
   private channel(socket:WebSocket):MuxChannel {
     const identity=socket.deserializeAttachment() as SocketIdentity,key=identity.id!;
     let channel=this.channels.get(key);
@@ -37,7 +37,12 @@ export class LocalHostRelay {
     }
     return channel;
   }
-  host(environmentId:string):WebSocket|undefined{return this.ctx.getWebSockets('local-host').find(socket=>{const a=socket.deserializeAttachment() as SocketIdentity;return a.environmentId===environmentId&&socket.readyState===1;});}
+  host(environmentId:string):WebSocket|undefined{return this.ctx.getWebSockets('local-host').find(socket=>{
+    const a=socket.deserializeAttachment() as SocketIdentity;if(a.environmentId!==environmentId||socket.readyState!==1)return false;
+    const seen=this.ctx.getWebSocketAutoResponseTimestamp(socket)?.getTime()??a.connectedAt??0;
+    if(a.protocol===LOCAL_PROTOCOL_V2&&Date.now()-seen>75_000){socket.close(1012,'Device heartbeat expired');this.closed(socket);return false;}
+    return true;
+  });}
   disconnect(environmentId:string):void {
     for(const socket of this.ctx.getWebSockets()) {const a=socket.deserializeAttachment() as SocketIdentity|null;if(a?.environmentId===environmentId){if(a.role==='host'){this.channels.get(a.id!)?.close();this.channels.delete(a.id!);}socket.close(1000,'Local environment disconnected');}}
     for(const [id,p] of this.pending)if((p.socket.deserializeAttachment() as SocketIdentity).environmentId===environmentId)this.fail(id,new Error('Local Host disconnected'));
@@ -45,7 +50,7 @@ export class LocalHostRelay {
   acceptHost(environmentId:string,protocol=LOCAL_PROTOCOL):Response {
     this.disconnect(environmentId);
     const pair=new WebSocketPair(),socket=pair[1];
-    socket.serializeAttachment({role:'host',environmentId,id:crypto.randomUUID(),protocol} satisfies SocketIdentity);
+    socket.serializeAttachment({role:'host',environmentId,id:crypto.randomUUID(),protocol,connectedAt:Date.now()} satisfies SocketIdentity);
     this.ctx.acceptWebSocket(socket,['local-host']);
     return new Response(null,{status:101,webSocket:pair[0]});
   }
@@ -100,12 +105,17 @@ export class LocalHostRelay {
       if(new TextEncoder().encode(data).length>MAX_MUX_FRAME){socket.close(1009,'Native Mux frame limit');this.closed(socket);return;}
       host.send(JSON.stringify({type:'ws-data',id:identity.id,text:data}));return;
     }
-    let frame:Frame;try{frame=JSON.parse(data) as Frame;if(typeof frame.type!=='string'||typeof frame.id!=='string')throw new Error();}catch{socket.close(1008,'Invalid frame');this.closed(socket);return;}
+    const current=this.host(identity.environmentId)?.deserializeAttachment() as SocketIdentity|undefined;
+    if(current?.id!==identity.id)return;
+    let frame:Frame;try{frame=JSON.parse(data) as Frame;if(typeof frame.type!=='string'||typeof frame.id!=='string'||frame.id.length>80)throw new Error();}catch{socket.close(1008,'Invalid frame');this.closed(socket);return;}
     if(identity.protocol===LOCAL_PROTOCOL_V2&&this.channel(socket).handle(frame))return;
     if(frame.type.startsWith('ws-')){
       const browser=this.ctx.getWebSockets('local-browser').find(s=>{const a=s.deserializeAttachment() as SocketIdentity;return a.id===frame.id&&a.environmentId===identity.environmentId&&a.hostId===identity.id;});
       if(!browser)return;
-      if(frame.type==='ws-data'&&typeof frame.text==='string')browser.send(frame.text);
+      if(frame.type==='ws-data'&&typeof frame.text==='string'){
+        if(identity.protocol===LOCAL_PROTOCOL_V2||new TextEncoder().encode(frame.text).length>MAX_MUX_FRAME){browser.close(1009,'Native Mux frame limit');return;}
+        browser.send(frame.text);
+      }
       else if(frame.type==='ws-close'){this.channels.get(identity.id!)?.drop(frame.id);browser.close(1011,'Local stream ended');}return;
     }
     const p=this.pending.get(frame.id);if(!p||(p.socket.deserializeAttachment() as SocketIdentity).id!==identity.id)return;

@@ -12,6 +12,8 @@ test('fragmented Mux preserves Unicode and order across concurrent browser strea
     const large='中文🙂'.repeat(550_000);
     await Promise.all([sender.send('one',large),sender.send('one','after snapshot'),sender.send('two','another tab')]);
     assert.ok(frames>100);assert.deepEqual(delivered.one,[large,'after snapshot']);assert.deepEqual(delivered.two,['another tab']);
+    for(let index=0;index<20;index++)await sender.send('one',String(index));
+    assert.deepEqual(delivered.one?.slice(2),Array.from({length:20},(_,index)=>String(index)));
   }finally{sender.close();receiver.close();}
 });
 

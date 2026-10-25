@@ -44,7 +44,7 @@ function ConnectionSettings({t}:{t:Props['t']}):ReactNode {
     <p role="status">{t(state.state in zh?state.state as keyof typeof zh:'connecting')}</p>
     {state.endpoint&&<p>{state.endpoint}</p>}
     {remote?<p>{t('remote')}</p>:<>
-      <label style={{display:'grid',gap:8}}>{t('code')}<Input type="password" autoComplete="off" value={code} onChange={event=>setCode(event.target.value)} disabled={busy}/><span>{t('hint')}</span></label>
+      <div style={{display:'grid',gap:8}}><label htmlFor="weft-pairing-code">{t('code')}</label><Input id="weft-pairing-code" aria-describedby="weft-pairing-hint" type="password" autoComplete="off" value={code} onChange={event=>setCode(event.target.value)} disabled={busy}/><span id="weft-pairing-hint">{t('hint')}</span></div>
       <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
         <Button variant="primary" disabled={busy||!code.trim()} onClick={()=>void action('pair')}>{busy?t('busy'):t('pair')}</Button>
         <Button variant="outline" disabled={busy||!state.configured} onClick={()=>void action('reconnect')}>{t('reconnect')}</Button>

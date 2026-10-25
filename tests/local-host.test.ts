@@ -72,6 +72,7 @@ for(const protocol of ['weft-local-host/1','weft-local-host/2'])test(`${protocol
     const {token}=await(await runtime.dispatchFetch(url('anonymous',`/v1/local-hosts/${tenant}/local-wire/pair`),{method:'POST',headers:{authorization:'Bearer '+pairingKey}})).json() as {token:string};
     const response=await runtime.dispatchFetch(url('anonymous',`/v1/local-hosts/${tenant}/local-wire/connect`),{headers:{upgrade:'websocket',authorization:'Bearer '+token,'x-weft-protocol':protocol,'x-dsh-version':'0.2.1-rc.2'}});
     assert.equal(response.status,101,response.status===101?'':await response.text());const ws=response.webSocket!;ws.accept();
+    if(protocol.endsWith('/2')){const pong=new Promise<string>(resolve=>ws.addEventListener('message',event=>resolve(String(event.data)),{once:true}));ws.send('weft:ping');assert.equal(await pong,'weft:pong');}
     const bridge=Object.assign(new EventEmitter(),{readyState:1,bufferedAmount:0,send:(text:string)=>ws.send(text),terminate:()=>ws.close(),close:()=>ws.close(),ping:()=>{bridge.emit('pong');}});
     ws.addEventListener('message',event=>bridge.emit('message',Buffer.from(String(event.data)),false));ws.addEventListener('close',()=>bridge.emit('close'));
     control=new AbortController();task=runTunnel(bridge,{origin,cookie:'local-cookie=private',signal:control.signal,protocol});

@@ -48,7 +48,7 @@ export class MuxChannel {
         if(frame.message!==state.message||frame.seq!==state.seq)throw new Error('Invalid fragment acknowledgement');
         clearTimeout(state.timer);state.offset=Math.min(state.offset+CHUNK,state.bytes.length);state.seq++;
         if(state.offset===state.bytes.length){queue.shift();this.buffered-=state.bytes.length;state.resolve();if(!queue.length)this.outgoing.delete(id);}
-        queueMicrotask(()=>this.next(id));return true;
+        queueMicrotask(()=>{if(this.outgoing.get(id)===queue)this.next(id);});return true;
       }
       let state=this.incoming.get(id);
       if(!state){if(frame.seq!==0||this.incoming.size>=64)throw new Error('Missing fragment start');state={message:frame.message,seq:0,size:0,chunks:[],timer:undefined,delivering:false};this.incoming.set(id,state);}
