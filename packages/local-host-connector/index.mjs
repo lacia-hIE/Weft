@@ -26,6 +26,7 @@ export async function apply(ctx,config={}) {
     const admission=ctx.connection.admit(req);
     const reply=(status,value)=>{res.writeHead(status,{'content-type':'application/json','cache-control':'private, no-store','x-content-type-options':'nosniff'});res.end(JSON.stringify(value));};
     if('rejection' in admission){reply(admission.rejection,{error:'Unauthorized'});return;}
+    if(admission.peer.principal.kind!=='owner'){reply(403,{error:'Owner access required'});return;}
     if(req.method==='GET'){reply(200,controller.snapshot());return;}
     if(req.method!=='POST'){reply(405,{error:'Method not allowed'});return;}
     try{
