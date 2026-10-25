@@ -20,12 +20,17 @@ concurrency:
 
 jobs:
   local-host:
-    name: Published local DSH
+    name: Published local DSH (${{ matrix.dsh }})
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        dsh: ['0.2.1-rc.2', '0.2.1-rc.3']
     env:
       WEFT_LOCAL_DSH_TEST: '1'
+      WEFT_LOCAL_DSH_VERSION: ${{ matrix.dsh }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -38,7 +43,7 @@ jobs:
           name: build
       - run: tar -xzf build.tgz
       - name: Install the exact published native Host
-        run: npm install --prefix .generated/local-dsh --no-audit --no-fund @deepseek-ai/dsh@0.2.1-rc.2
+        run: npm install --prefix .generated/local-dsh --no-audit --no-fund @deepseek-ai/dsh@${{ matrix.dsh }}
       - name: Native profile package manager
         run: npm install --global pnpm@11.28.5
       - run: npx playwright install --with-deps chromium
@@ -48,7 +53,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: local-dsh-results
+          name: local-dsh-results-${{ matrix.dsh }}
           path: |
             .generated/local-dsh-native.log
             test-results

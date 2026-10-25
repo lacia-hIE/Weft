@@ -23,6 +23,7 @@ import {DurableCopySnapshots,type EnvironmentCopyConfiguration} from './environm
 import type {EnvironmentLifecycleJob} from './environment-lifecycle.ts';
 import { compileClientPlugin } from "../../client-plugins/src/compiler.ts";
 import upstream from "../../../upstream.lock.json";
+import {supportsDshVersion,SUPPORTED_DSH_VERSIONS} from '../../local-host-connector/compatibility.mjs';
 import { z } from 'zod';
 import { NativeEventHub, NativeStreamHub, type NativeWaterfallOutcome } from './native-events.ts';
 import { sessionReadPorts } from '../../native-query/src/ports.ts';
@@ -1552,7 +1553,7 @@ export class TenantDO extends DurableObject<TenantEnvironment> {
       const row=await this.environment(tenantId,environmentId);
       const stored=this.ctx.storage.sql.exec<{token_hash:string|null}>('SELECT token_hash FROM weft_local_hosts WHERE id=?',environmentId).toArray()[0];
       if(row?.kind!=='local'||row.status==='deleted'||stored?.token_hash!==digest)return new Response('Unauthorized',{status:401});
-      if(request.headers.get('x-weft-protocol')!==LOCAL_PROTOCOL||request.headers.get('x-dsh-version')!=='0.2.1-rc.2')return new Response('Incompatible local Host version',{status:409});
+      if(request.headers.get('x-weft-protocol')!==LOCAL_PROTOCOL||!supportsDshVersion(request.headers.get('x-dsh-version')))return new Response(`Incompatible local Host version; supported DSH: ${SUPPORTED_DSH_VERSIONS.join(', ')}`,{status:409});
       return this.localRelay.acceptHost(environmentId);
     });
   }

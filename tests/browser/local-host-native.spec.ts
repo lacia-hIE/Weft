@@ -17,7 +17,8 @@ test('published local DSH runs native Files, Git, PTY and restores the workbench
   await expect(page.getByRole('button',{name:'Plugins',exact:true})).toBeVisible({timeout:60_000});
   expect(page.url()).toContain('/local/web/');
   const release=await page.evaluate(()=>(globalThis as {__DSH_BOOT__?:{release:{version:string}}}).__DSH_BOOT__?.release);
-  expect(release?.version).toBe('0.2.1-rc.2');
+  expect(process.env.WEFT_LOCAL_DSH_VERSION).toBeTruthy();
+  expect(release?.version).toBe(process.env.WEFT_LOCAL_DSH_VERSION);
   await page.getByRole('button',{name:'Open right sidebar',exact:true}).click();
   await page.getByRole('button',{name:/New terminal/}).first().click();
   const screen=page.locator('.xterm');await expect(screen).toBeVisible();await screen.click();

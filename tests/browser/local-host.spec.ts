@@ -1,11 +1,17 @@
 import {test,expect} from '@playwright/test';
-test('local environment uses native controls for pairing and safe removal',async({page})=>{
+import {LOCAL_HOST_BUNDLE} from '../../packages/local-host-connector/compatibility.mjs';
+test('local environment uses native controls for pairing and safe removal',async({page,request})=>{
   await page.goto('/');await page.getByRole('button',{name:'连接本地 DSH',exact:true}).click();
+  await expect(page.getByRole('dialog')).toContainText('0.2.1-rc.2、0.2.1-rc.3');
   await page.getByLabel('环境名称',{exact:true}).fill('My local computer');
   await page.getByRole('button',{name:'生成连接配置',exact:true}).click();
   await expect(page.getByRole('button',{name:'下载连接配置',exact:true})).toBeVisible();
   const downloadPromise=page.waitForEvent('download');await page.getByRole('button',{name:'下载连接配置',exact:true}).click();
   expect((await downloadPromise).suggestedFilename()).toBe('weft-connection.json');
+  const bundle=page.getByRole('link',{name:'下载本地 Host 插件',exact:true});
+  await expect(bundle).toHaveAttribute('href','/downloads/'+LOCAL_HOST_BUNDLE);
+  const archive=await request.get((await bundle.getAttribute('href'))!);expect(archive.status()).toBe(200);
+  expect([...((await archive.body()).subarray(0,2))]).toEqual([0x1f,0x8b]);
   await page.getByRole('button',{name:'关闭',exact:true}).last().click();
   const card=page.locator('.home-card-frame').filter({hasText:'My local computer'});
   await expect(card).toContainText('等待配对');await expect(card.getByRole('button',{name:'复制',exact:true})).toHaveCount(0);

@@ -2,14 +2,15 @@ import {readFile,writeFile,rename,mkdir,chmod} from 'node:fs/promises';
 import {dirname,join} from 'node:path';
 import {homedir} from 'node:os';
 import {connectLocalHost} from './transport.mjs';
+import {supportsDshVersion,SUPPORTED_DSH_VERSIONS} from './compatibility.mjs';
 export const name='weft-local-host';
 export const inject=['webServer','connection','clientModules'];
 /** This is a normal native Host plugin. It never implements a second Agent. */
 export async function apply(ctx,config={}) {
+  const version=ctx.clientModules.graph().release.version;
+  if(!supportsDshVersion(version))throw new Error(`Weft local Host supports DSH ${SUPPORTED_DSH_VERSIONS.join(', ')}; received ${version}`);
   const file=config.connectionFile??process.env.WEFT_LOCAL_HOST_CONFIG??join(homedir(),'.dsh','weft-connection.json');
   let settings;try{settings=JSON.parse(await readFile(file,'utf8'));}catch{throw new Error('Save your Weft connection file and set WEFT_LOCAL_HOST_CONFIG before enabling this plugin');}
-  const version=ctx.clientModules.graph().release.version;
-  if(version!=='0.2.1-rc.2')throw new Error('Weft local Host requires DSH 0.2.1-rc.2');
   const origin=ctx.webServer.getOrigin();
   const url=new URL(origin);if(!['127.0.0.1','localhost','[::1]'].includes(url.hostname))throw new Error('Use a loopback DSH web listener for the Weft connector');
   const save=async value=>{

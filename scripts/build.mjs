@@ -15,6 +15,7 @@ import {nativeWorkflowPlatform} from './native-workflow-platform.mjs';
 import {nativeEnvironmentPlatform} from './native-environment-platform.mjs';
 import {nativeChangesPlatform} from './native-changes-platform.mjs';
 import { execFileSync } from 'node:child_process';
+import {LOCAL_HOST_BUNDLE} from '../packages/local-host-connector/compatibility.mjs';
 
 // The deployed configuration must name the image built from the current workspace container Dockerfile.
 execFileSync(process.execPath, [resolve('scripts/workspace-container.mjs'), '--check'], {stdio: 'inherit'});
@@ -134,7 +135,7 @@ for (const [path, asset] of Object.entries(assets)) {
 }
 const paths = Object.keys(assets);
 execFileSync(process.execPath,[resolve('scripts/package-local-host.mjs')],{stdio:'inherit'});
-paths.push('/downloads/weft-dsh-local-host-0.1.0.tgz');
+paths.push('/downloads/'+LOCAL_HOST_BUNDLE);
 const revisions = {};
 if (existsSync('.generated/official-web-assets/harness/boot.json')) {
   const graph = JSON.parse(readFileSync('.generated/official-web-assets/harness/boot.json', 'utf8'));

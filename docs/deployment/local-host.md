@@ -1,9 +1,16 @@
 # 使用本地 DSH 环境
 
-本地模式支持 **DSH 0.2.1-rc.2**。本机运行原版 `dsh web`，安装
+本地模式支持 **DSH 0.2.1-rc.2、0.2.1-rc.3**。本机运行原版 `dsh web`，安装
 `@weft/dsh-local-host` Host 组合包；Weft 提供环境目录、设备配对与出站连接中继。
 会话、预设、模型凭据、工作区、Git、终端和插件均由本地 Host 管理。
 第一版接入原版 `dsh web` profile；仅有 Desktop IPC 的宿主暂不支持。
+
+截至 2026-10-25，最新发布版为 `0.2.1-rc.3`（npm `next`），npm `latest`
+仍为 `0.2.1-rc.2`。要使用 rc.3，执行 `npm install -g @deepseek-ai/dsh@0.2.1-rc.3`。
+已安装连接插件 0.1.0 的用户需先下载并升级到 **0.1.1**，再升级本地 DSH；
+已有配对配置及本地数据可以保留。插件安装器、Host 和中继使用同一份明确的
+版本清单，未审查的后续版本会被拒绝。CI 分别安装这两个 npm 原版验证原生
+文件、Git、PTY 和刷新恢复。云端运行时仍使用 `upstream.lock.json` 的固定版本。
 
 ## 部署者配置 Cloudflare Access
 

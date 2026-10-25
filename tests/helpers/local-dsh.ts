@@ -5,6 +5,7 @@ import {spawn,execFileSync,type ChildProcess} from 'node:child_process';
 import {createServer} from 'node:net';
 import type {Miniflare} from 'miniflare';
 import {tenantId,url} from './miniflare.ts';
+import {LOCAL_HOST_BUNDLE} from '../../packages/local-host-connector/compatibility.mjs';
 /** CI-only fixture: start the published, unmodified DSH with our real plugin. */
 export async function startLocalDsh(runtime:Miniflare,certificate:string):Promise<{project:string;base:string;stop:()=>Promise<void>}> {
   const root=mkdtempSync(join(tmpdir(),'weft-local-dsh-')),project=join(root,'project');mkdirSync(project);
@@ -20,7 +21,7 @@ export async function startLocalDsh(runtime:Miniflare,certificate:string):Promis
   const executable=resolve('.generated/local-dsh/node_modules/.bin/dsh');
   const environment={...process.env,DSH_HOME:join(root,'home'),DSH_AGENTS_HOME:join(root,'agents'),WEFT_LOCAL_HOST_CONFIG:file,NODE_EXTRA_CA_CERTS:certificate};
   const output=openSync('.generated/local-dsh-native.log','w');
-  try{execFileSync(executable,['plugin','--profile','web','add',resolve('dist/public/downloads/weft-dsh-local-host-0.1.0.tgz')],{cwd:project,env:environment,stdio:['ignore',output,output],timeout:120_000});}finally{closeSync(output);}
+  try{execFileSync(executable,['plugin','--profile','web','add',resolve('dist/public/downloads',LOCAL_HOST_BUNDLE)],{cwd:project,env:environment,stdio:['ignore',output,output],timeout:120_000});}finally{closeSync(output);}
   // Retain useful diagnostics without uploading native launch credentials.
   let trace=readFileSync('.generated/local-dsh-native.log','utf8');
   const log=(chunk:Buffer)=>{trace=(trace+chunk.toString()).slice(-2*1024*1024);writeFileSync('.generated/local-dsh-native.log',trace.replace(/([?&]token=)[^\s\x1b"<>]+/g,'$1[redacted]'),{mode:0o600});};

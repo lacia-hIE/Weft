@@ -2,6 +2,15 @@
 
 当前目标为 **DSH `0.2.1-rc.2`**，提交 `687f282e8625c6b8d11ff58211a90524be2e4317`。这是固定的适配基线，不随 npm `latest` 或上游分支自动更新。
 
+本地 Host 连接插件独立支持 `0.2.1-rc.2` 与最新发布的 `0.2.1-rc.3`
+（提交 `1f81c047fc48fa190a683e469daa699857e9afe8`）。rc.2 → rc.3 的
+WebServer、Client Modules、Connection、Session 存储格式和 Host Remote 协议实现
+未变；Client Session 接口仅调整注释。rc.3 的原版客户端包含插件入口菜单与
+空白会话草稿复用修复，整体由本机 Host 提供，不混入云端 rc.2 的 Boot Graph。
+连接插件的 `package.json` 中 `engines.dsh` 是安装器、Host、中继及 UI 共同使用的
+版本清单；CI 对每个支持版本启动 npm 发布的原版，验证真实文件、Git、PTY 与
+刷新恢复。此清单不放宽云端保留 revision 的来源检查，也不声明兼容未知后续版本。
+
 upstream.lock.json 固定 commit。服务端插件、模型协议、浏览器内核、UI 控件与样式从同一份源码构建。prepare-upstream.mjs 保留用户现有 checkout，必要时使用独立固定副本；所有公共及内部导入均指向同一副本。管理的副本若版本不匹配或有 tracked 修改则停止。升级需显式审查兼容契约。
 
 | 适配边界 | 职责 |

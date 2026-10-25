@@ -1,10 +1,16 @@
 # Weft local Host connector
 
-A native DSH Host plugin for **DSH 0.2.1-rc.2**, installed through the original
+A native DSH Host plugin for **DSH 0.2.1-rc.2 and 0.2.1-rc.3**, installed through the original
 `dsh.bundle.patch` mechanism. Run `dsh web` with its loopback listener. The
 connector opens an outbound TLS WebSocket to your Weft deployment; no inbound
 port or local certificate is needed with the default HTTP loopback listener.
 Install in the `dsh web` profile; a Desktop-only IPC Host is not supported in V1.
+
+Connector 0.1.1 supports both releases; upgrade an existing 0.1.0 connector before
+upgrading DSH to rc.3. Existing pairing files can be kept. As of 2026-10-25 the
+newest published release is rc.3 (`next`); npm `latest` still resolves to rc.2.
+Install rc.3 explicitly with `npm install -g @deepseek-ai/dsh@0.2.1-rc.3`.
+Untested releases remain rejected by both the native installer and the relay.
 
 1. In Weft, choose **连接本地 DSH** and generate a connection file.
 2. Save it as `~/.dsh/weft-connection.json` with permissions `0600`. Alternatively
