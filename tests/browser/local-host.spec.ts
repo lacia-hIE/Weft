@@ -1,11 +1,16 @@
 import {test,expect} from '@playwright/test';
 import {LOCAL_HOST_BUNDLE} from '../../packages/local-host-connector/compatibility.mjs';
-test('local environment uses native controls for pairing and safe removal',async({page,request})=>{
+test('local environment uses native controls for pairing and safe removal',async({page,request,context})=>{
+  await context.grantPermissions(['clipboard-read','clipboard-write']);
   await page.goto('/');await page.getByRole('button',{name:'连接本地 DSH',exact:true}).click();
   await expect(page.getByRole('dialog')).toContainText('0.2.1-rc.2、0.2.1-rc.3');
   await page.getByLabel('环境名称',{exact:true}).fill('My local computer');
   await page.getByRole('button',{name:'生成连接配置',exact:true}).click();
   await expect(page.getByRole('button',{name:'下载连接配置',exact:true})).toBeVisible();
+  await page.getByRole('button',{name:'复制配对码',exact:true}).click();
+  await expect(page.getByRole('button',{name:'已复制配对码',exact:true})).toBeVisible();
+  const code=await page.evaluate(()=>navigator.clipboard.readText());
+  const pairing=JSON.parse(Buffer.from(code,'base64url').toString('utf8'));expect(pairing.pairingKey).toMatch(/^[a-f0-9]{64}$/);expect(pairing.endpoint).toContain('/v1/local-hosts/');
   const downloadPromise=page.waitForEvent('download');await page.getByRole('button',{name:'下载连接配置',exact:true}).click();
   expect((await downloadPromise).suggestedFilename()).toBe('weft-connection.json');
   const bundle=page.getByRole('link',{name:'下载本地 Host 插件',exact:true});
@@ -21,4 +26,17 @@ test('local environment uses native controls for pairing and safe removal',async
   await expect(page.getByRole('dialog')).toContainText('本机的 DSH 数据和进程保留');
   await page.getByLabel('输入环境名称确认删除').fill('My local computer');
   await page.getByRole('button',{name:'删除环境',exact:true}).click();await expect(card).toHaveCount(0);
+});
+
+test('the home catalogue pauses polling while hidden and refreshes when visible again',async({page,request})=>{
+  const {tenantId}=await(await request.get('/v1/me')).json();
+  expect((await request.post(`/v1/tenants/${tenantId}/environments`,{data:{id:'poll-local-'+crypto.randomUUID().slice(0,8),name:'Polling local',kind:'local'}})).status()).toBe(201);
+  await page.clock.install();let requests=0;
+  page.on('request',request=>{if(request.method()==='GET'&&new URL(request.url()).pathname===`/v1/tenants/${tenantId}/environments`)requests++;});
+  await page.goto('/');await expect(page.getByText('Polling local',{exact:true})).toBeVisible();
+  await page.clock.fastForward(6000);await expect.poll(()=>requests).toBeGreaterThan(1);
+  await page.evaluate(()=>{Object.defineProperty(document,'hidden',{value:true,configurable:true});document.dispatchEvent(new Event('visibilitychange'));});
+  const before=requests;await page.clock.fastForward(30_000);expect(requests).toBe(before);
+  await page.evaluate(()=>{Object.defineProperty(document,'hidden',{value:false,configurable:true});document.dispatchEvent(new Event('visibilitychange'));});
+  await expect.poll(()=>requests).toBeGreaterThan(before);
 });

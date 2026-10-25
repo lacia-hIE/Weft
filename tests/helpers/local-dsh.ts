@@ -26,7 +26,7 @@ export async function startLocalDsh(runtime:Miniflare,certificate:string):Promis
   // Retain useful diagnostics without uploading native launch credentials.
   let trace=readFileSync('.generated/local-dsh-native.log','utf8');
   const log=(chunk:Buffer)=>{trace=(trace+chunk.toString()).slice(-2*1024*1024);writeFileSync('.generated/local-dsh-native.log',trace.replace(/([?&]token=)[^\s\x1b"<>]+/g,'$1[redacted]'),{mode:0o600});};
-  let child:ChildProcess,failed:Error|undefined;
+  let child!:ChildProcess,failed:Error|undefined;
   const launch=()=>{failed=undefined;child=spawn(executable,['--profile','web','--no-open','--port',String(port)],{cwd:project,env:environment,stdio:['ignore','pipe','pipe']});child.stdout?.on('data',log);child.stderr?.on('data',log);child.on('error',error=>{failed=error;});};
   launch();
   const stop=async()=>{if(child.exitCode!==null)return;child.kill('SIGTERM');await Promise.race([new Promise<void>(resolve=>child.once('exit',()=>resolve())),new Promise<void>(resolve=>setTimeout(()=>{child.kill('SIGKILL');resolve();},5000))]);};

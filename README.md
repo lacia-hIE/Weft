@@ -12,7 +12,7 @@ Weft 将原版 Agent Loop、Web UI 与 Cordis 插件体系接入 Cloudflare Work
 
 DeepSeek Harness 提供了 Agent 的执行逻辑、交互界面和插件生态。Weft 负责把这些能力接入云端运行环境：身份认证、持久存储、工作区文件、容器进程，以及插件的构建与授权。
 
-项目优先复用原版服务和界面，平台适配集中在本仓库中。当前适配 **DSH `0.2.1-rc.2`**，由 [`upstream.lock.json`](upstream.lock.json) 固定提交，构建时获取并校验；不需要手动修改上游源码。原版前端、Remote ABI、插件与运行时从同一份源码构建，升级边界见[兼容性说明](docs/architecture/upstream-compatibility.md)。
+项目优先复用原版服务和界面，平台适配集中在本仓库中。当前适配 **DSH `0.2.1-rc.3`**，由 [`upstream.lock.json`](upstream.lock.json) 固定提交，构建时获取并校验；不需要手动修改上游源码。原版前端、Remote ABI、插件与运行时从同一份源码构建，升级边界见[兼容性说明](docs/architecture/upstream-compatibility.md)。
 
 Weft 适合希望自行托管 Web 编程助手、通过浏览器访问远程工作区，或在同一部署中维护多个独立 Agent 环境的开发者。
 
