@@ -29,7 +29,12 @@ export async function startLocalDsh(runtime:Miniflare,certificate:string):Promis
   let child!:ChildProcess,failed:Error|undefined;
   const launch=()=>{failed=undefined;child=spawn(executable,['--profile','web','--no-open','--port',String(port)],{cwd:project,env:environment,stdio:['ignore','pipe','pipe']});child.stdout?.on('data',log);child.stderr?.on('data',log);child.on('error',error=>{failed=error;});};
   launch();
-  const stop=async()=>{if(child.exitCode!==null)return;child.kill('SIGTERM');await Promise.race([new Promise<void>(resolve=>child.once('exit',()=>resolve())),new Promise<void>(resolve=>setTimeout(()=>{child.kill('SIGKILL');resolve();},5000))]);};
+  const stop=async()=>{
+    const target=child;if(target.exitCode!==null||target.signalCode!==null)return;
+    let timer:ReturnType<typeof setTimeout>|undefined;target.kill('SIGTERM');
+    try{await Promise.race([new Promise<void>(resolve=>target.once('exit',()=>resolve())),new Promise<void>(resolve=>{timer=setTimeout(()=>{target.kill('SIGKILL');resolve();},5000);})]);}
+    finally{clearTimeout(timer);}
+  };
   const restart=async()=>{await stop();launch();for(let attempt=0;attempt<180;attempt++){if(failed||child.exitCode!==null)throw new Error('Native restart failed');const state=await(await runtime.dispatchFetch(url('alpha',base))).json() as {local?:{online:boolean}};if(state.local?.online)return;await new Promise(resolve=>setTimeout(resolve,500));}throw new Error('Native Host did not reconnect');};
   try{
     for(let attempt=0;attempt<180;attempt++){
