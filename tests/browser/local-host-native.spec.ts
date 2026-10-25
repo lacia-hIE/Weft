@@ -1,4 +1,5 @@
 import {test,expect} from '@playwright/test';
+import {readFile} from 'node:fs/promises';
 test('published local DSH pairs in native settings, runs Files, Git and PTY and recovers through Weft',async({page,request,context},testInfo)=>{
   test.setTimeout(180_000);
   test.skip(process.env.WEFT_LOCAL_DSH_TEST!=='1','Runs in the dedicated native DSH CI job');
@@ -53,5 +54,6 @@ test('published local DSH pairs in native settings, runs Files, Git and PTY and 
   await page.reload();
   await expect(page.getByText('LOCAL_CHANGED_FILE',{exact:true})).toBeVisible({timeout:45_000});
   const sessions=await rpc('session/list',{_request:{}});expect(sessions.items.some((row:{sessionId:string})=>row.sessionId===sessionId)).toBe(true);
+  expect((await readFile(project+'/notes.md','utf8')).match(/LOCAL_CHANGED_FILE/g)).toHaveLength(1);
   await page.screenshot({path:testInfo.outputPath('local-dsh-native.png')});expect(errors).toEqual([]);
 });

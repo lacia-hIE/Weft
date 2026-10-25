@@ -11,7 +11,9 @@ test('rc.3 native More menu creates an unsent plugin draft and New Session resto
   await expect(page.getByText('Tenant: '+tenantId,{exact:true})).toBeVisible({timeout:30_000});
   const older=await page.locator('[data-conversation-content]').getAttribute('data-conversation-session');expect(older).toBeTruthy();
   const newSession=page.getByRole('button',{name:'New session',exact:true}).filter({hasText:'New Session'}).last();
-  await newSession.click();
+  const opening=page.waitForResponse(response=>response.request().method()==='POST'&&new URL(response.url()).pathname.endsWith('/native/api/session/create'));
+  await newSession.click();const blank=await(await opening).json();expect(blank.result.ok).toBe(true);
+  await expect(page.locator('[data-conversation-content]')).toHaveAttribute('data-conversation-session',blank.result.value.sessionId);
   await compose(page,'KEEP_UNSENT_STANDARD_DRAFT');
   await page.locator(`[data-row-key="session:${older}"]`).click();
   await expect(page.getByText('COMPLETED_CONTEXT',{exact:true})).toBeVisible();
