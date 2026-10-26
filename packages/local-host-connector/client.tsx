@@ -56,7 +56,7 @@ function ConnectionSettings({t}:{t:Props['t']}):ReactNode {
       <p id={id+'-saved'} className="weft-connection-note">{t('saved')}</p>
       <div className="weft-connection-actions">
         <Button type="submit" variant="primary" disabled={busy||!code.trim()}>{busy&&pendingAction==='pair'?t('busy'):t('pair')}</Button>
-        {state.configured&&<div className="weft-connection-secondary"><Button variant="outline" disabled={busy} onClick={()=>void action('reconnect')}>{busy&&pendingAction==='reconnect'?t('busy'):t('reconnect')}</Button><Button variant="ghost" disabled={busy||state.state==='stopped'} onClick={()=>void action('disconnect')}>{busy&&pendingAction==='disconnect'?t('busy'):t('stop')}</Button></div>}
+        {state.configured&&<div className="weft-connection-secondary"><Button size="sm" variant="outline" disabled={busy} onClick={()=>void action('reconnect')}>{busy&&pendingAction==='reconnect'?t('busy'):t('reconnect')}</Button><Button size="sm" variant="ghost" disabled={busy||state.state==='stopped'} onClick={()=>void action('disconnect')}>{busy&&pendingAction==='disconnect'?t('busy'):t('stop')}</Button></div>}
       </div>
     </form>}
     {error&&<p className="weft-connection-error" role="alert">{error}</p>}

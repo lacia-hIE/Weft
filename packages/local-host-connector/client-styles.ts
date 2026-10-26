@@ -27,6 +27,7 @@ export const connectionStyles=`
 [data-weft-local-connection] .weft-connection-input { box-sizing: border-box; width: 100%; min-width: 0; margin-top: 4px; }
 [data-weft-local-connection] .weft-connection-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding-top: 4px; }
 [data-weft-local-connection] .weft-connection-secondary { display: flex; flex-wrap: wrap; gap: 8px; }
+[data-weft-local-connection] .weft-connection-secondary > button { white-space: nowrap; }
 [data-weft-local-connection] .weft-connection-note { font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary); }
 [data-weft-local-connection] .weft-connection-error { font-size: 12px; line-height: 18px; color: var(--dsw-alias-state-error-primary); }
 @media (max-width: 600px) {
