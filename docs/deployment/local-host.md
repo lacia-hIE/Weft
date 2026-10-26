@@ -1,7 +1,7 @@
 # 使用本地 DSH 环境
 
 本地模式支持 **DSH 0.2.1-rc.2、0.2.1-rc.3**。本机运行原版 `dsh web`，安装
-`@weft/dsh-local-host` Host 组合包；Weft 提供环境目录、设备配对与出站连接中继。
+`@laciaproject/dsh-local-host` Host 组合包；Weft 提供环境目录、设备配对与出站连接中继。
 会话、预设、模型凭据、工作区、Git、终端和插件均由本地 Host 管理。
 第一版接入原版 `dsh web` profile；仅有 Desktop IPC 的宿主暂不支持。
 
@@ -52,8 +52,10 @@ Cloudflare 是 TLS 终点，中继会处理传输内容；本版不提供端到�
 ## 用户安装
 
 1. 首页选择「连接本地 DSH」，输入名称并生成配置，点击「复制配对码」。
-2. 下载页面提供的 `.tgz` 插件包。在本地原版 DSH「插件」页中，以这个文件的
-   绝对路径安装组合包。它原生声明 `dsh.bundle.patch`，不需要 Weft 专用安装器。
+2. 在本地原版 DSH「插件」页添加 npm 包 `@laciaproject/dsh-local-host`，
+   或执行 `dsh plugin --profile web add @laciaproject/dsh-local-host@0.2.0`。也可下载
+   页面提供的 `.tgz`，以其绝对路径安装。它原生声明 `dsh.bundle.patch`。
+   已装过旧名 `@weft/dsh-local-host` 的用户，应先移除旧包再安装新包；配对文件保留。
 3. 在本机「插件 → Weft 本地连接」粘贴配对码并点击「配对并连接」，无需重启。
    插件自己显示连接状态、重连和停止按钮，版本不兼容时提示升级，授权撤销时
    提示重新配对，网络中断时自动退避重试。经 Weft 打开的该页只显示状态，连接
@@ -86,3 +88,5 @@ Weft 首页的「断开连接」撤销授权，需要重新配对。停止本地
 
 自定义根路径、硬编码站点绝对路径、外部 origin 和客户端 HMR 路由暂不代理。
 这类第三方插件需支持挂载路径后接入；安装后的插件和 DSH 升级需重新校验版本。
+
+发布者使用固定仓库、工作流及环境的 npm OIDC 发布，详见 [npm 发布](npm-publishing.md)。

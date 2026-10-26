@@ -1,4 +1,4 @@
 - insert:
     - id: weft-local-host
-      name: '@weft/dsh-local-host'
+      name: '@laciaproject/dsh-local-host'
       config: {}

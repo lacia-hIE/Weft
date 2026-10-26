@@ -13,8 +13,9 @@ Install rc.3 explicitly with `npm install -g @deepseek-ai/dsh@0.2.1-rc.3`.
 Untested releases remain rejected by both the native installer and the relay.
 
 1. In Weft, choose **连接本地 DSH**, generate a connection and copy its pairing code.
-2. Download the connector tarball and install its absolute path using the native
-   DSH Plugins page.
+2. Install `@laciaproject/dsh-local-host` from the native DSH Plugins page.
+   The downloadable tarball remains available for offline installation by absolute path.
+   CLI: `dsh plugin --profile web add @laciaproject/dsh-local-host@0.2.0`.
 3. Open **Plugins → Weft local connection** on the local DSH page, paste the code
    and select **Pair and connect**. No restart is needed. You can also retain the
    connection file at `~/.dsh/weft-connection.json` (`0600`), or the absolute path
@@ -48,3 +49,10 @@ Protocol 2 carries native messages up to 8 MiB in acknowledged 32 KiB fragments,
 with a 16 MiB aggregate buffer budget per device direction. Slow or overflowing
 streams close individually; interrupted messages are discarded. The server also
 accepts protocol 1 from older connectors. HTTP file bodies remain streamed.
+
+Releases use the fixed GitHub repository `lacia-hIE/Weft`, workflow
+`publish-local-host.yml`, and environment `npm-production` on `main`. The
+workflow publishes the same archive that passed CI, using npm trusted publishing
+with OIDC and provenance. See the repository’s
+[`docs/deployment/npm-publishing.md`](https://github.com/lacia-hIE/Weft/blob/main/docs/deployment/npm-publishing.md)
+for bootstrap and trusted publisher setup.

@@ -1,0 +1,102 @@
+name: Publish local Host connector
+run-name: Publish local Host connector ${{ inputs.version }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact version already present in package.json and tested on ci
+        required: true
+        type: string
+      ci_run:
+        description: Successful Test run ID (empty selects a successful run for this commit)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-local-host-production
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: github.repository == 'lacia-hIE/Weft' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      tag: ${{ steps.package.outputs.tag }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22.21.1'
+      - name: Require complete CI for this exact commit
+        id: ci
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_CI_RUN: ${{ inputs.ci_run }}
+        run: node scripts/local-host-release.mjs ci
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: build
+          repository: lacia-hIE/Weft
+          run-id: ${{ steps.ci.outputs.run_id }}
+          github-token: ${{ github.token }}
+          path: .release/build
+      - name: Inspect the exact archive tested by the native Hosts
+        id: package
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_CI_RUN: ${{ steps.ci.outputs.run_id }}
+        run: node scripts/local-host-release.mjs prepare .release/build/build.tgz .release/npm
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: npm-local-host
+          path: .release/npm
+          retention-days: 7
+          if-no-files-found: error
+
+  publish:
+    needs: prepare
+    if: github.repository == 'lacia-hIE/Weft' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: npm-production
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22.21.1'
+      - name: Install the pinned npm CLI with trusted publishing support
+        run: npm install --global npm@11.21.1 --ignore-scripts --no-audit --no-fund
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: npm-local-host
+          path: .release/npm
+      - name: Verify the handoff checksum and commit
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import {readFileSync} from 'node:fs';
+          import {createHash} from 'node:crypto';
+          const release=JSON.parse(readFileSync('.release/npm/release.json','utf8'));
+          assert.equal(release.sourceSha,process.env.GITHUB_SHA);
+          assert.equal(release.name,'@laciaproject/dsh-local-host');
+          assert.equal(release.version,process.env.RELEASE_VERSION);
+          assert.equal(createHash('sha256').update(readFileSync('.release/npm/package.tgz')).digest('hex'),release.sha256);
+          JS
+      - name: Publish with the repository and environment OIDC identity
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+        run: npm publish .release/npm/package.tgz --access public --registry=https://registry.npmjs.org/ --provenance --ignore-scripts --tag "$RELEASE_TAG"
