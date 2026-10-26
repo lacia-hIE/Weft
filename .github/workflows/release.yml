@@ -1,0 +1,65 @@
+name: Release Weft
+run-name: Release Weft ${{ inputs.version }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact project version already committed and tested on ci
+        required: true
+        type: string
+      ci_run:
+        description: Successful Test run ID (empty selects a run for this exact commit)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: weft-project-release
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22.21.1'
+      - name: Check version, notes and complete CI for the exact main commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_CI_RUN: ${{ inputs.ci_run }}
+        run: node scripts/project-release.mjs verify
+
+  publish:
+    needs: verify
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22.21.1'
+      - name: Recheck CI, create an annotated tag and publish committed release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_CI_RUN: ${{ inputs.ci_run }}
+        run: node scripts/project-release.mjs publish

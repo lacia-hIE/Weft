@@ -1,0 +1,43 @@
+name: Bug report / 问题反馈
+description: Report a reproducible problem / 反馈可以复现的问题
+body:
+  - type: markdown
+    attributes:
+      value: "English / 中文均可。Do not include credentials, Access assertions, cookies or user data. Report security issues privately through SECURITY.md."
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit / 版本或提交
+      description: Include DSH and connector versions for local Host issues.
+    validations:
+      required: true
+  - type: dropdown
+    id: runtime
+    attributes:
+      label: Runtime / 运行环境
+      options:
+        - Cloud — Auto / 云端自动
+        - Cloud — Worker only / 仅 Worker
+        - Cloud — Always container / 始终容器
+        - Local DSH Host / 本地连接
+        - Development / 开发环境
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce / 复现步骤
+      description: Include the smallest example and browser/OS details where relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and actual behavior / 预期与实际行为
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Redacted logs or screenshots / 脱敏日志或截图
+      description: Remove secrets and private paths before sharing.

@@ -1,6 +1,6 @@
 {
   "name": "weft",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -125,5 +125,13 @@
     "wrangler": "4.151.1"
   },
   "description": "DeepSeek Harness on Cloudflare Workers, Durable Objects and Containers",
-  "license": "MIT"
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lacia-hIE/Weft.git"
+  },
+  "homepage": "https://github.com/lacia-hIE/Weft#readme",
+  "bugs": {
+    "url": "https://github.com/lacia-hIE/Weft/issues"
+  }
 }

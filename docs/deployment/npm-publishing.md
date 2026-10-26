@@ -53,3 +53,7 @@ npm 当前要求配置可信发布的包已经存在，且维护者拥有包写�
 CI build artifact 默认只保留一天，过期需在同一 `ci` 提交重新运行 Test。已存在的 npm 版本不能覆盖，不会自动递增版本或忽略发布失败。
 
 源码开源 fork 若需要自行发布，需同时修改包名、repository 元数据、工作流和脚本中的固定仓库，并在自己的 npm 包上重新绑定可信发布。原仓库的 npm 信任不授予 fork。
+
+## Git Tag
+
+连接插件 Tag 独立于 Weft 项目版本，格式为 `dsh-local-host-vX.Y.Z`。确认 npm 发布成功后，在实际发布的源码 SHA 登记注释 Tag；不要将插件版本写成项目的 `vX.Y.Z`。Tag 本身不触发 npm 发布，可信发布仍从固定仓库的 main 手动启动。具体命令见[发布规则](../releases.md#release-the-local-connector)。

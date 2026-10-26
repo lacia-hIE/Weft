@@ -21,3 +21,6 @@ deepseek-harness/
 
 # Trusted upstream patch engine generated only by the CI build.
 apps/plugin-builder/patch.mjs
+
+# Temporary release handoff artifacts.
+.release/

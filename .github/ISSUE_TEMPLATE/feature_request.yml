@@ -1,0 +1,16 @@
+name: Feature request / 功能建议
+description: Describe a use case and desired behavior / 描述使用场景与期望行为
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case / 问题或使用场景
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Desired behavior / 期望行为
+      description: Mention native DSH behavior, plugin boundaries and alternatives if relevant.
+    validations:
+      required: true

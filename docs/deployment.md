@@ -2,6 +2,16 @@
 
 本文面向独立部署者。使用仓库锁定的 `cf`、Node.js 22.19+ 与 npm；命令通过 `npx cf` 调用已安装版本。Cloudflare 账号需具备项目使用的 Workers、SQLite Durable Objects、D1、R2、Worker Loader、Images、Workers AI 和 Containers 能力。`AI` binding 专用于文档转 Markdown，不替代用户的模型提供商配置。认证通过 Cloudflare Access 配置，模型凭据由用户在每个环境的 Settings → Models 保存。
 
+## Deploy to Cloudflare
+
+Cloudflare 提供官方 [Deploy to Cloudflare 按钮](https://developers.cloudflare.com/workers/platform/deploy-buttons/)，可复制公开 Git 仓库、收集配置并自动创建受支持的绑定资源。官方文档明确列出多 Worker 项目限制：多个应用不能通过同一按钮一起部署。
+
+**当前 Weft 尚不支持完整的一键初始化。** 本项目使用 `cf` 生成 Build Output 和自定义发布脚本，依次部署私有 UI Worker 与主 Worker；根 Wrangler 配置不直接列出全部资源。Access 应用及策略由部署者创建，两份容器镜像须经过 CI 验证并发布到自己的账号。官方按钮本身不会完成这些步骤，因此 README 暂不提供会误导用户的一键部署按钮。
+
+首次部署请按下文准备资源。完成后，使用第 6 节的 Workers Builds 配置即可自动部署后续更新。未来接入一键初始化时，需要先提供可重复执行的资源初始化流程，安全收集 Access / 域名配置、发布已验证镜像，并协调两个 Worker；所有私有值仍保留在部署者自己的账号中。
+
+Cloudflare offers a deployment button, but Weft's complete setup is not supported yet: two Workers, separately managed Access policy and verified private container images require additional initialization. Follow this guide for the first deployment, then enable Workers Builds for automatic updates. The repository currently does not advertise a working one-click deployment button.
+
 ## 1. 准备账号、域名和 Access
 
 安装依赖并登录自己的账号：
