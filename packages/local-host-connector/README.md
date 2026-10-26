@@ -16,12 +16,15 @@ Untested releases remain rejected by both the native installer and the relay.
 2. Install `@laciaproject/dsh-local-host` from the native DSH Plugins page.
    Select **Enable now** when installation completes.
    The downloadable tarball remains available for offline installation by absolute path.
-   CLI: `dsh plugin --profile web add @laciaproject/dsh-local-host@0.2.2`.
-3. Open **Plugins → Weft local connection** on the local DSH page, paste the code
+   CLI: `dsh plugin --profile web add @laciaproject/dsh-local-host@0.2.3`.
+3. Open **Plugins → @laciaproject/dsh-local-host** on the local DSH page, paste the code
    and select **Save and connect**. The plugin saves settings on this computer;
    no JSON download, manual file editing or restart is needed. Settings survive
    a DSH restart. Existing files at `~/.dsh/weft-connection.json` (`0600`), or the
    absolute path in `WEFT_LOCAL_HOST_CONFIG`, remain supported.
+   The pairing form is embedded in the installed package's detail page and its
+   component configuration page through native `plugins.bundle.config` and
+   `plugins.row.config` slots.
 4. Return to Weft. The environment becomes available when DSH connects.
 
 Older DSH versions, including `0.1.7-rc.2`, must be upgraded first:

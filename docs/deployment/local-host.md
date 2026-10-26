@@ -55,10 +55,11 @@ Cloudflare 是 TLS 终点，中继会处理传输内容；本版不提供端到�
    `npm install -g @deepseek-ai/dsh@0.2.1-rc.3`，然后重新启动 DSH。
    在 Weft 首页选择「连接本地 DSH」，输入名称并点击「生成配对码」和「复制配对码」。
 2. 在本地原版 DSH「插件」页添加 npm 包 `@laciaproject/dsh-local-host`，
-   或执行 `dsh plugin --profile web add @laciaproject/dsh-local-host@0.2.2`。也可下载
+   或执行 `dsh plugin --profile web add @laciaproject/dsh-local-host@0.2.3`。也可下载
    页面提供的 `.tgz`，以其绝对路径安装。它原生声明 `dsh.bundle.patch`。
    安装完成后点击「立即启用」。已装过旧名 `@weft/dsh-local-host` 的用户，应先移除旧包再安装新包；配对文件保留。
-3. 在本机「插件 → Weft 本地连接」粘贴配对码并点击「保存并连接」，无需重启。
+3. 在本机「插件」列表打开 `@laciaproject/dsh-local-host` 的详情页，直接填写「配对码」并点击「保存并连接」，无需重启。
+   「包含的组件」中的配置入口也提供同一表单，无需寻找单独的设置卡片。
    插件自己显示连接状态、重连和停止按钮，版本不兼容时提示升级，授权撤销时
    提示重新配对，网络中断时自动退避重试。经 Weft 打开的该页只显示状态，连接
    管理由本机页面执行。

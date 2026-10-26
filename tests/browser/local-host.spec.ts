@@ -13,6 +13,7 @@ test('local environment uses native controls for pairing and safe removal',async
   await expect(instructions).toContainText(`${localHostPackage.name}@${localHostPackage.version}`);
   await expect(instructions).toContainText('立即启用');
   await expect(instructions).toContainText('保存并连接');
+  await expect(instructions).toContainText('详情页');
   await expect(instructions).toContainText('无需下载文件');
   await expect(page.getByRole('dialog')).toContainText('桌面 App 暂未适配');
   await page.getByRole('button',{name:'复制配对码',exact:true}).click();

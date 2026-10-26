@@ -1,5 +1,6 @@
 import React,{useEffect,useState,type ReactNode} from 'react';
 import {Button,Input} from '@deepseek-ai/dsh-client-ui-primitives';
+import metadata from './package.json' with {type:'json'};
 
 const zh={title:'Weft 本地连接',description:'将此 DSH 连接到 Weft，在网页使用本机环境。',code:'配对码',hint:'粘贴 Weft 首页生成的配对码，点击「保存并连接」。配置会自动保存在本机，无需下载文件。',pair:'保存并连接',reconnect:'重新连接',stop:'停止连接',busy:'正在处理…',failed:'操作失败，请检查配对码或稍后重试。',remote:'请在本机 DSH 页面管理连接。',
   unpaired:'尚未配对',connecting:'正在连接…',connected:'已连接',retrying:'网络中断，正在重试…',revoked:'授权已撤销，请在 Weft 重新配对。',incompatible:'版本不兼容，请更新 DSH 或连接插件。','pairing-rejected':'配对码已过期或使用过，请在 Weft 生成新配对码。','configuration-error':'配置文件无法读取，请重新配对。',stopped:'连接已停止'};
@@ -11,11 +12,12 @@ interface Context {
   slots:{inject(name:string,callback:()=>unknown):unknown;register(spec:object,component:(props:Props)=>ReactNode):unknown};
   effect(callback:()=>unknown,label:string):unknown;
 }
-interface Props {view:'summary'|'detail';t:(key:keyof typeof zh)=>string;}
+interface Props {view:'summary'|'page';t:(key:keyof typeof zh)=>string;}
 export const inject=['slots','locale'];
 export function apply(ctx:Context):void {
   const ns='weft.local-host';ctx.effect(()=>ctx.locale.register(ns,{zh,en}),'weft.local-host: locale');
-  ctx.effect(()=>ctx.slots.inject('plugins.item',()=>ctx.slots.register({name:'plugins.item',id:'weft-local-host',order:42,label:()=>ctx.locale.bind(ns)('title'),locale:ns,inject:()=>({})},ConnectionCard)),'weft.local-host: settings');
+  ctx.effect(()=>ctx.slots.inject('plugins.bundle.config',()=>ctx.slots.register({name:'plugins.bundle.config',key:metadata.name,locale:ns,inject:()=>({})},ConnectionCard)),'weft.local-host: bundle settings');
+  ctx.effect(()=>ctx.slots.inject('plugins.row.config',()=>ctx.slots.register({name:'plugins.row.config',key:`${metadata.name}#weft-local-host`,locale:ns,inject:()=>({})},ConnectionCard)),'weft.local-host: component settings');
 }
 function ConnectionCard({view,t}:Props):ReactNode {
   if(view==='summary')return t('description');

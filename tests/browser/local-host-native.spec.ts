@@ -1,5 +1,6 @@
 import {test,expect} from '@playwright/test';
 import {readFile} from 'node:fs/promises';
+import localHostPackage from '../../packages/local-host-connector/package.json' with {type:'json'};
 test('published local DSH pairs in native settings, runs Files, Git and PTY and recovers through Weft',async({page,request,context},testInfo)=>{
   test.setTimeout(240_000);
   test.skip(process.env.WEFT_LOCAL_DSH_TEST!=='1','Runs in the dedicated native DSH CI job');
@@ -20,13 +21,21 @@ test('published local DSH pairs in native settings, runs Files, Git and PTY and 
   const installed=page.getByRole('dialog',{name:'Installed',exact:true});
   await expect(installed).toBeVisible({timeout:90_000});
   await installed.getByRole('button',{name:'Enable now',exact:true}).click();
-  await page.getByRole('button',{name:'View Weft local connection',exact:true}).click();
+  await expect(page.getByRole('button',{name:'View Weft local connection',exact:true})).toHaveCount(0);
+  await page.getByRole('button',{name:`View ${localHostPackage.name}`,exact:true}).click();
+  const packageDetail=page.locator(`[data-plugin-detail="${localHostPackage.name}"]`);
+  await expect(packageDetail.getByLabel('Pairing code',{exact:true})).toBeVisible();
   const connectionStatus=page.locator('[data-weft-local-connection]').getByRole('status');
   await expect(connectionStatus).toHaveText('Not paired');
   await page.getByLabel('Pairing code',{exact:true}).fill(pairingCode);
   await expect(page.locator('[data-weft-local-connection]')).toContainText('no file download is needed');
   await page.getByRole('button',{name:'Save and connect',exact:true}).click();
   await expect(connectionStatus).toHaveText('Connected',{timeout:45_000});
+  await expect(page.getByLabel('Pairing code',{exact:true})).toHaveValue('');
+  await page.screenshot({path:testInfo.outputPath('local-dsh-pairing-settings.png')});
+  await packageDetail.getByRole('button',{name:`Configure ${localHostPackage.name}`,exact:true}).click();
+  await expect(page.getByLabel('Pairing code',{exact:true})).toBeVisible();
+  await expect(connectionStatus).toHaveText('Connected');
   const settingsUrl=new URL('/api/weft-local-host',localUrl).href;
   expect((await request.get(settingsUrl)).status()).toBe(401);
   const snapshot=await(await context.request.get(settingsUrl)).json();
