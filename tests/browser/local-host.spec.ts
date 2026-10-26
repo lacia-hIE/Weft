@@ -1,5 +1,6 @@
 import {test,expect} from '@playwright/test';
 import {LOCAL_HOST_BUNDLE} from '../../packages/local-host-connector/compatibility.mjs';
+import localHostPackage from '../../packages/local-host-connector/package.json';
 test('local environment uses native controls for pairing and safe removal',async({page,request,context})=>{
   await context.grantPermissions(['clipboard-read','clipboard-write']);
   await page.goto('/');await page.getByRole('button',{name:'连接本地 DSH',exact:true}).click();
@@ -7,6 +8,11 @@ test('local environment uses native controls for pairing and safe removal',async
   await page.getByLabel('环境名称',{exact:true}).fill('My local computer');
   await page.getByRole('button',{name:'生成连接配置',exact:true}).click();
   await expect(page.getByRole('button',{name:'下载连接配置',exact:true})).toBeVisible();
+  const instructions=page.getByRole('dialog').locator('ol');
+  await expect(instructions).toContainText('插件 → 添加插件');
+  await expect(instructions).toContainText(`${localHostPackage.name}@${localHostPackage.version}`);
+  await expect(instructions).toContainText('配对并连接');
+  await expect(page.getByRole('dialog')).toContainText('桌面 App 暂未适配');
   await page.getByRole('button',{name:'复制配对码',exact:true}).click();
   await expect(page.getByRole('button',{name:'已复制配对码',exact:true})).toBeVisible();
   const code=await page.evaluate(()=>navigator.clipboard.readText());
