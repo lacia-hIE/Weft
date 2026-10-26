@@ -10,11 +10,20 @@ import { guardedPlugin, isPlugin, normalizeHandler, sandboxDefineTool, sandboxRe
 // This module is supplied by WorkerLoader, never evaluated in the supervisor.
 import factory from 'weft:plugin-factory';
 import { nativePluginFsMethods } from './protocol.ts';
+import {mountDurableStorage} from '../../native-storage/src/index.ts';
+import {DurablePluginTimers} from './durable-timers.ts';
+import {pluginSessionStream} from './stream.ts';
+import {sessionMethods} from './services.ts';
 import { snapshotJsonValue } from '@deepseek-ai/dsh-util-values';
 interface KernelEnv {
     ALLOWED?: string[];
+    BACKGROUND?: boolean;
+    ACTIVATION?: string;
     HOST?: {
         callFs(method: string, args: unknown[]): Promise<unknown>;
+        callSession(method: string, request: unknown): Promise<unknown>;
+        resolveCredential(ref: string): Promise<unknown>;
+        followSession(request: unknown): Promise<Response>;
     };
 }
 function wire<T>(value: T): T {
@@ -34,6 +43,7 @@ export class PluginFacet extends DurableObject<KernelEnv> {
     private starting: Promise<void> | undefined;
     private stopped = false;
     private bundle = false;
+    private durableTimers: DurablePluginTimers | undefined;
     private readonly handlers = new Map<string, (args: unknown) => Promise<unknown>>();
     private readonly operations = new Map<string, AbortController>();
     private readonly cancelled = new Set<string>();
@@ -45,6 +55,15 @@ export class PluginFacet extends DurableObject<KernelEnv> {
             await root.plugin(SystemPrompt);
             await root.plugin(Tools);
             await root.plugin(Timer);
+            if (this.env.BACKGROUND && this.env.ALLOWED?.includes('timer')) this.durableTimers = new DurablePluginTimers(this.ctx.storage, this.env.ACTIVATION ?? 'initial');
+            if (this.env.ALLOWED?.some(name => name === 'storage' || name === 'storageDomain')) await mountDurableStorage(root, this.ctx.storage);
+            if (this.env.ALLOWED?.includes('sessionController')) {
+              const host = this.env.HOST!;
+              root.provide('sessionController', {...Object.fromEntries(sessionMethods.map(method => [method, async (request: unknown, signal?: AbortSignal) => {signal?.throwIfAborted(); const value = await host.callSession(method, wire(request)); signal?.throwIfAborted(); return value;}])),
+                follow: (request: unknown, signal?: AbortSignal) => (async function* () {yield* pluginSessionStream(await host.followSession(wire(request)), signal);})(),
+              });
+            }
+            if (this.env.ALLOWED?.includes('credentials')) root.provide('credentials', {resolve: (ref: string) => this.env.HOST!.resolveCredential(ref)});
             if (this.env.HOST)
                 root.provide('fs', Object.fromEntries(nativePluginFsMethods.map(method => [method, async (...args: unknown[]) => {
                         const signals = args.flatMap(arg => arg instanceof AbortSignal ? [arg] : arg && typeof arg === 'object' && 'signal' in arg && arg.signal instanceof AbortSignal ? [arg.signal] : []);
@@ -96,14 +115,16 @@ export class PluginFacet extends DurableObject<KernelEnv> {
     private guard(plugin: Plugin): Plugin {
         const provided = new Set<string>(this.env.ALLOWED ?? ['tools', 'timer', 'fs']);
             const facade = (ctx: Context) => new Proxy(ctx, {
-                get(target, key) {
-                    if (typeof key === 'string' && ['tools', 'timer', 'fs'].includes(key) && !provided.has(key))
+                get: (target, key) => {
+                    if (this.durableTimers && (key === 'interval' || key === 'timeout')) return (callback: () => unknown, delay: number) => target.effect(() => this.durableTimers!.register(callback, delay, key === 'interval'));
+                    if (key === 'timer' && this.durableTimers && provided.has('timer')) return new Proxy(target.timer, {get: (timer, method) => method === 'interval' || method === 'timeout' ? (callback: () => unknown, delay: number) => target.effect(() => this.durableTimers!.register(callback, delay, method === 'interval')) : Reflect.get(timer, method)});
+                    if (typeof key === 'string' && ['tools', 'timer', 'fs', 'storage', 'storageDomain', 'sessionController', 'credentials'].includes(key) && !provided.has(key))
                         throw new Error(`Plugin permission denied: ${key}`);
                     if (key === 'get')
-                        return (name: string) => provided.has(name) ? target.get(name) : undefined;
+                        return (name: string) => provided.has(name) ? name === 'timer' && this.durableTimers ? facade(target).timer : target.get(name) : undefined;
                     if (key === 'provide')
                         return (name: string, value: unknown) => {
-                            if (name === 'systemPrompt')
+                            if (['systemPrompt', 'sessionController', 'credentials', 'storage', 'storageDomain'].includes(name))
                                 throw new Error('The Agent systemPrompt service is not bridged');
                             const dispose = target.provide(name, value);
                             provided.add(name);
@@ -159,6 +180,8 @@ export class PluginFacet extends DurableObject<KernelEnv> {
                 this.cancelled.delete(this.cancelled.values().next().value!);
         }
     }
+    async tick(): Promise<void> { await this.start(); await this.durableTimers?.tick(); }
+    async nextAlarm(): Promise<number | undefined> { await this.start(); return this.durableTimers?.next(); }
     async stop(): Promise<void> {
         this.stopped = true;
         for (const controller of this.operations.values())

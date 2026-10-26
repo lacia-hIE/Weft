@@ -5,6 +5,8 @@ export const permissionSchema = z.object({
   files: z.enum(['none', 'read', 'write']).default('none'),
   tools: z.boolean().default(false), timer: z.boolean().default(false),
   client: z.boolean().default(false),
+  network: z.boolean().optional(), storage: z.boolean().optional(), sessions: z.boolean().optional(),
+  credentials: z.boolean().optional(), background: z.boolean().optional(),
 }).strict();
 export const declarationSchema = z.object({patch: z.union([z.string().min(1).max(200), z.array(z.string().min(1).max(200)).min(1).max(16)])}).strict();
 export type Permissions = z.infer<typeof permissionSchema>;
@@ -29,6 +31,7 @@ const assetsSchema = z.record(z.string().regex(assetPath), z.string().max(1_398_
 export const artifactSchema = z.object({
   name: z.string(), version: z.string(), description: z.string().max(2000),
   patch: patchSchema, rows: patchSchema, permissions: permissionSchema, lock: lockSchema, host: z.string().max(1_048_576).optional(),
+  hostScope: z.enum(['session', 'environment']).optional(),
   client: z.string().max(1_048_576).optional(),
   css: z.string().max(1_048_576).optional(), assets: assetsSchema.optional(),
 }).strict();
@@ -36,6 +39,7 @@ export type Artifact = z.infer<typeof artifactSchema>;
 export interface PackageRevision {
   name: string; version: string; digest: string; enabled: boolean; approved: boolean;
   patch: Record<string, unknown>[]; rows: Record<string, unknown>[]; permissions: Permissions; description: string; installedAt: number;
+  hostScope?: 'session' | 'environment';
   needsReinstall?: true;
   activationId?: string;
 }

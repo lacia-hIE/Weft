@@ -8,6 +8,7 @@ interface Owner {
   validate(artifact: Artifact): Promise<void>;
   changed(): Promise<void>;
   revoke(name: string, digest: string): Promise<void>;
+  alarm?(at: number): Promise<void>;
 }
 /** A durable environment transaction: build -> review -> exact approval -> selected configuration. */
 export class PackageInstaller {
@@ -63,7 +64,7 @@ export class PackageInstaller {
     const job: InstallJob = {id: requestId, spec, name, ...(current ? {baseDigest: current.digest} : {}), phase: 'resolving', createdAt: Date.now()};
     this.registry.saveJob(job);
     await this.owner.state.storage.sync();
-    await this.owner.state.storage.setAlarm(Date.now() + 150_000);
+    await (this.owner.alarm ? this.owner.alarm(Date.now() + 150_000) : this.owner.state.storage.setAlarm(Date.now() + 150_000));
     this.launch(job);
     return job;
   }
@@ -105,7 +106,7 @@ export class PackageInstaller {
       const body = JSON.stringify(artifact), digest = await sha256(body);
       await this.owner.bucket!.put(artifactKey(this.owner.scope, digest), body, {httpMetadata: {contentType: 'application/json'}});
       const installed: Installation = {name: artifact.name, version: artifact.version, description: artifact.description,
-        digest, patch: artifact.patch, rows: artifact.rows, permissions: artifact.permissions, enabled: false, approved: false, installedAt: Date.now()};
+        digest, patch: artifact.patch, rows: artifact.rows, permissions: artifact.permissions, ...(artifact.hostScope ? {hostScope: artifact.hostScope} : {}), enabled: false, approved: false, installedAt: Date.now()};
       await this.exclusive(async () => {
         const current = this.registry.get(installed.name);
         if (current?.digest !== job.baseDigest || current?.candidate || this.registry.job(job.id)?.phase === 'failed') throw new Error('Installation changed while building the package');
@@ -142,18 +143,19 @@ export class PackageInstaller {
   approve(name: string, digest: string, grants?: Installation['permissions']): Promise<void> {
     return this.exclusive(async () => {
       const artifact = await this.artifact(name, digest, false);
-      if (grants && ((grants.files === 'write' && artifact.permissions.files !== 'write') || (grants.files !== 'none' && artifact.permissions.files === 'none') || ['tools', 'timer', 'client'].some(key => grants[key as 'tools'] && !artifact.permissions[key as 'tools']))) throw new Error('Approval exceeds bundle capability limits');
+      if (grants && ((grants.files === 'write' && artifact.permissions.files !== 'write') || (grants.files !== 'none' && artifact.permissions.files === 'none') || (['tools', 'timer', 'client', 'network', 'storage', 'sessions', 'credentials', 'background'] as const).some(key => grants[key] && !artifact.permissions[key]))) throw new Error('Approval exceeds bundle capability limits');
       const row = this.registry.get(name);
       const target = row?.digest === digest ? row : row?.candidate?.digest === digest ? row.candidate : undefined;
       if (!row || !target) throw new Error('Approval is stale');
-      const next: Installation = {...revision(target), activationId: crypto.randomUUID(), permissions: grants ?? artifact.permissions, approved: true, enabled: true,
+      if (artifact.hostScope === 'environment' && !(grants ?? artifact.permissions).background) throw new Error('This plugin requires environment background permission');
+      const next: Installation = {...revision(target), activationId: crypto.randomUUID(), permissions: grants ?? {...artifact.permissions, network: false, credentials: false}, approved: true, enabled: true,
         ...(target !== row ? {previous: revision(row), rollbackOnFailure:true as const} : { ...(row.previous ? {previous: row.previous} : {}), ...(row.candidate ? {candidate: row.candidate} : {}) })};
       await this.replace(row, next);
     });
   }
   /** Persist revocation before releasing old effects; failed switches restore the old receipt. */
   private async replace(old: Installation, next: Installation): Promise<void> {
-    await this.owner.state.storage.setAlarm(Date.now() + 150_000);
+    await (this.owner.alarm ? this.owner.alarm(Date.now() + 150_000) : this.owner.state.storage.setAlarm(Date.now() + 150_000));
     this.registry.save({...old, enabled: false, switching: {enabled: old.enabled}});
     await this.owner.state.storage.sync();
     try {

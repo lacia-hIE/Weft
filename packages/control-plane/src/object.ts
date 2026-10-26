@@ -96,6 +96,9 @@ import {environmentPlugins} from '../../native-composition/src/extensions.ts';
 import {Context} from '@deepseek-ai/cordis';
 import {NativePluginPlatform} from '../../native-plugins/src/platform.ts';
 import {permissionSchema} from '../../package-install/src/contracts.ts';
+import {EnvironmentPackages, environmentFacetName} from '../../package-install/src/environment.ts';
+import {workerHostServices, environmentHostServices} from '../../native-plugins/src/services.ts';
+import type {Artifact, Installation} from '../../package-install/src/contracts.ts';
 import {PackageInstaller} from '../../package-install/src/host.ts';
 import {mountWorkspace} from '../../workspace/src/provider.ts';
 import { ModelConfigurationError, type ModelEnvironment } from '../../model-provider/src/index.ts';
@@ -158,6 +161,7 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
     return this.lifecycle.maintenance(async()=>{
       if(at!==null && await this.ctx.storage.get('weft_paused_alarm')===undefined)await this.ctx.storage.put('weft_paused_alarm',at);
       this.nativeEvents.close();this.nativeControl.close();this.lifecycle.closeStreams();
+      await this.environmentPackages?.dispose();this.environmentPackages=undefined;
       await this.nativeWorkspaces?.dispose();this.nativeWorkspaces=undefined;
       await this.nativeSearch?.dispose();this.nativeSearch=undefined;
       await this.market?.dispose();this.market=undefined;
@@ -165,7 +169,7 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
       const builder=(this.ctx.exports as unknown as {PluginBuilderDO?:DurableObjectNamespace<import('../../package-install/src/builder.ts').PluginBuilderDO>}).PluginBuilderDO;
       if(typeof builder?.getByName==='function')await builder.getByName(this.ctx.id.toString()).retire(operation);
       await this.lifecycle.drain();await this.ctx.storage.deleteAlarm();
-      if(action==='delete'){await this.lifecycle.purge(operation);return Response.json({deleted:true});}
+      if(action==='delete'){for(const row of this.packages(scope).registry.list())this.ctx.facets.delete(environmentFacetName(row.name));if(this.ctx.storage.sql.exec<{name:string}>("SELECT name FROM sqlite_master WHERE name='weft_environment_plugin_facets'").toArray().length)for(const row of this.ctx.storage.sql.exec<{name:string}>('SELECT name FROM weft_environment_plugin_facets'))this.ctx.facets.delete(environmentFacetName(row.name));await this.lifecycle.purge(operation);return Response.json({deleted:true});}
       this.ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_environment_resources (kind TEXT NOT NULL,id TEXT NOT NULL,PRIMARY KEY(kind,id)) STRICT');
       const resources=this.ctx.storage.sql.exec<{kind:string;id:string}>('SELECT kind,id FROM weft_environment_resources').toArray();
       const records=this.sessions().list();
@@ -517,11 +521,22 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
         if (!artifact.host) return;
         const context = new Context(), platform = new NativePluginPlatform(this.ctx, (this.env as TenantEnvironment & {LOADER?: WorkerLoader}).LOADER, scope);
         const runId = 'bundle-inspect-'+crypto.randomUUID();
-        try {await platform.evaluate(context, 'inspect:'+artifact.name, runId, '', () => () => {}, {module: artifact.host, services: ['fs','tools','timer']});}
-        finally {await platform.release(runId); await context.fiber.dispose();}
+        try {
+          const plugin = await platform.evaluate(context, 'inspect:'+artifact.name, runId, '', () => () => {}, {module: artifact.host, services: [...workerHostServices]});
+          const inject = Object.keys(plugin.inject ?? {});
+          const background = inject.some(name => (environmentHostServices as readonly string[]).includes(name));
+          if (background && inject.includes('tools')) throw new Error('Environment plugins cannot register Agent tools in this version; split the tool entry into a separate session bundle');
+          artifact.hostScope = background ? 'environment' : 'session';
+          artifact.permissions = {...artifact.permissions, network: true,
+            storage: inject.some(name => name === 'storage' || name === 'storageDomain'), sessions: inject.includes('sessionController'),
+            credentials: inject.includes('credentials'), background};
+        } finally {await platform.release(runId, true); await context.fiber.dispose();}
       },
-      changed: async () => {this.presetReads.clear(); await this.nativeEvent(scope, 'plugin-manager/changed', [{reason: 'install'}]);},
+      changed: async () => {this.presetReads.clear(); await this.nativeEvent(scope, 'plugin-manager/changed', [{reason: 'install'}]); this.ctx.waitUntil(this.reconcileEnvironmentPackages(scope));},
+      alarm: at => this.requestPackageAlarm(at),
       revoke: async name => {
+        await this.environmentPackages?.stop(name);
+        this.ctx.facets.abort(environmentFacetName(name), new Error('Background package was revoked'));
         const sessions = await this.sessionIndex(scope);
         for (let offset = 0; offset < sessions.length; offset += 8) {
           const settled = await Promise.allSettled(sessions.slice(offset, offset + 8).map(row => {
@@ -533,6 +548,118 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
         }
       },
     });
+  }
+  private environmentPackages: EnvironmentPackages | undefined;
+  private backgroundPackages(scope: ControlScope): EnvironmentPackages {
+    this.scope(scope);
+    return this.environmentPackages ??= new EnvironmentPackages({state: this.ctx, loader: (this.env as HarnessEnvironment & {LOADER?: WorkerLoader}).LOADER, scope,
+      list: () => this.packages(scope).registry.list(), artifact: (name, digest) => this.packages(scope).artifact(name, digest),
+      capability: row => {
+        const exports = this.ctx.exports as unknown as {EnvironmentPluginCapabilities(options: {props: {scope: ControlScope; name: string; digest: string; activationId: string}}): Fetcher};
+        return exports.EnvironmentPluginCapabilities({props: {scope, name: row.name, digest: row.digest, activationId: row.activationId ?? row.digest}});
+      },
+      failed: async row => {await this.packages(scope).failed(row.name, row.digest, 'host', row.activationId);},
+    });
+  }
+  private async requestPackageAlarm(at: number): Promise<void> {
+    const previous = await this.ctx.storage.getAlarm();
+    if (previous === null || previous <= Date.now() || previous > at) await this.ctx.storage.setAlarm(at);
+  }
+  private async schedulePackageAlarm(scope: ControlScope): Promise<void> {
+    const next = await this.environmentPackages?.nextAlarm();
+    const recovering = this.packages(scope).registry.jobs().some(row => row.phase === 'resolving' || row.phase === 'building') || this.packages(scope).registry.list().some(row => row.switching);
+    const due = [next, ...(recovering ? [Date.now() + 150_000] : [])].filter((value): value is number => value !== undefined);
+    if (due.length) await this.requestPackageAlarm(Math.max(Date.now() + 1000, Math.min(...due)));
+  }
+  private async reconcileEnvironmentPackages(scope: ControlScope): Promise<void> {
+    if (this.lifecycle.mode !== 'active') return;
+    await this.backgroundPackages(scope).reconcile();
+    await this.schedulePackageAlarm(scope);
+  }
+  nativePackageAuthorize(scope: ControlScope, receipt: {name: string; digest: string; activationId: string}, permission: 'network' | 'sessions' | 'credentials' | 'files'): Installation {
+    this.scope(scope);
+    const row = this.packages(scope).registry.get(receipt.name);
+    if (!row?.enabled || !row.approved || row.digest !== receipt.digest || (row.activationId ?? row.digest) !== receipt.activationId || row.hostScope !== 'environment' || !row.permissions.background) throw new Error('Background package capability was revoked');
+    if (permission === 'files' ? row.permissions.files === 'none' : !row.permissions[permission]) throw new Error('Plugin permission denied: ' + permission);
+    return row;
+  }
+  async nativePackageCredential(scope: ControlScope, receipt: {name: string; digest: string; activationId: string}, ref: string): Promise<unknown> {
+    this.nativePackageAuthorize(scope, receipt, 'credentials');
+    const value = await this.settings(scope).credentials.resolve(credentialRef(ref));
+    this.nativePackageAuthorize(scope, receipt, 'credentials');
+    return value;
+  }
+  async nativePackageFs(scope: ControlScope, receipt: {name: string; digest: string; activationId: string}, method: string, args: unknown[]): Promise<unknown> {
+    const row = this.nativePackageAuthorize(scope, receipt, 'files');
+    const {nativePluginFsMethods} = await import('../../native-plugins/src/protocol.ts');
+    if (!(nativePluginFsMethods as readonly string[]).includes(method) || row.permissions.files === 'read' && ['writeText','editText'].includes(method)) throw new Error('Plugin filesystem permission denied');
+    const ctx = new Context();
+    try {
+      const volume = {...scope, workspaceId: 'default'};
+      await mountWorkspace(ctx, {scope: volume, transport: this.env.WORKSPACES.getByName(workspaceAddress(volume)), cwd: '/workspace', fileTools: false});
+      this.nativePackageAuthorize(scope, receipt, 'files');
+      return await Reflect.apply(Reflect.get(ctx.fs, method), ctx.fs, z.array(z.unknown()).max(5).parse(args));
+    } finally {await ctx.fiber.dispose();}
+  }
+  async nativePackageFollow(scope: ControlScope, receipt: {name: string; digest: string; activationId: string}, raw: unknown): Promise<Response> {
+    this.nativePackageAuthorize(scope, receipt, 'sessions');
+    const {request} = sessionRemote.methods['session/follow'].input({strict: true}).create().parse({request: raw});
+    if (request.address.kind !== 'session' || this.nativeSessionRoot(scope, request.address.sessionId) !== request.address.sessionId) throw new Error('Session stream is outside this environment');
+    const address = {...scope, sessionId: request.address.sessionId};
+    const response = await this.env.SESSIONS.getByName(sessionAddress(address)).fetch(new Request('https://session.internal/native-follow', {
+      method: 'POST', body: JSON.stringify({scope: address, operation: 'native-follow', args: {request}}),
+    }));
+    if (!response.body) return response;
+    const reader = response.body.getReader();
+    const body = new ReadableStream<Uint8Array>({
+      pull: async controller => {
+        try {this.nativePackageAuthorize(scope, receipt, 'sessions'); const part = await reader.read(); this.nativePackageAuthorize(scope, receipt, 'sessions'); if (part.done) controller.close(); else controller.enqueue(part.value);}
+        catch (error) {controller.error(error); await reader.cancel().catch(() => {});}
+      }, cancel: () => reader.cancel(),
+    }, {highWaterMark: 0});
+    return new Response(body, {status: response.status, headers: response.headers});
+  }
+  async nativePackageSession(scope: ControlScope, receipt: {name: string; digest: string; activationId: string}, method: string, raw: unknown): Promise<unknown> {
+    this.nativePackageAuthorize(scope, receipt, 'sessions');
+    if (method === 'list') {
+      sessionRemote.methods['session/list'].input({strict: true}).create().parse({request: raw});
+      return (await this.nativeSessionList(scope)).json();
+    }
+    if (method === 'create') {
+      const {request} = sessionRemote.methods['session/create'].input({strict: true}).create().parse({request: raw});
+      const workspace = await this.nativeResolveWorkspace(scope, request.workspaceId, request.cwd);
+      let sessionId = request.sessionId ?? crypto.randomUUID();
+      if (this.nativeSessionRoot(scope, sessionId)) sessionId = crypto.randomUUID();
+      const address = {...scope, sessionId};
+      const target = this.env.SESSIONS.getByName(sessionAddress(address));
+      this.nativePackageAuthorize(scope, receipt, 'sessions');
+      if (!await target.nativeCreate(address, request.agentPreset === undefined ? undefined : {id: request.agentPreset}, 'default', workspace.path)) throw new Error('Session identity already exists');
+      await this.nativeAttachWorkspace(scope, workspace.workspaceId, sessionId);
+      return {sessionId};
+    }
+    const value = z.object({sessionId: z.string().optional(), address: z.object({kind: z.literal('session'), sessionId: z.string()}).optional()}).passthrough().parse(raw);
+    const sessionId = id.parse(value.sessionId ?? value.address?.sessionId);
+    if (this.nativeSessionRoot(scope, sessionId) !== sessionId) throw new Error('Session is outside this environment or is not a root Session');
+    const address = {...scope, sessionId};
+    const target = this.env.SESSIONS.getByName(sessionAddress(address));
+    if (method === 'prompt') {
+      const {request} = sessionRemote.methods['session/prompt'].input({strict: true}).create().parse({request: raw});
+      await target.nativePrompt(address, request); return {accepted: true};
+    }
+    if (method === 'cancel') {
+      sessionRemote.methods['session/cancel'].input({strict: true}).create().parse({request: raw});
+      await target.nativeCancel(address); return {accepted: true};
+    }
+    if (method === 'rename') {
+      const {request} = sessionRemote.methods['session/rename'].input({strict: true}).create().parse({request: raw});
+      return target.nativeRename(address, request.title);
+    }
+    if (method === 'page') return (await target.nativePage(address, raw)).json();
+    if (method === 'projections') {
+      sessionRemote.methods['session/projections'].input({strict: true}).create().parse({request: raw});
+      return (await target.nativeProjections(address)).json();
+    }
+    throw new Error('Session Controller method is not bridged: ' + method);
   }
   async nativePackageList(scope: ControlScope): Promise<Response> {return Response.json(this.packages(scope).list(), {headers: {'cache-control': 'private, no-store'}});}
   async nativePackageArtifact(scope: ControlScope, name: string, digest: string, client = false): Promise<Response> {
@@ -576,7 +703,15 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
     if (request.operation === 'client-failed') return Response.json({changed:await packages.failed(request.name, request.digest, 'client', request.activationId)});
     return Response.json(packages.list());
   }
-  override async alarm(): Promise<void> {if(this.lifecycle.mode==='active')await this.lifecycle.run(()=>this.packages(environmentScopeOf(this.ctx.id.name)).recover());}
+  override async alarm(): Promise<void> {
+    if (this.lifecycle.mode !== 'active') return;
+    await this.lifecycle.run(async () => {
+      const scope = environmentScopeOf(this.ctx.id.name);
+      await this.packages(scope).recover();
+      await this.backgroundPackages(scope).tick();
+      await this.schedulePackageAlarm(scope);
+    });
+  }
   async nativePreset(scope: ControlScope, endpoint: CompositionEndpoint, args: unknown): Promise<Response> {
     await this.syncSettingsDocument(scope);
     const defaultId = await this.nativePresetDefault(scope);
@@ -822,6 +957,7 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
     );
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_harness_home (id INTEGER PRIMARY KEY CHECK (id = 1), anonymous_user_id TEXT NOT NULL)');
     lifecycle.finishBoot();
+    if(lifecycle.mode==='active')this.ctx.waitUntil(Promise.resolve().then(()=>this.reconcileEnvironmentPackages(environmentScopeOf(this.ctx.id.name))));
   }
   /** This environment's harness home facts, minting its random anonymous id on first use. */
   async nativeHarnessHome(scope: ControlScope): Promise<HarnessHomeFacts> {

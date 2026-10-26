@@ -96,12 +96,30 @@ const cancelSchema = z.object({ requestId: z.uuid() }).strict();
 type TurnResult = { ok: true; requestId: string; events: readonly SessionEvent[]; model: { provider: string; model: string } }
   | { ok: false; requestId: string; error: TurnFailure };
 
+import {pluginFetch} from '../../../packages/native-plugins/src/network.ts';
+
 /** Immutable capability identity; the child never receives a namespace or secret. */
 export class PluginCapabilities extends WorkerEntrypoint<Env, {scope: SessionScope; pluginId: string; runId: string}> {
+  async fetch(request: Request): Promise<Response> {
+    const {scope, pluginId, runId} = this.ctx.props;
+    return pluginFetch(request, async () => {await this.env.SESSIONS.getByName(sessionAddress(scope)).nativePluginNetwork(scope, pluginId, runId);});
+  }
   async callFs(method: string, args: unknown[]): Promise<unknown> {
     const {scope, pluginId, runId} = this.ctx.props;
     return this.env.SESSIONS.getByName(sessionAddress(scope)).nativePluginFs(scope, pluginId, runId, method, args);
   }
+}
+
+/** Environment capabilities remain bound to one approved package activation. */
+export class EnvironmentPluginCapabilities extends WorkerEntrypoint<Env, {scope: ReturnType<typeof controlScope>; name: string; digest: string; activationId: string}> {
+  private owner() {return controlFor(this.env, this.ctx.props.scope);}
+  async fetch(request: Request): Promise<Response> {
+    return pluginFetch(request, async () => {await this.owner().nativePackageAuthorize(this.ctx.props.scope, this.ctx.props, 'network');});
+  }
+  async callSession(method: string, request: unknown): Promise<unknown> {return this.owner().nativePackageSession(this.ctx.props.scope, this.ctx.props, method, request);}
+  async followSession(request: unknown): Promise<Response> {return this.owner().nativePackageFollow(this.ctx.props.scope, this.ctx.props, request);}
+  async callFs(method: string, args: unknown[]): Promise<unknown> {return this.owner().nativePackageFs(this.ctx.props.scope, this.ctx.props, method, args);}
+  async resolveCredential(ref: string): Promise<unknown> {return this.owner().nativePackageCredential(this.ctx.props.scope, this.ctx.props, ref);}
 }
 
 /** One tenant-qualified session. RPC methods are reachable only through trusted bindings. */
@@ -836,6 +854,14 @@ export class SessionDO extends DurableObject<Env> {
     this.assertScope(input);
     const args = nativePluginRemote.methods['dynamicCordisRunner/syncInspectManifest'].input({strict: true}).create().parse({providers});
     if (this.nativeHost) nativePlugins(this.nativeHost.ctx)!.runner.syncInspectManifest(args.providers);
+  }
+  async nativePluginNetwork(input: SessionScope, pluginId: string, runId: string): Promise<void> {
+    const scope = this.assertScope(input);
+    const installation = this.installedPackages?.permission(pluginId, runId);
+    if (!installation?.permissions.network) throw new Error('Plugin network permission denied');
+    const owner = controlScope(scope.tenantId, scope.environmentId);
+    const current = ((await (await controlFor(this.env, owner).nativePackageList(owner)).json()) as {installations: Installation[]}).installations.find(row => row.name === installation.name);
+    if (!current?.enabled || !current.approved || current.digest !== installation.digest || current.activationId !== installation.activationId || !current.permissions.network) throw new Error('Plugin network capability was revoked');
   }
   async nativePluginFs(input: SessionScope, pluginId: string, runId: string, method: string, args: unknown[]): Promise<unknown> {
     const scope = this.assertScope(input);

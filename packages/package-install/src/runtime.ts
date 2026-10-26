@@ -7,7 +7,7 @@ interface Active {
 }
 function authority(row: Installation): string {
   const p = row.permissions;
-  return JSON.stringify([row.digest, row.activationId, p.files, p.tools, p.timer, p.client]);
+  return JSON.stringify([row.digest, row.activationId, p.files, p.tools, p.timer, p.client, p.network, p.storage, p.sessions, p.credentials]);
 }
 /** Per-Session activations; declarations, grants and module authority remain in EnvironmentDO. */
 export class InstalledPackageRuntime {
@@ -23,7 +23,7 @@ export class InstalledPackageRuntime {
   }
   reconcile(): Promise<void> {
     const operation = this.tail.catch(() => {}).then(async () => {
-      const selected = (await this.source.list()).filter(row => row.enabled && row.approved);
+      const selected = (await this.source.list()).filter(row => row.enabled && row.approved && row.hostScope !== 'environment');
       for (const name of this.failed.keys()) if (!selected.some(row => row.name === name && authority(row) === this.failed.get(name))) this.failed.delete(name);
       for (const [name, row] of this.active) if (!selected.some(next => next.name === name && authority(next) === authority(row.installation))) await this.stopNow(name);
       for (const installation of selected) {
@@ -36,7 +36,7 @@ export class InstalledPackageRuntime {
           if (artifact.host) {
             const p = installation.permissions;
             const services = [...(p.files !== 'none' ? ['fs'] : []), ...(p.tools ? ['tools'] : []), ...(p.timer ? ['timer'] : [])];
-            const plugin = await this.platform.evaluate(this.ctx, `installed:${installation.name}`, runId, '', () => {throw new Error('Bundle handlers use native Cordis services');}, {module: artifact.host, services});
+            const plugin = await this.platform.evaluate(this.ctx, `installed:${installation.name}`, runId, '', () => {throw new Error('Bundle handlers use native Cordis services');}, {module: artifact.host, services, network: p.network === true});
             row.fiber = this.ctx.plugin(plugin as Plugin);
             await row.fiber.await();
           }

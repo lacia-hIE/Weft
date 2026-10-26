@@ -17,6 +17,8 @@ interface FacetApi {
     }>;
     tool(name: string, args: unknown, callId: string, operationId: string): Promise<ToolExecutionResult>;
     cancelTool(operationId: string): Promise<void>;
+    tick(): Promise<void>;
+    nextAlarm(): Promise<number | undefined>;
     stop(): Promise<void>;
 }
 interface Allocation {
@@ -46,7 +48,7 @@ export class NativePluginPlatform {
             clearTimeout(timer);
         }
     }
-    async evaluate(ctx: Context, pluginId: string, runId: string, source: string, handle: (method: unknown, fn: unknown) => () => void, installed?: {module: string; services: string[]}): Promise<Plugin> {
+    async evaluate(ctx: Context, pluginId: string, runId: string, source: string, handle: (method: unknown, fn: unknown) => () => void, installed?: {module: string; services: string[]; environment?: boolean; network?: boolean; activationId?: string}): Promise<Plugin> {
         if (!this.loader)
             throw new Error('Dynamic Workers loader is not configured');
         const name = 'harness-plugin:' + pluginId;
@@ -61,7 +63,7 @@ export class NativePluginPlatform {
         const worker = this.loader.get(codeId, () => ({
             compatibilityDate: '2026-07-30', compatibilityFlags: ['nodejs_compat'], mainModule: 'kernel.js',
             modules: { 'kernel.js': kernelModule, 'weft:plugin-factory': { js: factory } },
-            env: {...(capability ? {HOST: capability} : {}), ...(installed ? {ALLOWED: installed.services} : {})}, globalOutbound: null,
+            env: {...(capability ? {HOST: capability} : {}), ...(installed ? {ALLOWED: installed.services, BACKGROUND: installed.environment === true, ACTIVATION: installed.activationId ?? runId} : {})}, globalOutbound: installed?.network && capability ? capability : null,
             limits: { cpuMs: 100, subRequests: 64 },
         }));
         const facet = this.state.facets.get(name, () => ({ class: worker.getDurableObjectClass('PluginFacet') })) as unknown as FacetApi;
@@ -147,7 +149,7 @@ export class NativePluginPlatform {
             };
             sync({ ...description, tools: [] });
             return {
-                name: description.name, inject: description.inject as NonNullable<Plugin.Object['inject']>, apply: async (child) => {
+                name: description.name, inject: installed?.environment ? {} : description.inject as NonNullable<Plugin.Object['inject']>, apply: async (child) => {
                     child.effect(() => () => this.release(runId), 'weft.native-plugin-facet');
                     sync(metadataSchema.parse(await this.bounded(allocation, () => facet.start())));
                 }
@@ -158,7 +160,20 @@ export class NativePluginPlatform {
             throw error;
         }
     }
-    async release(runId: string): Promise<void> {
+    async tick(runId: string): Promise<void> {
+        const allocation = this.allocations.get(runId);
+        if (allocation) await this.bounded(allocation, () => allocation.facet.tick());
+    }
+    async nextAlarm(runId: string): Promise<number | undefined> {
+        const allocation = this.allocations.get(runId);
+        return allocation ? this.bounded(allocation, () => allocation.facet.nextAlarm()) : undefined;
+    }
+    async call(runId: string, method: string, args: unknown): Promise<unknown> {
+        const allocation = this.allocations.get(runId);
+        if (!allocation) throw new Error('Plugin is not active');
+        return (await this.bounded(allocation, () => allocation.facet.invoke(method, args))).value;
+    }
+    async release(runId: string, destroy = false): Promise<void> {
         const allocation = this.allocations.get(runId);
         if (!allocation)
             return;
@@ -171,7 +186,8 @@ export class NativePluginPlatform {
         }
         catch { /* A crashed or uncooperative isolate is still forcibly stopped below. */ }
         finally {
-            this.state.facets.abort(allocation.name, new Error('Plugin activation stopped'));
+            if (destroy) this.state.facets.delete(allocation.name);
+            else this.state.facets.abort(allocation.name, new Error('Plugin activation stopped'));
         }
     }
     async reconcile(active: ReadonlySet<string>): Promise<void> {
