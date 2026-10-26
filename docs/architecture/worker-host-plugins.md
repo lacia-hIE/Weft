@@ -4,7 +4,7 @@ Worker Host 使用标准 Cordis 导出和原版 `dsh.bundle.patch`。这一轮�
 
 ## 运行位置与权限
 
-安装阶段在隔离环境检查实际 `inject`。依赖 `storage`、`storageDomain`、`sessionController`、`credentials` 或 `webServer` 的包归入环境宿主；其余包保留会话宿主。运行位置是检查得到的产物元数据，不是 npm 包另写的 Weft 声明。
+安装阶段在隔离环境检查实际 `inject`。依赖 `storage`、`storageDomain`、`sessionController`、`webhookRuntime`、`credentials` 或 `webServer` 的包归入环境宿主；其余包保留会话宿主。运行位置是检查得到的产物元数据，不是 npm 包另写的 Weft 声明。
 
 沿用 Plugins 包详情的原版审核入口，审核精确代码摘要后授权：
 
@@ -21,7 +21,7 @@ Worker Host 使用标准 Cordis 导出和原版 `dsh.bundle.patch`。这一轮�
 
 新网络、凭据和公开路由权限默认不勾选。旧安装记录不自动增加权限；如需新增能力，安装新版本并重新审核。授权跟随精确产物和启用批次，撤销后旧能力引用不能继续访问环境资源。
 
-环境包本版不能同时注册 Agent 工具；需要后台触发与模型工具的组合，应拆成后台包和会话工具包。创造模式的动态函数体插件继续使用原来的 fs/tools/timer 边界，不自动取得后台或网络权限。
+环境包可以同时注册 Agent 工具，无须拆 npm 包。后台代码只在环境 facet 初始化一次；每个 Agent 在自己的原版 Tools 注册表挂载描述和调用代理，参数校验、结果投影与取消信号继续走原版执行链。每次执行校验精确版本及启用批次，调用以所属 Session 和独立 operationId 区分，不设置共享“当前 Agent”。工具授权关闭后不再向 Agent 暴露工具，后台服务仍可运行。工具清单在每轮开始前刷新；背景工具中的 `ctx.fs` 仍指向环境工作区，不自动切换成调用会话的 cwd。直接依赖 Agent 对象的插件仍须按 Agent 生命周期适配。创造模式的动态函数体插件继续使用原来的 fs/tools/timer 边界，不自动取得后台或网络权限。
 
 ## 存储与恢复
 
@@ -59,6 +59,31 @@ EnvironmentDO 的数据库只登记安装和调度元数据，不保存插件代
 
 Cloudflare Access 断言和内部认证头不会转发给第三方。授权并不提供浏览器登录 Cookie；插件自己的目标服务认证由已授权的凭据服务或其配置处理。流式外部 SSE/MCP、长期渠道 WebSocket 仍需后续适配。
 
+## 原版 webhookRuntime
+
+环境包可直接 `inject: ['webhookRuntime']`，使用原版 `register(rule)` / `dispatch(delivery)`。宿主已装配运行时，不必另外挂载本地 Node Host 的运行时入口。授权对应“管理本环境会话”。
+
+规则注册、输入快照、匹配、回调取消与卸载等待复用固定上游 `WebhookRuntime` 的实现；只将其内部创建 Session 的宿主动作替换为 Worker 端口。规则函数留在自己的 facet，不跨 RPC 传函数或伪造 Agent 对象。环境将事件分发给已启用的规则包，因此提供方适配器和规则可以放在同一个 bundle，也可以分别安装。
+
+创建动作使用真实 Workspace 和 Session 服务，设置 Agent 预设、权限预设、标题、初始模型选择及可选 maxTokens；省略 model 时捕获环境的初始选择。消息保留原版 webhook source（provider/source/deliveryId/ruleId）。发布前再次确认授权和取消状态；失败时清理本次创建的 Session、工作区关联和列表摘要。成功接纳后 Agent 由 Session 持有，卸载规则不会取消已接纳的会话。
+
+`dispatch()` 保留立即返回、不等待规则执行完成的行为；HTTP carrier 在返回 202 前等待跨 Worker 的分发接纳。执行由 Worker `waitUntil` 持有，**目前不是崩溃后可重放的持久消息队列**。deliveryId 是来源信息，不自动去重；需要可靠重试的渠道应在自己的持久状态中处理重复消息。
+
+官方 `@deepseek-ai/dsh-webhook-github` 可作为普通 bundle 依赖并在原版 patch 中配置：
+
+```yaml
+- insert:
+    - id: github
+      name: '@deepseek-ai/dsh-webhook-github'
+      config:
+        source: primary
+        path: /github
+        secretEnv: GITHUB_WEBHOOK_SECRET
+        maxBodyBytes: 65536
+```
+
+在环境凭据中设置 `GITHUB_WEBHOOK_SECRET`，批准凭据、公开路由、会话和后台运行权限。该适配器复用原版原始正文读取和 Octokit 验签；Worker carrier 补齐其所需的 headersDistinct、complete 与 resume，含糊的单值认证头按失败处理。编译器共享匹配的原版模块和品牌类型，支持 Worker 内的 node:crypto / node:buffer；不开放进程、文件系统模块或监听端口。
+
 ## Webhook 路由
 
 `inject: ['webServer']` 后，通过原版 `register({kind, path, handler})` 登记有限响应的 HTTP 处理器，并用 `ctx.effect` 交出 disposer。支持 exact 和最长 prefix 匹配。
@@ -79,6 +104,6 @@ https://<your-domain>/v1/plugin-hooks/<tenant>/<environment>/<encodeURIComponent
 
 ## 当前边界
 
-这是一阶段的 Worker Host 服务扩展，尚不等于完整本地 Host。没有 Node Host、Node 原生扩展、任意 Node 内置导入、通用子进程桥接、完整 WebServer/Remote 服务、自定义凭据配置表单或跨包任意同步对象共享。原版 `webhookRuntime` 和提供方适配器不会因此自动兼容；可通过已开放的路由与 Session Controller 编写 Worker 插件，后续再逐项适配原版服务。
+这是一阶段的 Worker Host 服务扩展，尚不等于完整本地 Host。没有 Node Host、Node 原生扩展、任意 Node 内置导入、通用子进程桥接、完整 WebServer/Remote 服务、自定义凭据配置表单或跨包任意同步对象共享。原版 Webhook 规则接口与官方 GitHub 适配器已有 Worker 兼容路径；其他提供方若依赖完整 Node 请求、socket、进程或任意 Host 对象，仍需逐项适配。
 
 验证仅在 ci 执行，覆盖真实离线构建、workerd facet、原版 domain、重建后定时触发、原版消息接纳、渠道路由认证、版本撤销，以及现有浏览器、进程和本地 Host 回归。

@@ -4,7 +4,7 @@ import {NativePluginPlatform} from '../../native-plugins/src/platform.ts';
 import type {Artifact, Installation} from './contracts.ts';
 
 interface Active {
-  installation: Installation; runId: string; fiber?: Fiber; dispose?:()=>void;
+  installation: Installation; runId: string; fiber?: Fiber; dispose?:()=>void; toolSignature?:string;
 }
 function authority(row: Installation): string {
   const p = row.permissions;
@@ -28,17 +28,19 @@ export class InstalledPackageRuntime {
       for (const name of this.failed.keys()) if (!selected.some(row => row.name === name && authority(row) === this.failed.get(name))) this.failed.delete(name);
       for (const [name, row] of this.active) if (!selected.some(next => next.name === name && authority(next) === authority(row.installation))) await this.stopNow(name);
       for (const installation of selected) {
-        if (this.active.has(installation.name) || this.failed.get(installation.name) === authority(installation)) continue;
+        const existing=this.active.get(installation.name);
+        if(existing && installation.hostScope!=='environment' || this.failed.get(installation.name) === authority(installation))continue;
         const runId = 'installed-' + crypto.randomUUID();
-        const row: Active = {installation, runId};
+        const row: Active = existing??{installation, runId};
         this.active.set(installation.name, row);
         try {
           if(installation.hostScope==='environment') {
             if(!this.source.environmentTools || !this.source.environmentTransport)throw new Error('Environment tool bridge is unavailable');
             const tools=toolDescriptions.parse(await this.source.environmentTools(installation));
+            const signature=JSON.stringify(tools);if(row.toolSignature===signature)continue;row.dispose?.();
             const transport=this.source.environmentTransport(installation);
             const disposers:(()=>void)[]=[];row.dispose=()=>{for(const dispose of disposers.splice(0).reverse())dispose();};
-            for(const tool of tools)disposers.push(registerRemoteTool(this.ctx,tool,transport));
+            for(const tool of tools)disposers.push(registerRemoteTool(this.ctx,tool,transport));row.toolSignature=signature;
             continue;
           }
           const artifact = await this.source.artifact(installation.name, installation.digest);

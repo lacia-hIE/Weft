@@ -123,10 +123,10 @@ export class NativeSessionHost {
       this.changed();
     });
   }
-  async webhook(message:UserMessage):Promise<void> {
+  async webhook(message:UserMessage,admit:()=>Promise<void>):Promise<void> {
     await this.serialized(async()=>{
       if(this.closed)throw new NativeHostReplacedError('Native host was replaced before webhook admission');
-      await this.options.beforeAssembly?.();this.agent.ctx.fiber.assertActive();
+      await this.options.beforeAssembly?.();await admit();this.agent.ctx.fiber.assertActive();
       this.agent.followup(message);this.watch();await this.ctx.get('sessionPersistence')?.flush();this.changed();
     });
   }

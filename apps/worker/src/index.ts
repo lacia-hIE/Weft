@@ -549,10 +549,10 @@ export class SessionDO extends DurableObject<Env> {
   }
 
   nativeWebhookOwned(input:SessionScope,actionId:string):boolean {this.assertScope(input);return this.webhookSeed()?.actionId===z.uuid().parse(actionId);}
-  async nativeWebhookAdmit(input:SessionScope):Promise<void> {
+  async nativeWebhookAdmit(input:SessionScope,receipt:{name:string;digest:string;activationId:string},operationId:string):Promise<void> {
     const scope=this.assertScope(input),seed=this.webhookSeed();if(!seed)throw new Error('Webhook Session bootstrap is missing');
     const host=await this.getNativeHost(scope);
-    await host.webhook(createUserMessage({content:[{type:'text',text:seed.request.prompt}],source:{kind:'webhook',provider:seed.delivery.kind,source:seed.delivery.source,deliveryId:seed.delivery.deliveryId,ruleId:seed.ruleId,form:'notice',summary:boundContextSummary(seed.delivery.kind+' webhook handled by '+seed.ruleId)}}));
+    await host.webhook(createUserMessage({content:[{type:'text',text:seed.request.prompt}],source:{kind:'webhook',provider:seed.delivery.kind,source:seed.delivery.source,deliveryId:seed.delivery.deliveryId,ruleId:seed.ruleId,form:'notice',summary:boundContextSummary(seed.delivery.kind+' webhook handled by '+seed.ruleId)}}),()=>controlFor(this.env,controlScope(scope.tenantId,scope.environmentId)).nativePackageCheckWebhook(controlScope(scope.tenantId,scope.environmentId),receipt,operationId));
     await this.ctx.storage.sync();
   }
 

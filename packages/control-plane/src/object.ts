@@ -597,6 +597,10 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
     this.scope(scope);const key=this.webhookOperation(receipt,operationId);const active=this.webhookOperations.get(key);
     if(active)active.abort();else {this.cancelledWebhooks.add(key);if(this.cancelledWebhooks.size>128)this.cancelledWebhooks.delete(this.cancelledWebhooks.values().next().value!);}
   }
+  nativePackageCheckWebhook(scope:ControlScope,receipt:{name:string;digest:string;activationId:string},operationId:string):void {
+    this.nativePackageAuthorize(scope,receipt,'sessions');const active=this.webhookOperations.get(this.webhookOperation(receipt,operationId));
+    if(!active)throw new Error('Webhook action is no longer active');active.signal.throwIfAborted();
+  }
   async nativePackageCreateWebhook(scope:ControlScope,receipt:{name:string;digest:string;activationId:string},operationId:string,rawDelivery:unknown,ruleId:string,rawRequest:unknown):Promise<void> {
     this.nativePackageAuthorize(scope,receipt,'sessions');
     const delivery=webhookDelivery.parse(rawDelivery),request=webhookSessionRequest.parse(rawRequest);z.string().trim().min(1).max(200).parse(ruleId);
@@ -615,7 +619,7 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
       created=await target.nativeCreate(address,{id:request.agentPreset},'default',workspace.path,{actionId:operationId,delivery,ruleId,request});
       if(!created)throw new Error('Webhook Session identity is unavailable');check();
       await this.nativeAttachWorkspace(scope,workspace.workspaceId,sessionId);check();
-      await target.nativeWebhookAdmit(address);published=true;
+      await target.nativeWebhookAdmit(address,receipt,operationId);published=true;
     } finally {
       this.webhookOperations.delete(key);
       if(!published&&sessionId && await this.env.SESSIONS.getByName(sessionAddress({...scope,sessionId})).nativeWebhookOwned({...scope,sessionId},operationId)){

@@ -68,7 +68,7 @@ const declarationOnlyPackages = {
   '@deepseek-ai/dsh-client-web': 'packages/client/web/src/index.ts',
   '@deepseek-ai/dsh-client-modules/client': 'packages/client/modules/src/client/index.ts',
   '@deepseek-ai/dsh-client-connection/client': 'packages/client/connection/src/client/index.ts',
-  '@deepseek-ai/dsh-host-webserver': 'packages/host/webserver/package.json',
+  '@deepseek-ai/dsh-host-webserver': 'packages/host/webserver/src/index.ts',
 };
 // This pinned upstream module has a broad-union MessageSource spread which its
 // standalone source check rejects. Consume its declarations without changing it;
