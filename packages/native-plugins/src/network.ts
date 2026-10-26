@@ -9,10 +9,13 @@ export async function pluginFetch(request: Request, authorized: () => Promise<vo
   const abort = AbortSignal.any([request.signal, AbortSignal.timeout(15_000)]);
   const limit = 1_048_576;
   const read = async (body: ReadableStream<Uint8Array> | null) => {
+    abort.throwIfAborted();
     if (!body) return undefined;
     const reader = body.getReader(), parts: Uint8Array[] = []; let size = 0;
-    try {for (;;) {const part = await reader.read(); if (part.done) break; size += part.value.length; if (size > limit) {await reader.cancel(); throw new Error('Plugin network body exceeds 1 MiB');} parts.push(part.value);}}
-    finally {reader.releaseLock();}
+    const cancel = () => {void reader.cancel(abort.reason).catch(() => {});};
+    abort.addEventListener('abort', cancel, {once: true});
+    try {for (;;) {abort.throwIfAborted(); const part = await reader.read(); abort.throwIfAborted(); if (part.done) break; size += part.value.length; if (size > limit) {await reader.cancel(); throw new Error('Plugin network body exceeds 1 MiB');} parts.push(part.value);}}
+    finally {abort.removeEventListener('abort', cancel); reader.releaseLock();}
     const bytes = new Uint8Array(size); let offset = 0; for (const part of parts) {bytes.set(part, offset); offset += part.length;} return bytes;
   };
   const body = await read(request.body);

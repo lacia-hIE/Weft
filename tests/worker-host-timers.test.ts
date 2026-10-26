@@ -34,3 +34,16 @@ test('plugin egress checks authorization before touching the network and rejects
   assert.throws(() => new Request('https://user:secret@example.com'), /credentials/);
   await assert.rejects(pluginFetch(new Request('https://example.com'), async () => {throw new Error('revoked');}), /revoked/);
 });
+
+test('plugin egress abort cancels a stalled request body before starting a network request', async () => {
+  const controller = new AbortController();
+  let cancelled = false;
+  const body = new ReadableStream<Uint8Array>({cancel() {cancelled = true;}});
+  const request = new Request('https://example.com', {method: 'POST', body, signal: controller.signal, duplex: 'half'} as RequestInit);
+  const pending = pluginFetch(request, async () => {});
+  // Let the bridge start consuming the body, then interrupt the blocked read.
+  await new Promise(resolve => setTimeout(resolve, 0));
+  controller.abort(new Error('cancelled by plugin'));
+  await assert.rejects(pending, /cancelled by plugin/);
+  assert.equal(cancelled, true);
+});

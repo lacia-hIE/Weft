@@ -34,7 +34,7 @@ EnvironmentDO 的数据库只登记安装和调度元数据，不保存插件代
 环境包的 `ctx.timer.interval(callback, delay)` / `ctx.interval` 与 `ctx.timer.timeout(callback, delay)` / `ctx.timeout` 登记持久计划。回调由插件正常初始化时重新注册，序号、周期和截止时间保存在 facet SQLite，EnvironmentDO 使用一个共享 Alarm 协调插件唤醒与安装恢复，不互相覆盖。
 
 - interval 至少 60 秒，timeout 至少 1 秒，每包最多 32 个。
-- 回调本体和普通变量不持久化；订阅参数必须由配置或 domain 状态重建。
+- 回调本体和普通变量不持久化；订阅参数必须由配置或 domain 状态重建。恢复只覆盖初始化时按稳定顺序重新登记的回调，运行中临时创建的闭包不能自动恢复。
 - 正常重建保留已完成的一次性计划和未完成计划；注册顺序应保持稳定。
 - 成功后推进下一次期限，失败后延迟重试；错过的周期合并，不逐次补跑。
 - 崩溃可能使未确认的回调再次执行。使用持久游标、渠道消息 ID 和 Session `requestId` 去重，不能据此承诺外部副作用恰好一次。
