@@ -3,7 +3,7 @@ import {post} from './api.ts';
 import {Button,Input,Modal} from './runtime/primitives.ts';
 import type {EnvironmentRecord} from '../../../packages/control-plane/src/contracts.ts';
 import {SUPPORTED_DSH_VERSIONS,LOCAL_HOST_BUNDLE} from '../../../packages/local-host-connector/compatibility.mjs';
-import localHostPackage from '../../../packages/local-host-connector/package.json';
+import localHostPackage from '../../../packages/local-host-connector/package.json' with {type:'json'};
 export function LocalHostDialog({environment,onClose,onSaved}:{environment:EnvironmentRecord|null;onClose:()=>void;onSaved:(record:EnvironmentRecord)=>void}):ReactNode {
   const [name,setName]=useState(environment?.name??'我的电脑');
   const [busy,setBusy]=useState(false),[error,setError]=useState('');

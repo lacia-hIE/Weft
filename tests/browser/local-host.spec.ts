@@ -1,6 +1,6 @@
 import {test,expect} from '@playwright/test';
 import {LOCAL_HOST_BUNDLE} from '../../packages/local-host-connector/compatibility.mjs';
-import localHostPackage from '../../packages/local-host-connector/package.json';
+import localHostPackage from '../../packages/local-host-connector/package.json' with {type:'json'};
 test('local environment uses native controls for pairing and safe removal',async({page,request,context})=>{
   await context.grantPermissions(['clipboard-read','clipboard-write']);
   await page.goto('/');await page.getByRole('button',{name:'连接本地 DSH',exact:true}).click();
