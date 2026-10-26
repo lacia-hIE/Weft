@@ -8,6 +8,7 @@ import {packageFixture} from './helpers/package-fixture.ts';
 import {createRuntime,tenantId,url} from './helpers/miniflare.ts';
 import {nativeFixtureResponse} from './helpers/native-plugin-model.ts';
 import {nativeClient} from './helpers/native.ts';
+import type {SessionListValue} from '@deepseek-ai/dsh-api-session-controller/types';
 import type {Installation} from '../packages/package-install/src/contracts.ts';
 
 test('the published official GitHub adapter verifies signatures and dispatches to a separate native Worker rule with full Session bootstrap',{timeout:240000},async()=>{
@@ -36,7 +37,7 @@ test('the published official GitHub adapter verifies signatures and dispatches t
   const installed=async()=> (await(await operation()).json() as {installations:Installation[]}).installations;
   const route=`/v1/plugin-hooks/${tenant}/default/${encodeURIComponent(adapter.name)}/github`;
   const send=(action:string,signature=true,extra:Record<string,string>={})=>{const body=JSON.stringify({action});return runtime.dispatchFetch(url('anonymous',route),{method:'POST',headers:{'content-type':'application/json','x-github-event':'issues','x-github-delivery':crypto.randomUUID(),'x-hub-signature-256':signature?'sha256='+createHmac('sha256','signed-fixture').update(body).digest('hex'):'sha256=invalid',...extra},body});};
-  const sessions=async()=> (await api.call<{items:{sessionId:string;title?:string}[]}>('session/list',{_request:{}})).items;
+  const sessions=async()=> (await api.call<SessionListValue>('session/list',{_request:{}})).items;
   try{
     await api.call('credentials/set',{ref:'GITHUB_SECRET',value:'signed-fixture'});
     for(const fixture of fixtures){
@@ -53,8 +54,10 @@ test('the published official GitHub adapter verifies signatures and dispatches t
     let rows:Awaited<ReturnType<typeof sessions>>=[];
     for(const end=Date.now()+30000;Date.now()<end;await delay(100)){rows=await sessions();if(rows.length)break;}
     assert.equal(rows.length,1,JSON.stringify({installed:await installed(),seen:await(await runtime.dispatchFetch(url('alpha',`/v1/tenants/${tenant}/environments/default/workspaces/default/files?path=/workspace/webhook-rule-seen.txt`))).text()}));const sessionId=rows[0]!.sessionId;
-    assert.equal(rows[0]!.title,'Worker webhook review');
+    assert.match(JSON.stringify(rows[0]!.projections),/Worker webhook review/);
     const projections=await api.call<{values:{permissions?:{currentValue:string}}}>('session/projections',{request:{sessionId}});assert.equal(projections.values.permissions?.currentValue,'read-only');
+    for(const end=Date.now()+30000;Date.now()<end;await delay(100)){if(modelRequests.length)break;}
+    assert.ok(modelRequests.length,'Webhook admission reaches the real model adapter');
     const events=await(await runtime.dispatchFetch(url('alpha',`/v1/tenants/${tenant}/environments/default/sessions/${sessionId}/events`))).text();
     assert.match(events,/"kind":"webhook"/);assert.match(events,/"ruleId":"worker-review"/);assert.match(events,/"provider":"github"/);
     assert.equal((await send('explicit')).status,202);
