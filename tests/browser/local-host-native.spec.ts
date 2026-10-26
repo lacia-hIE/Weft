@@ -17,8 +17,6 @@ test('published local DSH pairs in native settings, runs Files, Git and PTY and 
   await page.getByRole('button',{name:'Add plugin',exact:true}).click();
   await page.getByLabel('Package name or address',{exact:true}).fill(bundlePath);
   await page.getByRole('button',{name:'Install',exact:true}).click();
-  const confirmation=page.getByRole('dialog',{name:'Install plugin',exact:true});
-  await confirmation.getByRole('button',{name:'Install',exact:true}).click();
   const installed=page.getByRole('dialog',{name:'Installed',exact:true});
   await expect(installed).toBeVisible({timeout:90_000});
   await installed.getByRole('button',{name:'Close',exact:true}).last().click();
