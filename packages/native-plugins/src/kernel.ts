@@ -1,3 +1,10 @@
+import * as cryptoModule from 'node:crypto';
+import * as bufferModule from 'node:buffer';
+import * as valuesModule from '@deepseek-ai/dsh-util-values';
+import * as sessionModule from '@deepseek-ai/dsh-session';
+import {credentialRef} from '@deepseek-ai/dsh-credentials';
+import Schema from '@deepseek-ai/schemastery';
+import {WebhookDeliveryId,WebhookSourceId,WebhookRuleId} from '@deepseek-ai/dsh-webhook';
 import { DurableObject } from 'cloudflare:workers';
 import * as cordis from '@deepseek-ai/cordis';
 import {composeInstalledBundle} from '../../package-install/src/composition.ts';
@@ -86,6 +93,7 @@ export class PluginFacet extends DurableObject<KernelEnv> {
                         return result;
                     }])));
             const harness = {
+                crypto:cryptoModule,buffer:bufferModule,values:valuesModule,session:sessionModule,schema:Schema,credentials:{credentialRef},webhook:{WebhookDeliveryId,WebhookSourceId,WebhookRuleId},
                 cordis, tools: {defineTool: sandboxDefineTool},
                 compose: (rows: Record<string, unknown>[], modules: Record<string, unknown>) => {this.bundle = true; return composeInstalledBundle(rows, modules, plugin => this.guard(plugin));},
                 defineTool: sandboxDefineTool, registerTool: sandboxRegisterTool,

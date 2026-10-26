@@ -175,6 +175,9 @@ export async function buildPackage(input) {
             if (args.suffix === '?url' && !assetExtensions.includes(ext)) return {errors:[{text:'Unsupported URL asset type'}]};
             if (css) return {contents:await readFile(path,'utf8'),loader:path.endsWith('.module.css')?'local-css':'css',resolveDir:dirname(path)};
           });
+          const hostModules={'node:crypto':'crypto','node:buffer':'buffer','@deepseek-ai/dsh-webhook':'webhook','@deepseek-ai/dsh-credentials':'credentials','@deepseek-ai/schemastery':'schema','@deepseek-ai/dsh-util-values':'values','@deepseek-ai/dsh-session':'session'};
+          builder.onResolve({filter:/^(?:node:(?:crypto|buffer)|@deepseek-ai\/(?:dsh-(?:webhook|credentials|util-values|session)|schemastery))$/},args=>half==='host'?{path:args.path,namespace:'worker-host-module'}:undefined);
+          builder.onLoad({filter:/.*/,namespace:'worker-host-module'},args=>({contents:`module.exports=__runtime.${hostModules[args.path]};`,loader:'js'}));
           builder.onResolve({filter: /^(?:node:|cloudflare:|https?:|data:)/}, args=>({errors:[{text:'Unsupported import: '+args.path}]}));
           builder.onResolve({filter: /^(?:react(?:\/jsx(?:-dev)?-runtime)?|@deepseek-ai\/cordis|@deepseek-ai\/dsh-tools|@deepseek-ai\/dsh-client-ui-primitives)$/}, args=>({path: args.path, namespace:'native-platform'}));
           builder.onLoad({filter: /.*/, namespace:'native-platform'}, args => {

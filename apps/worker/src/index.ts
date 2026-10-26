@@ -96,7 +96,8 @@ const cancelSchema = z.object({ requestId: z.uuid() }).strict();
 type TurnResult = { ok: true; requestId: string; events: readonly SessionEvent[]; model: { provider: string; model: string } }
   | { ok: false; requestId: string; error: TurnFailure };
 
-import {readWebhookSeed,type WorkerWebhookSeed} from '../../../packages/native-plugins/src/webhook-contracts.ts';
+import type {ToolExecutionResult} from '@deepseek-ai/dsh-tools';
+import {readWebhookSeed,readWebhookBootstrap,type WorkerWebhookSeed} from '../../../packages/native-plugins/src/webhook-contracts.ts';
 import {pluginFetch} from '../../../packages/native-plugins/src/network.ts';
 
 /** Immutable capability identity; the child never receives a namespace or secret. */
@@ -258,7 +259,7 @@ export class SessionDO extends DurableObject<Env> {
           environmentTools: row => controlFor(this.env,owner).nativePackageTools(owner,{name:row.name,digest:row.digest,activationId:row.activationId??row.digest}),
           environmentTransport: row => {
             const receipt={name:row.name,digest:row.digest,activationId:row.activationId??row.digest};
-            return {execute:(name,args,callId,operationId)=>controlFor(this.env,owner).nativePackageTool(owner,receipt,scope.sessionId,{name,args,callId,operationId}),
+            return {execute:async(name,args,callId,operationId)=>await controlFor(this.env,owner).nativePackageTool(owner,receipt,scope.sessionId,{name,args,callId,operationId}) as ToolExecutionResult,
               cancel:operationId=>controlFor(this.env,owner).nativePackageToolCancel(owner,receipt,scope.sessionId,operationId),waitUntil:work=>this.ctx.waitUntil(work)};
           },
           artifact: async (name, digest) => await (await controlFor(this.env, owner).nativePackageArtifact(owner, name, digest)).json() as Artifact,
@@ -500,10 +501,11 @@ export class SessionDO extends DurableObject<Env> {
   }
 
   /** Native Web creation opens a real persisted Session before its first prompt. */
-  async nativeCreate(input: SessionScope, binding?: AgentBinding, workspaceId?: string, cwd?: string, webhook?:Omit<WorkerWebhookSeed,'selection'>): Promise<boolean> {
-    const scope = this.assertScope(input);
+  async nativeCreate(input: SessionScope, binding?: AgentBinding, workspaceId?: string, cwd?: string, webhookRaw?:unknown): Promise<boolean> {
+    const scope = this.assertScope(input);const webhook=webhookRaw===undefined?undefined:readWebhookBootstrap(webhookRaw);
     const known = this.ctx.storage.sql.exec<{workspace_id: string; agent_document: string; presentation: number}>('SELECT workspace_id,agent_document,presentation FROM weft_session_config WHERE id=1').toArray()[0];
     const existing = readSessionSnapshot(this.ctx.storage, SessionId(scope.sessionId));
+    if(webhook && (known || existing))return false;
     if (known && existing) {
       if (known.presentation !== 1 || existing.events.some(event => event.type === 'turn/start') || (workspaceId && workspaceId !== known.workspace_id) || (cwd && workspacePath(cwd) !== (existing.header.cwd ?? '/workspace'))) return false;
       const profile = JSON.parse(known.agent_document) as AgentRevision;
@@ -543,9 +545,10 @@ export class SessionDO extends DurableObject<Env> {
       ]);
       return true;
     });
-    return result === 'race' ? this.nativeCreate(scope, binding, workspaceId, cwd, webhook) : result;
+    return result === 'race' ? this.nativeCreate(scope, binding, workspaceId, cwd, webhookRaw) : result;
   }
 
+  nativeWebhookOwned(input:SessionScope,actionId:string):boolean {this.assertScope(input);return this.webhookSeed()?.actionId===z.uuid().parse(actionId);}
   async nativeWebhookAdmit(input:SessionScope):Promise<void> {
     const scope=this.assertScope(input),seed=this.webhookSeed();if(!seed)throw new Error('Webhook Session bootstrap is missing');
     const host=await this.getNativeHost(scope);

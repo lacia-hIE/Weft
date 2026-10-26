@@ -530,7 +530,7 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
           artifact.hostScope = background ? 'environment' : 'session';
           artifact.permissions = {...artifact.permissions, network: true,
             storage: inject.some(name => name === 'storage' || name === 'storageDomain'), sessions: inject.includes('sessionController') || inject.includes('webhookRuntime'),
-            credentials: inject.includes('credentials'), routes: inject.includes('webServer'), background};
+            credentials: inject.includes('credentials'), routes: inject.includes('webServer'), tools:inject.includes('tools'), background};
         } finally {await platform.release(runId, true); await context.fiber.dispose();}
       },
       changed: async () => {this.presetReads.clear(); await this.nativeEvent(scope, 'plugin-manager/changed', [{reason: 'install'}]); this.ctx.waitUntil(this.reconcileEnvironmentPackages(scope));},
@@ -612,13 +612,13 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
       try {permissions.ctx.permissionPresets.resolve(request.permissionPreset);}finally{await permissions.ctx.fiber.dispose();}
       check();const workspace=await this.nativeResolveWorkspace(scope,undefined,request.workspacePath);workspaceId=workspace.workspaceId;
       check();sessionId='webhook-'+crypto.randomUUID();const address={...scope,sessionId},target=this.env.SESSIONS.getByName(sessionAddress(address));
-      created=await target.nativeCreate(address,{id:request.agentPreset},'default',workspace.path,{delivery,ruleId,request});
+      created=await target.nativeCreate(address,{id:request.agentPreset},'default',workspace.path,{actionId:operationId,delivery,ruleId,request});
       if(!created)throw new Error('Webhook Session identity is unavailable');check();
       await this.nativeAttachWorkspace(scope,workspace.workspaceId,sessionId);check();
       await target.nativeWebhookAdmit(address);published=true;
     } finally {
       this.webhookOperations.delete(key);
-      if(created&&!published&&sessionId){
+      if(!published&&sessionId && await this.env.SESSIONS.getByName(sessionAddress({...scope,sessionId})).nativeWebhookOwned({...scope,sessionId},operationId)){
         const address={...scope,sessionId};
         await this.env.SESSIONS.getByName(sessionAddress(address)).nativeLifecycle(address,'delete',1);
         if(workspaceId)await this.workspaces(scope).detach(workspaceId,sessionId);
@@ -626,12 +626,12 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
       }
     }
   }
-  async nativePackageTools(scope:ControlScope,receipt:{name:string;digest:string;activationId:string}) {
+  async nativePackageTools(scope:ControlScope,receipt:{name:string;digest:string;activationId:string}):Promise<unknown> {
     this.nativePackageAuthorize(scope,receipt,'tools');
     const tools=await this.backgroundPackages(scope).tools(receipt.name,receipt.digest,receipt.activationId);
     this.nativePackageAuthorize(scope,receipt,'tools');return tools;
   }
-  async nativePackageTool(scope:ControlScope,receipt:{name:string;digest:string;activationId:string},sessionId:string,raw:unknown) {
+  async nativePackageTool(scope:ControlScope,receipt:{name:string;digest:string;activationId:string},sessionId:string,raw:unknown):Promise<unknown> {
     this.nativePackageAuthorize(scope,receipt,'tools');
     if(this.nativeSessionRoot(scope,id.parse(sessionId))!==sessionId)throw new Error('Tool caller is outside this environment');
     const request=z.object({name:z.string().min(1).max(100),args:z.unknown(),callId:z.string().min(1).max(200),operationId:z.uuid()}).strict().parse(raw);

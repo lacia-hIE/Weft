@@ -16,3 +16,15 @@ test('Worker HTTP routes retain exact/prefix matching, native disposal and bound
   server.register({kind:'exact',path:'/unfinished',handler:()=>{}});
   await assert.rejects(server.dispatch(new Request('https://example.com/unfinished')),/must end/);
 });
+
+test('Worker HTTP carrier preserves exact bytes, completion and singular GitHub header checks',async()=>{
+  const server=new WorkerWebServer();
+  server.register({kind:'exact',path:'/github',handler:async(raw,response)=>{
+    const request=raw as {headersDistinct:Record<string,string[]>;complete:boolean;[Symbol.asyncIterator]():AsyncIterator<Uint8Array>};
+    const res=response as {writeHead(code:number):void;end(value:string):void};assert.equal(request.complete,false);
+    const bytes:Uint8Array[]=[];for await(const part of request)bytes.push(part);
+    assert.equal(request.complete,true);assert.deepEqual(request.headersDistinct['x-github-delivery'],['one','two']);res.writeHead(202);res.end(new TextDecoder().decode(bytes[0]));
+  }});
+  const body='{"text":"你好"}';const response=await server.dispatch(new Request('https://example.com/github',{method:'POST',headers:{'x-github-delivery':'one,two'},body}));
+  assert.equal(response.status,202);assert.equal(await response.text(),body);
+});

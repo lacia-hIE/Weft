@@ -6,7 +6,7 @@ export const environmentFacetName = (name: string) => 'harness-plugin:environmen
 const identity = (row: Installation) => JSON.stringify([row.digest, row.activationId, row.permissions]);
 export function installedServices(row: Installation): string[] {
   const p = row.permissions;
-  return [...(p.files !== 'none' ? ['fs'] : []), ...(p.tools ? ['tools'] : []), ...(p.timer ? ['timer'] : []),
+  return [...(p.files !== 'none' ? ['fs'] : []), ...(p.tools || row.hostScope==='environment' ? ['tools'] : []), ...(p.timer ? ['timer'] : []),
     ...(p.storage ? ['storage', 'storageDomain'] : []), ...(p.sessions ? ['sessionController','webhookRuntime'] : []), ...(p.credentials ? ['credentials'] : []), ...(p.routes ? ['webServer'] : [])];
 }
 interface Active {row: Installation; runId: string; fiber?: Fiber}

@@ -8,11 +8,13 @@ export const webhookSessionRequest=z.object({workspacePath:text,title:text,promp
   model:z.object({provider:text,model:text,maxTokens:z.number().int().positive().safe().optional()}).strict().optional(),
 }).strict();
 export interface WorkerWebhookSeed {
-  delivery:VerifiedWebhookDelivery;ruleId:WebhookRuleId;request:WebhookSessionRequest;
+  actionId:string;delivery:VerifiedWebhookDelivery;ruleId:WebhookRuleId;request:WebhookSessionRequest;
   selection:ModelSelection;
 }
 export function readWebhookSeed(raw:unknown):WorkerWebhookSeed {
-  return z.object({delivery:webhookDelivery,ruleId:text,request:webhookSessionRequest,
+  return z.object({actionId:z.uuid(),delivery:webhookDelivery,ruleId:text,request:webhookSessionRequest,
     selection:z.object({provider:text,model:text,reasoningEffort:z.string().optional()}).strict(),
   }).strict().parse(raw) as WorkerWebhookSeed;
 }
+
+export function readWebhookBootstrap(raw:unknown):Omit<WorkerWebhookSeed,'selection'> {return z.object({actionId:z.uuid(),delivery:webhookDelivery,ruleId:text,request:webhookSessionRequest}).strict().parse(raw) as Omit<WorkerWebhookSeed,'selection'>;}

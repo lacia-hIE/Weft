@@ -68,7 +68,7 @@ const declarationOnlyPackages = {
   '@deepseek-ai/dsh-client-web': 'packages/client/web/src/index.ts',
   '@deepseek-ai/dsh-client-modules/client': 'packages/client/modules/src/client/index.ts',
   '@deepseek-ai/dsh-client-connection/client': 'packages/client/connection/src/client/index.ts',
-  '@deepseek-ai/dsh-host-webserver': 'packages/host/webserver/src/index.ts',
+  '@deepseek-ai/dsh-host-webserver': 'packages/host/webserver/package.json',
 };
 // This pinned upstream module has a broad-union MessageSource spread which its
 // standalone source check rejects. Consume its declarations without changing it;
@@ -171,6 +171,12 @@ const packagePlatformVersions = {react: '18.3.1'};
 for (const [name, path] of Object.entries({
   '@deepseek-ai/cordis': 'vendor/cordis/package.json',
   '@deepseek-ai/dsh-tools': 'packages/core/tools/package.json',
+  '@deepseek-ai/dsh-session': 'packages/core/session/package.json',
+  '@deepseek-ai/dsh-webhook': 'packages/experimental/webhook/package.json',
+  '@deepseek-ai/dsh-credentials': 'packages/credentials/credentials/package.json',
+  '@deepseek-ai/dsh-host-webserver': 'packages/host/webserver/package.json',
+  '@deepseek-ai/dsh-util-values': 'packages/util/values/package.json',
+  '@deepseek-ai/schemastery': 'vendor/schemastery/package.json',
   '@deepseek-ai/dsh-client-ui-primitives': 'packages/client/ui-primitives/package.json',
 })) packagePlatformVersions[name] = JSON.parse(readFileSync(resolve(checkout, path), 'utf8')).version;
 writeFileSync(resolve(output, 'package-platform-versions.json'), JSON.stringify(packagePlatformVersions) + '\n');
