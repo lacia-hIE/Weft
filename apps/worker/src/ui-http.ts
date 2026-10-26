@@ -9,7 +9,7 @@ export function serveUi(
   const officialDocument = environmentDocument;
   // Content-addressed responses may live in the browser cache: boot graph modules
   // requested at their current revision, and esbuild's hashed chunks.
-  let immutable = /^\/assets\/(?:chunk|entry)-[A-Z0-9]{8}\.js$/.test(url.pathname);
+  let immutable = /^\/assets\/[a-zA-Z0-9_-]+-[A-Z0-9]{8}\.js$/.test(url.pathname);
   if (url.pathname === '/harness/' && url.search.startsWith('??')) {
     const match = /^\?\?(@[a-zA-Z0-9_-]+\/[a-zA-Z0-9_-]+)\/client\.js&rev=([a-f0-9]+)$/.exec(url.search);
     if (!match) return undefined;

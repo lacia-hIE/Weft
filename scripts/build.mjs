@@ -91,9 +91,9 @@ const web = await build({
   plugins: [browserNodeModule],
   loader: { '.woff2': 'dataurl', '.woff': 'dataurl', '.ttf': 'dataurl' },
 });
-// Object-valued defines create shared initialization imports even in otherwise
-// independent entries. Compile the recovery entry without the app's build graph.
-const bootstrap = await build({entryPoints: {start: 'apps/web/src/start.ts'}, outdir: 'dist/web', format: 'esm', platform: 'browser', target: 'es2022', minify: true, bundle: false, metafile: true});
+// Compile the tiny DOM-only recovery entry independently. Its helper must not
+// turn an application chunk failure into a failure of the retry screen itself.
+const bootstrap = await build({entryPoints: {start: 'apps/web/src/start.ts'}, outdir: 'dist/web', format: 'esm', platform: 'browser', target: 'es2022', minify: true, bundle: true, metafile: true});
 if (Object.values(bootstrap.metafile.outputs).some(output => output.imports.some(item => item.kind !== 'dynamic-import'))) throw new Error('Recovery entry must not depend on application chunks');
 Object.assign(web.metafile.outputs, bootstrap.metafile.outputs);
 Object.assign(web.metafile.inputs, bootstrap.metafile.inputs);

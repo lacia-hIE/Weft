@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createRuntime, url } from './helpers/miniflare.ts';
+import {readFileSync} from 'node:fs';
 
 test('the environment document preloads every boot graph bundle and only revision-matched bundles are cached as immutable', {timeout: 60_000}, async () => {
   const runtime = createRuntime(undefined, {browser: true});
@@ -19,6 +20,11 @@ test('the environment document preloads every boot graph bundle and only revisio
     assert.equal((await runtime.dispatchFetch(url('alpha', '/agents/default'))).headers.get('cache-control'), 'private, no-store', 'the document follows each deployment');
     assert.equal((await runtime.dispatchFetch(url('alpha', '/harness/boot.json'))).headers.get('cache-control'), 'private, no-store');
     assert.equal((await runtime.dispatchFetch(url('alpha', '/harness-shell.html'))).status, 404, 'the private document is dispatched by the authenticated router');
+    const outputs=Object.keys((JSON.parse(readFileSync('dist/web-metafile.json','utf8')) as {outputs:Record<string,unknown>}).outputs);
+    const catalogue=outputs.find(path=>/^dist\/web\/environments-[A-Z0-9]{8}\.js$/.test(path));
+    assert.ok(catalogue,'the catalogue has its own content-addressed module');
+    const chunk=await runtime.dispatchFetch(url('alpha','/assets/'+catalogue.slice('dist/web/'.length)));
+    assert.equal(chunk.status,200);assert.equal(chunk.headers.get('cache-control'),'private, max-age=31536000, immutable');
   } finally {
     await runtime.dispose();
   }

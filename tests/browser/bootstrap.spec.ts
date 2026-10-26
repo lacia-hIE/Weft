@@ -42,3 +42,15 @@ test('an application evaluation error preserves its cause in the recovery screen
   await page.getByText('查看错误详情', {exact: true}).click();
   await expect(page.locator('#root pre')).toHaveText('ReferenceError: bootstrap evaluation fixture');
 });
+
+test('a failed lazy catalogue module retains the retry screen',async({page})=>{
+  const route='**/assets/environments-*.js';
+  let rejected=0;
+  await page.route(route,request=>{rejected++;return request.fulfill({status:503,contentType:'text/plain',body:'Unavailable'});});
+  await page.goto('/');
+  await expect(page.getByText('界面资源加载失败，请刷新页面重试。',{exact:true})).toBeVisible();
+  expect(rejected).toBeGreaterThan(0);
+  await page.unroute(route);
+  await page.getByRole('button',{name:'重新加载',exact:true}).click();
+  await expect(page.getByRole('heading',{name:'我的环境',exact:true})).toBeVisible();
+});
