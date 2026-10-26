@@ -4,13 +4,14 @@ export default {
   async fetch(request: Request, env: { ASSETS: Fetcher }): Promise<Response> {
     if (!["GET", "HEAD"].includes(request.method)) return new Response("Not found", {status: 404});
     const url = new URL(request.url);
-    if (url.pathname === "/") url.pathname = "/index.html";
+    const official = ['/', '/index.html'].includes(url.pathname) && request.headers.get('x-weft-harness-document') === 'official';
+    if (official) url.pathname = "/harness-shell.html";
+    else if (url.pathname === "/") url.pathname = "/index.html";
     const asset = await env.ASSETS.fetch(new Request(url, request));
     const headers = new Headers(asset.headers);
     // Only the public Worker marks a response immutable, after matching its content revision.
     headers.set("cache-control", asset.ok && request.headers.get("x-weft-immutable") === "1" ? "private, max-age=31536000, immutable" : "private, no-store");
     headers.set("x-content-type-options", "nosniff");
-    const official = url.pathname === '/index.html' && request.headers.get('x-weft-harness-document') === 'official';
     // Official Cordis Loader expressions and the client runner use Function.
     // The public Worker supplies this marker only for the native environment document.
     // Cloudflare Web Analytics injects its beacon into zone pages; it loads from and reports to Cloudflare Insights.

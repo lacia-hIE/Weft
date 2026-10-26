@@ -1,7 +1,6 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { configureTenant, environmentId } from "./api.ts";
-import { Environments } from "./environments.tsx";
 import "@weft/upstream/packages/client/ui-theme/src/styles/base.css";
 import "@weft/upstream/packages/client/ui-theme/src/styles/design-platform.css";
 import "@weft/upstream/packages/client/ui-theme/src/styles/focus.css";
@@ -13,7 +12,7 @@ async function boot(): Promise<void> {
     await startOfficialHarness(environmentId);
     return;
   }
-  const response = await fetch("/v1/me");
+  const [response, {Environments}] = await Promise.all([fetch("/v1/me"), import('./environments.tsx')]);
   if (!response.ok) throw new Error("请先通过 Cloudflare Access 登录");
   const me = (await response.json()) as { tenantId: string; user: {id: string; email: string} };
   configureTenant(me.tenantId);

@@ -1,5 +1,18 @@
 import {test, expect} from '@playwright/test';
 
+test('the catalogue loads without fetching the native workbench graph or bundles',async({page},testInfo)=>{
+  const requests:string[]=[];
+  page.on('request',request=>{const url=new URL(request.url());if(url.pathname.startsWith('/harness/'))requests.push(url.pathname);});
+  await page.goto('/');
+  await expect(page.getByRole('heading',{name:'我的环境',exact:true})).toBeVisible();
+  expect(requests).toEqual([]);
+  const metrics=await page.evaluate(()=>{
+    const resources=performance.getEntriesByType('resource') as PerformanceResourceTiming[];
+    return {scripts:resources.filter(row=>row.initiatorType==='script').length,encodedResourceBytes:resources.reduce((sum,row)=>sum+row.encodedBodySize,0)};
+  });
+  await testInfo.attach('catalogue-performance',{body:JSON.stringify({nativeWorkbenchRequests:requests.length,...metrics}),contentType:'application/json'});
+});
+
 test('a rejected application chunk shows a recoverable error instead of leaving the loading placeholder', async ({page}) => {
   const chunk = '**/assets/chunk-*.js';
   let rejected = 0;

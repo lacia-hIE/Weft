@@ -4,6 +4,7 @@ import {Button, Checkbox, Input, SegmentedControl} from '@deepseek-ai/dsh-client
 import * as ui from '@deepseek-ai/dsh-client-ui-primitives';
 import {composeInstalledBundle} from '../../../../packages/package-install/src/composition.ts';
 import type {Installation, InstallJob, Artifact, Permissions, PackageRevision} from '../../../../packages/package-install/src/contracts.ts';
+import {RefreshQueue} from '../../../../packages/plugin-registry/src/refresh.ts';
 
 interface Fiber {dispose(): Promise<void>; await(): Promise<unknown>}
 interface ClientContext {
@@ -19,8 +20,8 @@ const NS = 'weft.package-installations';
 const zh = {title: '插件审核', reinstall: '请移除此旧版安装记录，再通过“添加插件”以原版 dsh.bundle.patch 重新安装。', summary: '审核原版 dsh.bundle.patch、构建产物和宿主能力。', spec: '插件包与精确版本', install: '安装并检查', refresh: '刷新', approve: '批准此版本并启用', review: '查看产物与权限', unavailable: '本部署未提供插件构建或存储服务。', loading: '正在读取安装记录…', empty: '尚未安装外部插件包。', trust: 'Client 模块会在工作台页面执行。批准前请确认来源、代码与所需权限。', nextTurn: 'Host 插件在下一轮运行前加载。', pending: '等待审批', enabled: '已启用', disabled: '已停用', code: '构建产物', files: '文件权限', tools: '注册工具', timer: '定时器', client: '浏览器模块', resolving: '解析依赖', building: '构建中', failed: '安装失败', update: '构建更新版本', version: '目标版本', reviewUpdate: '审核更新', discard: '放弃此更新', rollback: '恢复上一版本', current: '当前版本', previous: '上一版本', resources: '样式与静态资源', updating: '新版本将在审核批准后替换当前版本。', none: '无', read: '只读', write: '读写'};
 const en: typeof zh = {title: 'Bundle review', reinstall: 'Remove this legacy installation and reinstall its native dsh.bundle.patch through Add plugin.', summary: 'Review the original dsh.bundle.patch, compiled artifacts and Host capabilities.', spec: 'Package and exact version', install: 'Install and inspect', refresh: 'Refresh', approve: 'Approve this version and enable', review: 'Review artifact and permissions', unavailable: 'This deployment has no plugin build or artifact service.', loading: 'Reading installations…', empty: 'No external packages installed.', trust: 'Client modules execute in the workbench page. Review the source, code and permissions before approval.', nextTurn: 'Host plugins load before the next turn.', pending: 'Awaiting approval', enabled: 'Enabled', disabled: 'Disabled', code: 'Build artifacts', files: 'File permission', tools: 'Register tools', timer: 'Timers', client: 'Browser module', resolving: 'Resolving dependencies', building: 'Building', failed: 'Installation failed', update: 'Build update', version: 'Target version', reviewUpdate: 'Review update', discard: 'Discard update', rollback: 'Restore previous version', current: 'Current version', previous: 'Previous version', resources: 'Styles and static assets', updating: 'The current version stays selected until you approve the update.', none: 'None', read: 'Read only', write: 'Read and write'};
 interface Snapshot {available: boolean; installations: Installation[]; jobs: InstallJob[]}
-async function operation<T>(body?: object): Promise<T> {
-  const response = await fetch('package-installations', body ? {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify(body)} : {});
+async function operation<T>(body?: object, signal?: AbortSignal): Promise<T> {
+  const response = await fetch('package-installations', {...(signal ? {signal} : {}), ...(body ? {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify(body)} : {})});
   const value = await response.json() as T & {error?: string};
   if (!response.ok) throw new Error(value.error ?? `HTTP ${response.status}`);
   return value;
@@ -32,56 +33,54 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(NS, {zh, en}), 'weft.package-installations.locale');
   ctx.slots.inject('plugins.detail.section', () => ctx.slots.register({name: 'plugins.detail.section', id: 'installed-bundle-review', order: 42, locale: NS}, props => props.subject.kind === 'bundle' && props.subject.pkg ? React.createElement(Installations, {ctx, t, name: props.subject.pkg.name}) : null));
   const active = new Map<string, {digest: string; authority: string; fiber: Fiber}>();
-  let closed = false, pending: Promise<void> | undefined, dirty = false;
-  const refresh = () => {
-    if (closed) return;
-    dirty = true;
-    if (pending) return;
-    pending = (async () => {
-      while (dirty && !closed) {
-        dirty = false;
-        const snapshot = await operation<Snapshot>();
-        for (const [name, row] of active) if (!snapshot.installations.some(next => next.name === name && next.digest === row.digest && next.approved && next.enabled && next.permissions.client && JSON.stringify([next.activationId,next.permissions]) === row.authority)) {active.delete(name); await row.fiber.dispose();}
-        for (const row of snapshot.installations) {
-          if (closed || !row.approved || !row.enabled || !row.permissions.client || active.has(row.name)) continue;
-          try {
-            const url = new URL(`package-assets/${row.digest}/client.js?name=${encodeURIComponent(row.name)}`, document.baseURI).href;
-            const asset = (path: string) => new URL(path, url).href;
-            const module = await import(/* @vite-ignore */ url) as {stylesheet?: boolean; default(sdk: object): Promise<cordis.Plugin>};
-            if (closed) break;
-            const plugin = await module.default({React, cordis, ui, compose: composeInstalledBundle, asset,
-              css: (source: string) => source.replace(/__WEFT_ASSET__\/(assets\/[A-Z0-9]+\.[a-z0-9]+)/gi, (_,path: string)=>asset(path))});
-            if (closed) break;
-            const fiber = ctx.plugin({name: 'installed-client-resources', inject: plugin.inject, async apply(client: cordis.Context) {
-              if (module.stylesheet) {
-                await new Promise<void>((resolve,reject) => {
-                  client.effect(() => {
-                    const link = document.createElement('link'); link.rel='stylesheet'; link.href=asset('client.css');
-                    link.dataset.plugin=`installed:${row.name}`; link.dataset.pluginCss=row.digest;
-                    const timer=setTimeout(()=>reject(new Error('Plugin stylesheet timed out')),15000);
-                    link.onload=()=>{clearTimeout(timer);resolve();}; link.onerror=()=>{clearTimeout(timer);reject(new Error('Plugin stylesheet could not load'));};
-                    document.head.appendChild(link);
-                    return ()=>{clearTimeout(timer);link.remove();reject(new Error('Plugin stylesheet activation stopped'));};
-                  }, 'installed-client: stylesheet');
-                });
-              }
-              await client.plugin(plugin).await();
-            }});
-            try {await fiber.await();} catch (error) {await fiber.dispose(); throw error;}
-            if (closed) {await fiber.dispose(); break;}
-            active.set(row.name, {digest: row.digest, authority: JSON.stringify([row.activationId,row.permissions]), fiber});
-          } catch (error) {
-            if (closed) break;
-            console.error('[weft] installed Client activation failed', row.name, error);
-            const result=await operation<{changed:boolean}>({operation:'client-failed',name:row.name,digest:row.digest,activationId:row.activationId});
-            if (result.changed) dirty=true;
+  const queue = new RefreshQueue(async current => {
+    const snapshot = await operation<Snapshot>();
+    if (!current()) return;
+    const installations = new Map(snapshot.installations.map(row => [row.name, row]));
+    for (const [name, row] of active) {
+      if (!current()) return;
+      const next = installations.get(name);
+      if (!next || next.digest !== row.digest || !next.approved || !next.enabled || !next.permissions.client || JSON.stringify([next.activationId,next.permissions]) !== row.authority) {active.delete(name); await row.fiber.dispose();}
+    }
+    for (const row of snapshot.installations) {
+      if (!current()) return;
+      if (!row.approved || !row.enabled || !row.permissions.client || active.has(row.name)) continue;
+      try {
+        const url = new URL(`package-assets/${row.digest}/client.js?name=${encodeURIComponent(row.name)}`, document.baseURI).href;
+        const asset = (path: string) => new URL(path, url).href;
+        const module = await import(/* @vite-ignore */ url) as {stylesheet?: boolean; default(sdk: object): Promise<cordis.Plugin>};
+        if (!current()) return;
+        const plugin = await module.default({React, cordis, ui, compose: composeInstalledBundle, asset,
+          css: (source: string) => source.replace(/__WEFT_ASSET__\/(assets\/[A-Z0-9]+\.[a-z0-9]+)/gi, (_,path: string)=>asset(path))});
+        if (!current()) return;
+        const fiber = ctx.plugin({name: 'installed-client-resources', inject: plugin.inject, async apply(client: cordis.Context) {
+          if (module.stylesheet) {
+            await new Promise<void>((resolve,reject) => {
+              client.effect(() => {
+                const link = document.createElement('link'); link.rel='stylesheet'; link.href=asset('client.css');
+                link.dataset.plugin=`installed:${row.name}`; link.dataset.pluginCss=row.digest;
+                const timer=setTimeout(()=>reject(new Error('Plugin stylesheet timed out')),15000);
+                link.onload=()=>{clearTimeout(timer);resolve();}; link.onerror=()=>{clearTimeout(timer);reject(new Error('Plugin stylesheet could not load'));};
+                document.head.appendChild(link);
+                return ()=>{clearTimeout(timer);link.remove();reject(new Error('Plugin stylesheet activation stopped'));};
+              }, 'installed-client: stylesheet');
+            });
           }
-        }
+          await client.plugin(plugin).await();
+        }});
+        try {await fiber.await();} catch (error) {await fiber.dispose(); throw error;}
+        if (!current()) {await fiber.dispose(); return;}
+        active.set(row.name, {digest: row.digest, authority: JSON.stringify([row.activationId,row.permissions]), fiber});
+      } catch (error) {
+        if (!current()) return;
+        console.error('[weft] installed Client activation failed', row.name, error);
+        const result=await operation<{changed:boolean}>({operation:'client-failed',name:row.name,digest:row.digest,activationId:row.activationId});
+        if (result.changed) queue.refresh();
       }
-    })().catch(error => {if (!closed) console.error('[weft] installed Client activation failed', error);}).finally(() => {pending = undefined; if (dirty) refresh();});
-  };
-  ctx.effect(() => () => {closed = true; return (pending ?? Promise.resolve()).then(()=>Promise.all([...active.values()].map(row => row.fiber.dispose())));}, 'weft.installed-clients');
-  ctx.on('connection/reset', refresh); ctx.remote.$on('plugin-manager/changed', refresh); refresh();
+    }
+  }, error => {console.error('[weft] installed Client activation failed', error);});
+  ctx.effect(() => () => queue.close().then(()=>Promise.all([...active.values()].map(row => row.fiber.dispose()))), 'weft.installed-clients');
+  ctx.on('connection/reset', queue.refresh); ctx.remote.$on('plugin-manager/changed', queue.refresh); queue.refresh();
 }
 function Installations({ctx, t, name}: {ctx: ClientContext; t: (key: string) => string; name: string}): React.ReactNode {
   const [snapshot, setSnapshot] = React.useState<Snapshot>();
@@ -90,22 +89,26 @@ function Installations({ctx, t, name}: {ctx: ClientContext; t: (key: string) => 
   const [grants, setGrants] = React.useState<Permissions>();
   const [review, setReview] = React.useState<{row: PackageRevision; artifact: Artifact}>();
   const id=React.useId();
-  const hasPending=snapshot?.jobs.some(job=>['resolving','building'].includes(job.phase)) ?? false;
   const refresh = async () => {setSnapshot(await operation<Snapshot>());};
   const action = async (fn: () => Promise<void>) => {setBusy(true); setError(undefined); try {await fn(); await refresh();} catch (error) {setError(error instanceof Error ? error.message : String(error));} finally {setBusy(false);}};
   React.useEffect(() => {
-    let closed=false, timer:ReturnType<typeof setTimeout>|undefined;
+    let closed=false, running=false, dirty=false, timer:ReturnType<typeof setTimeout>|undefined;
+    const abort=new AbortController();
     const read=async()=>{
       clearTimeout(timer); if(closed || document.hidden)return;
+      if(running){dirty=true;return;}
+      running=true;dirty=false;
+      let interval:number|undefined;
       try {
-        const value=await operation<Snapshot>();
-        if(!closed) {setSnapshot(value);setError(undefined);if(value.jobs.some(job=>['resolving','building'].includes(job.phase)))timer=setTimeout(()=>void read(),1500);}
-      } catch(error) {if(!closed){setError(String(error));timer=setTimeout(()=>void read(),5000);}}
+        const value=await operation<Snapshot>(undefined,abort.signal);
+        if(!closed) {setSnapshot(value);setError(undefined);if(value.jobs.some(job=>['resolving','building'].includes(job.phase)))interval=1500;}
+      } catch(error) {if(!closed){setError(String(error));interval=5000;}}
+      finally{running=false;if(!closed&&!document.hidden&&(dirty||interval!==undefined))timer=setTimeout(()=>void read(),dirty?0:interval);}
     };
     const dispose=ctx.remote.$on('plugin-manager/changed',()=>void read());
     document.addEventListener('visibilitychange',read); void read();
-    return()=>{closed=true;clearTimeout(timer);document.removeEventListener('visibilitychange',read);if(typeof dispose==='function')dispose();};
-  }, [ctx,name,hasPending]);
+    return()=>{closed=true;abort.abort();clearTimeout(timer);document.removeEventListener('visibilitychange',read);if(typeof dispose==='function')dispose();};
+  }, [ctx,name]);
   const h = React.createElement;
   const row = snapshot?.installations.find(row => row.name === name);
   if (!row) return null;

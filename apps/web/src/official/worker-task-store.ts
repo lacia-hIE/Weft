@@ -44,11 +44,23 @@ export class WorkerTaskStore {
       const details = new Map(this.snapshot.details);
       const wanted = new Set([...this.subscribers.values()].filter(row => row.details && row.id).map(row => row.id!));
       for (const [id] of details) if (!wanted.has(id)) details.delete(id);
-      for (const id of wanted) {
-        const prior = details.get(id), current = value.tasks.find(task => task.id === id);
-        if (prior && current && !unfinished(prior) && prior.status === current.status) continue;
-        details.set(id, await this.request(this.sessionId, 'status', id, abort.signal) as JavaScriptStatus);
-      }
+      const tasks = new Map(value.tasks.map(task => [task.id,task]));
+      const pending = [...wanted].filter(id => {
+        const prior = details.get(id), current = tasks.get(id);
+        return !(prior && current && !unfinished(prior) && prior.status === current.status);
+      });
+      let cursor=0;
+      const failures:unknown[]=[];
+      // Independent task details should not form a network waterfall. Bound the
+      // concurrency so a long conversation cannot overwhelm its Session owner.
+      await Promise.all(Array.from({length:Math.min(4,pending.length)},async()=>{
+        while(!abort.signal.aborted&&!failures.length){
+          const id=pending[cursor++];if(!id)return;
+          try{details.set(id,await this.request(this.sessionId,'status',id,abort.signal) as JavaScriptStatus);}
+          catch(error){failures.push(error);}
+        }
+      }));
+      if(failures.length)throw failures[0];
       if (!abort.signal.aborted) this.publish({value, details, error: this.mutationError});
     } catch {if (!abort.signal.aborted) {this.publish({error: true}); retry = true;}}
     finally {

@@ -7,6 +7,8 @@ test('the environment document preloads every boot graph bundle and only revisio
   try {
     const graph = await (await runtime.dispatchFetch(url('alpha', '/harness/boot.json'))).json() as {entries: {url: string; rev: string}[]};
     assert.ok(graph.entries.length > 0);
+    const home = await (await runtime.dispatchFetch(url('alpha', '/'))).text();
+    assert.ok(!home.includes('rel="preload" as="script"'), 'the catalogue never downloads the native workbench');
     const page = await (await runtime.dispatchFetch(url('alpha', '/agents/default'))).text();
     for (const entry of graph.entries) assert.ok(page.includes(`<link rel="preload" as="script" href="${entry.url.replace(/&/g, '&amp;')}">`), `preloads ${entry.url}`);
     const current = await runtime.dispatchFetch(url('alpha', graph.entries[0]!.url));
@@ -16,6 +18,7 @@ test('the environment document preloads every boot graph bundle and only revisio
     assert.equal(stale.headers.get('cache-control'), 'private, no-store', 'a revision the build did not produce is never cached');
     assert.equal((await runtime.dispatchFetch(url('alpha', '/agents/default'))).headers.get('cache-control'), 'private, no-store', 'the document follows each deployment');
     assert.equal((await runtime.dispatchFetch(url('alpha', '/harness/boot.json'))).headers.get('cache-control'), 'private, no-store');
+    assert.equal((await runtime.dispatchFetch(url('alpha', '/harness-shell.html'))).status, 404, 'the private document is dispatched by the authenticated router');
   } finally {
     await runtime.dispose();
   }
