@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {readFileSync} from 'node:fs';
 import {gzipSync} from 'node:zlib';
-import yaml from 'js-yaml';
+import {parse} from 'yaml';
 import {assertReleaseRun,assertReleaseJobs,inspectReleaseTarball,RELEASE_REPOSITORY,RELEASE_ENVIRONMENT,RELEASE_WORKFLOW} from '../scripts/local-host-release.mjs';
 import {archiveFiles} from './helpers/package-fixture.ts';
 
@@ -14,7 +14,7 @@ test('npm releases accept only complete native Host validation from the exact re
   assertReleaseJobs(jobs,engines);
   assert.throws(()=>assertReleaseJobs(jobs.slice(0,-1),engines));
   assert.throws(()=>assertReleaseJobs([...jobs,{name:'Browser 1/2',conclusion:'skipped'}],engines));
-  const workflow=yaml.load(readFileSync('.github/workflows/'+RELEASE_WORKFLOW,'utf8')) as {jobs:Record<string,{if:string;environment?:string;permissions?:Record<string,string>}>};
+  const workflow=parse(readFileSync('.github/workflows/'+RELEASE_WORKFLOW,'utf8')) as {jobs:Record<string,{if:string;environment?:string;permissions?:Record<string,string>}>};
   for(const job of Object.values(workflow.jobs)){assert.match(job.if,/github\.repository == 'lacia-hIE\/Weft'/);assert.match(job.if,/github\.ref == 'refs\/heads\/main'/);}
   assert.equal(workflow.jobs.publish!.environment,RELEASE_ENVIRONMENT);
   assert.equal(workflow.jobs.publish!.permissions!['id-token'],'write');
