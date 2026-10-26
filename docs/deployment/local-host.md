@@ -7,7 +7,7 @@
 
 截至 2026-10-25，最新发布版为 `0.2.1-rc.3`（npm `next`），npm `latest`
 仍为 `0.2.1-rc.2`。要使用 rc.3，执行 `npm install -g @deepseek-ai/dsh@0.2.1-rc.3`。
-已安装旧连接插件的用户可下载并升级到 **0.2.0**，再升级本地 DSH；
+已安装旧连接插件的用户可下载并升级到 **0.2.1**，再升级本地 DSH；
 已有配对配置及本地数据可以保留。插件安装器、Host 和中继使用同一份明确的
 版本清单，未审查的后续版本会被拒绝。CI 分别安装这两个 npm 原版验证原生
 文件、Git、PTY、界面配对和刷新恢复。云端运行时也已升级为 `upstream.lock.json` 固定的 rc.3。
@@ -53,7 +53,7 @@ Cloudflare 是 TLS 终点，中继会处理传输内容；本版不提供端到�
 
 1. 首页选择「连接本地 DSH」，输入名称并生成配置，点击「复制配对码」。
 2. 在本地原版 DSH「插件」页添加 npm 包 `@laciaproject/dsh-local-host`，
-   或执行 `dsh plugin --profile web add @laciaproject/dsh-local-host@0.2.0`。也可下载
+   或执行 `dsh plugin --profile web add @laciaproject/dsh-local-host@0.2.1`。也可下载
    页面提供的 `.tgz`，以其绝对路径安装。它原生声明 `dsh.bundle.patch`。
    已装过旧名 `@weft/dsh-local-host` 的用户，应先移除旧包再安装新包；配对文件保留。
 3. 在本机「插件 → Weft 本地连接」粘贴配对码并点击「配对并连接」，无需重启。

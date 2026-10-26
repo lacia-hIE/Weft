@@ -6,7 +6,7 @@ connector opens an outbound TLS WebSocket to your Weft deployment; no inbound
 port or local certificate is needed with the default HTTP loopback listener.
 Install in the `dsh web` profile; a Desktop-only IPC Host is not supported in V1.
 
-Connector 0.2.0 supports both releases and adds native connection settings and
+Connector 0.2.x supports both releases and adds native connection settings and
 fragmented transport. Existing pairing files can be kept. As of 2026-10-25 the
 newest published release is rc.3 (`next`); npm `latest` still resolves to rc.2.
 Install rc.3 explicitly with `npm install -g @deepseek-ai/dsh@0.2.1-rc.3`.
@@ -15,12 +15,15 @@ Untested releases remain rejected by both the native installer and the relay.
 1. In Weft, choose **连接本地 DSH**, generate a connection and copy its pairing code.
 2. Install `@laciaproject/dsh-local-host` from the native DSH Plugins page.
    The downloadable tarball remains available for offline installation by absolute path.
-   CLI: `dsh plugin --profile web add @laciaproject/dsh-local-host@0.2.0`.
+   CLI: `dsh plugin --profile web add @laciaproject/dsh-local-host@0.2.1`.
 3. Open **Plugins → Weft local connection** on the local DSH page, paste the code
    and select **Pair and connect**. No restart is needed. You can also retain the
    connection file at `~/.dsh/weft-connection.json` (`0600`), or the absolute path
    in `WEFT_LOCAL_HOST_CONFIG`, and select **Reconnect** to read it.
 4. Return to Weft. The environment becomes available when DSH connects.
+
+If an earlier tarball installed `@weft/dsh-local-host`, remove that bundle before
+installing the new npm name. Keep the existing pairing file.
 
 The initial key expires after ten minutes and can be exchanged once. The
 connector replaces it with a device token in the same file, written atomically
