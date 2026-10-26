@@ -4,6 +4,9 @@ Application versions use `vX.Y.Z`; local connector versions are independent. See
 
 ## Unreleased / 未发布
 
+- Worker Host bundles share background activations with Agent tools and support native Webhook rules with the official GitHub adapter.
+- Worker Host 同包支持后台服务与 Agent 工具，适配原版 Webhook 规则和官方 GitHub 入口。
+
 - Environment-owned Worker Host plugins with native domain persistence, durable callbacks, approved HTTPS egress, scoped session operations, credential resolution and plugin-authenticated Webhook routes. Node Host is not included.
 - 环境级 Worker Host：原版 domain 持久状态、后台唤醒、受控 HTTPS、会话操作、凭据解析与插件验签的 Webhook 路由；不包含 Node Host。
 

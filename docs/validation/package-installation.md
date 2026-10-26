@@ -26,7 +26,7 @@
 
 构建器从已验证的归档读取一个 patch 文件或按顺序读取 patch 文件列表，以固定上游的真正 `applyEntryPatches` 处理插入、组和配置覆盖。启用的条目必须来自本包及锁定依赖。覆盖本包之前插入的行有效；第三方包对其他宿主配置的修改明确拒绝，不能跨隔离边界停用或重配基础服务。已经适配的官方组合包仍走[官方组合包](official-bundles.md)的可信预编译路径。
 
-Host 与 Client 使用真正 Cordis Loader，并隔离自己的 loader 服务。Host 在 Dynamic Worker facet 执行；Supervisor 不执行包代码。安装先在无工作区、无凭据、无网络的 facet 中检查标准导出和服务依赖，缺少的宿主服务明确报错。普通会话插件桥接 fs、tools、timer；环境插件还支持受控 HTTPS、原版 storage/storageDomain、部分 sessionController、credentials.resolve 和有限 webServer 路由，需审核相应权限，详见[Worker Host 服务](../architecture/worker-host-plugins.md)。授权上限来自平台能力，并不是包自报权限。审核页面可收紧文件、工具、计时器和 Client 授权，拒绝越权授予。文件写入逐次校验环境中当前的授权；停用先持久撤销，再释放已有实例。
+Host 与 Client 使用真正 Cordis Loader，并隔离自己的 loader 服务。Host 在 Dynamic Worker facet 执行；Supervisor 不执行包代码。安装先在无工作区、无凭据、无网络的 facet 中检查标准导出和服务依赖，缺少的宿主服务明确报错。普通会话插件桥接 fs、tools、timer；环境插件还支持受控 HTTPS、原版 storage/storageDomain、部分 sessionController、原版 webhookRuntime、credentials.resolve 和有限 webServer 路由，需审核相应权限，详见[Worker Host 服务](../architecture/worker-host-plugins.md)。授权上限来自平台能力，并不是包自报权限。审核页面可收紧文件、工具、计时器和 Client 授权，拒绝越权授予。文件写入逐次校验环境中当前的授权；停用先持久撤销，再释放已有实例。
 
 Client 支持普通 CSS、CSS Modules、CSS `@import` / `url()`、`?inline` 样式、`?raw` 文本，以及 JS 导入图片、字体、Wasm / 文本静态文件（也支持 `?url`）。仅处理归档内的依赖，不下载远程样式。编译器把样式和资源字节放入同一份不可变产物，SHA-256 覆盖全部内容；资源无需单独复制或获得另一套授权。普通样式在 Client 的 Cordis effect 中加载，停用、更新和初始化失败均释放样式；插件自行插入的 inline 样式仍由该插件释放。CSS Modules 保留类名映射，并以包名和版本生成类名前缀，避免独立编译的插件互相覆盖；普通全局 CSS 保持其原有作用域。
 
@@ -47,3 +47,5 @@ Client 在工作台页面执行，具有页面代码的信任级别；用户在�
 EnvironmentDO 保存安装选择和持久任务，私有 R2 保存不可变产物。请求 ID 去重、Alarm 重建恢复、审批摘要、跨租户隔离、停用撤销及不删除工作区数据保持。旧的专用格式不再接收；旧安装记录显示需移除并以原版包重装，不沿用旧审批，也不阻断其他插件清单。
 
 构建、类型检查、真实无网络 Docker 编译、workerd/R2/真实 facet 工具执行、原版详情页审核、资源鉴权、版本更新/回滚与 Client 样式生命周期测试仅在 ci 分支运行。生产使用 CI 导出的已测构建器镜像，不在本地重新构建。
+
+新增 Worker Host 集成验证覆盖同一后台实例服务两个 Agent、收紧工具授权后后台继续运行，以及从 npm 解析和离线编译原版 GitHub 适配器，检查签名拒绝、跨包规则、预设/权限/模型/标题/消息来源与卸载取消。

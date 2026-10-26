@@ -591,7 +591,7 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
     this.nativePackageAuthorize(scope,receipt,'sessions');const delivery=webhookDelivery.parse(raw);
     if(new TextEncoder().encode(JSON.stringify(delivery)).byteLength>1_048_576)throw new Error('Webhook delivery exceeds 1 MiB');
     await this.backgroundPackages(scope).reconcile();this.nativePackageAuthorize(scope,receipt,'sessions');
-    this.ctx.waitUntil(this.backgroundPackages(scope).dispatchWebhook(delivery));
+    await this.backgroundPackages(scope).dispatchWebhook(delivery);
   }
   async nativePackageCancelWebhook(scope:ControlScope,receipt:{name:string;digest:string;activationId:string},operationId:string):Promise<void> {
     this.scope(scope);const key=this.webhookOperation(receipt,operationId);const active=this.webhookOperations.get(key);
@@ -608,19 +608,19 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
     if(this.webhookOperations.size>=32)throw new Error('Too many active webhook actions');
     const abort=new AbortController();this.webhookOperations.set(key,abort);if(this.cancelledWebhooks.delete(key))abort.abort();
     const check=()=>{abort.signal.throwIfAborted();this.nativePackageAuthorize(scope,receipt,'sessions');};
-    let sessionId:string|undefined,workspaceId:string|undefined,created=false,published=false;
+    let sessionId:string|undefined,workspaceId:string|undefined,created=false,published=false,phase='preflight';
     try {
       check();
       const profile=await this.nativeProfile(scope,request.agentPreset);if(!(await profile.json() as {value?:unknown}).value)throw new Error('Webhook Agent preset is unavailable');
       const permissions=await openPermissionWorld(undefined);
       try {permissions.ctx.permissionPresets.resolve(request.permissionPreset);}finally{await permissions.ctx.fiber.dispose();}
-      check();const workspace=await this.nativeResolveWorkspace(scope,undefined,request.workspacePath);workspaceId=workspace.workspaceId;
-      check();sessionId='webhook-'+crypto.randomUUID();const address={...scope,sessionId},target=this.env.SESSIONS.getByName(sessionAddress(address));
+      phase='workspace';check();const workspace=await this.nativeResolveWorkspace(scope,undefined,request.workspacePath);workspaceId=workspace.workspaceId;
+      phase='create';check();sessionId='webhook-'+crypto.randomUUID();const address={...scope,sessionId},target=this.env.SESSIONS.getByName(sessionAddress(address));
       created=await target.nativeCreate(address,{id:request.agentPreset},'default',workspace.path,{actionId:operationId,delivery,ruleId,request});
       if(!created)throw new Error('Webhook Session identity is unavailable');check();
-      await this.nativeAttachWorkspace(scope,workspace.workspaceId,sessionId);check();
-      await target.nativeWebhookAdmit(address,receipt,operationId);published=true;
-    } finally {
+      phase='attach';await this.nativeAttachWorkspace(scope,workspace.workspaceId,sessionId);check();
+      phase='admit';await target.nativeWebhookAdmit(address,receipt,operationId);published=true;
+    } catch(error) {console.warn('weft.webhook.action.failed',{phase,code:error instanceof RemoteError?error.code:error instanceof Error?error.name:'unknown'});throw error;} finally {
       this.webhookOperations.delete(key);
       if(!published&&sessionId && await this.env.SESSIONS.getByName(sessionAddress({...scope,sessionId})).nativeWebhookOwned({...scope,sessionId},operationId)){
         const address={...scope,sessionId};

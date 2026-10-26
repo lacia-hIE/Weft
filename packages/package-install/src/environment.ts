@@ -84,7 +84,8 @@ export class EnvironmentPackages {
   }
   async dispatchWebhook(delivery:unknown):Promise<void> {
     await this.reconcile();
-    await Promise.allSettled([...this.active.values()].filter(active=>active.row.permissions.sessions).map(active=>this.platform.deliverWebhook(active.runId,delivery)));
+    const results=await Promise.allSettled([...this.active.values()].filter(active=>active.row.permissions.sessions).map(active=>this.platform.deliverWebhook(active.runId,delivery)));
+    if(results.some(result=>result.status==='rejected'))throw new Error('A Worker webhook receiver is unavailable');
   }
   async tick(): Promise<void> {
     await this.reconcile();

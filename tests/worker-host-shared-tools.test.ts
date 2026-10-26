@@ -30,7 +30,7 @@ test('one environment activation supplies native tools to two Agents and revokes
     assert.equal(row.hostScope,'environment');assert.equal(row.permissions.tools,true);
     assert.equal((await operation({operation:'approve',name:row.name,digest:row.digest,permissions:{...row.permissions,network:false}})).status,200);
     for(const sessionId of ['shared-a','shared-b']){await api.call('session/create',{request:{sessionId}});await turn(sessionId);}
-    const read=async()=>await(await runtime.dispatchFetch(url('alpha',base+'/workspaces/default/files?path=/workspace/shared-tools.json'))).json();
+    const read=async()=>JSON.parse((await(await runtime.dispatchFetch(url('alpha',base+'/workspaces/default/files?path=/workspace/shared-tools.json'))).json() as {value:{content:string}}).value.content) as {activations:number;calls:number};
     assert.deepEqual(await read(),{activations:1,calls:2});
     assert.equal((await operation({operation:'approve',name:row.name,digest:row.digest,permissions:{...row.permissions,tools:false,network:false}})).status,200);
     await turn('shared-a');assert.equal((await read() as {calls:number}).calls,2);

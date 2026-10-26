@@ -6,6 +6,7 @@ import {Response} from 'miniflare';
 import {buildPackage} from '../apps/plugin-builder/server.mjs';
 import {packageFixture} from './helpers/package-fixture.ts';
 import {createRuntime,tenantId,url} from './helpers/miniflare.ts';
+import {nativeFixtureResponse} from './helpers/native-plugin-model.ts';
 import {nativeClient} from './helpers/native.ts';
 import type {Installation} from '../packages/package-install/src/contracts.ts';
 
@@ -13,15 +14,18 @@ test('the published official GitHub adapter verifies signatures and dispatches t
   const adapter=packageFixture({name:'@weft-fixture/github-ingress',client:false,dependencies:{'@deepseek-ai/dsh-webhook-github':'0.2.1-rc.3'},patch:[{insert:[{id:'github',name:'@deepseek-ai/dsh-webhook-github',config:{source:'fixture',path:'/github',secretEnv:'GITHUB_SECRET',maxBodyBytes:4096}}]}]});
   const rule=packageFixture({name:'@weft-fixture/github-rules',client:false,files:{'host.js':`
     import {WebhookRuleId} from '@deepseek-ai/dsh-webhook';
-    export const inject=['webhookRuntime'];
+    export const inject=['webhookRuntime','fs'];
     export function apply(ctx){ctx.effect(()=>ctx.webhookRuntime.register({id:WebhookRuleId('worker-review'),kind:'github',run:async(delivery,signal)=>{
+      const file=await ctx.fs.resolve('/workspace/webhook-rule-seen.txt');await ctx.fs.writeText(file,delivery.event.payload.action);
       if(delivery.event.name!=='issues')return null;
       if(delivery.event.payload.action==='ignore')return null;
       if(delivery.event.payload.action==='slow')await new Promise((resolve,reject)=>{const timer=setTimeout(resolve,5000);signal.addEventListener('abort',()=>{clearTimeout(timer);reject(signal.reason);},{once:true});});
-      return {workspacePath:'/workspace',title:'Worker webhook review',prompt:'Review signed GitHub event',agentPreset:'standard',permissionPreset:'read-only'};
+      return {workspacePath:'/workspace',title:'Worker webhook review',prompt:'Review signed GitHub event',agentPreset:'standard',permissionPreset:'read-only',...(delivery.event.payload.action==='explicit'?{model:{provider:'deepseek-official',model:'deepseek-v4-pro',maxTokens:1337}}:{})};
     }}));}`}});
+  const modelRequests:{model:string;max_tokens:number}[]=[];
   const fixtures=[adapter,rule],cache=new Map<string,{body:Uint8Array;status:number;headers:Record<string,string>}>();
-  const runtime=createRuntime(undefined,{packages:true,outbound:async request=>{
+  const runtime=createRuntime(undefined,{packages:true,bindings:{MODEL_BACKEND:'deepseek',DEEPSEEK_API_KEY:'webhook-fixture',DEEPSEEK_BASE_URL:'https://webhook-model.test/anthropic'},outbound:async request=>{
+    if(new URL(request.url).hostname==='webhook-model.test'){modelRequests.push(await request.json() as typeof modelRequests[number]);return nativeFixtureResponse();}
     const fixture=fixtures.find(row=>request.url===row.manifest.dist.tarball || request.url.includes(encodeURIComponent(row.name)) || request.url.includes(row.name));
     if(fixture)return request.url===fixture.manifest.dist.tarball?new Response(fixture.bytes):Response.json(fixture.manifest);
     if(new URL(request.url).hostname!=='registry.npmjs.org')throw new Error('Unexpected test destination');
@@ -48,13 +52,17 @@ test('the published official GitHub adapter verifies signatures and dispatches t
     const accepted=await send('opened');assert.equal(accepted.status,202,await accepted.text());
     let rows:Awaited<ReturnType<typeof sessions>>=[];
     for(const end=Date.now()+30000;Date.now()<end;await delay(100)){rows=await sessions();if(rows.length)break;}
-    assert.equal(rows.length,1,JSON.stringify(await installed()));const sessionId=rows[0]!.sessionId;
+    assert.equal(rows.length,1,JSON.stringify({installed:await installed(),seen:await(await runtime.dispatchFetch(url('alpha',`/v1/tenants/${tenant}/environments/default/workspaces/default/files?path=/workspace/webhook-rule-seen.txt`))).text()}));const sessionId=rows[0]!.sessionId;
     assert.equal(rows[0]!.title,'Worker webhook review');
     const projections=await api.call<{values:{permissions?:{currentValue:string}}}>('session/projections',{request:{sessionId}});assert.equal(projections.values.permissions?.currentValue,'read-only');
     const events=await(await runtime.dispatchFetch(url('alpha',`/v1/tenants/${tenant}/environments/default/sessions/${sessionId}/events`))).text();
     assert.match(events,/"kind":"webhook"/);assert.match(events,/"ruleId":"worker-review"/);assert.match(events,/"provider":"github"/);
+    assert.equal((await send('explicit')).status,202);
+    for(const end=Date.now()+30000;Date.now()<end;await delay(100)){if(modelRequests.some(row=>row.model==='deepseek-v4-pro'))break;}
+    assert.ok(modelRequests.some(row=>row.model==='deepseek-v4-pro'&&row.max_tokens===1337),JSON.stringify(modelRequests));
+    assert.equal((await sessions()).length,2);
     assert.equal((await send('slow')).status,202);await delay(100);
-    await api.call('pluginManager/setBundleEnabled',{name:rule.name,enabled:false});await delay(300);assert.equal((await sessions()).length,1,'rule teardown cancels work before it publishes another Session');
+    await api.call('pluginManager/setBundleEnabled',{name:rule.name,enabled:false});await delay(300);assert.equal((await sessions()).length,2,'rule teardown cancels work before it publishes another Session');
     await api.call('pluginManager/setBundleEnabled',{name:adapter.name,enabled:false});assert.equal((await send('opened')).status,404);
   }finally{await runtime.dispose();}
 });
