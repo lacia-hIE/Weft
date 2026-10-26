@@ -19,7 +19,7 @@ test('published local DSH pairs in native settings, runs Files, Git and PTY and 
   await page.getByRole('button',{name:'Install',exact:true}).click();
   const installed=page.getByRole('dialog',{name:'Installed',exact:true});
   await expect(installed).toBeVisible({timeout:90_000});
-  await installed.getByRole('button',{name:'Close',exact:true}).last().click();
+  await installed.getByRole('button',{name:'Enable now',exact:true}).click();
   await page.getByRole('button',{name:'View Weft local connection',exact:true}).click();
   const connectionStatus=page.locator('[data-weft-local-connection]').getByRole('status');
   await expect(connectionStatus).toHaveText('Not paired');

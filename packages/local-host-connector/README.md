@@ -14,6 +14,7 @@ Untested releases remain rejected by both the native installer and the relay.
 
 1. In Weft, choose **连接本地 DSH**, generate a connection and copy its pairing code.
 2. Install `@laciaproject/dsh-local-host` from the native DSH Plugins page.
+   Select **Enable now** when installation completes.
    The downloadable tarball remains available for offline installation by absolute path.
    CLI: `dsh plugin --profile web add @laciaproject/dsh-local-host@0.2.2`.
 3. Open **Plugins → Weft local connection** on the local DSH page, paste the code
