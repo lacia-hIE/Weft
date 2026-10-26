@@ -27,9 +27,10 @@ test('background timer reconstruction preserves due work, retries failures and r
 
 test('plugin egress checks authorization before touching the network and rejects non-HTTPS/private literals', async () => {
   let checks = 0;
-  for (const address of ['http://example.com', 'https://127.0.0.1', 'https://[::1]', 'https://localhost', 'https://service.internal', 'https://example.com:8443', 'https://user:secret@example.com']) {
+  for (const address of ['http://example.com', 'https://127.0.0.1', 'https://[::1]', 'https://localhost', 'https://service.internal', 'https://example.com:8443']) {
     await assert.rejects(pluginFetch(new Request(address), async () => {checks++;}), /not allowed/);
   }
-  assert.equal(checks, 7);
+  assert.equal(checks, 6);
+  assert.throws(() => new Request('https://user:secret@example.com'), /credentials/);
   await assert.rejects(pluginFetch(new Request('https://example.com'), async () => {throw new Error('revoked');}), /revoked/);
 });

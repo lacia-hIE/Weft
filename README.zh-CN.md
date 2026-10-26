@@ -197,6 +197,8 @@ Cloudflare 提供官方 [Deploy to Cloudflare](https://developers.cloudflare.com
 
 当前支持的宿主服务、包来源与格式边界见 **[原版插件安装](docs/validation/package-installation.md)**；已适配的官方组合包见 **[官方组合包](docs/validation/official-bundles.md)**。
 
+第三方包还可使用环境级 Worker Host，获得原版 domain 持久状态、后台回调、获准的 HTTPS 请求、本环境会话操作和插件自行验签的 Webhook 入口。权限沿用包详情审核，具体接口与限制见[Worker Host 服务](docs/architecture/worker-host-plugins.md)。
+
 ## 与本地 DSH 的差异
 
 Weft 保留原版交互与插件声明，但运行能力取决于 Cloudflare 宿主和已实现的服务桥接。

@@ -45,19 +45,19 @@ test('environment Worker Host restores native storage and timers, uses approved 
   const list=async()=> (await (await runtime.dispatchFetch(url('alpha',base))).json() as {installations:Installation[]}).installations;
   const approve=async(row:Installation,network:boolean)=>runtime.dispatchFetch(url('alpha',base),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({operation:'approve',name:row.name,digest:row.digest,permissions:{...row.permissions,network}})});
   const file=async()=>runtime.dispatchFetch(url('alpha',`/v1/tenants/${scope.tenantId}/environments/default/workspaces/default/files?path=/workspace/worker-host.txt`));
-  const waitFile=async(count:number)=>{for(const end=Date.now()+35000;Date.now()<end;await delay(200)){const response=await file();if(response.ok&&(await response.text()).includes('delivered:'+count))return;}throw new Error('Background delivery did not finish');};
+  const waitFile=async(count:number)=>{for(const end=Date.now()+35000;Date.now()<end;await delay(200)){const response=await file();if(response.ok&&(await response.text()).includes('delivered:'+count))return;}throw new Error('Background delivery did not finish: '+JSON.stringify({feeds,installations:await list(),file:await(await file()).text()}));};
   try {
     await api.call('pluginManager/installBundle',{spec:`${fixture.name}@${fixture.version}`,options:{requestId:crypto.randomUUID()}});
     const row=(await list())[0]!;assert.equal(row.hostScope,'environment');assert.equal(row.permissions.sessions,true);assert.equal(row.permissions.storage,true);
     assert.equal((await approve(row,true)).status,200);
     await waitFile(1);
     assert.equal(feeds,1);
-    const sessions=await api.call<{items:{sessionId:string}[]}>('session/list',{request:{}});assert.equal(sessions.items.length,1);
+    const sessions=await api.call<{items:{sessionId:string}[]}>('session/list',{_request:{}});assert.equal(sessions.items.length,1);
     const sessionId=sessions.items[0]!.sessionId;
     assert.equal((await file()).status,200);
     await runtime.dispose();runtime=createRuntime(directory,options);
     await waitFile(2);assert.equal(feeds,2);
-    const again=await api.call<{items:{sessionId:string}[]}>('session/list',{request:{}});assert.equal(again.items.length,1);
+    const again=await api.call<{items:{sessionId:string}[]}>('session/list',{_request:{}});assert.equal(again.items.length,1);
     await api.call('pluginManager/setBundleEnabled',{name:row.name,enabled:false});
     const before=feeds;await delay(1200);assert.equal(feeds,before);assert.equal((await list())[0]!.enabled,false);
   } finally {await runtime.dispose();await rm(directory,{recursive:true,force:true});}
@@ -93,11 +93,11 @@ test('a native bundle owns an explicitly approved webhook route and queues chann
     assert.equal((await send('Bearer fixture-secret')).status,404);
     assert.equal((await operation({operation:'approve',name:row.name,digest:row.digest,permissions:{...row.permissions,network:false,credentials:false,routes:true}})).status,200);
     assert.equal((await send()).status,401);
-    const first=await send('Bearer fixture-secret');assert.equal(first.status,202,await first.clone().text());
+    const first=await send('Bearer fixture-secret');assert.equal(first.status,202,await first.clone().text());assert.match(first.headers.get('content-security-policy')!,/sandbox/);assert.equal(first.headers.get('set-cookie'),null);
     const {sessionId}=await first.json() as {sessionId:string};
     const duplicate=await send('Bearer fixture-secret');assert.equal(duplicate.status,202);assert.equal((await duplicate.json() as {sessionId:string}).sessionId,sessionId);
     const reader=await api.follow(sessionId);await reader.next();await reader.close();
-    assert.equal((await api.call<{items:unknown[]}>('session/list',{request:{}})).items.length,1);
+    assert.equal((await api.call<{items:unknown[]}>('session/list',{_request:{}})).items.length,1);
     await api.call('pluginManager/setBundleEnabled',{name:row.name,enabled:false});assert.equal((await send('Bearer fixture-secret')).status,404);
   }finally{await runtime.dispose();}
 });

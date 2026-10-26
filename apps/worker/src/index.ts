@@ -1063,7 +1063,14 @@ export default {
         const headers = new Headers(request.headers);
         for(const key of ['cookie','cf-access-jwt-assertion','cf-access-client-id','cf-access-client-secret'])headers.delete(key);
         if (Number(headers.get('content-length') ?? 0) > 65536) return new Response(null,{status:413});
-        return controlFor(env, controlScope(hook[1]!,hook[2]!)).nativePackageHook(controlScope(hook[1]!,hook[2]!),name,new Request(target,{method:request.method,headers,body:request.body,signal:request.signal}));
+        try {
+          const response = await controlFor(env, controlScope(hook[1]!,hook[2]!)).nativePackageHook(controlScope(hook[1]!,hook[2]!),name,new Request(target,{method:request.method,headers,body:request.body,signal:request.signal}));
+          const reply = new Headers(response.headers);
+          reply.delete('set-cookie');
+          reply.set('content-security-policy', "sandbox; default-src 'none'; frame-ancestors 'none'");
+          reply.set('x-content-type-options','nosniff');reply.set('cache-control','no-store');
+          return new Response(response.body,{status:response.status,headers:reply});
+        } catch {return new Response('Plugin endpoint unavailable',{status:503,headers:{'cache-control':'no-store'}});}
       }
       const device=/^\/v1\/local-hosts\/([a-zA-Z0-9_-]{1,80})\/([a-zA-Z0-9_-]{1,80})\/(pair|connect)$/.exec(pathname);
       if(device){

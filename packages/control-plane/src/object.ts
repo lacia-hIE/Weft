@@ -100,7 +100,7 @@ import {EnvironmentPackages, environmentFacetName} from '../../package-install/s
 import {workerHostServices, environmentHostServices} from '../../native-plugins/src/services.ts';
 import type {Artifact, Installation} from '../../package-install/src/contracts.ts';
 import {PackageInstaller} from '../../package-install/src/host.ts';
-import {mountWorkspace} from '../../workspace/src/provider.ts';
+import {mountWorkspace, ComputerFileSystem} from '../../workspace/src/provider.ts';
 import { ModelConfigurationError, type ModelEnvironment } from '../../model-provider/src/index.ts';
 import {SqliteModelUploadIndex, type ModelUploadOperation} from '../../model-provider/src/files-protocol.ts';
 import { DATA_LAYOUT_VERSION } from '../../tenant/src/layout.ts';
@@ -596,7 +596,7 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
     const ctx = new Context();
     try {
       const volume = {...scope, workspaceId: 'default'};
-      await mountWorkspace(ctx, {scope: volume, transport: this.env.WORKSPACES.getByName(workspaceAddress(volume)), cwd: '/workspace', fileTools: false});
+      await ctx.plugin(ComputerFileSystem, {scope: volume, transport: this.env.WORKSPACES.getByName(workspaceAddress(volume)), cwd: '/workspace'}).await();
       this.nativePackageAuthorize(scope, receipt, 'files');
       return await Reflect.apply(Reflect.get(ctx.fs, method), ctx.fs, z.array(z.unknown()).max(5).parse(args));
     } finally {await ctx.fiber.dispose();}
@@ -631,18 +631,22 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
   async nativePackageSession(scope: ControlScope, receipt: {name: string; digest: string; activationId: string}, method: string, raw: unknown): Promise<unknown> {
     this.nativePackageAuthorize(scope, receipt, 'sessions');
     if (method === 'list') {
-      sessionRemote.methods['session/list'].input({strict: true}).create().parse({request: raw});
+      sessionRemote.methods['session/list'].input({strict: true}).create().parse({_request: raw});
       return (await this.nativeSessionList(scope)).json();
     }
     if (method === 'create') {
       const {request} = sessionRemote.methods['session/create'].input({strict: true}).create().parse({request: raw});
       const workspace = await this.nativeResolveWorkspace(scope, request.workspaceId, request.cwd);
       let sessionId = request.sessionId ?? crypto.randomUUID();
-      if (this.nativeSessionRoot(scope, sessionId)) sessionId = crypto.randomUUID();
-      const address = {...scope, sessionId};
-      const target = this.env.SESSIONS.getByName(sessionAddress(address));
+      const existingOwner = this.nativeSessionRoot(scope, sessionId);
+      if (existingOwner && existingOwner !== sessionId) sessionId = crypto.randomUUID();
+      let address = {...scope, sessionId};
+      let target = this.env.SESSIONS.getByName(sessionAddress(address));
       this.nativePackageAuthorize(scope, receipt, 'sessions');
-      if (!await target.nativeCreate(address, request.agentPreset === undefined ? undefined : {id: request.agentPreset}, 'default', workspace.path)) throw new Error('Session identity already exists');
+      if (!await target.nativeCreate(address, request.agentPreset === undefined ? undefined : {id: request.agentPreset}, 'default', workspace.path)) {
+        sessionId = crypto.randomUUID(); address = {...scope, sessionId}; target = this.env.SESSIONS.getByName(sessionAddress(address));
+        if (!await target.nativeCreate(address, request.agentPreset === undefined ? undefined : {id: request.agentPreset}, 'default', workspace.path)) throw new Error('Session identity already exists');
+      }
       await this.nativeAttachWorkspace(scope, workspace.workspaceId, sessionId);
       return {sessionId};
     }

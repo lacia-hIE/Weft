@@ -143,6 +143,8 @@ Install public npm bundles through **Plugins → Add plugin**. The installer loc
 
 Creative mode can also produce Host and Client Cordis plugins. Host code runs behind scoped service bridges; Client code executes in the workbench page. Native declarations, configuration validation and lifecycle remain authoritative. See [installation and compatibility](docs/validation/package-installation.md), [official bundles](docs/validation/official-bundles.md) and [plugin composition](docs/architecture/plugin-composition.md).
 
+Third-party bundles can also use an environment-owned Worker Host for persistent domain state, background callbacks, approved HTTPS requests, scoped Session Controller operations and plugin-authenticated Webhook routes. Review these permissions in the existing package details. See [Worker Host services and limits](docs/architecture/worker-host-plugins.md); this does not provide a complete Node host.
+
 ## Limits compared with local DSH
 
 - Synchronized workspace files have a **256 MiB per-file limit**. Large Git packs can exceed it; see [Git workspace guidance](docs/architecture/workspace-git.md).
