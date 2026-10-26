@@ -7,7 +7,7 @@
  * the application version alone changes; it is not the application's version.
  */
 export function workspaceDependencyLock(bytes) {
-  const lock = JSON.parse(bytes.toString());
+  const lock = JSON.parse(new TextDecoder().decode(bytes));
   lock.version = '0.0.1';
   if (lock.packages?.['']) lock.packages[''].version = '0.0.1';
   return JSON.stringify(lock, null, 2) + '\n';

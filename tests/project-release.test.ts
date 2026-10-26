@@ -54,7 +54,7 @@ test('application version changes retain image identity while dependency and int
   const baseline = {name: 'weft', version: '0.0.1', lockfileVersion: 3, packages: {'': {name: 'weft', version: '0.0.1', engines: {node: '>=22.19.0'}}, 'node_modules/example': {version: '1.2.3', integrity: 'sha512-reviewed'}}};
   const bytes = (value: unknown) => Buffer.from(JSON.stringify(value, null, 2) + '\n');
   const canonical = bytes(baseline).toString();
-  assert.equal(workspaceDependencyLock(bytes(baseline)), canonical);
+  assert.equal(workspaceDependencyLock(new Uint8Array(bytes(baseline))), canonical);
   const release = structuredClone(baseline);
   release.version = release.packages[''].version = '0.1.0';
   assert.equal(workspaceDependencyLock(bytes(release)), canonical);
