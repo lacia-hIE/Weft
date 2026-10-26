@@ -76,6 +76,7 @@ export interface NativeSessionContext {
   workspaceRuntime: {shell: WorkspaceShell; containerInstance: ContainerInstance};
   pluginPlan: import('../../plugin-registry/src/types.ts').PluginPlan;
 }
+import {openPermissionWorld} from '../../native-environment/src/permissions.ts';
 import { NativeWorkspaces } from './native-workspaces.ts';
 import type { WorkspaceDO } from '../../workspace/src/object.ts';
 import type { SessionDO } from '../../../apps/worker/src/index.ts';
@@ -95,6 +96,7 @@ import {availableBundleStates, composeBundleProfile, optionalBundleInfo, optiona
 import {environmentPlugins} from '../../native-composition/src/extensions.ts';
 import {Context} from '@deepseek-ai/cordis';
 import {NativePluginPlatform} from '../../native-plugins/src/platform.ts';
+import {webhookDelivery,webhookSessionRequest} from '../../native-plugins/src/webhook-contracts.ts';
 import {permissionSchema} from '../../package-install/src/contracts.ts';
 import {EnvironmentPackages, environmentFacetName} from '../../package-install/src/environment.ts';
 import {workerHostServices, environmentHostServices} from '../../native-plugins/src/services.ts';
@@ -525,11 +527,10 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
           const plugin = await platform.evaluate(context, 'inspect:'+artifact.name, runId, '', () => () => {}, {module: artifact.host, services: [...workerHostServices]});
           const inject = Object.keys(plugin.inject ?? {});
           const background = inject.some(name => (environmentHostServices as readonly string[]).includes(name));
-          if (background && inject.includes('tools')) throw new Error('Environment plugins cannot register Agent tools in this version; split the tool entry into a separate session bundle');
           artifact.hostScope = background ? 'environment' : 'session';
           artifact.permissions = {...artifact.permissions, network: true,
-            storage: inject.some(name => name === 'storage' || name === 'storageDomain'), sessions: inject.includes('sessionController'),
-            credentials: inject.includes('credentials'), routes: inject.includes('webServer'), ...(background ? {tools:false} : {}), background};
+            storage: inject.some(name => name === 'storage' || name === 'storageDomain'), sessions: inject.includes('sessionController') || inject.includes('webhookRuntime'),
+            credentials: inject.includes('credentials'), routes: inject.includes('webServer'), background};
         } finally {await platform.release(runId, true); await context.fiber.dispose();}
       },
       changed: async () => {this.presetReads.clear(); await this.nativeEvent(scope, 'plugin-manager/changed', [{reason: 'install'}]); this.ctx.waitUntil(this.reconcileEnvironmentPackages(scope));},
@@ -576,12 +577,70 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
     await this.backgroundPackages(scope).reconcile();
     await this.schedulePackageAlarm(scope);
   }
-  nativePackageAuthorize(scope: ControlScope, receipt: {name: string; digest: string; activationId: string}, permission: 'network' | 'sessions' | 'credentials' | 'files' | 'routes'): Installation {
+  nativePackageAuthorize(scope: ControlScope, receipt: {name: string; digest: string; activationId: string}, permission: 'network' | 'sessions' | 'credentials' | 'files' | 'routes' | 'tools'): Installation {
     this.scope(scope);
     const row = this.packages(scope).registry.get(receipt.name);
     if (!row?.enabled || !row.approved || row.digest !== receipt.digest || (row.activationId ?? row.digest) !== receipt.activationId || row.hostScope !== 'environment' || !row.permissions.background) throw new Error('Background package capability was revoked');
     if (permission === 'files' ? row.permissions.files === 'none' : !row.permissions[permission]) throw new Error('Plugin permission denied: ' + permission);
     return row;
+  }
+  private readonly webhookOperations=new Map<string,AbortController>();
+  private readonly cancelledWebhooks=new Set<string>();
+  private webhookOperation(receipt:{name:string;activationId:string},operationId:string):string {return JSON.stringify([receipt.name,receipt.activationId,z.uuid().parse(operationId)]);}
+  async nativePackageDispatchWebhook(scope:ControlScope,receipt:{name:string;digest:string;activationId:string},raw:unknown):Promise<void> {
+    this.nativePackageAuthorize(scope,receipt,'sessions');const delivery=webhookDelivery.parse(raw);
+    if(new TextEncoder().encode(JSON.stringify(delivery)).byteLength>1_048_576)throw new Error('Webhook delivery exceeds 1 MiB');
+    await this.backgroundPackages(scope).reconcile();this.nativePackageAuthorize(scope,receipt,'sessions');
+    this.ctx.waitUntil(this.backgroundPackages(scope).dispatchWebhook(delivery));
+  }
+  async nativePackageCancelWebhook(scope:ControlScope,receipt:{name:string;digest:string;activationId:string},operationId:string):Promise<void> {
+    this.scope(scope);const key=this.webhookOperation(receipt,operationId);const active=this.webhookOperations.get(key);
+    if(active)active.abort();else {this.cancelledWebhooks.add(key);if(this.cancelledWebhooks.size>128)this.cancelledWebhooks.delete(this.cancelledWebhooks.values().next().value!);}
+  }
+  async nativePackageCreateWebhook(scope:ControlScope,receipt:{name:string;digest:string;activationId:string},operationId:string,rawDelivery:unknown,ruleId:string,rawRequest:unknown):Promise<void> {
+    this.nativePackageAuthorize(scope,receipt,'sessions');
+    const delivery=webhookDelivery.parse(rawDelivery),request=webhookSessionRequest.parse(rawRequest);z.string().trim().min(1).max(200).parse(ruleId);
+    const key=this.webhookOperation(receipt,operationId);if(this.webhookOperations.has(key))throw new Error('Webhook action already active');
+    if(this.webhookOperations.size>=32)throw new Error('Too many active webhook actions');
+    const abort=new AbortController();this.webhookOperations.set(key,abort);if(this.cancelledWebhooks.delete(key))abort.abort();
+    const check=()=>{abort.signal.throwIfAborted();this.nativePackageAuthorize(scope,receipt,'sessions');};
+    let sessionId:string|undefined,workspaceId:string|undefined,created=false,published=false;
+    try {
+      check();
+      const profile=await this.nativeProfile(scope,request.agentPreset);if(!(await profile.json() as {value?:unknown}).value)throw new Error('Webhook Agent preset is unavailable');
+      const permissions=await openPermissionWorld(undefined);
+      try {permissions.ctx.permissionPresets.resolve(request.permissionPreset);}finally{await permissions.ctx.fiber.dispose();}
+      check();const workspace=await this.nativeResolveWorkspace(scope,undefined,request.workspacePath);workspaceId=workspace.workspaceId;
+      check();sessionId='webhook-'+crypto.randomUUID();const address={...scope,sessionId},target=this.env.SESSIONS.getByName(sessionAddress(address));
+      created=await target.nativeCreate(address,{id:request.agentPreset},'default',workspace.path,{delivery,ruleId,request});
+      if(!created)throw new Error('Webhook Session identity is unavailable');check();
+      await this.nativeAttachWorkspace(scope,workspace.workspaceId,sessionId);check();
+      await target.nativeWebhookAdmit(address);published=true;
+    } finally {
+      this.webhookOperations.delete(key);
+      if(created&&!published&&sessionId){
+        const address={...scope,sessionId};
+        await this.env.SESSIONS.getByName(sessionAddress(address)).nativeLifecycle(address,'delete',1);
+        if(workspaceId)await this.workspaces(scope).detach(workspaceId,sessionId);
+        this.sessionRecords?.remove(sessionId);this.summaryStore().remove(sessionId);
+      }
+    }
+  }
+  async nativePackageTools(scope:ControlScope,receipt:{name:string;digest:string;activationId:string}) {
+    this.nativePackageAuthorize(scope,receipt,'tools');
+    const tools=await this.backgroundPackages(scope).tools(receipt.name,receipt.digest,receipt.activationId);
+    this.nativePackageAuthorize(scope,receipt,'tools');return tools;
+  }
+  async nativePackageTool(scope:ControlScope,receipt:{name:string;digest:string;activationId:string},sessionId:string,raw:unknown) {
+    this.nativePackageAuthorize(scope,receipt,'tools');
+    if(this.nativeSessionRoot(scope,id.parse(sessionId))!==sessionId)throw new Error('Tool caller is outside this environment');
+    const request=z.object({name:z.string().min(1).max(100),args:z.unknown(),callId:z.string().min(1).max(200),operationId:z.uuid()}).strict().parse(raw);
+    const value=await this.backgroundPackages(scope).tool(receipt.name,receipt.digest,receipt.activationId,request.name,request.args,request.callId,sessionId+':'+request.operationId);
+    this.nativePackageAuthorize(scope,receipt,'tools');return value;
+  }
+  async nativePackageToolCancel(scope:ControlScope,receipt:{name:string;digest:string;activationId:string},sessionId:string,operationId:string):Promise<void> {
+    this.scope(scope);id.parse(sessionId);z.uuid().parse(operationId);
+    await this.environmentPackages?.cancelTool(receipt.name,receipt.digest,receipt.activationId,sessionId+':'+operationId);
   }
   async nativePackageCredential(scope: ControlScope, receipt: {name: string; digest: string; activationId: string}, ref: string): Promise<unknown> {
     this.nativePackageAuthorize(scope, receipt, 'credentials');

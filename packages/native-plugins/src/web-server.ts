@@ -40,12 +40,17 @@ export class WorkerWebServer {
       writeHead(code: number, values?: Record<string,string>) {status=code; for(const [key,value] of Object.entries(values ?? {}))headers.set(key,value);return response;},
       write, end(value?: unknown) {if(value !== undefined)write(value);ended=true;return response;},
     };
-    const incoming = {method: request.method, url: url.pathname + url.search, headers: Object.fromEntries(request.headers),
+    let complete=false,aborted=false,reader:ReadableStreamDefaultReader<Uint8Array>|undefined;
+    const stop=()=>{aborted=true;void (reader?reader.cancel():request.body?.cancel())?.catch(()=>{});};
+    const distinct=Object.fromEntries([...request.headers].map(([name,value])=>[name,['x-hub-signature-256','x-github-delivery','x-github-event','content-length'].includes(name)?value.split(',').map(part=>part.trim()):[value]]));
+    const incoming = {method: request.method, url: url.pathname + url.search, headers: Object.fromEntries(request.headers),headersDistinct:distinct,
+      get complete(){return complete;},get aborted(){return aborted;},resume(){stop();return incoming;},destroy(){stop();return incoming;},
       async *[Symbol.asyncIterator]() {
-        if (!request.body) return;
-        const reader = request.body.getReader(); let read = 0;
-        try {for (;;) {const part = await reader.read(); if(part.done)return; read += part.value.length; if(read>65536)throw new Error('Plugin HTTP request exceeds 64 KiB'); yield part.value;}}
-        finally {await reader.cancel().catch(()=>{});reader.releaseLock();}
+        if (!request.body) {complete=true;return;}
+        reader = request.body.getReader(); let read = 0;
+        try {for (;;) {const part = await reader.read(); if(part.done){complete=!aborted;return;} read += part.value.length; if(read>65536)throw new Error('Plugin HTTP request exceeds 64 KiB'); yield part.value;}}
+        catch(error){aborted=true;throw error;}
+        finally {await reader.cancel().catch(()=>{});reader.releaseLock();reader=undefined;}
       },
     };
     await route.handler!(incoming,response);

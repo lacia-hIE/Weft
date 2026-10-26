@@ -1,15 +1,15 @@
 import type { Context, Plugin } from '@deepseek-ai/cordis';
-import type { ContentBlock } from '@deepseek-ai/dsh-llm';
-import type { JsonValue } from '@deepseek-ai/dsh-util-values';
 import type { ToolExecutionResult } from '@deepseek-ai/dsh-tools';
-import { HarnessError } from '@deepseek-ai/dsh-llm';
 import { z } from 'zod';
+import {registerRemoteTool, toolDescriptions} from './tool-bridge.ts';
 import { kernelModule } from '../../../.generated/native-plugin-kernel.ts';
 const descriptionSchema = z.object({ name: z.string().max(200), inject: z.record(z.string().max(100), z.json()), handlers: z.array(z.string().min(1).max(100)).max(100) });
-const metadataSchema = descriptionSchema.extend({ tools: z.array(z.object({ name: z.string().min(1).max(100), description: z.string(), parameters: z.record(z.string(), z.unknown()), outputSchema: z.record(z.string(), z.unknown()), hasPresentation: z.boolean(), timeoutMs: z.number().positive().optional() })).max(100) });
+const metadataSchema = descriptionSchema.extend({tools:toolDescriptions});
 type Metadata = z.infer<typeof metadataSchema>;
 interface FacetApi {
     describe(): Promise<unknown>;
+    metadata(): Promise<unknown>;
+    deliverWebhook(delivery: unknown): Promise<void>;
     start(): Promise<unknown>;
     invoke(method: string, args: unknown): Promise<{
         value: unknown;
@@ -106,44 +106,10 @@ export class NativePluginPlatform {
                     if (tools.get(tool.name)?.signature === signature)
                         continue;
                     tools.get(tool.name)?.dispose();
-                    const projections = new WeakMap<object, {
-                        content: ContentBlock[];
-                        meta?: JsonValue;
-                    }>();
-                    const dispose = ctx.tools.register({
-                        name: tool.name, description: tool.description, parameters: tool.parameters,
-                        ...(tool.timeoutMs === undefined ? {} : { timeoutMs: tool.timeoutMs }),
-                        output: {
-                            schema: tool.outputSchema,
-                            render: args => {
-                                const result = projections.get(args as object);
-                                if (!result)
-                                    throw new Error('Missing isolated tool result projection');
-                                return result.content;
-                            },
-                            ...(tool.hasPresentation ? { presentationMeta: (args: unknown) => projections.get(args as object)?.meta ?? null } : {}),
-                        },
-                        execute: async (args, exec) => {
-                            exec.signal.throwIfAborted();
-                            const operationId = crypto.randomUUID();
-                            const abort = () => this.state.waitUntil(facet.cancelTool(operationId).catch(() => { }));
-                            exec.signal.addEventListener('abort', abort, { once: true });
-                            try {
-                                const result = await this.bounded(allocation, () => facet.tool(tool.name, args, exec.callId, operationId));
-                                exec.signal.throwIfAborted();
-                                for (const context of result.additionalContexts ?? [])
-                                    exec.deferContext(context);
-                                if (result.isError)
-                                    throw new HarnessError(result.error.message, result.error.info?.code ?? 'PLUGIN_TOOL_FAILED');
-                                if (result.concludesTurn)
-                                    exec.concludeTurn();
-                                projections.set(args as object, result);
-                                return result.value;
-                            }
-                            finally {
-                                exec.signal.removeEventListener('abort', abort);
-                            }
-                        },
+                    if (installed?.environment) continue;
+                    const dispose = registerRemoteTool(ctx, tool, {
+                        execute: (name,args,callId,operationId) => this.bounded(allocation, () => facet.tool(name,args,callId,operationId)),
+                        cancel: operationId => facet.cancelTool(operationId), waitUntil: work => this.state.waitUntil(work),
                     });
                     tools.set(tool.name, { signature, dispose });
                     allocation.disposers.push(dispose);
@@ -175,10 +141,18 @@ export class NativePluginPlatform {
         const allocation = this.allocations.get(runId);
         return allocation ? this.bounded(allocation, () => allocation.facet.nextAlarm()) : undefined;
     }
-    async call(runId: string, method: string, args: unknown): Promise<unknown> {
-        const allocation = this.allocations.get(runId);
-        if (!allocation) throw new Error('Plugin is not active');
-        return (await this.bounded(allocation, () => allocation.facet.invoke(method, args))).value;
+    async toolMetadata(runId: string) {
+        const allocation=this.allocations.get(runId);if(!allocation)throw new Error('Plugin is not active');
+        return metadataSchema.parse(await this.bounded(allocation,()=>allocation.facet.metadata())).tools;
+    }
+    async tool(runId:string,name:string,args:unknown,callId:string,operationId:string):Promise<ToolExecutionResult> {
+        const allocation=this.allocations.get(runId);if(!allocation)throw new Error('Plugin is not active');
+        return this.bounded(allocation,()=>allocation.facet.tool(name,args,callId,operationId));
+    }
+    async cancelTool(runId:string,operationId:string):Promise<void> {await this.allocations.get(runId)?.facet.cancelTool(operationId);}
+    async deliverWebhook(runId:string,delivery:unknown):Promise<void> {
+        const allocation=this.allocations.get(runId);if(!allocation)throw new Error('Plugin is not active');
+        await this.bounded(allocation,()=>allocation.facet.deliverWebhook(delivery));
     }
     async release(runId: string, destroy = false): Promise<void> {
         const allocation = this.allocations.get(runId);

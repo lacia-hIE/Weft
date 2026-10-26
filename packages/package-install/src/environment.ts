@@ -7,7 +7,7 @@ const identity = (row: Installation) => JSON.stringify([row.digest, row.activati
 export function installedServices(row: Installation): string[] {
   const p = row.permissions;
   return [...(p.files !== 'none' ? ['fs'] : []), ...(p.tools ? ['tools'] : []), ...(p.timer ? ['timer'] : []),
-    ...(p.storage ? ['storage', 'storageDomain'] : []), ...(p.sessions ? ['sessionController'] : []), ...(p.credentials ? ['credentials'] : []), ...(p.routes ? ['webServer'] : [])];
+    ...(p.storage ? ['storage', 'storageDomain'] : []), ...(p.sessions ? ['sessionController','webhookRuntime'] : []), ...(p.credentials ? ['credentials'] : []), ...(p.routes ? ['webServer'] : [])];
 }
 interface Active {row: Installation; runId: string; fiber?: Fiber}
 /** A single environment-owned activation, independent of open browser pages and Sessions. */
@@ -68,6 +68,23 @@ export class EnvironmentPackages {
     await this.reconcile();
     const active = this.active.get(name);
     return active ? this.platform.fetch(active.runId, request) : new Response(null, {status:404});
+  }
+  private async activation(name:string,digest:string,activationId:string):Promise<Active> {
+    await this.reconcile();const active=this.active.get(name);
+    if(!active || active.row.digest!==digest || (active.row.activationId??active.row.digest)!==activationId)throw new Error('Background activation was revoked');
+    return active;
+  }
+  async tools(name:string,digest:string,activationId:string) {return this.platform.toolMetadata((await this.activation(name,digest,activationId)).runId);}
+  async tool(name:string,digest:string,activationId:string,tool:string,args:unknown,callId:string,operationId:string) {
+    return this.platform.tool((await this.activation(name,digest,activationId)).runId,tool,args,callId,operationId);
+  }
+  async cancelTool(name:string,digest:string,activationId:string,operationId:string):Promise<void> {
+    const active=this.active.get(name);
+    if(active && active.row.digest===digest && (active.row.activationId??active.row.digest)===activationId)await this.platform.cancelTool(active.runId,operationId);
+  }
+  async dispatchWebhook(delivery:unknown):Promise<void> {
+    await this.reconcile();
+    await Promise.allSettled([...this.active.values()].filter(active=>active.row.permissions.sessions).map(active=>this.platform.deliverWebhook(active.runId,delivery)));
   }
   async tick(): Promise<void> {
     await this.reconcile();

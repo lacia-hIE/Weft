@@ -1,9 +1,10 @@
 import type {Context, Fiber, Plugin} from '@deepseek-ai/cordis';
+import {registerRemoteTool, toolDescriptions, type ToolTransport} from '../../native-plugins/src/tool-bridge.ts';
 import {NativePluginPlatform} from '../../native-plugins/src/platform.ts';
 import type {Artifact, Installation} from './contracts.ts';
 
 interface Active {
-  installation: Installation; runId: string; fiber?: Fiber;
+  installation: Installation; runId: string; fiber?: Fiber; dispose?:()=>void;
 }
 function authority(row: Installation): string {
   const p = row.permissions;
@@ -16,14 +17,14 @@ export class InstalledPackageRuntime {
   private readonly platform: NativePluginPlatform;
   private tail: Promise<unknown> = Promise.resolve();
   constructor(private readonly ctx: Context, private readonly state: DurableObjectState, loader: WorkerLoader | undefined, scope: object,
-    private readonly source: {list(): Promise<Installation[]>; artifact(name: string, digest: string): Promise<Artifact>; capability(pluginId: string, runId: string): Fetcher; failed?(name: string, digest: string, activationId?: string): Promise<boolean>}) {
+    private readonly source: {list(): Promise<Installation[]>; artifact(name: string, digest: string): Promise<Artifact>; capability(pluginId: string, runId: string): Fetcher; environmentTools?(row:Installation):Promise<unknown>; environmentTransport?(row:Installation):ToolTransport; failed?(name: string, digest: string, activationId?: string): Promise<boolean>}) {
     this.platform = new NativePluginPlatform(state, loader, scope, source.capability);
     this.platform.onFault((runId) => {const entry = [...this.active.values()].find(row => row.runId === runId); if (entry) state.waitUntil(this.stop(entry.installation.name));});
     ctx.effect(() => () => Promise.all([...this.active.keys()].map(name => this.stop(name))).then(() => {}), 'weft.installed-packages');
   }
   reconcile(): Promise<void> {
     const operation = this.tail.catch(() => {}).then(async () => {
-      const selected = (await this.source.list()).filter(row => row.enabled && row.approved && row.hostScope !== 'environment');
+      const selected = (await this.source.list()).filter(row => row.enabled && row.approved && (row.hostScope !== 'environment' || row.permissions.tools));
       for (const name of this.failed.keys()) if (!selected.some(row => row.name === name && authority(row) === this.failed.get(name))) this.failed.delete(name);
       for (const [name, row] of this.active) if (!selected.some(next => next.name === name && authority(next) === authority(row.installation))) await this.stopNow(name);
       for (const installation of selected) {
@@ -32,6 +33,14 @@ export class InstalledPackageRuntime {
         const row: Active = {installation, runId};
         this.active.set(installation.name, row);
         try {
+          if(installation.hostScope==='environment') {
+            if(!this.source.environmentTools || !this.source.environmentTransport)throw new Error('Environment tool bridge is unavailable');
+            const tools=toolDescriptions.parse(await this.source.environmentTools(installation));
+            const transport=this.source.environmentTransport(installation);
+            const disposers:(()=>void)[]=[];row.dispose=()=>{for(const dispose of disposers.splice(0).reverse())dispose();};
+            for(const tool of tools)disposers.push(registerRemoteTool(this.ctx,tool,transport));
+            continue;
+          }
           const artifact = await this.source.artifact(installation.name, installation.digest);
           if (artifact.host) {
             const p = installation.permissions;
@@ -60,7 +69,7 @@ export class InstalledPackageRuntime {
   private async stopNow(name: string): Promise<void> {
     const row = this.active.get(name); if (!row) return;
     this.active.delete(name);
-    await row.fiber?.dispose(); await this.platform.release(row.runId);
+    row.dispose?.(); await row.fiber?.dispose(); await this.platform.release(row.runId);
   }
   permission(pluginId: string, runId: string): Installation | undefined {
     const name = pluginId.startsWith('installed:') ? pluginId.slice('installed:'.length) : '';

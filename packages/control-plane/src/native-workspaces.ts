@@ -91,6 +91,9 @@ export class NativeWorkspaces {
       catch (error) {throw new RemoteError('session/workspace-attach-failed', 'Session directory does not match its Workspace', {sessionId: SessionId(sessionId), workspaceId: id}, {cause: error});}
     });
   }
+  async detach(id:string,sessionId:string):Promise<void> {
+    await this.run(async({ctx})=>{await ctx.workspaceRegistry.get(WorkspaceId(id))?.detachSession(SessionId(sessionId));});
+  }
   async *follow(signal: AbortSignal): AsyncIterable<WorkspaceFollowFrame> {const {feed} = await this.ready; yield* feed.follow(signal);}
   async invoke(endpoint: string, args: unknown): Promise<Response> {
     return this.run(async ({commands}) => {

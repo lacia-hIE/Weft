@@ -28,6 +28,8 @@ export class DurableSessionIndex<T extends {id: string; updatedAt: string}> {
     return [...this.records.values()].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || left.id.localeCompare(right.id)).map(record => structuredClone(record));
   }
 
+  remove(sessionId:string):void {this.sql.exec('DELETE FROM session_index WHERE id=?',sessionId);this.records.delete(sessionId);}
+
   put(record: T): void {
     this.sql.exec('INSERT INTO session_index VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET document = excluded.document', record.id, JSON.stringify(record));
     this.records.set(record.id, structuredClone(record));

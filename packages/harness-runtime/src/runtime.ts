@@ -24,7 +24,7 @@ export interface RuntimeOptions {
   clientTimeZone?: string;
   promptContent?: readonly {type: 'text'; text: string}[];
   persona: string;
-  model: { provider: string; model: string };
+  model: { provider: string; model: string; maxTokens?:number };
   /** A single adapter for `model.provider`; used only when `mountModels` is absent. */
   adapter?: LlmAdapter;
   /** Mount the model providers as profile entries, in place of a single adapter. */

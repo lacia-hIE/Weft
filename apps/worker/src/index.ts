@@ -38,7 +38,7 @@ import type {Installation, Artifact} from '../../../packages/package-install/src
 import {InstalledPackageRuntime} from '../../../packages/package-install/src/runtime.ts';
 import { z } from 'zod';
 import { Context } from '@deepseek-ai/cordis';
-import { createUserMessage } from '@deepseek-ai/dsh-llm';
+import { createUserMessage, boundContextSummary } from '@deepseek-ai/dsh-llm';
 import type {} from '@deepseek-ai/dsh-cordis-host-runner';
 import { SessionId, SessionSeq, type SessionEvent } from '@deepseek-ai/dsh-session';
 import {readSessionReferenceMetadata} from '../../../packages/native-query/src/reference-metadata.ts';
@@ -96,6 +96,7 @@ const cancelSchema = z.object({ requestId: z.uuid() }).strict();
 type TurnResult = { ok: true; requestId: string; events: readonly SessionEvent[]; model: { provider: string; model: string } }
   | { ok: false; requestId: string; error: TurnFailure };
 
+import {readWebhookSeed,type WorkerWebhookSeed} from '../../../packages/native-plugins/src/webhook-contracts.ts';
 import {pluginFetch} from '../../../packages/native-plugins/src/network.ts';
 
 /** Immutable capability identity; the child never receives a namespace or secret. */
@@ -116,6 +117,9 @@ export class EnvironmentPluginCapabilities extends WorkerEntrypoint<Env, {scope:
   override async fetch(request: Request): Promise<Response> {
     return pluginFetch(request, async () => {await this.owner().nativePackageAuthorize(this.ctx.props.scope, this.ctx.props, 'network');});
   }
+  async dispatchWebhook(delivery:unknown):Promise<void> {return this.owner().nativePackageDispatchWebhook(this.ctx.props.scope,this.ctx.props,delivery);}
+  async createWebhook(operationId:string,delivery:unknown,ruleId:string,request:unknown):Promise<void> {return this.owner().nativePackageCreateWebhook(this.ctx.props.scope,this.ctx.props,operationId,delivery,ruleId,request);}
+  async cancelWebhook(operationId:string):Promise<void> {return this.owner().nativePackageCancelWebhook(this.ctx.props.scope,this.ctx.props,operationId);}
   async callSession(method: string, request: unknown): Promise<unknown> {return this.owner().nativePackageSession(this.ctx.props.scope, this.ctx.props, method, request);}
   async followSession(request: unknown): Promise<Response> {return this.owner().nativePackageFollow(this.ctx.props.scope, this.ctx.props, request);}
   async callFs(method: string, args: unknown[]): Promise<unknown> {return this.owner().nativePackageFs(this.ctx.props.scope, this.ctx.props, method, args);}
@@ -211,6 +215,7 @@ export class SessionDO extends DurableObject<Env> {
   private readonly requests = new Map<string, AbortController>();
   private nativeHost: NativeSessionHost | undefined;
   private installedPackages: InstalledPackageRuntime | undefined;
+  private webhookSeed():WorkerWebhookSeed|undefined {const row=this.ctx.storage.sql.exec<{seed:string}>("SELECT seed FROM weft_webhook_bootstrap WHERE id=1").toArray()[0];return row?readWebhookSeed(JSON.parse(row.seed)):undefined;}
   private nativeHostPromise: Promise<NativeSessionHost> | undefined;
   private getNativeHost(scope: SessionScope): Promise<NativeSessionHost> {
     if (this.nativeHostPromise) return this.nativeHostPromise;
@@ -221,6 +226,7 @@ export class SessionDO extends DurableObject<Env> {
       const profile = JSON.parse(stored.agent_document) as AgentRevision;
       if (!supportsAgentRuntime(profile.upstream)) throw new Error('Agent runtime revision unavailable');
       const runtime = await sessionRuntime(this.env, this.ctx.storage, scope, profile, stored.workspace_id, profile.spec.persona, true, await this.getReader(), {}, this.nativeCwd(scope.sessionId), false);
+      const seed=this.webhookSeed();if(seed)runtime.options.model={provider:seed.selection.provider,model:seed.selection.model,...(seed.request.model?.maxTokens===undefined?{}:{maxTokens:seed.request.model.maxTokens})};
       const owner = controlScope(scope.tenantId, scope.environmentId);
       const pluginsReady = Promise.withResolvers<void>();
       let packageTurn: string | undefined;
@@ -249,6 +255,12 @@ export class SessionDO extends DurableObject<Env> {
         });
         this.installedPackages = new InstalledPackageRuntime(ctx, this.ctx, this.env.LOADER, scope, {
           list: async () => ((await (await controlFor(this.env, owner).nativePackageList(owner)).json()) as {installations: Installation[]}).installations,
+          environmentTools: row => controlFor(this.env,owner).nativePackageTools(owner,{name:row.name,digest:row.digest,activationId:row.activationId??row.digest}),
+          environmentTransport: row => {
+            const receipt={name:row.name,digest:row.digest,activationId:row.activationId??row.digest};
+            return {execute:(name,args,callId,operationId)=>controlFor(this.env,owner).nativePackageTool(owner,receipt,scope.sessionId,{name,args,callId,operationId}),
+              cancel:operationId=>controlFor(this.env,owner).nativePackageToolCancel(owner,receipt,scope.sessionId,operationId),waitUntil:work=>this.ctx.waitUntil(work)};
+          },
           artifact: async (name, digest) => await (await controlFor(this.env, owner).nativePackageArtifact(owner, name, digest)).json() as Artifact,
           failed: (name, digest, activationId) => controlFor(this.env, owner).nativePackageFailure(owner, name, digest, activationId),
           capability: (pluginId, runId) => {
@@ -348,6 +360,7 @@ export class SessionDO extends DurableObject<Env> {
     this.lifecycle=lifecycle;
     if(lifecycle.mode==='deleted'){lifecycle.finishBoot();return;}
     initializeSessionStorage(ctx.storage);
+    ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_webhook_bootstrap (id INTEGER PRIMARY KEY CHECK(id=1),seed TEXT NOT NULL)');
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_session_config (id INTEGER PRIMARY KEY CHECK(id=1), workspace_id TEXT, agent_document TEXT, presentation INTEGER NOT NULL DEFAULT 0)');
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_pending_preset (id INTEGER PRIMARY KEY CHECK(id=1), document TEXT NOT NULL)');
     lifecycle.finishBoot();
@@ -487,7 +500,7 @@ export class SessionDO extends DurableObject<Env> {
   }
 
   /** Native Web creation opens a real persisted Session before its first prompt. */
-  async nativeCreate(input: SessionScope, binding?: AgentBinding, workspaceId?: string, cwd?: string): Promise<boolean> {
+  async nativeCreate(input: SessionScope, binding?: AgentBinding, workspaceId?: string, cwd?: string, webhook?:Omit<WorkerWebhookSeed,'selection'>): Promise<boolean> {
     const scope = this.assertScope(input);
     const known = this.ctx.storage.sql.exec<{workspace_id: string; agent_document: string; presentation: number}>('SELECT workspace_id,agent_document,presentation FROM weft_session_config WHERE id=1').toArray()[0];
     const existing = readSessionSnapshot(this.ctx.storage, SessionId(scope.sessionId));
@@ -513,6 +526,15 @@ export class SessionDO extends DurableObject<Env> {
       const reader = await this.getReader();
       const directory = workspacePath(cwd ?? '/workspace');
       const runtime = await sessionRuntime(this.env, this.ctx.storage, scope, profile, attachedWorkspace, profile.spec.persona, true, reader, {}, directory, false);
+      if(webhook) {
+        const seed=readWebhookSeed({...webhook,selection:webhook.request.model?{provider:webhook.request.model.provider,model:webhook.request.model.model}:runtime.options.defaultModel?.()??runtime.options.model});
+        this.ctx.storage.sql.exec('INSERT INTO weft_webhook_bootstrap VALUES (1,?)',JSON.stringify(seed));
+        const setup=runtime.options.setupAgent;
+        runtime.options.setupAgent=async(ctx,agent)=>{
+          await setup?.(ctx,agent);ctx.permissionPresets.set(agent.session,seed.request.permissionPreset);ctx.sessionTitle.rename(agent.session,seed.request.title);
+          agent.session.append('model/selection',seed.selection);
+        };
+      }
       await initializeHarnessSession(runtime.options);
       this.ctx.storage.sql.exec('INSERT INTO weft_session_config (id,workspace_id,agent_document,presentation) VALUES (1,?,?,1) ON CONFLICT(id) DO UPDATE SET workspace_id=excluded.workspace_id,agent_document=excluded.agent_document,presentation=1', attachedWorkspace, JSON.stringify(profile));
       await Promise.all([
@@ -521,7 +543,14 @@ export class SessionDO extends DurableObject<Env> {
       ]);
       return true;
     });
-    return result === 'race' ? this.nativeCreate(scope, binding, workspaceId, cwd) : result;
+    return result === 'race' ? this.nativeCreate(scope, binding, workspaceId, cwd, webhook) : result;
+  }
+
+  async nativeWebhookAdmit(input:SessionScope):Promise<void> {
+    const scope=this.assertScope(input),seed=this.webhookSeed();if(!seed)throw new Error('Webhook Session bootstrap is missing');
+    const host=await this.getNativeHost(scope);
+    await host.webhook(createUserMessage({content:[{type:'text',text:seed.request.prompt}],source:{kind:'webhook',provider:seed.delivery.kind,source:seed.delivery.source,deliveryId:seed.delivery.deliveryId,ruleId:seed.ruleId,form:'notice',summary:boundContextSummary(seed.delivery.kind+' webhook handled by '+seed.ruleId)}}));
+    await this.ctx.storage.sync();
   }
 
   /** The original fork seed for a Session this object owns; the default boundary is the latest completed turn. */

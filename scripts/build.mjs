@@ -1,3 +1,4 @@
+import {nativeWebhookPlatform} from './native-webhook-platform.mjs';
 import { build } from 'esbuild';
 import { mkdirSync, readFileSync, writeFileSync, readdirSync, rmSync, cpSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -80,7 +81,7 @@ const browserNodeModule = {
 };
 const dynamicCordis = await build({ entryPoints: [resolve(upstreamDirectory,'vendor/cordis/src/index.ts')], bundle: true, format: 'esm', platform: 'browser', target: 'es2024', minify: true, write: false, tsconfig: '.generated/upstream.source.tsconfig.json' });
 writeFileSync('.generated/dynamic-cordis.ts', `export const cordisModule = ${JSON.stringify(dynamicCordis.outputFiles[0].text)};\n`);
-const nativeKernel = await build({entryPoints: ['packages/native-plugins/src/kernel.ts'], bundle: true, format: 'esm', platform: 'browser', target: 'es2024', minify: true, write: false, external: ['cloudflare:workers', 'node:*', 'weft:plugin-factory'], tsconfig: '.generated/upstream.source.tsconfig.json', plugins: [staticAttribution, nativeCompositionPlatform]});
+const nativeKernel = await build({entryPoints: ['packages/native-plugins/src/kernel.ts'], bundle: true, format: 'esm', platform: 'browser', target: 'es2024', minify: true, write: false, external: ['cloudflare:workers', 'node:*', 'weft:plugin-factory'], tsconfig: '.generated/upstream.source.tsconfig.json', plugins: [staticAttribution, nativeCompositionPlatform, nativeWebhookPlatform]});
 writeFileSync('.generated/native-plugin-kernel.ts', `export const kernelModule = ${JSON.stringify(nativeKernel.outputFiles[0].text)};\n`);
 rmSync('dist/web', { recursive: true, force: true });
 const web = await build({

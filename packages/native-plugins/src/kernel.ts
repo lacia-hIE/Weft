@@ -14,6 +14,8 @@ import {mountDurableStorage} from '../../native-storage/src/index.ts';
 import {DurablePluginTimers} from './durable-timers.ts';
 import {WorkerWebServer} from './web-server.ts';
 import {pluginSessionStream} from './stream.ts';
+import {WorkerWebhooks} from './webhooks.ts';
+import type {VerifiedWebhookDelivery} from '@deepseek-ai/dsh-webhook';
 import {sessionMethods} from './services.ts';
 import { snapshotJsonValue } from '@deepseek-ai/dsh-util-values';
 interface KernelEnv {
@@ -25,6 +27,9 @@ interface KernelEnv {
         callSession(method: string, request: unknown): Promise<unknown>;
         resolveCredential(ref: string): Promise<unknown>;
         followSession(request: unknown): Promise<Response>;
+        dispatchWebhook(delivery:unknown):Promise<void>;
+        createWebhook(operationId:string,delivery:unknown,ruleId:string,request:unknown):Promise<void>;
+        cancelWebhook(operationId:string):Promise<void>;
     };
 }
 function wire<T>(value: T): T {
@@ -45,6 +50,7 @@ export class PluginFacet extends DurableObject<KernelEnv> {
     private stopped = false;
     private bundle = false;
     private webServer: WorkerWebServer | undefined;
+    private webhooks: WorkerWebhooks | undefined;
     private durableTimers: DurablePluginTimers | undefined;
     private readonly handlers = new Map<string, (args: unknown) => Promise<unknown>>();
     private readonly operations = new Map<string, AbortController>();
@@ -58,6 +64,7 @@ export class PluginFacet extends DurableObject<KernelEnv> {
             await root.plugin(Tools);
             await root.plugin(Timer);
             if (this.env.BACKGROUND && this.env.ALLOWED?.includes('timer')) this.durableTimers = new DurablePluginTimers(this.ctx.storage, this.env.ACTIVATION ?? 'initial');
+            if (this.env.ALLOWED?.includes('webhookRuntime')) {this.webhooks=new WorkerWebhooks(this.env.HOST!,work=>this.ctx.waitUntil(work));await this.webhooks.mount(root);}
             if (this.env.ALLOWED?.includes('webServer')) {this.webServer = new WorkerWebServer();root.provide('webServer', this.webServer);}
             if (this.env.ALLOWED?.some(name => name === 'storage' || name === 'storageDomain')) await mountDurableStorage(root, this.ctx.storage);
             if (this.env.ALLOWED?.includes('sessionController')) {
@@ -121,13 +128,14 @@ export class PluginFacet extends DurableObject<KernelEnv> {
                 get: (target, key) => {
                     if (this.durableTimers && (key === 'interval' || key === 'timeout')) return (callback: () => unknown, delay: number) => target.effect(() => this.durableTimers!.register(callback, delay, key === 'interval'));
                     if (key === 'timer' && this.durableTimers && provided.has('timer')) return new Proxy(target.timer, {get: (timer, method) => method === 'interval' || method === 'timeout' ? (callback: () => unknown, delay: number) => target.effect(() => this.durableTimers!.register(callback, delay, method === 'interval')) : Reflect.get(timer, method)});
-                    if (typeof key === 'string' && ['tools', 'timer', 'fs', 'storage', 'storageDomain', 'sessionController', 'credentials', 'webServer'].includes(key) && !provided.has(key))
+                    if (key==='webhookRuntime' && provided.has('webhookRuntime')) return this.webhooks?.service;
+                    if (typeof key === 'string' && ['tools', 'timer', 'fs', 'storage', 'storageDomain', 'sessionController', 'webhookRuntime', 'credentials', 'webServer'].includes(key) && !provided.has(key))
                         throw new Error(`Plugin permission denied: ${key}`);
                     if (key === 'get')
-                        return (name: string) => provided.has(name) ? name === 'timer' && this.durableTimers ? facade(target).timer : target.get(name) : undefined;
+                        return (name: string) => provided.has(name) ? name==='webhookRuntime' ? this.webhooks?.service : name === 'timer' && this.durableTimers ? facade(target).timer : target.get(name) : undefined;
                     if (key === 'provide')
                         return (name: string, value: unknown) => {
-                            if (['systemPrompt', 'sessionController', 'credentials', 'storage', 'storageDomain', 'webServer'].includes(name))
+                            if (['systemPrompt', 'sessionController', 'webhookRuntime', 'credentials', 'storage', 'storageDomain', 'webServer'].includes(name))
                                 throw new Error('The Agent systemPrompt service is not bridged');
                             const dispose = target.provide(name, value);
                             provided.add(name);
@@ -183,8 +191,9 @@ export class PluginFacet extends DurableObject<KernelEnv> {
                 this.cancelled.delete(this.cancelled.values().next().value!);
         }
     }
-    override async fetch(request: Request): Promise<Response> {await this.start(); return this.webServer ? this.webServer.dispatch(request) : new Response(null,{status:404});}
-    async tick(): Promise<void> { await this.start(); await this.durableTimers?.tick(); }
+    override async fetch(request: Request): Promise<Response> {await this.start();const dispatch=()=>this.webServer ? this.webServer.dispatch(request) : Promise.resolve(new Response(null,{status:404}));return this.webhooks?this.webhooks.run(dispatch):dispatch();}
+    async deliverWebhook(delivery:VerifiedWebhookDelivery):Promise<void> {await this.start();await this.webhooks?.deliver(delivery);}
+    async tick(): Promise<void> { await this.start(); if(this.webhooks)await this.webhooks.run(async()=>{await this.durableTimers?.tick();});else await this.durableTimers?.tick(); }
     async nextAlarm(): Promise<number | undefined> { await this.start(); return this.durableTimers?.next(); }
     async stop(): Promise<void> {
         this.stopped = true;
