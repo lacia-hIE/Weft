@@ -62,3 +62,42 @@ test('environment Worker Host restores native storage and timers, uses approved 
     const before=feeds;await delay(1200);assert.equal(feeds,before);assert.equal((await list())[0]!.enabled,false);
   } finally {await runtime.dispose();await rm(directory,{recursive:true,force:true});}
 });
+
+test('a native bundle owns an explicitly approved webhook route and queues channel messages with native request deduplication', {timeout:120000}, async()=>{
+  const fixture=packageFixture({name:'@weft-fixture/channel',client:false,files:{'host.js':`
+    export const inject=['webServer','storageDomain','sessionController'];
+    export async function apply(ctx){
+      const state=await ctx.storageDomain.open({name:'channel',version:1,tables:{},global:{schema:{parse:value=>value},initial:{sessionId:null}}});ctx.effect(()=>()=>state.close());
+      let tail=Promise.resolve();
+      ctx.effect(()=>ctx.webServer.register({kind:'exact',path:'/events',handler:(req,res)=>{
+        const work=tail.then(async()=>{
+          if(req.headers.authorization!=='Bearer fixture-secret'){res.writeHead(401);res.end();return;}
+          let text='';for await(const chunk of req)text+=new TextDecoder().decode(chunk);
+          const input=JSON.parse(text);let value=state.global.get();
+          if(!value.sessionId){value=await ctx.sessionController.create({});await state.global.set(value);}
+          await ctx.sessionController.prompt({sessionId:value.sessionId,requestId:input.id,mode:'queue',content:[{type:'text',text:input.text}]});
+          res.writeHead(202,{'content-type':'application/json'});res.end(JSON.stringify(value));
+        });tail=work.catch(()=>{});return work;
+      }}));
+    }`}});
+  const runtime=createRuntime(undefined,{packages:true,outbound:async request=>request.url===fixture.manifest.dist.tarball?new Response(fixture.bytes):Response.json(fixture.manifest),packageBuilder:async request=>Response.json(await buildPackage(JSON.parse(await request.text())))});
+  const api=nativeClient(()=>runtime),tenant=tenantId('alpha');
+  const route=`/v1/plugin-hooks/${tenant}/default/${encodeURIComponent(fixture.name)}/events`;
+  const operation=async(body?:object)=>runtime.dispatchFetch(url('alpha',`/v1/tenants/${tenant}/environments/default/native/package-installations`),body?{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}:{});
+  const event={id:crypto.randomUUID(),text:'Channel gateway fixture'};
+  const send=(token?:string)=>runtime.dispatchFetch(url('anonymous',route),{method:'POST',headers:{'content-type':'application/json',...(token?{authorization:token}:{}),'cookie':'CF_Authorization=untrusted'},body:JSON.stringify(event)});
+  try{
+    await api.call('pluginManager/installBundle',{spec:`${fixture.name}@${fixture.version}`});
+    const row=(await(await operation()).json() as {installations:Installation[]}).installations[0]!;
+    assert.equal(row.hostScope,'environment');assert.equal(row.permissions.routes,true);
+    assert.equal((await send('Bearer fixture-secret')).status,404);
+    assert.equal((await operation({operation:'approve',name:row.name,digest:row.digest,permissions:{...row.permissions,network:false,credentials:false,routes:true}})).status,200);
+    assert.equal((await send()).status,401);
+    const first=await send('Bearer fixture-secret');assert.equal(first.status,202,await first.clone().text());
+    const {sessionId}=await first.json() as {sessionId:string};
+    const duplicate=await send('Bearer fixture-secret');assert.equal(duplicate.status,202);assert.equal((await duplicate.json() as {sessionId:string}).sessionId,sessionId);
+    const reader=await api.follow(sessionId);await reader.next();await reader.close();
+    assert.equal((await api.call<{items:unknown[]}>('session/list',{request:{}})).items.length,1);
+    await api.call('pluginManager/setBundleEnabled',{name:row.name,enabled:false});assert.equal((await send('Bearer fixture-secret')).status,404);
+  }finally{await runtime.dispose();}
+});

@@ -529,7 +529,7 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
           artifact.hostScope = background ? 'environment' : 'session';
           artifact.permissions = {...artifact.permissions, network: true,
             storage: inject.some(name => name === 'storage' || name === 'storageDomain'), sessions: inject.includes('sessionController'),
-            credentials: inject.includes('credentials'), background};
+            credentials: inject.includes('credentials'), routes: inject.includes('webServer'), ...(background ? {tools:false} : {}), background};
         } finally {await platform.release(runId, true); await context.fiber.dispose();}
       },
       changed: async () => {this.presetReads.clear(); await this.nativeEvent(scope, 'plugin-manager/changed', [{reason: 'install'}]); this.ctx.waitUntil(this.reconcileEnvironmentPackages(scope));},
@@ -576,7 +576,7 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
     await this.backgroundPackages(scope).reconcile();
     await this.schedulePackageAlarm(scope);
   }
-  nativePackageAuthorize(scope: ControlScope, receipt: {name: string; digest: string; activationId: string}, permission: 'network' | 'sessions' | 'credentials' | 'files'): Installation {
+  nativePackageAuthorize(scope: ControlScope, receipt: {name: string; digest: string; activationId: string}, permission: 'network' | 'sessions' | 'credentials' | 'files' | 'routes'): Installation {
     this.scope(scope);
     const row = this.packages(scope).registry.get(receipt.name);
     if (!row?.enabled || !row.approved || row.digest !== receipt.digest || (row.activationId ?? row.digest) !== receipt.activationId || row.hostScope !== 'environment' || !row.permissions.background) throw new Error('Background package capability was revoked');
@@ -600,6 +600,15 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
       this.nativePackageAuthorize(scope, receipt, 'files');
       return await Reflect.apply(Reflect.get(ctx.fs, method), ctx.fs, z.array(z.unknown()).max(5).parse(args));
     } finally {await ctx.fiber.dispose();}
+  }
+  async nativePackageHook(scope: ControlScope, name: string, request: Request): Promise<Response> {
+    this.scope(scope);
+    const row = this.packages(scope).registry.get(name);
+    if (!row?.enabled || !row.approved || row.hostScope !== 'environment' || !row.permissions.background || !row.permissions.routes) return new Response(null,{status:404});
+    this.nativePackageAuthorize(scope, {name,digest:row.digest,activationId:row.activationId ?? row.digest}, 'routes');
+    const response = await this.backgroundPackages(scope).fetch(name, request);
+    await this.schedulePackageAlarm(scope);
+    return response;
   }
   async nativePackageFollow(scope: ControlScope, receipt: {name: string; digest: string; activationId: string}, raw: unknown): Promise<Response> {
     this.nativePackageAuthorize(scope, receipt, 'sessions');

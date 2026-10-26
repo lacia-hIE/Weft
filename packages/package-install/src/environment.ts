@@ -7,7 +7,7 @@ const identity = (row: Installation) => JSON.stringify([row.digest, row.activati
 export function installedServices(row: Installation): string[] {
   const p = row.permissions;
   return [...(p.files !== 'none' ? ['fs'] : []), ...(p.tools ? ['tools'] : []), ...(p.timer ? ['timer'] : []),
-    ...(p.storage ? ['storage', 'storageDomain'] : []), ...(p.sessions ? ['sessionController'] : []), ...(p.credentials ? ['credentials'] : [])];
+    ...(p.storage ? ['storage', 'storageDomain'] : []), ...(p.sessions ? ['sessionController'] : []), ...(p.credentials ? ['credentials'] : []), ...(p.routes ? ['webServer'] : [])];
 }
 interface Active {row: Installation; runId: string; fiber?: Fiber}
 /** A single environment-owned activation, independent of open browser pages and Sessions. */
@@ -61,6 +61,11 @@ export class EnvironmentPackages {
   async stop(name: string): Promise<void> {
     // Revocation must not queue behind apply(), which may be waiting for a capability RPC.
     await this.stopNow(name);
+  }
+  async fetch(name: string, request: Request): Promise<Response> {
+    await this.reconcile();
+    const active = this.active.get(name);
+    return active ? this.platform.fetch(active.runId, request) : new Response(null, {status:404});
   }
   async tick(): Promise<void> {
     await this.reconcile();

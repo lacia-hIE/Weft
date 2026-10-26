@@ -1052,6 +1052,19 @@ export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     try {
       let pathname = new URL(request.url).pathname;
+      const hook = /^\/v1\/plugin-hooks\/([a-zA-Z0-9_-]{1,80})\/([a-zA-Z0-9_-]{1,80})\/([^/]{1,250})(\/.*)$/.exec(pathname);
+      if (hook) {
+        // This separately enabled ingress is authenticated by the plugin's provider signature.
+        // Never turn an external event into a browser/owner identity.
+        const registered = await env.CONFIG_DB.prepare('SELECT 1 FROM environments WHERE tenant_id=? AND environment_id=?').bind(hook[1]!,hook[2]!).first();
+        if (!registered) return new Response(null,{status:404});
+        let name: string; try {name = decodeURIComponent(hook[3]!);} catch {return new Response(null,{status:404});}
+        const target = new URL(request.url); target.pathname = hook[4]!;
+        const headers = new Headers(request.headers);
+        for(const key of ['cookie','cf-access-jwt-assertion','cf-access-client-id','cf-access-client-secret'])headers.delete(key);
+        if (Number(headers.get('content-length') ?? 0) > 65536) return new Response(null,{status:413});
+        return controlFor(env, controlScope(hook[1]!,hook[2]!)).nativePackageHook(controlScope(hook[1]!,hook[2]!),name,new Request(target,{method:request.method,headers,body:request.body,signal:request.signal}));
+      }
       const device=/^\/v1\/local-hosts\/([a-zA-Z0-9_-]{1,80})\/([a-zA-Z0-9_-]{1,80})\/(pair|connect)$/.exec(pathname);
       if(device){
         if(request.headers.has('origin'))return new Response('Device endpoint',{status:403});

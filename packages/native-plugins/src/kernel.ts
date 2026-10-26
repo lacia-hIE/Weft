@@ -12,6 +12,7 @@ import factory from 'weft:plugin-factory';
 import { nativePluginFsMethods } from './protocol.ts';
 import {mountDurableStorage} from '../../native-storage/src/index.ts';
 import {DurablePluginTimers} from './durable-timers.ts';
+import {WorkerWebServer} from './web-server.ts';
 import {pluginSessionStream} from './stream.ts';
 import {sessionMethods} from './services.ts';
 import { snapshotJsonValue } from '@deepseek-ai/dsh-util-values';
@@ -43,6 +44,7 @@ export class PluginFacet extends DurableObject<KernelEnv> {
     private starting: Promise<void> | undefined;
     private stopped = false;
     private bundle = false;
+    private webServer: WorkerWebServer | undefined;
     private durableTimers: DurablePluginTimers | undefined;
     private readonly handlers = new Map<string, (args: unknown) => Promise<unknown>>();
     private readonly operations = new Map<string, AbortController>();
@@ -56,6 +58,7 @@ export class PluginFacet extends DurableObject<KernelEnv> {
             await root.plugin(Tools);
             await root.plugin(Timer);
             if (this.env.BACKGROUND && this.env.ALLOWED?.includes('timer')) this.durableTimers = new DurablePluginTimers(this.ctx.storage, this.env.ACTIVATION ?? 'initial');
+            if (this.env.ALLOWED?.includes('webServer')) {this.webServer = new WorkerWebServer();root.provide('webServer', this.webServer);}
             if (this.env.ALLOWED?.some(name => name === 'storage' || name === 'storageDomain')) await mountDurableStorage(root, this.ctx.storage);
             if (this.env.ALLOWED?.includes('sessionController')) {
               const host = this.env.HOST!;
@@ -118,13 +121,13 @@ export class PluginFacet extends DurableObject<KernelEnv> {
                 get: (target, key) => {
                     if (this.durableTimers && (key === 'interval' || key === 'timeout')) return (callback: () => unknown, delay: number) => target.effect(() => this.durableTimers!.register(callback, delay, key === 'interval'));
                     if (key === 'timer' && this.durableTimers && provided.has('timer')) return new Proxy(target.timer, {get: (timer, method) => method === 'interval' || method === 'timeout' ? (callback: () => unknown, delay: number) => target.effect(() => this.durableTimers!.register(callback, delay, method === 'interval')) : Reflect.get(timer, method)});
-                    if (typeof key === 'string' && ['tools', 'timer', 'fs', 'storage', 'storageDomain', 'sessionController', 'credentials'].includes(key) && !provided.has(key))
+                    if (typeof key === 'string' && ['tools', 'timer', 'fs', 'storage', 'storageDomain', 'sessionController', 'credentials', 'webServer'].includes(key) && !provided.has(key))
                         throw new Error(`Plugin permission denied: ${key}`);
                     if (key === 'get')
                         return (name: string) => provided.has(name) ? name === 'timer' && this.durableTimers ? facade(target).timer : target.get(name) : undefined;
                     if (key === 'provide')
                         return (name: string, value: unknown) => {
-                            if (['systemPrompt', 'sessionController', 'credentials', 'storage', 'storageDomain'].includes(name))
+                            if (['systemPrompt', 'sessionController', 'credentials', 'storage', 'storageDomain', 'webServer'].includes(name))
                                 throw new Error('The Agent systemPrompt service is not bridged');
                             const dispose = target.provide(name, value);
                             provided.add(name);
@@ -180,6 +183,7 @@ export class PluginFacet extends DurableObject<KernelEnv> {
                 this.cancelled.delete(this.cancelled.values().next().value!);
         }
     }
+    override async fetch(request: Request): Promise<Response> {await this.start(); return this.webServer ? this.webServer.dispatch(request) : new Response(null,{status:404});}
     async tick(): Promise<void> { await this.start(); await this.durableTimers?.tick(); }
     async nextAlarm(): Promise<number | undefined> { await this.start(); return this.durableTimers?.next(); }
     async stop(): Promise<void> {

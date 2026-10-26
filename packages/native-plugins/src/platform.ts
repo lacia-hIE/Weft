@@ -17,6 +17,7 @@ interface FacetApi {
     }>;
     tool(name: string, args: unknown, callId: string, operationId: string): Promise<ToolExecutionResult>;
     cancelTool(operationId: string): Promise<void>;
+    fetch(request: Request): Promise<Response>;
     tick(): Promise<void>;
     nextAlarm(): Promise<number | undefined>;
     stop(): Promise<void>;
@@ -27,6 +28,7 @@ interface Allocation {
     facet: FacetApi;
     disposers: (() => void)[];
     releasing?: boolean;
+    deadlineMs: number;
 }
 /** The trusted bridge runs no user source in the main Harness isolate. */
 export class NativePluginPlatform {
@@ -40,7 +42,7 @@ export class NativePluginPlatform {
             this.state.facets.abort(allocation.name, error);
             if (!allocation.releasing)
                 this.faultHandler?.(allocation.runId, error);
-        }, 15000);
+        }, allocation.deadlineMs);
         try {
             return await operation();
         }
@@ -67,7 +69,7 @@ export class NativePluginPlatform {
             limits: { cpuMs: 100, subRequests: 64 },
         }));
         const facet = this.state.facets.get(name, () => ({ class: worker.getDurableObjectClass('PluginFacet') })) as unknown as FacetApi;
-        const allocation: Allocation = { name, runId, facet, disposers: [] };
+        const allocation: Allocation = { name, runId, facet, disposers: [], deadlineMs: installed?.environment ? 60_000 : 15_000 };
         this.allocations.set(runId, allocation);
         try {
             const description = descriptionSchema.parse(await this.bounded(allocation, () => facet.describe()));
@@ -163,6 +165,11 @@ export class NativePluginPlatform {
     async tick(runId: string): Promise<void> {
         const allocation = this.allocations.get(runId);
         if (allocation) await this.bounded(allocation, () => allocation.facet.tick());
+    }
+    async fetch(runId: string, request: Request): Promise<Response> {
+        const allocation = this.allocations.get(runId);
+        if (!allocation) return new Response(null, {status:404});
+        return this.bounded(allocation, () => allocation.facet.fetch(request));
     }
     async nextAlarm(runId: string): Promise<number | undefined> {
         const allocation = this.allocations.get(runId);
