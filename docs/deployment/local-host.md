@@ -51,12 +51,14 @@ Cloudflare 是 TLS 终点，中继会处理传输内容；本版不提供端到�
 
 ## 用户安装
 
-1. 首页选择「连接本地 DSH」，输入名称并生成配置，点击「复制配对码」。
+1. 本机先运行 DSH `0.2.1-rc.2` 或 `0.2.1-rc.3` 的 `dsh web`。`0.1.7-rc.2` 等旧版需要先升级：
+   `npm install -g @deepseek-ai/dsh@0.2.1-rc.3`，然后重新启动 DSH。
+   在 Weft 首页选择「连接本地 DSH」，输入名称并点击「生成配对码」和「复制配对码」。
 2. 在本地原版 DSH「插件」页添加 npm 包 `@laciaproject/dsh-local-host`，
-   或执行 `dsh plugin --profile web add @laciaproject/dsh-local-host@0.2.1`。也可下载
+   或执行 `dsh plugin --profile web add @laciaproject/dsh-local-host@0.2.2`。也可下载
    页面提供的 `.tgz`，以其绝对路径安装。它原生声明 `dsh.bundle.patch`。
    已装过旧名 `@weft/dsh-local-host` 的用户，应先移除旧包再安装新包；配对文件保留。
-3. 在本机「插件 → Weft 本地连接」粘贴配对码并点击「配对并连接」，无需重启。
+3. 在本机「插件 → Weft 本地连接」粘贴配对码并点击「保存并连接」，无需重启。
    插件自己显示连接状态、重连和停止按钮，版本不兼容时提示升级，授权撤销时
    提示重新配对，网络中断时自动退避重试。经 Weft 打开的该页只显示状态，连接
    管理由本机页面执行。
@@ -64,10 +66,9 @@ Cloudflare 是 TLS 终点，中继会处理传输内容；本版不提供端到�
    如果启用了本地 HTTPS，应为 Node 配置受信任的本地证书。
 5. 回到首页，状态变成可进入后打开本地工作台。
 
-也可继续下载 `weft-connection.json`，保存为 `~/.dsh/weft-connection.json`，
-设置 `chmod 600` 后在插件页点击「重新连接」。其他位置可通过
-`WEFT_LOCAL_HOST_CONFIG=/absolute/path/weft-connection.json` 指定。配对码与文件
-具有相同的一次性授权，应保密，不写入 profile；设置响应不包含密钥或配对码。
+无需下载或手工创建 JSON。连接插件将配置自动保存到本机 `~/.dsh/weft-connection.json`；
+已有配置仍可使用，其他位置可通过 `WEFT_LOCAL_HOST_CONFIG` 指定。
+配对码具有一次性授权，应保密，不写入 profile；设置响应不包含密钥或配对码。
 
 连接插件自动把配对密钥换成设备密钥，以 `0600` 权限原子写回配置文件。
 首次配对后无需每次网页登录。为不同电脑或不同本地 profile 使用不同环境和

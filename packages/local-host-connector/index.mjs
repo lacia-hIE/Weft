@@ -6,8 +6,8 @@ export const name='weft-local-host';
 export const inject=['webServer','connection','clientModules'];
 /** This is a normal native Host plugin. It never implements a second Agent. */
 export async function apply(ctx,config={}) {
-  const version=ctx.clientModules.graph().release.version;
-  if(!supportsDshVersion(version))throw new Error(`Weft local Host supports DSH ${SUPPORTED_DSH_VERSIONS.join(', ')}; received ${version}`);
+  const version=ctx.clientModules.graph()?.release?.version;
+  if(!supportsDshVersion(version))throw new Error(`Weft local Host supports DSH ${SUPPORTED_DSH_VERSIONS.join(', ')}; received ${version??'an older Host without release identity'}. Update DSH with npm install -g @deepseek-ai/dsh@${SUPPORTED_DSH_VERSIONS.at(-1)}, then restart dsh web and enable this plugin.`);
   const file=config.connectionFile??process.env.WEFT_LOCAL_HOST_CONFIG??join(homedir(),'.dsh','weft-connection.json');
   const origin=ctx.webServer.getOrigin();
   const url=new URL(origin);if(!['127.0.0.1','localhost','[::1]'].includes(url.hostname))throw new Error('Use a loopback DSH web listener for the Weft connector');

@@ -49,7 +49,7 @@ execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyo
 const server = createSecureServer({key: readFileSync(keyFile), cert: readFileSync(cert), allowHTTP1: true}, async (request, response) => {
   try {
     if(localDsh&&request.url==='/__test/local-host'){
-      const fixture=await localFixture;response.writeHead(200,{'content-type':'application/json'});response.end(JSON.stringify({project:fixture?.project,base:fixture?.base,localUrl:fixture?.localUrl,pairingCode:fixture?.pairingCode}));return;
+      const fixture=await localFixture;response.writeHead(200,{'content-type':'application/json'});response.end(JSON.stringify({project:fixture?.project,base:fixture?.base,localUrl:fixture?.localUrl,pairingCode:fixture?.pairingCode,bundlePath:fixture?.bundlePath}));return;
     }
     if(localDsh&&request.url==='/__test/local-host/restart'&&request.method==='POST'){
       await(await localFixture)?.restart();response.writeHead(204);response.end();return;

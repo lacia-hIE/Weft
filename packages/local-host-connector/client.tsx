@@ -1,9 +1,9 @@
 import React,{useEffect,useState,type ReactNode} from 'react';
 import {Button,Input} from '@deepseek-ai/dsh-client-ui-primitives';
 
-const zh={title:'Weft 本地连接',description:'将此 DSH 连接到 Weft，在网页使用本机环境。',code:'配对码',hint:'在 Weft 首页生成并复制配对码，粘贴到这里。',pair:'配对并连接',reconnect:'重新连接',stop:'停止连接',busy:'正在处理…',failed:'操作失败，请检查配对码或稍后重试。',remote:'请在本机 DSH 页面管理连接。',
+const zh={title:'Weft 本地连接',description:'将此 DSH 连接到 Weft，在网页使用本机环境。',code:'配对码',hint:'粘贴 Weft 首页生成的配对码，点击「保存并连接」。配置会自动保存在本机，无需下载文件。',pair:'保存并连接',reconnect:'重新连接',stop:'停止连接',busy:'正在处理…',failed:'操作失败，请检查配对码或稍后重试。',remote:'请在本机 DSH 页面管理连接。',
   unpaired:'尚未配对',connecting:'正在连接…',connected:'已连接',retrying:'网络中断，正在重试…',revoked:'授权已撤销，请在 Weft 重新配对。',incompatible:'版本不兼容，请更新 DSH 或连接插件。','pairing-rejected':'配对码已过期或使用过，请在 Weft 生成新配对码。','configuration-error':'配置文件无法读取，请重新配对。',stopped:'连接已停止'};
-const en:typeof zh={title:'Weft local connection',description:'Connect this DSH to Weft to use your local environment in the browser.',code:'Pairing code',hint:'Generate and copy a pairing code on the Weft home page, then paste it here.',pair:'Pair and connect',reconnect:'Reconnect',stop:'Stop connection',busy:'Working…',failed:'The operation failed. Check the pairing code or try again.',remote:'Manage this connection from your local DSH page.',
+const en:typeof zh={title:'Weft local connection',description:'Connect this DSH to Weft to use your local environment in the browser.',code:'Pairing code',hint:'Paste the pairing code from Weft, then select Save and connect. Settings are saved on this computer; no file download is needed.',pair:'Save and connect',reconnect:'Reconnect',stop:'Stop connection',busy:'Working…',failed:'The operation failed. Check the pairing code or try again.',remote:'Manage this connection from your local DSH page.',
   unpaired:'Not paired',connecting:'Connecting…',connected:'Connected',retrying:'Network interrupted; retrying…',revoked:'Authorization revoked. Pair again in Weft.',incompatible:'Version incompatible. Update DSH or the connector.','pairing-rejected':'Pairing code expired or already used. Generate a new code in Weft.','configuration-error':'Cannot read the connection file. Pair again.',stopped:'Connection stopped'};
 type State={state:string;endpoint?:string;hostVersion?:string;configured?:boolean};
 interface Context {

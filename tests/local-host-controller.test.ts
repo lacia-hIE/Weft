@@ -5,6 +5,19 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 // @ts-expect-error Published Node plugin is JavaScript.
 import {createController} from '../packages/local-host-connector/controller.mjs';
+// @ts-expect-error Published Node plugin is JavaScript.
+import {apply} from '../packages/local-host-connector/index.mjs';
+
+test('older Hosts without release identity report an upgrade instruction before starting a connection',async()=>{
+  for(const graph of [{entries:[]},undefined,{release:{version:'0.1.7-rc.2'}}]){
+    await assert.rejects(apply({clientModules:{graph:()=>graph}}),error=>{
+      assert.ok(error instanceof Error);assert.equal(error.name,'Error');
+      assert.match(error.message,/supports DSH 0\.2\.1-rc\.2, 0\.2\.1-rc\.3/);
+      assert.match(error.message,/npm install -g @deepseek-ai\/dsh@0\.2\.1-rc\.3/);
+      return true;
+    });
+  }
+});
 
 test('native settings can pair a fresh plugin, retain its private token and reconnect without overlapping lifecycles',async()=>{
   const directory=await mkdtemp(join(tmpdir(),'weft-connector-')),file=join(directory,'connection.json');
