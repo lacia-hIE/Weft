@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {readFileSync} from 'node:fs';
 import {parse} from 'yaml';
+import {workspaceDependencyLock} from '../scripts/workspace-image-input.mjs';
 import {assertProjectCI, releaseIdentity} from '../scripts/project-release.mjs';
 
 test('project tags accept canonical stable and prerelease versions without ambiguous identities', () => {
@@ -46,4 +47,24 @@ test('project release dispatch separates the read-only gate from publication and
   }
   assert.ok(verify.steps.some(step => step.run === 'node scripts/project-release.mjs verify'));
   assert.ok(publish.steps.some(step => step.run === 'node scripts/project-release.mjs publish'));
+});
+
+
+test('application version changes retain image identity while dependency and integrity changes invalidate it', () => {
+  const baseline = {name: 'weft', version: '0.0.1', lockfileVersion: 3, packages: {'': {name: 'weft', version: '0.0.1', engines: {node: '>=22.19.0'}}, 'node_modules/example': {version: '1.2.3', integrity: 'sha512-reviewed'}}};
+  const bytes = (value: unknown) => Buffer.from(JSON.stringify(value, null, 2) + '\n');
+  const canonical = bytes(baseline).toString();
+  assert.equal(workspaceDependencyLock(bytes(baseline)), canonical);
+  const release = structuredClone(baseline);
+  release.version = release.packages[''].version = '0.1.0';
+  assert.equal(workspaceDependencyLock(bytes(release)), canonical);
+  const changed = structuredClone(release);
+  changed.packages['node_modules/example'].version = '1.2.4';
+  assert.notEqual(workspaceDependencyLock(bytes(changed)), canonical);
+  changed.packages['node_modules/example'].version = '1.2.3';
+  changed.packages['node_modules/example'].integrity = 'sha512-different';
+  assert.notEqual(workspaceDependencyLock(bytes(changed)), canonical);
+  const engines = structuredClone(release);
+  engines.packages[''].engines.node = '>=24.0.0';
+  assert.notEqual(workspaceDependencyLock(bytes(engines)), canonical);
 });

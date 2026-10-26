@@ -8,6 +8,8 @@
 | Local DSH connector | `packages/local-host-connector/package.json` | `dsh-local-host-vX.Y.Z` | `@laciaproject/dsh-local-host` on npm |
 | Upstream DSH | `upstream.lock.json` | No Weft tag implied | Pinned upstream source and compatibility matrix |
 
+Application version fields in the root lockfile are excluded from workspace image identity; dependency versions and integrity remain part of the image hash. Versioning a release alone does not require publishing a new container image.
+
 These versions are independent. A Weft release does not automatically publish a connector version or upgrade upstream DSH. Tags identify immutable commits: never force-push or reuse a published tag. Correct mistakes with a new version.
 
 Use canonical `MAJOR.MINOR.PATCH`, with optional prerelease identifiers such as `0.2.0-rc.1`. While Weft is below 1.0, a minor release can change compatibility; patch releases should preserve existing interfaces. Document data resets, required migrations, image changes and any manual deployment work explicitly. Prereleases are marked on GitHub; connector prereleases use npm's `next` dist-tag.

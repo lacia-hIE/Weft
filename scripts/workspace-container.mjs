@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {recordDeploymentImage} from './deployment-config.ts';
+import {workspaceDependencyLock} from './workspace-image-input.mjs';
 
 /**
  * The workspace container image: built from apps/workspace-container and
@@ -29,7 +30,7 @@ if (computerd !== computer) throw new Error(`The workspace container's computerd
 const sources = ['Dockerfile', 'entrypoint.sh', 'package.json', 'package-lock.json', 'process-service.mjs'];
 const hash = createHash('sha256');
 for (const source of sources) hash.update(source).update(readFileSync(resolve(directory, source)));
-hash.update(readFileSync(resolve(root, 'package-lock.json'))).update(readFileSync(resolve(root, 'upstream.lock.json'))).update(readFileSync(resolve(root, 'scripts/build-process-service.mjs')));
+hash.update(workspaceDependencyLock(readFileSync(resolve(root, 'package-lock.json')))).update(readFileSync(resolve(root, 'upstream.lock.json'))).update(readFileSync(resolve(root, 'scripts/build-process-service.mjs')));
 const tag = hash.digest('hex').slice(0, 12);
 if (process.argv.includes('--tag')) {console.log(`${NAME}:${tag}`); process.exit(0);}
 
