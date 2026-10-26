@@ -100,7 +100,7 @@ import {pluginFetch} from '../../../packages/native-plugins/src/network.ts';
 
 /** Immutable capability identity; the child never receives a namespace or secret. */
 export class PluginCapabilities extends WorkerEntrypoint<Env, {scope: SessionScope; pluginId: string; runId: string}> {
-  async fetch(request: Request): Promise<Response> {
+  override async fetch(request: Request): Promise<Response> {
     const {scope, pluginId, runId} = this.ctx.props;
     return pluginFetch(request, async () => {await this.env.SESSIONS.getByName(sessionAddress(scope)).nativePluginNetwork(scope, pluginId, runId);});
   }
@@ -113,7 +113,7 @@ export class PluginCapabilities extends WorkerEntrypoint<Env, {scope: SessionSco
 /** Environment capabilities remain bound to one approved package activation. */
 export class EnvironmentPluginCapabilities extends WorkerEntrypoint<Env, {scope: ReturnType<typeof controlScope>; name: string; digest: string; activationId: string}> {
   private owner() {return controlFor(this.env, this.ctx.props.scope);}
-  async fetch(request: Request): Promise<Response> {
+  override async fetch(request: Request): Promise<Response> {
     return pluginFetch(request, async () => {await this.owner().nativePackageAuthorize(this.ctx.props.scope, this.ctx.props, 'network');});
   }
   async callSession(method: string, request: unknown): Promise<unknown> {return this.owner().nativePackageSession(this.ctx.props.scope, this.ctx.props, method, request);}
