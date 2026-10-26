@@ -114,8 +114,9 @@ async function withHarnessSession<T>(options: RuntimeOptions, operation: (ctx: C
 }
 
 /** Create or restore the real native Agent/Session without submitting a prompt. */
-export async function initializeHarnessSession(options: RuntimeOptions): Promise<void> {
+export async function initializeHarnessSession(options: RuntimeOptions, configure?:(ctx:Context,agent:Agent)=>void|Promise<void>): Promise<void> {
   await withHarnessSession(options, async (ctx, agent) => {
+    await configure?.(ctx,agent);
     if (options.presentation && !ctx.sessionTitle.get(agent.session)) await ctx.sessionTitle.refresh(agent.session);
     await ctx.get('sessionPersistence')?.flush();
   });

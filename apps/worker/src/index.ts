@@ -528,16 +528,16 @@ export class SessionDO extends DurableObject<Env> {
       const reader = await this.getReader();
       const directory = workspacePath(cwd ?? '/workspace');
       const runtime = await sessionRuntime(this.env, this.ctx.storage, scope, profile, attachedWorkspace, profile.spec.persona, true, reader, {}, directory, false);
+      let configure:Parameters<typeof initializeHarnessSession>[1];
       if(webhook) {
         const seed=readWebhookSeed({...webhook,selection:webhook.request.model?{provider:webhook.request.model.provider,model:webhook.request.model.model}:runtime.options.defaultModel?.()??runtime.options.model});
         this.ctx.storage.sql.exec('INSERT INTO weft_webhook_bootstrap VALUES (1,?)',JSON.stringify(seed));
-        const setup=runtime.options.setupAgent;
-        runtime.options.setupAgent=async(ctx,agent)=>{
-          await setup?.(ctx,agent);ctx.permissionPresets.set(agent.session,seed.request.permissionPreset);ctx.sessionTitle.rename(agent.session,seed.request.title);
+        configure=(ctx,agent)=>{
+          ctx.permissionPresets.set(agent.session,seed.request.permissionPreset);ctx.sessionTitle.rename(agent.session,seed.request.title);
           agent.session.append('model/selection',seed.selection);
         };
       }
-      await initializeHarnessSession(runtime.options);
+      await initializeHarnessSession(runtime.options,configure);
       this.ctx.storage.sql.exec('INSERT INTO weft_session_config (id,workspace_id,agent_document,presentation) VALUES (1,?,?,1) ON CONFLICT(id) DO UPDATE SET workspace_id=excluded.workspace_id,agent_document=excluded.agent_document,presentation=1', attachedWorkspace, JSON.stringify(profile));
       await Promise.all([
         control.trackSession(owner, {id: scope.sessionId, title: '', agentId: profile.spec.id, revision: profile.revision, workspaceId: attachedWorkspace, updatedAt: new Date().toISOString()}),
