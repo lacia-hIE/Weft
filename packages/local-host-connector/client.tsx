@@ -1,10 +1,11 @@
-import React,{useEffect,useState,type ReactNode} from 'react';
-import {Button,Input} from '@deepseek-ai/dsh-client-ui-primitives';
+import React,{useEffect,useId,useState,type ReactNode} from 'react';
+import {Button,Input,Tag} from '@deepseek-ai/dsh-client-ui-primitives';
 import metadata from './package.json' with {type:'json'};
+import {connectionStyles} from './client-styles.ts';
 
-const zh={title:'Weft 本地连接',description:'将此 DSH 连接到 Weft，在网页使用本机环境。',code:'配对码',hint:'粘贴 Weft 首页生成的配对码，点击「保存并连接」。配置会自动保存在本机，无需下载文件。',pair:'保存并连接',reconnect:'重新连接',stop:'停止连接',busy:'正在处理…',failed:'操作失败，请检查配对码或稍后重试。',remote:'请在本机 DSH 页面管理连接。',
+const zh={title:'连接设置',description:'通过 Weft 使用本机环境，数据由本地 DSH 管理。',code:'配对码',hint:'在 Weft 首页生成配对码，复制并粘贴到这里。',placeholder:'粘贴配对码',saved:'配置自动保存在本机，无需下载文件。',details:'连接详情',address:'连接地址',hostVersion:'DSH 版本',pair:'保存并连接',reconnect:'重新连接',stop:'停止连接',busy:'正在处理…',failed:'操作失败，请检查配对码或稍后重试。',remote:'请在本机 DSH 页面管理连接。',
   unpaired:'尚未配对',connecting:'正在连接…',connected:'已连接',retrying:'网络中断，正在重试…',revoked:'授权已撤销，请在 Weft 重新配对。',incompatible:'版本不兼容，请更新 DSH 或连接插件。','pairing-rejected':'配对码已过期或使用过，请在 Weft 生成新配对码。','configuration-error':'配置文件无法读取，请重新配对。',stopped:'连接已停止'};
-const en:typeof zh={title:'Weft local connection',description:'Connect this DSH to Weft to use your local environment in the browser.',code:'Pairing code',hint:'Paste the pairing code from Weft, then select Save and connect. Settings are saved on this computer; no file download is needed.',pair:'Save and connect',reconnect:'Reconnect',stop:'Stop connection',busy:'Working…',failed:'The operation failed. Check the pairing code or try again.',remote:'Manage this connection from your local DSH page.',
+const en:typeof zh={title:'Connection settings',description:'Use this computer through Weft. Your data stays managed by local DSH.',code:'Pairing code',hint:'Generate a pairing code on the Weft home page, then paste it here.',placeholder:'Paste pairing code',saved:'Settings are saved on this computer; no file download is needed.',details:'Connection details',address:'Endpoint',hostVersion:'DSH version',pair:'Save and connect',reconnect:'Reconnect',stop:'Stop connection',busy:'Working…',failed:'The operation failed. Check the pairing code or try again.',remote:'Manage this connection from your local DSH page.',
   unpaired:'Not paired',connecting:'Connecting…',connected:'Connected',retrying:'Network interrupted; retrying…',revoked:'Authorization revoked. Pair again in Weft.',incompatible:'Version incompatible. Update DSH or the connector.','pairing-rejected':'Pairing code expired or already used. Generate a new code in Weft.','configuration-error':'Cannot read the connection file. Pair again.',stopped:'Connection stopped'};
 type State={state:string;endpoint?:string;hostVersion?:string;configured?:boolean};
 interface Context {
@@ -25,6 +26,10 @@ function ConnectionCard({view,t}:Props):ReactNode {
 }
 function ConnectionSettings({t}:{t:Props['t']}):ReactNode {
   const [state,setState]=useState<State>({state:'connecting'}),[code,setCode]=useState(''),[busy,setBusy]=useState(false),[error,setError]=useState('');
+  const [pendingAction,setPendingAction]=useState('');
+  const id=useId();
+  const tone=state.state==='connected'?'success':['revoked','incompatible','pairing-rejected','configuration-error'].includes(state.state)?'danger':state.state==='retrying'?'warning':state.state==='connecting'?'info':'neutral';
+  let destination='';try{if(state.endpoint)destination=new URL(state.endpoint).host;}catch{/* Keep malformed legacy settings inside the folded details. */}
   const remote=location.pathname.includes('/local/web/');
   const endpoint=new URL('api/weft-local-host',document.baseURI).href;
   useEffect(()=>{
@@ -38,21 +43,22 @@ function ConnectionSettings({t}:{t:Props['t']}):ReactNode {
     return()=>{controller.abort();clearTimeout(timer);document.removeEventListener('visibilitychange',poll);};
   },[endpoint,t]);
   async function action(action:string):Promise<void>{
-    if(busy)return;setBusy(true);setError('');
+    if(busy)return;setBusy(true);setPendingAction(action);setError('');
     try{const response=await fetch(endpoint,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action,...(action==='pair'?{code}:{})})});if(!response.ok)throw new Error();setState(await response.json() as State);setCode('');}
-    catch{setError(t('failed'));}finally{setBusy(false);}
+    catch{setError(t('failed'));}finally{setBusy(false);setPendingAction('');}
   }
-  return <div data-weft-local-connection style={{display:'grid',gap:16}}>
-    <p role="status">{t(state.state in zh?state.state as keyof typeof zh:'connecting')}</p>
-    {state.endpoint&&<p>{state.endpoint}</p>}
-    {remote?<p>{t('remote')}</p>:<>
-      <div style={{display:'grid',gap:8}}><label htmlFor="weft-pairing-code">{t('code')}</label><Input id="weft-pairing-code" aria-describedby="weft-pairing-hint" type="password" autoComplete="off" value={code} onChange={event=>setCode(event.target.value)} disabled={busy}/><span id="weft-pairing-hint">{t('hint')}</span></div>
-      <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
-        <Button variant="primary" disabled={busy||!code.trim()} onClick={()=>void action('pair')}>{busy?t('busy'):t('pair')}</Button>
-        <Button variant="outline" disabled={busy||!state.configured} onClick={()=>void action('reconnect')}>{t('reconnect')}</Button>
-        <Button variant="outline" disabled={busy||!state.configured||state.state==='stopped'} onClick={()=>void action('disconnect')}>{t('stop')}</Button>
+  return <section data-weft-local-connection aria-labelledby={id+'-title'} aria-busy={busy}>
+    <style>{connectionStyles}</style>
+    <div className="weft-connection-head"><div><h4 id={id+'-title'} className="weft-connection-title">{t('title')}</h4><p className="weft-connection-description">{t('description')}</p></div><div className="weft-connection-status" role="status"><Tag tone={tone}>{t(state.state in zh?state.state as keyof typeof zh:'connecting')}</Tag></div></div>
+    {state.endpoint&&<details className="weft-connection-destination"><summary><span className="weft-connection-site">{destination||t('address')}</span><span className="weft-connection-detail-label">{t('details')}</span></summary><dl className="weft-connection-facts"><div><dt>{t('address')}</dt><dd className="weft-connection-address">{state.endpoint}</dd></div>{state.hostVersion&&<div><dt>{t('hostVersion')}</dt><dd>{state.hostVersion}</dd></div>}</dl></details>}
+    {remote?<p className="weft-connection-hint">{t('remote')}</p>:<form className="weft-connection-form" onSubmit={event=>{event.preventDefault();if(code.trim())void action('pair');}}>
+      <div className="weft-connection-field"><label htmlFor={id+'-code'}>{t('code')}</label><p id={id+'-hint'} className="weft-connection-hint">{t('hint')}</p><Input className="weft-connection-input" id={id+'-code'} aria-describedby={id+'-hint '+id+'-saved'} placeholder={t('placeholder')} type="password" autoComplete="off" spellCheck={false} value={code} onChange={event=>setCode(event.target.value)} disabled={busy}/></div>
+      <p id={id+'-saved'} className="weft-connection-note">{t('saved')}</p>
+      <div className="weft-connection-actions">
+        <Button type="submit" variant="primary" disabled={busy||!code.trim()}>{busy&&pendingAction==='pair'?t('busy'):t('pair')}</Button>
+        {state.configured&&<div className="weft-connection-secondary"><Button variant="outline" disabled={busy} onClick={()=>void action('reconnect')}>{busy&&pendingAction==='reconnect'?t('busy'):t('reconnect')}</Button><Button variant="ghost" disabled={busy||state.state==='stopped'} onClick={()=>void action('disconnect')}>{busy&&pendingAction==='disconnect'?t('busy'):t('stop')}</Button></div>}
       </div>
-    </>}
-    {error&&<p role="alert">{error}</p>}
-  </div>;
+    </form>}
+    {error&&<p className="weft-connection-error" role="alert">{error}</p>}
+  </section>;
 }

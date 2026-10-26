@@ -21,8 +21,8 @@ test('published local DSH pairs in native settings, runs Files, Git and PTY and 
   const installed=page.getByRole('dialog',{name:'Installed',exact:true});
   await expect(installed).toBeVisible({timeout:90_000});
   await installed.getByRole('button',{name:'Enable now',exact:true}).click();
-  await expect(page.getByRole('button',{name:'View Weft local connection',exact:true})).toHaveCount(0);
-  await page.getByRole('button',{name:`View ${localHostPackage.name}`,exact:true}).click();
+  await expect(page.getByRole('button',{name:'View Weft local connection',exact:true})).toHaveCount(1);
+  await page.getByRole('button',{name:'View Weft local connection',exact:true}).click();
   const packageDetail=page.locator(`[data-plugin-detail="${localHostPackage.name}"]`);
   await expect(packageDetail.getByLabel('Pairing code',{exact:true})).toBeVisible();
   const connectionStatus=page.locator('[data-weft-local-connection]').getByRole('status');
@@ -32,8 +32,25 @@ test('published local DSH pairs in native settings, runs Files, Git and PTY and 
   await page.getByRole('button',{name:'Save and connect',exact:true}).click();
   await expect(connectionStatus).toHaveText('Connected',{timeout:45_000});
   await expect(page.getByLabel('Pairing code',{exact:true})).toHaveValue('');
+  const panel=page.locator('[data-weft-local-connection]');
+  await expect(panel.locator('summary')).toContainText('127.0.0.1:4173');
+  await expect(panel.locator('details')).not.toHaveAttribute('open','');
+  await expect(panel.getByText(snapshotEndpoint(pairingCode),{exact:true})).toBeHidden();
+  await panel.locator('summary').click();
+  await expect(panel.getByText(snapshotEndpoint(pairingCode),{exact:true})).toBeVisible();
+  await panel.locator('summary').click();
   await page.screenshot({path:testInfo.outputPath('local-dsh-pairing-settings.png')});
-  await packageDetail.getByRole('button',{name:`Configure ${localHostPackage.name}`,exact:true}).click();
+  const lightColor=await panel.evaluate(element=>getComputedStyle(element).color);
+  await page.emulateMedia({colorScheme:'dark'});
+  await expect.poll(()=>panel.evaluate(element=>getComputedStyle(element).color)).not.toBe(lightColor);
+  await page.screenshot({path:testInfo.outputPath('local-dsh-pairing-settings-dark.png')});
+  await page.setViewportSize({width:390,height:844});
+  await expect(page.getByLabel('Pairing code',{exact:true})).toBeVisible();
+  await expect(panel.getByRole('button',{name:'Save and connect',exact:true})).toBeVisible();
+  expect(await panel.evaluate(element=>element.scrollWidth<=element.clientWidth)).toBe(true);
+  await page.screenshot({path:testInfo.outputPath('local-dsh-pairing-settings-mobile.png')});
+  await page.setViewportSize({width:1280,height:720});
+  await packageDetail.getByRole('button',{name:'Configure Weft local connection',exact:true}).click();
   await expect(page.getByLabel('Pairing code',{exact:true})).toBeVisible();
   await expect(connectionStatus).toHaveText('Connected');
   const settingsUrl=new URL('/api/weft-local-host',localUrl).href;
@@ -75,3 +92,7 @@ test('published local DSH pairs in native settings, runs Files, Git and PTY and 
   expect((await readFile(project+'/notes.md','utf8')).match(/LOCAL_CHANGED_FILE/g)).toHaveLength(1);
   await page.screenshot({path:testInfo.outputPath('local-dsh-native.png')});expect(errors).toEqual([]);
 });
+
+function snapshotEndpoint(code:string):string {
+  return (JSON.parse(Buffer.from(code,'base64url').toString('utf8')) as {endpoint:string}).endpoint;
+}

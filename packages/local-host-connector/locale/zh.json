@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Weft 本地连接",
+    "description": "通过 Weft 使用本机 DSH 的会话、文件与终端。"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Weft local connection",
+    "description": "Use your local DSH sessions, files and terminals through Weft."
+  }
+}
