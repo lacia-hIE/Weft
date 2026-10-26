@@ -41,6 +41,7 @@ export function apply(ctx: ClientContext) {
   });
   let retry: ReturnType<typeof setTimeout> | undefined;
   const queue = new RefreshQueue(async current => {
+    clearTimeout(retry);
     const [plugins, settings] = await Promise.all([ctx.remote.pluginManager.listPlugins(), ctx.remote.settings.describe()]);
     if (!plugins.ok || !plugins.value || !settings.ok || !settings.value) throw new Error('Unable to read native plugin composition');
     if (!current()) return;
