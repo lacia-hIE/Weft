@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState, type ReactNode } from "react";
 import YAML from 'yaml';
-import { api, post } from "./api.ts";
+import { api, post, tenantPath } from "./api.ts";
 import { BrandWordmark, Button, DisclosureRow, FishLogo, Input, Menu, Modal, Tag, IconCodeOutlineRegular, IconPlusOutlineRegular, IconUserOutlineRegular } from "./runtime/primitives.ts";
 import {ConfigField} from '@weft/upstream/packages/client/ui-primitives/src/ConfigField.tsx';
 import type { EnvironmentRecord } from "../../../packages/control-plane/src/contracts.ts";
@@ -143,7 +143,7 @@ export function Environments({user}: {user: {id: string; email: string}}): React
             ? [0, 1].map(index => <div key={index} className="home-card home-card-loading" aria-hidden />)
             : environments.map(environment => (
               <div key={environment.id} className="home-card-frame">
-              {React.createElement((environment.status&&environment.status!=='ready')||(environment.kind==='local'&&!environment.local?.online)?'div':'a', {className:'home-card',...((environment.status&&environment.status!=='ready')||(environment.kind==='local'&&!environment.local?.online)?{}:{'aria-label':`进入 ${environment.name}`,href:`/agents/${environment.id}`})}, <>
+              {React.createElement((environment.status&&environment.status!=='ready')||(environment.kind==='local'&&!environment.local?.online)?'div':'a', {className:'home-card',...((environment.status&&environment.status!=='ready')||(environment.kind==='local'&&!environment.local?.online)?{}:{'aria-label':`进入 ${environment.name}`,href:environment.kind==='local'?tenantPath(`environments/${environment.id}/local/web/`):`/agents/${environment.id}`})}, <>
                 <span className="home-card-mark" aria-hidden><FishLogo size={18} /></span>
                 <span className="home-card-body">
                   <span className="home-card-title"><strong>{environment.name}</strong>{environment.kind==='local'&&<Tag tone="outline">本地</Tag>}{environment.id === 'default' && <Tag tone="outline">默认</Tag>}</span>

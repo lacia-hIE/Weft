@@ -63,9 +63,15 @@ test('published local DSH pairs in native settings, runs Files, Git and PTY and 
   await rpc('workspace/create',{request:{path:project}});
   const created=await rpc('session/create',{request:{sessionId:crypto.randomUUID(),cwd:project}});const sessionId=created.sessionId;
   await rpc('session/rename',{request:{sessionId,title:'Local browser session'}});
-  await page.goto('/agents/native-local-ci');
+  await page.goto('/');
+  const localEnvironment=page.getByRole('link',{name:'进入 Native local CI',exact:true});
+  await expect(localEnvironment).toHaveAttribute('href',base+'/local/web/');
+  const cloudBundles:string[]=[];
+  page.on('request',request=>{if(new URL(request.url()).pathname.startsWith('/harness/'))cloudBundles.push(request.url());});
+  await localEnvironment.click();
   await expect(page.getByRole('button',{name:'Plugins',exact:true})).toBeVisible({timeout:60_000});
   expect(page.url()).toContain('/local/web/');
+  expect(cloudBundles).toEqual([]);
   const release=await page.evaluate(()=>(globalThis as {__DSH_BOOT__?:{release:{version:string}}}).__DSH_BOOT__?.release);
   expect(process.env.WEFT_LOCAL_DSH_VERSION).toBeTruthy();
   expect(release?.version).toBe(process.env.WEFT_LOCAL_DSH_VERSION);

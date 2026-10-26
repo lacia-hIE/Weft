@@ -11,6 +11,10 @@ the owners of rendering, activation and permissions.
 - The catalogue's UI and YAML editor code load only on the home route. Identity
   lookup and that module download run concurrently. The native workbench
   retains its existing module loader and recovery entry.
+- A local environment card opens its existing native Host mount directly. It
+  avoids loading the cloud workbench only to redirect to local DSH. The relay
+  still checks current identity and environment state for every request; old
+  `/agents/:id` links retain their existing redirect behavior.
 - `RefreshQueue` combines same-turn plugin notifications and serializes reads.
   A later notification invalidates an earlier read before it can apply a stale
   composition. It caches no plugin authority or environment state. Native
