@@ -1,4 +1,3 @@
-import {Service} from '@deepseek-ai/cordis';
 import Schema from '@deepseek-ai/schemastery';
 import {background, chunks, requestId, sleep} from './shared.js';
 
@@ -29,16 +28,9 @@ function textOf(message) {
  * Channels register with `ctx.im.channel(name, {send, maxChars, allows})` and
  * hand inbound messages to `ctx.im.receive(...)`.
  */
-export default class ImBridge extends Service {
-  static provide = 'im';
-  static inject = ['sessionController', 'storageDomain'];
-  static Config = Schema.object({
-    agentPreset: Schema.string().description('Agent preset for new conversations; the environment default when empty.'),
-    titlePrefix: Schema.boolean().default(true).description('Prefix Session titles with the channel and conversation name.'),
-  });
-
+class ImBridge {
   constructor(ctx, config) {
-    super(ctx, 'im');
+    this.ctx = ctx;
     this.config = config ?? {};
     this.channels = new Map();
     this.followers = new Map();
@@ -159,7 +151,7 @@ export default class ImBridge extends Service {
           }
         } catch (error) {
           if (signal.aborted) return;
-          this.ctx.logger?.warn?.('dsh-im follow %s: %s', key, error instanceof Error ? error.message : String(error));
+          console.warn(`dsh-im follow ${key}: ${error instanceof Error ? error.message : String(error)}`);
           await sleep(Math.min(30_000, 1000 * 2 ** attempt), signal);
         } finally {clearTimeout(timer);}
       }
@@ -167,4 +159,16 @@ export default class ImBridge extends Service {
     this.followers.set(key, task);
     void task.pending.finally(() => this.followers.delete(key));
   }
+}
+
+// The bundle's own service: sibling entries inject it, the Host does not provide it.
+export const name = 'dsh-im-core';
+export const provide = 'im';
+export const inject = ['sessionController', 'storageDomain'];
+export const Config = Schema.object({
+  agentPreset: Schema.string().description('Agent preset for new conversations; the environment default when empty.'),
+  titlePrefix: Schema.boolean().default(true).description('Prefix Session titles with the channel and conversation name.'),
+});
+export function apply(ctx, config) {
+  ctx.provide('im', new ImBridge(ctx, config));
 }

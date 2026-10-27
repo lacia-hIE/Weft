@@ -51,7 +51,7 @@ export function background(ctx, name, work) {
   const controller = new AbortController();
   const dispose = ctx.effect(() => () => controller.abort(new Error(name + ' stopped')), name);
   const pending = Promise.resolve().then(() => work(controller.signal)).catch(error => {
-    if (!controller.signal.aborted) ctx.logger?.warn?.('%s failed: %s', name, error instanceof Error ? error.message : String(error));
+    if (!controller.signal.aborted) console.warn(`${name} failed: ${error instanceof Error ? error.message : String(error)}`);
   }).finally(() => {void Promise.resolve(typeof dispose === 'function' ? dispose() : undefined).catch(() => {});});
   return {signal: controller.signal, abort: reason => controller.abort(reason), pending};
 }

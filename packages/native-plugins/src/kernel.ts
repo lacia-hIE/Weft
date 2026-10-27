@@ -141,8 +141,10 @@ export class PluginFacet extends DurableObject<KernelEnv> {
         })());
         return this.metadata();
     }
+    /** Host services plus those the bundle's own entries provide, shared by every entry of this facet. */
+    private provided: Set<string> | undefined;
     private guard(plugin: Plugin): Plugin {
-        const provided = new Set<string>(this.env.ALLOWED ?? ['tools', 'timer', 'fs']);
+        const provided = this.provided ??= new Set<string>(this.env.ALLOWED ?? ['tools', 'timer', 'fs']);
             const facade = (ctx: Context) => new Proxy(ctx, {
                 get: (target, key) => {
                     if (this.durableTimers && (key === 'interval' || key === 'timeout')) return (callback: () => unknown, delay: number) => target.effect(() => this.durableTimers!.register(callback, delay, key === 'interval'));

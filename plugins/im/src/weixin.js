@@ -74,7 +74,7 @@ export async function apply(ctx, config) {
           if (signal.aborted) return;
           // A timed-out long poll is an empty batch.
           if (error?.name === 'TimeoutError') continue;
-          ctx.logger?.warn?.('dsh-im weixin: %s', error instanceof Error ? error.message : String(error));
+          console.warn(`dsh-im weixin: ${error instanceof Error ? error.message : String(error)}`);
           await sleep(Math.min(60_000, 2000 * 2 ** failures++), signal);
         }
       }
