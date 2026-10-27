@@ -77,7 +77,13 @@ npm run dev
 npm run test:live:workspace
 ```
 
-文件修改与 Session 工具结果分属两个 DO，不构成跨 DO 原子事务。执行中硬终止后的副作用回执、幂等重投与工作区快照需要后续实现，不承诺文件工具 exactly-once。
+文件修改与 Session 工具结果分属两个 DO，不构成跨 DO 原子事务；系统靠以下三条保证不重复施加副作用：
+
+- **不自动重放**：上游恢复时，已记录开始但没有持久结果的工具调用，会被补写为 `TOOL_OUTCOME_UNKNOWN`，并提示模型先核实外部状态，Harness 不会重新执行它；未记录开始的调用按"未开始"关闭。
+- **版本前置条件**：原版 `fs-observation-policy` 让写入和编辑都携带读取时观察到的版本（`replaceIfVersion` / `createIfAbsent`），WorkspaceDO 在同一事务中校验。模型若盲目重发一个已生效的修改，会收到 `FS_STALE_VERSION`、`FS_NOT_OBSERVED` 或 `FS_EDIT_NOT_FOUND`，不会被施加两次。见 `tests/workspace.test.ts` 中的重发用例。
+- **Shell 与外部请求不在此列**：命令执行和插件出站请求不具备幂等性，结果未知时由模型按上游提示核实或询问用户。
+
+由此得到的语义是"每个已记录的调用至多派发一次，文件修改有版本校验"，而不是任意副作用的 exactly-once。工作区快照仍未实现。
 
 ## 依赖记录
 

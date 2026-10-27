@@ -146,6 +146,37 @@ test('native Harness write/read/edit and observation policy operate against the 
   } finally { await runtime.dispose(); }
 });
 
+test('a re-issued mutation whose effect already committed is refused instead of applied twice', async () => {
+  // Crash recovery closes a started call as outcome-unknown and never replays it. A model that
+  // retries anyway sends the same mutation again, which the read-observation guards must refuse.
+  const script: [string | undefined, object][] = [
+    ['read', { file_path: 'notes/once.txt' }],
+    ['edit', { file_path: 'notes/once.txt', old_string: 'count: 0', new_string: 'count: 1' }],
+    ['edit', { file_path: 'notes/once.txt', old_string: 'count: 0', new_string: 'count: 1' }],
+    [undefined, {}],
+    // A recovered Session holds no observation of the file, so a blind rewrite is refused too.
+    ['write', { file_path: 'notes/once.txt', content: 'count: 1' }],
+    [undefined, {}],
+  ];
+  let calls = 0;
+  const runtime = createRuntime(undefined, { bindings: realAdapter, outbound: async () => {
+    const step = script[calls++] ?? [undefined, {}];
+    return modelReply(step[0], step[1]);
+  } });
+  const failures = async (response: Response) => {
+    assert.equal(response.status, 200, await response.clone().text());
+    return (await response.json() as SessionResponse).events.filter(entry => entry.type === 'tool/result').map(entry => JSON.stringify(entry).includes('isError":true'));
+  };
+  try {
+    await value(await write(runtime, 'alpha', 'once', 'notes/once.txt', 'count: 0'));
+    assert.deepEqual(await failures(await message(runtime, 'replayed', 'once')), [false, false, true]);
+    assert.deepEqual(await failures(await message(runtime, 'recovered', 'once')), [true]);
+    const file = await value<{ content: string; version: string }>(await read(runtime, 'alpha', 'once', 'notes/once.txt'));
+    assert.equal(file.content, 'count: 1');
+    assert.equal(file.version, '2');
+  } finally { await runtime.dispose(); }
+});
+
 test('workspace binding is persisted, inherited on followup and cannot be switched', async () => {
   const runtime = createRuntime();
   try {

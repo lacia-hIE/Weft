@@ -41,7 +41,11 @@
 
 自动断流取消采用 `enable_request_signal` 和流取消回调做尽力处理；当前本地代理链路未可靠传递该信号，不承诺客户端断开立即终止模型。需要确定停止时应调用显式取消接口，空闲与回合期限提供兜底。
 
-SSE 一旦开始，HTTP 状态为 200；后续失败通过 `error` 事件传递。`assistant-stream` 是临时通知，不能独立充当持久历史；重连后应调用 `GET .../events` 读取已保存的事件。当前未实现按 Last-Event-ID 自动续传。每个流的本地待消费队列超过约 1 MiB 时会停止该请求，避免无限缓存。
+SSE 一旦开始，HTTP 状态为 200；后续失败通过 `error` 事件传递。`assistant-stream` 是临时通知，不能独立充当持久历史，也不会续传。根会话的 `session-event` 带 SSE `id`，取值为事件 `seq`。
+
+断线后用 `GET .../events` 并带上 `Accept: text/event-stream` 与 `Last-Event-ID: <seq>` 续传：先补发已提交的后续事件，再接上运行中回合尚未落盘的事件，之后实时跟随，转发各回合的 `done` / `error`，直到没有进行中或排队的请求时发送 `idle` 并关闭。不带 `Last-Event-ID` 时从头读取。游标超出日志返回 409 / `RESUME_AHEAD`，格式错误返回 400；内存缓冲溢出导致无法无缝衔接时发送 `error` / `RESUME_GAP`，此时改读完整日志。官方 Web UI 使用上游 `session/follow` 的快照游标，不经过此接口。
+
+POST 流被消费端取消时仍按下文取消当前回合；续传用于取消信号未到达服务端的断线，以及其他观察者加入。每个流的本地待消费队列超过约 1 MiB 时会停止该请求，避免无限缓存。
 
 `POST /v1/tenants/:tenantId/sessions/:sessionId/cancel`
 

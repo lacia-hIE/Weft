@@ -27,6 +27,7 @@ import {readScheduleCatalog, drainDueReminders} from '../../../packages/native-s
 import questionRemote from '../../../.generated/official-remotes/packages/interaction/user-questions/typert.remote-client.js';
 import {FILE_UPLOAD_PATH} from '@weft/upstream/packages/client/file-upload/src/protocol.ts';
 import {SESSION_LOG_EXPORT_PATH} from '@deepseek-ai/dsh-session-log-export';
+import { TurnReplay } from './turn-replay.ts';
 import {CHANGED_FILES_PATH, CHANGES_DIFF_PATH} from '@weft/upstream/packages/client/ui-deliverables/src/changes.ts';
 import { workspaceIdSchema, workspaceAddress, workspacePath } from '../../../packages/workspace/src/protocol.ts';
 export { WorkspaceDO, TenantDO, EnvironmentDO };
@@ -143,6 +144,9 @@ function latestCompletedPrefixBoundary(events: readonly SessionEvent[]): number 
   return boundary;
 }
 
+/** Internal SessionDO route behind `GET .../events` with `Accept: text/event-stream`. */
+const SESSION_RESUME_PATH = '/turns/resume';
+
 export class SessionDO extends DurableObject<Env> {
   private readonly lifecycle:LifecycleGate;
   private lifecycleRegistration:Promise<void>|undefined;
@@ -214,6 +218,7 @@ export class SessionDO extends DurableObject<Env> {
   }
   private tail: Promise<void> = Promise.resolve();
   private readonly requests = new Map<string, AbortController>();
+  private readonly replay = new TurnReplay();
   private nativeHost: NativeSessionHost | undefined;
   private installedPackages: InstalledPackageRuntime | undefined;
   private webhookSeed():WorkerWebhookSeed|undefined {const row=this.ctx.storage.sql.exec<{seed:string}>("SELECT seed FROM weft_webhook_bootstrap WHERE id=1").toArray()[0];return row?readWebhookSeed(JSON.parse(row.seed)):undefined;}
@@ -457,8 +462,10 @@ export class SessionDO extends DurableObject<Env> {
     if (this.requests.size >= 32) return { ok: false, requestId, error: { code: 'SESSION_BUSY', message: 'Session queue is full', status: 429 } };
     const controller = new AbortController();
     this.requests.set(requestId, controller);
+    let began = false;
+    let outcome: TurnResult | undefined;
     try {
-      return await this.exclusive(async (): Promise<TurnResult> => {
+      return outcome = await this.exclusive(async (): Promise<TurnResult> => {
         let timer: ReturnType<typeof setTimeout> | undefined;
         try {
           controller.signal.throwIfAborted();
@@ -479,7 +486,11 @@ export class SessionDO extends DurableObject<Env> {
           }
           const attachedWorkspace = stored ? stored.workspace_id : profile?.spec.workspaceId ?? workspaceId ?? null;
           if (profile && workspaceId !== undefined && workspaceId !== attachedWorkspace) return { ok: false, requestId, error: { code: 'WORKSPACE_MISMATCH', message: 'Workspace conflicts with the published agent', status: 409 } };
-          const runtime = await sessionRuntime(this.env, this.ctx.storage, scope, profile, attachedWorkspace, persona, false, undefined, hooks);
+          this.replay.begin(); began = true;
+          const runtime = await sessionRuntime(this.env, this.ctx.storage, scope, profile, attachedWorkspace, persona, false, undefined, {...hooks, onEvent: (event, session) => {
+            hooks.onEvent?.(event, session);
+            if (session.id === scope.sessionId) this.replay.event(event);
+          }});
           if (!stored) this.ctx.storage.sql.exec('INSERT INTO weft_session_config (id,workspace_id,agent_document) VALUES (1,?,?)', attachedWorkspace, profile ? JSON.stringify(profile) : null);
           if (profile) await controlFor(this.env, controlScope(scope.tenantId, scope.environmentId)).trackSession(controlScope(scope.tenantId, scope.environmentId), {
             id: scope.sessionId, title: text.slice(0, 80), agentId: profile.spec.id, revision: profile.revision, workspaceId: attachedWorkspace!, updatedAt: new Date().toISOString(),
@@ -497,7 +508,48 @@ export class SessionDO extends DurableObject<Env> {
       });
     } finally {
       this.requests.delete(requestId);
+      if (began) this.replay.end(outcome?.ok
+        ? {event: 'done', data: {requestId, model: outcome.model}}
+        : {event: 'error', data: {requestId, ...(outcome?.error ?? {code: 'TURN_FAILED', message: 'Turn failed', status: 500})}}, this.requests.size === 0);
     }
+  }
+
+  /** Resume a validation SSE reader after `after`: committed events, the running turn's pending suffix, then later turns until idle. */
+  private resumeTurns(scope: SessionScope, after: number): Response {
+    const id = SessionId(scope.sessionId);
+    const metadata = readSessionMetadata(this.ctx.storage, id);
+    if (!metadata) return Response.json({error: 'Session not found'}, {status: 404});
+    if (after > this.replay.known(metadata.eventCount)) return Response.json({error: 'Last-Event-ID is ahead of the session log', code: 'RESUME_AHEAD'}, {status: 409});
+    const committed = (from: number) => {
+      const count = readSessionMetadata(this.ctx.storage, id)?.eventCount ?? 0;
+      return from < count ? readSessionEventPage(this.ctx.storage, id, from, count) : [];
+    };
+    const abort = new AbortController();
+    const frames = this.replay.follow(after, committed, () => this.requests.size === 0, abort.signal);
+    const encoder = new TextEncoder();
+    let heartbeat: ReturnType<typeof setInterval> | undefined;
+    const body = new ReadableStream<Uint8Array>({
+      start: controller => {
+        const write = (text: string) => {
+          if ((controller.desiredSize ?? 0) < -1_048_576) { abort.abort(); controller.error(new Error('Stream consumer is too slow')); return; }
+          controller.enqueue(encoder.encode(text));
+        };
+        heartbeat = setInterval(() => { write(`event: ping\ndata: {}\n\n`); }, 5000);
+        this.ctx.waitUntil((async () => {
+          try {
+            for await (const frame of frames) {
+              if (abort.signal.aborted) break;
+              write(`event: ${frame.event}\ndata: ${JSON.stringify(frame.data)}\n${'id' in frame ? `id: ${frame.id}\n` : ''}\n`);
+            }
+            if (!abort.signal.aborted) controller.close();
+          } catch (error) {
+            if (!abort.signal.aborted) controller.error(error);
+          } finally { clearInterval(heartbeat); }
+        })());
+      },
+      cancel: () => { clearInterval(heartbeat); abort.abort(); },
+    }, {highWaterMark: 65_536, size: chunk => chunk.byteLength});
+    return new Response(body, {headers: {'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'private, no-store'}});
   }
 
   /** Native Web creation opens a real persisted Session before its first prompt. */
@@ -934,6 +986,10 @@ export class SessionDO extends DurableObject<Env> {
       if (pathname === FILE_UPLOAD_PATH) await this.ctx.storage.sync();
       return response;
     }
+    if (pathname === SESSION_RESUME_PATH && request.method === 'GET') {
+      const scope = this.assertScope(scopeSchema.parse(JSON.parse(request.headers.get('x-weft-session-scope') ?? 'null')));
+      return this.resumeTurns(scope, Number(request.headers.get('last-event-id') ?? '-1'));
+    }
     const raw: unknown = await request.json();
     if (typeof raw === 'object' && raw !== null && 'operation' in raw && raw.operation === 'native-subagent') {
       const body = z.object({scope: scopeSchema, operation: z.literal('native-subagent'), endpoint: z.enum(['subagents/prompt', 'subagents/interruptByParent']), args: z.unknown()}).strict().parse(raw);
@@ -1036,7 +1092,7 @@ export class SessionDO extends DurableObject<Env> {
     const encoder = new TextEncoder();
     const body = new ReadableStream<Uint8Array>({
       start: controller => {
-        const publish = (event: string, data: unknown) => {
+        const publish = (event: string, data: unknown, id?: number) => {
           if (cancelled) return;
           if ((controller.desiredSize ?? 0) < -1_048_576) {
             cancelled = true;
@@ -1044,12 +1100,13 @@ export class SessionDO extends DurableObject<Env> {
             controller.error(new Error('Stream consumer is too slow'));
             return;
           }
-          controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+          controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n${id === undefined ? '' : `id: ${id}\n`}\n`));
         };
         publish('session', { ...payload.scope, requestId: payload.requestId });
         heartbeat = setInterval(() => { publish('ping', { requestId: payload.requestId }); }, 5000);
         const operation = this.execute(payload.scope, payload.text, payload.persona, payload.requestId, payload.workspaceId, payload.agent, {
-          onEvent: event => { publish('session-event', event); },
+          // Root events carry their seq as the SSE id; GET .../events resumes from Last-Event-ID.
+          onEvent: (event, session) => { publish('session-event', event, session.id === payload.scope.sessionId ? event.seq : undefined); },
           onFrame: frame => { publish('assistant-stream', frame); },
         }).then(result => {
           if (result.ok) publish('done', { requestId: result.requestId, model: result.model });
@@ -1199,6 +1256,11 @@ export default {
           return response;
         }
         return await session.send(scope, text, persona, requestId, parsed.data.workspaceId, parsed.data.agent);
+      }
+      if (match[3] === 'events' && request.method === 'GET' && request.headers.get('accept')?.split(',').some(type => type.trim().split(';')[0] === 'text/event-stream')) {
+        const cursor = request.headers.get('last-event-id') ?? '-1';
+        if (!/^(-1|0|[1-9]\d{0,15})$/.test(cursor)) throw new HttpError(400, 'Last-Event-ID must be a session event seq');
+        return session.fetch(new Request(`https://session.internal${SESSION_RESUME_PATH}`, {headers: {'x-weft-session-scope': JSON.stringify(scope), 'last-event-id': cursor}}));
       }
       if (match[3] === 'events' && request.method === 'GET') {
         const events = await session.events(scope);

@@ -113,6 +113,58 @@ test('SSE publishes assistant deltas before the model response finishes, then du
   } finally { await runtime.dispose(); }
 });
 
+test('Last-Event-ID resumes root events gap-free across a running turn and after it ends', async () => {
+  let finish!: () => void;
+  const runtime = createRuntime(undefined, { bindings, outbound: async () => new Response(new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(textPrefix));
+      finish = () => { controller.enqueue(new TextEncoder().encode(textSuffix)); controller.close(); };
+    },
+  }), { headers: { 'content-type': 'text/event-stream' } }) });
+  const resume = (cursor?: string) => runtime.dispatchFetch(url('alpha', sessionPath('alpha', 'resume', 'events')), {
+    headers: { accept: 'text/event-stream', ...(cursor === undefined ? {} : { 'last-event-id': cursor }) },
+  });
+  const ids = (text: string) => text.trim().split('\n\n').flatMap(frame => frame.split('\n').filter(line => line.startsWith('id: ')).map(line => Number(line.slice(4))));
+  try {
+    const response = await runtime.dispatchFetch(url('alpha', sessionPath('alpha', 'resume', 'messages')), {
+      method: 'POST', headers: { accept: 'text/event-stream', 'content-type': 'application/json' }, body: JSON.stringify({ text: 'resume' }),
+    });
+    const reader = response.body!.getReader();
+    const decoder = new TextDecoder();
+    let text = '';
+    while (!text.includes('text-delta')) text += decoder.decode((await reader.read()).value, { stream: true });
+    const first = ids(text)[0]!;
+    assert.equal(first, 0);
+
+    // A second reader joins mid-turn from the first id it holds, then follows the turn to its end.
+    const live = await resume(String(first));
+    assert.equal(live.status, 200);
+    assert.match(live.headers.get('content-type')!, /text\/event-stream/);
+    const liveReader = live.body!.getReader();
+    let liveText = '';
+    finish();
+    for (;;) { const next = await reader.read(); if (next.done) break; text += decoder.decode(next.value, { stream: true }); }
+    for (;;) { const next = await liveReader.read(); if (next.done) break; liveText += decoder.decode(next.value, { stream: true }); }
+
+    const log = (await readEvents(runtime, 'resume')).events;
+    const last = log.at(-1)!.seq;
+    assert.deepEqual(ids(liveText), Array.from({ length: last - first }, (_, index) => first + 1 + index));
+    assert.deepEqual(ids(text), log.map(event => event.seq));
+    const liveFrames = sseFrames(liveText.split('\n\n').filter(frame => !frame.startsWith('event: ping')).join('\n\n'));
+    assert.equal(liveFrames.at(-1)?.event, 'done');
+    assert.deepEqual(liveFrames.filter(frame => frame.event === 'session-event').map(frame => frame.data), log.slice(first + 1));
+
+    // Once idle, a reader gets the committed suffix and an idle marker.
+    const after = await (await resume(String(last - 2))).text();
+    assert.deepEqual(ids(after), [last - 1, last]);
+    assert.match(after, /event: idle\ndata: \{"seq":\d+\}/);
+    assert.deepEqual(ids(await (await resume()).text()), log.map(event => event.seq));
+    assert.equal((await resume(String(last + 1))).status, 409);
+    assert.equal((await resume('x')).status, 400);
+    assert.equal((await runtime.dispatchFetch(url('alpha', sessionPath('alpha', 'missing', 'events')), { headers: { accept: 'text/event-stream' } })).status, 404);
+  } finally { await runtime.dispose(); }
+});
+
 test('provider failures are classified without persisting or returning echoed credentials', async () => {
   for (const [status, code, expectedStatus] of [[401, 'AUTH', 502], [429, 'RATE_LIMIT', 429], [503, 'SERVER', 502]] as const) {
     let count = 0;
