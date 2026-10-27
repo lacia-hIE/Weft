@@ -93,6 +93,8 @@ export class EnvironmentPackages {
       try {await this.platform.tick(active.runId);} catch {await this.stopNow(active.row.name); await this.owner.failed(active.row);}
     }
   }
+  /** Whether an active Host may hold connections that end with this object's eviction. */
+  networked(): boolean {return [...this.active.values()].some(active => active.row.permissions.network === true);}
   async nextAlarm(): Promise<number | undefined> {
     const values = await Promise.all([...this.active.values()].map(active => this.platform.nextAlarm(active.runId)));
     const due = values.filter((value): value is number => value !== undefined);

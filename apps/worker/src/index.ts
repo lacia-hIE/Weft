@@ -99,7 +99,7 @@ type TurnResult = { ok: true; requestId: string; events: readonly SessionEvent[]
 
 import type {ToolExecutionResult} from '@deepseek-ai/dsh-tools';
 import {readWebhookSeed,readWebhookBootstrap,type WorkerWebhookSeed} from '../../../packages/native-plugins/src/webhook-contracts.ts';
-import {pluginFetch} from '../../../packages/native-plugins/src/network.ts';
+import {environmentEgress, pluginFetch} from '../../../packages/native-plugins/src/network.ts';
 
 /** Immutable capability identity; the child never receives a namespace or secret. */
 export class PluginCapabilities extends WorkerEntrypoint<Env, {scope: SessionScope; pluginId: string; runId: string}> {
@@ -117,7 +117,7 @@ export class PluginCapabilities extends WorkerEntrypoint<Env, {scope: SessionSco
 export class EnvironmentPluginCapabilities extends WorkerEntrypoint<Env, {scope: ReturnType<typeof controlScope>; name: string; digest: string; activationId: string}> {
   private owner() {return controlFor(this.env, this.ctx.props.scope);}
   override async fetch(request: Request): Promise<Response> {
-    return pluginFetch(request, async () => {await this.owner().nativePackageAuthorize(this.ctx.props.scope, this.ctx.props, 'network');});
+    return pluginFetch(request, async () => {await this.owner().nativePackageAuthorize(this.ctx.props.scope, this.ctx.props, 'network');}, environmentEgress);
   }
   async dispatchWebhook(delivery:unknown):Promise<void> {return this.owner().nativePackageDispatchWebhook(this.ctx.props.scope,this.ctx.props,delivery);}
   async createWebhook(operationId:string,delivery:unknown,ruleId:string,request:unknown):Promise<void> {return this.owner().nativePackageCreateWebhook(this.ctx.props.scope,this.ctx.props,operationId,delivery,ruleId,request);}

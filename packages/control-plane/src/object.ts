@@ -581,7 +581,10 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
   private async schedulePackageAlarm(scope: ControlScope): Promise<void> {
     const next = await this.environmentPackages?.nextAlarm();
     const recovering = this.packages(scope).registry.jobs().some(row => row.phase === 'resolving' || row.phase === 'building') || this.packages(scope).registry.list().some(row => row.switching);
-    const due = [next, ...(recovering ? [Date.now() + 150_000] : [])].filter((value): value is number => value !== undefined);
+    // Outbound sockets and long polls do not survive eviction or a deploy; the
+    // watchdog re-activates networked Hosts, which reconnect on their own.
+    const watchdog = this.environmentPackages?.networked() ? [Date.now() + PACKAGE_WATCHDOG_MS] : [];
+    const due = [next, ...watchdog, ...(recovering ? [Date.now() + 150_000] : [])].filter((value): value is number => value !== undefined);
     if (due.length) await this.requestPackageAlarm(Math.max(Date.now() + 1000, Math.min(...due)));
   }
   private async reconcileEnvironmentPackages(scope: ControlScope): Promise<void> {
@@ -1448,6 +1451,8 @@ export function controlFor(env: HarnessEnvironment, scope: ControlScope) {
 }
 
 /** Tenant catalogue only; every Harness runs in an EnvironmentDO. */
+/** How soon a networked environment Host is re-activated after this object restarts. */
+const PACKAGE_WATCHDOG_MS = 60_000;
 export class TenantDO extends DurableObject<TenantEnvironment> {
   private copyWork: Promise<void> | undefined;
   private readonly localRelay:LocalHostRelay;
