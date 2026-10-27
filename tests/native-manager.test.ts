@@ -44,7 +44,7 @@ test('inventory covers the pinned official profile and durable management retire
     assert.ok(inventory.entries.filter(row => row.entryId === 'preset-standard' || row.entryId === 'preset-cordis').every(row => row.fiberPhase === 'active'));
     assert.equal(inventory.agentPresets?.find(row => row.id === 'cordis')?.rows.find(row => row.entryId === 'tool-todo')?.fiberPhase, 'active');
     const bundles = await api.call<BundleInfo[]>('pluginManager/listBundles', {});
-    assert.deepEqual(bundles.map(bundle => bundle.name), ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', '@weft/harness-profile', '@deepseek-ai/dsh-experimental-agent-team-profile', '@weft/worker-javascript', '@weft/worker-documents', '@weft/worker-task-management']);
+    assert.deepEqual(bundles.map(bundle => bundle.name), ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', '@weft/harness-profile', '@weft/dsh-im', '@deepseek-ai/dsh-experimental-agent-team-profile', '@weft/worker-javascript', '@weft/worker-documents', '@weft/worker-task-management']);
     assert.equal(bundles.find(bundle => bundle.name === '@weft/harness-profile')?.rows.length, 4);
     assert.deepEqual(bundles.filter(bundle => bundle.installed).flatMap(bundle => bundle.rows.map(row => row.rowId)).sort(), inventory.entries.map(row => row.entryId).sort());
     const plugins = await api.call<PluginInfo[]>('pluginManager/listPlugins', {});
