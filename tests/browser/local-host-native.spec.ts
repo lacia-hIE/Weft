@@ -47,7 +47,8 @@ test('published local DSH pairs in native settings, runs Files, Git and PTY and 
   await page.setViewportSize({width:390,height:844});
   await expect(page.getByLabel('Pairing code',{exact:true})).toBeVisible();
   await expect(panel.getByRole('button',{name:'Save and connect',exact:true})).toBeVisible();
-  expect(await panel.evaluate(element=>element.scrollWidth<=element.clientWidth)).toBe(true);
+  // Read after the resize and theme change settle; a real overflow still fails.
+  await expect.poll(()=>panel.evaluate(element=>element.scrollWidth<=element.clientWidth)).toBe(true);
   await page.screenshot({path:testInfo.outputPath('local-dsh-pairing-settings-mobile.png')});
   await page.setViewportSize({width:1280,height:720});
   await packageDetail.getByRole('button',{name:'Configure Weft local connection',exact:true}).click();
