@@ -21,6 +21,13 @@ export function standardPlugin(namespace: unknown): Plugin {
   return plugin as Plugin;
 }
 
+/** The service a module's Cordis `Service` class or plugin object declares with a static `provide`. */
+export function bundleService(namespace: unknown): string | undefined {
+  const plugin = (namespace as {default?: unknown}).default ?? namespace;
+  const provide = (plugin as {provide?: unknown} | null)?.provide;
+  return typeof provide === 'string' && provide ? provide : undefined;
+}
+
 type Row = Record<string, unknown>;
 const object = (value: unknown): value is Row => value !== null && typeof value === 'object' && !Array.isArray(value);
 /** Plain objects merge; arrays and scalar values replace, matching native profile layers. */
@@ -62,7 +69,9 @@ export function entrySchemas(rows: readonly Row[], modules: Record<string, unkno
 /** Original Loader with a private service realm and an immutable, archive-locked module table. */
 export function composeInstalledBundle(rows: Record<string, unknown>[], modules: Record<string, unknown>, decorate: (plugin: Plugin) => Plugin = plugin => plugin): Plugin {
   const plugins = Object.fromEntries(Object.entries(modules).map(([name, value]) => [name, standardPlugin(value)]));
-  const inject = Object.assign({}, ...Object.values(plugins).map(plugin => Inject.resolve(plugin.inject)));
+  // A service one entry provides to its siblings is not a Host service.
+  const local = new Set(Object.values(modules).flatMap(value => bundleService(value) ?? []));
+  const inject = Object.fromEntries(Object.entries(Object.assign({}, ...Object.values(plugins).map(plugin => Inject.resolve(plugin.inject)))).filter(([name]) => !local.has(name)));
   return {name: 'installed-cordis-bundle', inject, async apply(ctx: Context) {
     class BundleLoader extends Loader {
       override write(): void {}

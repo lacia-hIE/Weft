@@ -1,0 +1,10 @@
+# The shared IM bridge first; each channel injects it and stays idle until configured.
+- insert:
+    - id: im-core
+      name: '@weft/dsh-im/core'
+    - id: im-feishu
+      name: '@weft/dsh-im/feishu'
+    - id: im-weixin
+      name: '@weft/dsh-im/weixin'
+    - id: im-qq
+      name: '@weft/dsh-im/qq'
