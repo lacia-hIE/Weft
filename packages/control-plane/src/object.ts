@@ -576,7 +576,7 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
         const exports = this.ctx.exports as unknown as {EnvironmentPluginCapabilities(options: {props: {scope: ControlScope; name: string; digest: string; activationId: string}}): Fetcher};
         return exports.EnvironmentPluginCapabilities({props: {scope, name: row.name, digest: row.digest, activationId: row.activationId ?? row.digest}});
       },
-      failed: async row => {await this.packages(scope).failed(row.name, row.digest, 'host', row.activationId);},
+      failed: async (row, reason) => {await this.packages(scope).failed(row.name, row.digest, 'host', row.activationId, reason);},
     });
   }
   private async requestPackageAlarm(at: number): Promise<void> {

@@ -177,12 +177,12 @@ export class PackageInstaller {
     });
   }
   /** Only an exact, still-selected activation can roll back; late failures cannot undo a later update. */
-  failed(name: string, digest: string, half: 'host' | 'client', activationId?: string): Promise<boolean> {
+  failed(name: string, digest: string, half: 'host' | 'client', activationId?: string, reason?: string): Promise<boolean> {
     return this.exclusive(async () => {
       const row = this.registry.get(name);
       if (!row || row.digest !== digest || !row.enabled || !row.approved) return false;
       if ((row.activationId ?? digest) !== (activationId ?? digest)) return false;
-      const lastError = `${half === 'host' ? 'Host' : 'Client'} activation failed for ${row.version}.`;
+      const lastError = `${half === 'host' ? 'Host' : 'Client'} activation failed for ${row.version}.${reason ? ' ' + reason.slice(0, 500) : ''}`;
       let next: Installation = {...row, enabled: false, lastError};
       if (row.rollbackOnFailure && row.previous?.approved) {
         try {

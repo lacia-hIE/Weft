@@ -66,12 +66,16 @@ export function entrySchemas(rows: readonly Row[], modules: Record<string, unkno
   });
 }
 
-/** Original Loader with a private service realm and an immutable, archive-locked module table. */
-export function composeInstalledBundle(rows: Record<string, unknown>[], modules: Record<string, unknown>, decorate: (plugin: Plugin) => Plugin = plugin => plugin): Plugin {
+/**
+ * Original Loader with a private service realm and an immutable, archive-locked module table.
+ * @param withheld - Host services this activation was not granted; entries that inject one stay parked, as Cordis parks a plugin whose service is absent.
+ */
+export function composeInstalledBundle(rows: Record<string, unknown>[], modules: Record<string, unknown>, decorate: (plugin: Plugin) => Plugin = plugin => plugin, withheld: ReadonlySet<string> = new Set()): Plugin {
   const plugins = Object.fromEntries(Object.entries(modules).map(([name, value]) => [name, standardPlugin(value)]));
   // A service one entry provides to its siblings is not a Host service.
   const local = new Set(Object.values(modules).flatMap(value => bundleService(value) ?? []));
-  const inject = Object.fromEntries(Object.entries(Object.assign({}, ...Object.values(plugins).map(plugin => Inject.resolve(plugin.inject)))).filter(([name]) => !local.has(name)));
+  const inject = Object.fromEntries(Object.entries(Object.assign({}, ...Object.values(plugins).map(plugin => Inject.resolve(plugin.inject)))).filter(([name]) => !local.has(name) && !withheld.has(name)));
+  const parked = (name: unknown) => typeof name === 'string' && Object.keys(Inject.resolve(plugins[name]?.inject)).some(service => withheld.has(service));
   return {name: 'installed-cordis-bundle', inject, async apply(ctx: Context) {
     class BundleLoader extends Loader {
       override write(): void {}
@@ -91,8 +95,8 @@ export function composeInstalledBundle(rows: Record<string, unknown>[], modules:
     for (const row of rows) await loader.create(structuredClone(row) as unknown as EntryOptions);
     const visit = async (entries: Iterable<ReturnType<typeof loader.resolve>>): Promise<void> => {
       for (const entry of entries) {
+        if (entry.options.disabled === true || parked(entry.options.name)) continue;
         await entry.fiber?.await();
-        if (entry.options.disabled === true) continue;
         if (!entry.fiber || Object.keys(entry.fiber.inject).some(name => entry.ctx.get(name) === undefined)) throw new Error('Bundle entry has unavailable services: '+entry.options.id);
       }
     };

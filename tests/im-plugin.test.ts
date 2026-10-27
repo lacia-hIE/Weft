@@ -94,8 +94,17 @@ test('the deployment-bundled IM plugin bridges Feishu, QQ and WeChat conversatio
     assert.equal(row.hostScope, 'environment');
     assert.deepEqual(row.configs?.map(entry => entry.id).sort(), ['im-core', 'im-feishu', 'im-qq', 'im-weixin']);
     assert.equal(row.permissions.sessions && row.permissions.storage && row.permissions.routes, true, 'The bundle-provided im service is not a Host service');
-    assert.equal((await runtime.dispatchFetch(url('alpha', base + '/native/package-installations'), {method: 'POST', headers: {'content-type': 'application/json'},
-      body: JSON.stringify({operation: 'approve', name: row.name, digest: row.digest, permissions: {...row.permissions, network: true, routes: true}})})).status, 200);
+    const approve = (permissions: Installation['permissions']) => runtime.dispatchFetch(url('alpha', base + '/native/package-installations'), {method: 'POST', headers: {'content-type': 'application/json'},
+      body: JSON.stringify({operation: 'approve', name: row.name, digest: row.digest, permissions})});
+    const current = async () => (await (await runtime.dispatchFetch(url('alpha', base + '/native/package-installations'))).json() as {installations: Installation[]}).installations[0]!;
+    // The review page's defaults grant neither network nor routes: channel entries park, the bundle stays enabled.
+    assert.equal((await approve({...row.permissions, network: false, routes: false, credentials: false})).status, 200);
+    await delay(3000);
+    const parked = await current();
+    assert.equal(parked.enabled, true, JSON.stringify(parked.lastError));
+    assert.equal(parked.lastError, undefined);
+    assert.equal((await hook('/feishu', {method: 'POST', body: '{}'})).status, 404, 'Routes stay closed until granted');
+    assert.equal((await approve({...row.permissions, network: true, routes: true})).status, 200);
     await configure('im-feishu', {enabled: true, appId: 'cli_fixture', appSecret: 'feishu-secret', verificationToken: 'feishu-verify', encryptKey: 'feishu-encrypt', allowedSenders: ['ou_allowed']});
     await configure('im-qq', {enabled: true, appId: '1020', appSecret: qqSecret, allowedSenders: ['qq-user']});
     await configure('im-weixin', {enabled: true, loginKey: 'login-key-fixture'});

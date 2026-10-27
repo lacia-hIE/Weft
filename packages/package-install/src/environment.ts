@@ -20,7 +20,7 @@ export class EnvironmentPackages {
   constructor(private readonly owner: {
     state: DurableObjectState; loader: WorkerLoader | undefined; scope: object;
     list(): Installation[]; artifact(name: string, digest: string): Promise<Artifact>;
-    capability(row: Installation): Fetcher; failed(row: Installation): Promise<void>;
+    capability(row: Installation): Fetcher; failed(row: Installation, reason: string): Promise<void>;
   }) {
     owner.state.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_environment_plugin_facets (name TEXT PRIMARY KEY)');
     this.platform = new NativePluginPlatform(owner.state, owner.loader, owner.scope, pluginId => {
@@ -49,8 +49,10 @@ export class EnvironmentPackages {
           });
           if (this.closed || this.active.get(row.name) !== active) {await this.platform.release(active.runId); continue;}
           active.fiber = this.ctx.plugin(plugin); await active.fiber.await();
-        } catch {
-          await this.stopNow(row.name); await this.owner.failed(row);
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : String(error);
+          console.warn('weft.package.environment.failed', {name: row.name, reason});
+          await this.stopNow(row.name); await this.owner.failed(row, reason);
         }
       }
     });
@@ -90,7 +92,7 @@ export class EnvironmentPackages {
   async tick(): Promise<void> {
     await this.reconcile();
     for (const active of this.active.values()) {
-      try {await this.platform.tick(active.runId);} catch {await this.stopNow(active.row.name); await this.owner.failed(active.row);}
+      try {await this.platform.tick(active.runId);} catch (error) {await this.stopNow(active.row.name); await this.owner.failed(active.row, error instanceof Error ? error.message : String(error));}
     }
   }
   /** Whether an active Host may hold connections that end with this object's eviction. */

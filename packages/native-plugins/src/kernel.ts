@@ -23,7 +23,7 @@ import {WorkerWebServer} from './web-server.ts';
 import {pluginSessionStream} from './stream.ts';
 import {WorkerWebhooks} from './webhooks.ts';
 import type {VerifiedWebhookDelivery} from '@deepseek-ai/dsh-webhook';
-import {sessionMethods} from './services.ts';
+import {sessionMethods, workerHostServices} from './services.ts';
 import { snapshotJsonValue } from '@deepseek-ai/dsh-util-values';
 interface KernelEnv {
     ALLOWED?: string[];
@@ -100,7 +100,8 @@ export class PluginFacet extends DurableObject<KernelEnv> {
                 cordis, tools: {defineTool: sandboxDefineTool},
                 compose: (rows: Record<string, unknown>[], modules: Record<string, unknown>) => {
                     this.bundle = true; this.schemas = entrySchemas(rows, modules);
-                    return composeInstalledBundle(applyEntryConfig(rows, this.env.CONFIG ?? {}), modules, plugin => this.guard(plugin));
+                    const granted = new Set(this.env.ALLOWED ?? workerHostServices);
+                    return composeInstalledBundle(applyEntryConfig(rows, this.env.CONFIG ?? {}), modules, plugin => this.guard(plugin), new Set(workerHostServices.filter(name => !granted.has(name))));
                 },
                 defineTool: sandboxDefineTool, registerTool: sandboxRegisterTool,
                 handle: (method: unknown, fn: unknown) => {
