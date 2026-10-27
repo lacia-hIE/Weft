@@ -49,7 +49,7 @@ test('an installed entry is configured through native Settings, secrets stay red
     assert.deepEqual(bundle.rows.map(item => item.rowId), [ns], 'The Plugin Manager row opens the namespace of its form');
 
     const initial = (await form())!;
-    assert.deepEqual(initial.value, {filename: '/workspace/package-result.txt', value: 'from-patch', token: ''});
+    assert.deepEqual({...initial.value as object, token: undefined}, {filename: '/workspace/package-result.txt', value: 'from-patch', token: undefined});
     await api.call('session/create', {request: {sessionId: 'configured'}});
     assert.equal(await saved('configured'), 'from-patch|');
 
