@@ -47,7 +47,7 @@ test('an environment Host long-polls, streams large bodies and holds a bounded o
   }, packageBuilder: async request => Response.json(await buildPackage(JSON.parse(await request.text())))});
   const api = nativeClient(() => runtime), tenant = tenantId('alpha');
   const base = `/v1/tenants/${tenant}/environments/default`;
-  const read = async (name: string) => {const response = await runtime.dispatchFetch(url('alpha', `${base}/workspaces/default/files?path=/workspace/${name}`)); return response.ok ? response.text() : undefined;};
+  const read = async (name: string) => {const response = await runtime.dispatchFetch(url('alpha', `${base}/workspaces/default/files?path=/workspace/${name}`)); return response.ok ? (await response.json() as {value: {content: string}}).value.content : undefined;};
   const wait = async (name: string) => {
     for (const end = Date.now() + 60_000; Date.now() < end; await delay(250)) {const text = await read(name); if (text !== undefined) return text;}
     throw new Error(`${name} was not written: ${await read('error.txt')}`);
