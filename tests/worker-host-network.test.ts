@@ -38,9 +38,9 @@ test('an environment Host long-polls, streams large bodies and holds a bounded o
     if (target.hostname === 'gateway.example.test') {
       handshakes++;
       assert.equal(request.headers.get('upgrade')?.toLowerCase(), 'websocket');
-      const [client, server] = Object.values(new WebSocketPair());
-      server!.accept();
-      server!.addEventListener('message', event => {if (event.data === 'hello') server!.send('welcome');});
+      const pair = new WebSocketPair(), client = pair[0], server = pair[1];
+      server.accept();
+      server.addEventListener('message', event => {if (event.data === 'hello') server.send('welcome');});
       return new Response(null, {status: 101, webSocket: client});
     }
     return request.url === fixture.manifest.dist.tarball ? new Response(fixture.bytes) : Response.json(fixture.manifest);
