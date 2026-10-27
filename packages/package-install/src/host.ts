@@ -106,7 +106,7 @@ export class PackageInstaller {
       const body = JSON.stringify(artifact), digest = await sha256(body);
       await this.owner.bucket!.put(artifactKey(this.owner.scope, digest), body, {httpMetadata: {contentType: 'application/json'}});
       const installed: Installation = {name: artifact.name, version: artifact.version, description: artifact.description,
-        digest, patch: artifact.patch, rows: artifact.rows, permissions: artifact.permissions, ...(artifact.hostScope ? {hostScope: artifact.hostScope} : {}), enabled: false, approved: false, installedAt: Date.now()};
+        digest, patch: artifact.patch, rows: artifact.rows, permissions: artifact.permissions, ...(artifact.hostScope ? {hostScope: artifact.hostScope} : {}), ...(artifact.configs?.length ? {configs: artifact.configs} : {}), enabled: false, approved: false, installedAt: Date.now()};
       await this.exclusive(async () => {
         const current = this.registry.get(installed.name);
         if (current?.digest !== job.baseDigest || current?.candidate || this.registry.job(job.id)?.phase === 'failed') throw new Error('Installation changed while building the package');

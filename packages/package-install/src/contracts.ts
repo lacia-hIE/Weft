@@ -28,18 +28,23 @@ const assetsSchema = z.record(z.string().regex(assetPath), z.string().max(1_398_
   }
   if (Object.keys(assets).length > 128 || bytes > 4_194_304) ctx.addIssue({code: 'custom', message: 'Assets exceed 128 files or 4 MiB'});
 });
+/** Serialized Config schemas of a bundle's editable entries, read when the artifact is inspected. */
+export const entrySchemasSchema = z.array(z.object({id: z.string().min(1).max(80), schema: z.json()}).strict()).max(64);
+export type EntrySchemas = z.infer<typeof entrySchemasSchema>;
 export const artifactSchema = z.object({
   name: z.string(), version: z.string(), description: z.string().max(2000),
   patch: patchSchema, rows: patchSchema, permissions: permissionSchema, lock: lockSchema, host: z.string().max(1_048_576).optional(),
   hostScope: z.enum(['session', 'environment']).optional(),
   client: z.string().max(1_048_576).optional(),
   css: z.string().max(1_048_576).optional(), assets: assetsSchema.optional(),
+  configs: entrySchemasSchema.optional(),
 }).strict();
 export type Artifact = z.infer<typeof artifactSchema>;
 export interface PackageRevision {
   name: string; version: string; digest: string; enabled: boolean; approved: boolean;
   patch: Record<string, unknown>[]; rows: Record<string, unknown>[]; permissions: Permissions; description: string; installedAt: number;
   hostScope?: 'session' | 'environment';
+  configs?: EntrySchemas;
   needsReinstall?: true;
   activationId?: string;
 }
@@ -47,10 +52,12 @@ export interface Installation extends PackageRevision {
   candidate?: PackageRevision; previous?: PackageRevision; lastError?: string;
   switching?: {enabled: boolean};
   rollbackOnFailure?: true;
+  /** Runtime-only: the environment's configuration of the selected revision's entries. Never listed to clients. */
+  config?: Record<string, Record<string, unknown>>;
 }
 /** Revision history never recursively embeds previous revisions or transfers approvals. */
 export function revision(row: Installation): PackageRevision {
-  const {candidate: _candidate, previous: _previous, lastError: _error, switching: _switching, rollbackOnFailure: _rollback, ...value} = row;
+  const {candidate: _candidate, previous: _previous, lastError: _error, switching: _switching, rollbackOnFailure: _rollback, config: _config, ...value} = row;
   return value;
 }
 export interface InstallJob {
@@ -60,6 +67,8 @@ export interface InstallJob {
 }
 export const exactSpec = /^((?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*)@(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/;
 export const entryId = (name: string) => `installed:${name}` as PluginEntryId;
+/** The Settings namespace of one installed entry, which is also its Plugin Manager row id. */
+export const entryNamespace = (name: string, id: string) => `${entryId(name)}/${id}`;
 export async function sha256(value: string | Uint8Array): Promise<string> {
   const data = typeof value === 'string' ? new TextEncoder().encode(value) : value;
   const digest = await crypto.subtle.digest('SHA-256', data as BufferSource);

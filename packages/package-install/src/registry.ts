@@ -1,5 +1,5 @@
 import type {Installation, InstallJob} from './contracts.ts';
-import {entryId} from './contracts.ts';
+import {entryId, entryNamespace} from './contracts.ts';
 import type {BundleInfo, PluginInfo} from '@deepseek-ai/dsh-plugin-manager/types';
 
 /** Environment-owned declarations and durable installation receipts. Never stores module bytes in SQL. */
@@ -27,7 +27,7 @@ export class PackageRegistry {
     name: row.name, version: row.version, description: row.description, official: false,
     availability: 'profile', source: `${row.name}@${row.version}`, installed: true,
     enabled: row.enabled && row.approved, optional: false, removable: true,
-    rows: row.rows.filter(item => !item.group).map(item => ({rowId: String(item.id), moduleName: String(item.name), entryId: entryId(row.name)})), overrides: row.patch.filter(item => item.id && !item.insert).map(item => String(item.id)),
+    rows: row.rows.filter(item => !item.group).map(item => ({rowId: entryNamespace(row.name, String(item.id)), moduleName: String(item.name), entryId: entryId(row.name)})), overrides: row.patch.filter(item => item.id && !item.insert).map(item => String(item.id)),
     ...(!row.approved ? {error: {code: 'stale-approval' as const, diagnostic: row.needsReinstall ? 'Remove and reinstall this package using its native dsh.bundle.patch declaration.' : 'Built and installed; review this bundle’s patch, exact artifact and capabilities on its detail page before enabling.'}} : {}),
   }));}
   plugins(): PluginInfo[] {return this.list().map(row => ({entryId: entryId(row.name) as never, readOnlyReason: 'management-required', moduleName: row.name,

@@ -8,6 +8,7 @@ const metadataSchema = descriptionSchema.extend({tools:toolDescriptions});
 type Metadata = z.infer<typeof metadataSchema>;
 interface FacetApi {
     describe(): Promise<unknown>;
+    configSchemas(): Promise<unknown>;
     metadata(): Promise<unknown>;
     deliverWebhook(delivery: unknown): Promise<void>;
     start(): Promise<unknown>;
@@ -50,7 +51,7 @@ export class NativePluginPlatform {
             clearTimeout(timer);
         }
     }
-    async evaluate(ctx: Context, pluginId: string, runId: string, source: string, handle: (method: unknown, fn: unknown) => () => void, installed?: {module: string; services: string[]; environment?: boolean; network?: boolean; activationId?: string}): Promise<Plugin> {
+    async evaluate(ctx: Context, pluginId: string, runId: string, source: string, handle: (method: unknown, fn: unknown) => () => void, installed?: {module: string; services: string[]; environment?: boolean; network?: boolean; activationId?: string; config?: Record<string, Record<string, unknown>>}): Promise<Plugin> {
         if (!this.loader)
             throw new Error('Dynamic Workers loader is not configured');
         const name = 'harness-plugin:' + pluginId;
@@ -65,7 +66,7 @@ export class NativePluginPlatform {
         const worker = this.loader.get(codeId, () => ({
             compatibilityDate: '2026-07-30', compatibilityFlags: ['nodejs_compat'], mainModule: 'kernel.js',
             modules: { 'kernel.js': kernelModule, 'weft:plugin-factory': { js: factory } },
-            env: {...(capability ? {HOST: capability} : {}), ...(installed ? {ALLOWED: installed.services, BACKGROUND: installed.environment === true, ACTIVATION: installed.activationId ?? runId} : {})}, globalOutbound: installed?.network && capability ? capability : null,
+            env: {...(capability ? {HOST: capability} : {}), ...(installed ? {ALLOWED: installed.services, BACKGROUND: installed.environment === true, ACTIVATION: installed.activationId ?? runId, ...(installed.config ? {CONFIG: installed.config} : {})} : {})}, globalOutbound: installed?.network && capability ? capability : null,
             limits: { cpuMs: 100, subRequests: 64 },
         }));
         const facet = this.state.facets.get(name, () => ({ class: worker.getDurableObjectClass('PluginFacet') })) as unknown as FacetApi;
@@ -127,6 +128,12 @@ export class NativePluginPlatform {
             await this.release(runId);
             throw error;
         }
+    }
+    /** Serialized entry Config schemas of an evaluated bundle. */
+    async configSchemas(runId: string): Promise<unknown> {
+        const allocation = this.allocations.get(runId);
+        if (!allocation) throw new Error('Plugin is not active');
+        return this.bounded(allocation, () => allocation.facet.configSchemas());
     }
     async tick(runId: string): Promise<void> {
         const allocation = this.allocations.get(runId);

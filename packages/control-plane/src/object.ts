@@ -97,7 +97,8 @@ import {environmentPlugins} from '../../native-composition/src/extensions.ts';
 import {Context} from '@deepseek-ai/cordis';
 import {NativePluginPlatform} from '../../native-plugins/src/platform.ts';
 import {webhookDelivery,webhookSessionRequest} from '../../native-plugins/src/webhook-contracts.ts';
-import {permissionSchema} from '../../package-install/src/contracts.ts';
+import {entryId, entryNamespace, entrySchemasSchema, permissionSchema} from '../../package-install/src/contracts.ts';
+import {bundleLeaves} from '../../package-install/src/composition.ts';
 import {EnvironmentPackages, environmentFacetName} from '../../package-install/src/environment.ts';
 import {workerHostServices, environmentHostServices} from '../../native-plugins/src/services.ts';
 import type {Artifact, Installation} from '../../package-install/src/contracts.ts';
@@ -259,6 +260,11 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
       changed: (event, args) => {
         this.nativeEvents.emit(event, args);
         if (event === 'settings/document-updated' && ([PRESET_NAMESPACE, PROFILE_PLUGINS_NAMESPACE].includes(String(args[0])) || environmentPlugins.hasNamespace(String(args[0])))) this.nativeEvents.emit('plugin-manager/changed', [{reason: 'plugin'}]);
+        // An installed entry's configuration restarts its activations with the new value.
+        if (event === 'settings/document-updated' && String(args[0]).startsWith(entryId(''))) {
+          this.nativeEvents.emit('plugin-manager/changed', [{reason: 'plugin'}]);
+          this.ctx.waitUntil(this.reconcileEnvironmentPackages(scope));
+        }
         if (event === 'settings/document-updated' && (args[0] === MODEL_NAMESPACE || args[0] === PI_AI_NAMESPACE || args[0] === DEFAULT_MODEL_NAMESPACE)) void this.modelWorld?.refresh().catch(() => { /* A rejected draft keeps the previous entries serving; the next read retries. */ });
         if (event === 'settings/document-updated' && args[0] === MARKET_NAMESPACE) {
           const previous = this.market;
@@ -269,6 +275,10 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
       },
       validatePreset: id => {const value = this.latest(id); if (!value || value.spec.disabled) throw new Error('Unknown preset');},
       openDocument: () => this.openSettingsDocument(scope),
+      packageEntries: () => this.packages(scope).registry.list().flatMap(row => row.needsReinstall ? [] : (row.configs ?? []).map(entry => {
+        const config = bundleLeaves(row.rows).find(leaf => leaf.id === entry.id)?.config;
+        return {id: entryNamespace(row.name, entry.id), schema: entry.schema, base: config !== null && typeof config === 'object' && !Array.isArray(config) ? config as Record<string, unknown> : {}};
+      })),
     }, documents);
   }
   async nativeSettingsRequest(scope: ControlScope, endpoint: string, args: unknown): Promise<Response> {
@@ -531,6 +541,8 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
           artifact.permissions = {...artifact.permissions, network: true,
             storage: inject.some(name => name === 'storage' || name === 'storageDomain'), sessions: inject.includes('sessionController') || inject.includes('webhookRuntime'),
             credentials: inject.includes('credentials'), routes: inject.includes('webServer'), tools:inject.includes('tools'), background};
+          const configs = entrySchemasSchema.parse(await platform.configSchemas(runId));
+          if (configs.length) artifact.configs = configs; else delete artifact.configs;
         } finally {await platform.release(runId, true); await context.fiber.dispose();}
       },
       changed: async () => {this.presetReads.clear(); await this.nativeEvent(scope, 'plugin-manager/changed', [{reason: 'install'}]); this.ctx.waitUntil(this.reconcileEnvironmentPackages(scope));},
@@ -554,7 +566,7 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
   private backgroundPackages(scope: ControlScope): EnvironmentPackages {
     this.scope(scope);
     return this.environmentPackages ??= new EnvironmentPackages({state: this.ctx, loader: (this.env as HarnessEnvironment & {LOADER?: WorkerLoader}).LOADER, scope,
-      list: () => this.packages(scope).registry.list(), artifact: (name, digest) => this.packages(scope).artifact(name, digest),
+      list: () => this.runtimeInstallations(scope), artifact: (name, digest) => this.packages(scope).artifact(name, digest),
       capability: row => {
         const exports = this.ctx.exports as unknown as {EnvironmentPluginCapabilities(options: {props: {scope: ControlScope; name: string; digest: string; activationId: string}}): Fetcher};
         return exports.EnvironmentPluginCapabilities({props: {scope, name: row.name, digest: row.digest, activationId: row.activationId ?? row.digest}});
@@ -738,6 +750,18 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
     throw new Error('Session Controller method is not bridged: ' + method);
   }
   async nativePackageList(scope: ControlScope): Promise<Response> {return Response.json(this.packages(scope).list(), {headers: {'cache-control': 'private, no-store'}});}
+  /** Installations with the environment's configuration of their entries, for activations only. */
+  private runtimeInstallations(scope: ControlScope): Installation[] {
+    const settings = this.settings(scope);
+    return this.packages(scope).registry.list().map(row => {
+      const config = Object.fromEntries((row.configs ?? []).flatMap(entry => {
+        const user = settings.user(entryNamespace(row.name, entry.id));
+        return Object.keys(user).length ? [[entry.id, user]] : [];
+      }));
+      return Object.keys(config).length ? {...row, config} : row;
+    });
+  }
+  async nativePackageRuntime(scope: ControlScope): Promise<Installation[]> {return this.runtimeInstallations(scope);}
   async nativePackageArtifact(scope: ControlScope, name: string, digest: string, client = false): Promise<Response> {
     const packages = this.packages(scope);
     if (client && !packages.registry.get(name)?.permissions.client) throw new Error('Client module permission is not granted');

@@ -260,7 +260,7 @@ export class SessionDO extends DurableObject<Env> {
           manifest: async () => (await (await controlFor(this.env, owner).nativePluginManifest(owner)).json() as {value: unknown}).value,
         });
         this.installedPackages = new InstalledPackageRuntime(ctx, this.ctx, this.env.LOADER, scope, {
-          list: async () => ((await (await controlFor(this.env, owner).nativePackageList(owner)).json()) as {installations: Installation[]}).installations,
+          list: () => controlFor(this.env, owner).nativePackageRuntime(owner),
           environmentTools: row => controlFor(this.env,owner).nativePackageTools(owner,{name:row.name,digest:row.digest,activationId:row.activationId??row.digest}),
           environmentTransport: row => {
             const receipt={name:row.name,digest:row.digest,activationId:row.activationId??row.digest};

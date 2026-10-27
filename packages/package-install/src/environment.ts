@@ -3,7 +3,7 @@ import {NativePluginPlatform} from '../../native-plugins/src/platform.ts';
 import type {Artifact, Installation} from './contracts.ts';
 
 export const environmentFacetName = (name: string) => 'harness-plugin:environment:' + name;
-const identity = (row: Installation) => JSON.stringify([row.digest, row.activationId, row.permissions]);
+const identity = (row: Installation) => JSON.stringify([row.digest, row.activationId, row.permissions, row.config ?? {}]);
 export function installedServices(row: Installation): string[] {
   const p = row.permissions;
   return [...(p.files !== 'none' ? ['fs'] : []), ...(p.tools || row.hostScope==='environment' ? ['tools'] : []), ...(p.timer ? ['timer'] : []),
@@ -45,7 +45,7 @@ export class EnvironmentPackages {
           // A cold supervisor must replace any surviving facet's capability receipt.
           this.owner.state.facets.abort(environmentFacetName(row.name), new Error('Background Host generation changed'));
           const plugin = await this.platform.evaluate(this.ctx, 'environment:' + row.name, active.runId, '', () => () => {}, {
-            module: artifact.host, services: installedServices(row), environment: true, network: row.permissions.network === true, activationId: row.activationId ?? row.digest,
+            module: artifact.host, services: installedServices(row), environment: true, network: row.permissions.network === true, activationId: row.activationId ?? row.digest, ...(row.config ? {config: row.config} : {}),
           });
           if (this.closed || this.active.get(row.name) !== active) {await this.platform.release(active.runId); continue;}
           active.fiber = this.ctx.plugin(plugin); await active.fiber.await();

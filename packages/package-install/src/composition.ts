@@ -1,5 +1,6 @@
 import {Context, Inject, isConstructor, symbols, type Plugin} from '@deepseek-ai/cordis';
 import Loader, {Group, type EntryOptions} from '@deepseek-ai/cordis-plugin-loader';
+import Schema from '@deepseek-ai/schemastery';
 
 /** Standard Cordis exports, including class plugins, retain their native Config/inject metadata. */
 export function standardPlugin(namespace: unknown): Plugin {
@@ -18,6 +19,44 @@ export function standardPlugin(namespace: unknown): Plugin {
   }
   if (!plugin || typeof plugin !== 'object' || !('apply' in plugin) || typeof plugin.apply !== 'function') throw new Error('Bundle module must export a standard Cordis plugin');
   return plugin as Plugin;
+}
+
+type Row = Record<string, unknown>;
+const object = (value: unknown): value is Row => value !== null && typeof value === 'object' && !Array.isArray(value);
+/** Plain objects merge; arrays and scalar values replace, matching native profile layers. */
+export function mergeConfig(base: Row, patch: Row): Row {
+  const result = {...base};
+  for (const [key, value] of Object.entries(patch)) Object.defineProperty(result, key, {value: object(value) && object(base[key]) ? mergeConfig(base[key], value) : structuredClone(value), enumerable: true, writable: true, configurable: true});
+  return result;
+}
+/** Leaf entries of a bundle, including those inside groups. */
+export function bundleLeaves(rows: readonly Row[]): Row[] {
+  return rows.flatMap(row => row.group ? bundleLeaves(Array.isArray(row.config) ? row.config as Row[] : []) : [row]);
+}
+/** The environment's configuration of an entry is a layer after the bundle's own patch. */
+export function applyEntryConfig(rows: readonly Row[], overrides: Readonly<Record<string, Row>>): Row[] {
+  return rows.map(row => row.group ? {...row, config: applyEntryConfig(Array.isArray(row.config) ? row.config as Row[] : [], overrides)}
+    : typeof row.id === 'string' && Object.hasOwn(overrides, row.id) ? {...row, config: mergeConfig(object(row.config) ? row.config : {}, overrides[row.id]!)} : row);
+}
+export interface EntrySchema {id: string; schema: unknown}
+/**
+ * Serialized Config schemas of the bundle's entries. An entry is editable
+ * only when its schema is an object that survives a JSON round trip and still
+ * accepts the bundle's own configuration; functions and transforms do not.
+ */
+export function entrySchemas(rows: readonly Row[], modules: Record<string, unknown>): EntrySchema[] {
+  return bundleLeaves(rows).flatMap(row => {
+    const module = typeof row.name === 'string' ? modules[row.name] : undefined;
+    if (typeof row.id !== 'string' || module === undefined) return [];
+    try {
+      const schema = (standardPlugin(module) as unknown as {Config?: Schema}).Config;
+      if (!schema || typeof schema.toJSON !== 'function' || schema.type !== 'object') return [];
+      const json: unknown = JSON.parse(JSON.stringify(schema.toJSON()));
+      if (JSON.stringify(json).length > 65_536) return [];
+      new Schema(json as never)(object(row.config) ? row.config : {});
+      return [{id: row.id, schema: json}];
+    } catch {return [];}
+  });
 }
 
 /** Original Loader with a private service realm and an immutable, archive-locked module table. */

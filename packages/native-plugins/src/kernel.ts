@@ -7,7 +7,7 @@ import Schema from '@deepseek-ai/schemastery';
 import {WebhookDeliveryId,WebhookSourceId,WebhookRuleId} from '@deepseek-ai/dsh-webhook';
 import { DurableObject } from 'cloudflare:workers';
 import * as cordis from '@deepseek-ai/cordis';
-import {composeInstalledBundle} from '../../package-install/src/composition.ts';
+import {applyEntryConfig, composeInstalledBundle, entrySchemas, type EntrySchema} from '../../package-install/src/composition.ts';
 import { Context, Inject, type Fiber, type Plugin } from '@deepseek-ai/cordis';
 import Timer from '@deepseek-ai/cordis-plugin-timer';
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt';
@@ -29,6 +29,8 @@ interface KernelEnv {
     ALLOWED?: string[];
     BACKGROUND?: boolean;
     ACTIVATION?: string;
+    /** The environment's configuration of the bundle's entries, by entry id. */
+    CONFIG?: Record<string, Record<string, unknown>>;
     HOST?: {
         callFs(method: string, args: unknown[]): Promise<unknown>;
         callSession(method: string, request: unknown): Promise<unknown>;
@@ -56,6 +58,7 @@ export class PluginFacet extends DurableObject<KernelEnv> {
     private starting: Promise<void> | undefined;
     private stopped = false;
     private bundle = false;
+    private schemas: EntrySchema[] = [];
     private webServer: WorkerWebServer | undefined;
     private webhooks: WorkerWebhooks | undefined;
     private durableTimers: DurablePluginTimers | undefined;
@@ -95,7 +98,10 @@ export class PluginFacet extends DurableObject<KernelEnv> {
             const harness = {
                 crypto:cryptoModule,buffer:bufferModule,values:valuesModule,session:sessionModule,schema:Schema,credentials:{credentialRef},webhook:{WebhookDeliveryId,WebhookSourceId,WebhookRuleId},
                 cordis, tools: {defineTool: sandboxDefineTool},
-                compose: (rows: Record<string, unknown>[], modules: Record<string, unknown>) => {this.bundle = true; return composeInstalledBundle(rows, modules, plugin => this.guard(plugin));},
+                compose: (rows: Record<string, unknown>[], modules: Record<string, unknown>) => {
+                    this.bundle = true; this.schemas = entrySchemas(rows, modules);
+                    return composeInstalledBundle(applyEntryConfig(rows, this.env.CONFIG ?? {}), modules, plugin => this.guard(plugin));
+                },
                 defineTool: sandboxDefineTool, registerTool: sandboxRegisterTool,
                 handle: (method: unknown, fn: unknown) => {
                     const handler = normalizeHandler(method, fn);
@@ -117,6 +123,11 @@ export class PluginFacet extends DurableObject<KernelEnv> {
         if (unsupported.length)
             throw new Error('Services are not bridged in workerd Host plugins: ' + unsupported.join(', '));
         return wire({ name: typeof plugin === 'object' && 'name' in plugin ? String(plugin.name) : 'dynamic-host', inject: { ...Inject.resolve(plugin.inject) }, handlers: [...this.handlers.keys()] });
+    }
+    /** Config schemas of a bundle's entries, read without starting the plugin. */
+    async configSchemas() {
+        await this.prepare();
+        return wire(this.schemas);
     }
     async start() {
         await this.prepare();

@@ -65,6 +65,14 @@ export interface NativeSettingsHost {
   validatePreset?(id: string): void;
   /** Materialize the configuration document where the environment's client can open it. */
   openDocument?(): Promise<void>;
+  /** Installed bundle entries with a serialized Config schema; each is a namespace named by its Plugin Manager row. */
+  packageEntries?(): readonly {id: string; schema: unknown; base: Section}[];
+}
+/** A plugin's serialized schema, with each top-level field editable as an installed bundle restarts on change. */
+function editableSchema(json: unknown): Schema {
+  const schema = new z(json as never);
+  for (const child of Object.values(schema.dict ?? {})) child.meta = {...child.meta, volatile: true};
+  return schema;
 }
 
 /**
@@ -104,7 +112,27 @@ export class NativeSettings {
   private readonly namespaces: Namespace[];
   private formsWorld: EnvironmentSettings | undefined;
   private forms(): EnvironmentSettings {
-    return this.formsWorld ??= new EnvironmentSettings(this.documents, this.namespaces, (id, user) => this.check(this.namespace(id), user));
+    const namespaces = this.all();
+    return this.formsWorld ??= new EnvironmentSettings(this.documents, namespaces, (id, user) => this.check(this.namespace(id), user));
+  }
+  private packageSignature = '[]';
+  private packageNamespaces: Namespace[] = [];
+  /** Built-in namespaces, then those of installed entries; the forms world recomposes when the installed set changes. */
+  private all(): Namespace[] {
+    const entries = this.host.packageEntries?.() ?? [];
+    const signature = JSON.stringify(entries);
+    if (signature !== this.packageSignature) {
+      this.packageNamespaces = entries.flatMap(row => {
+        if (this.namespaces.some(ns => ns.id === row.id)) return [];
+        try {return [{id: row.id, schema: editableSchema(row.schema), base: () => structuredClone(row.base), autoGenerate: true, validate: () => {}}];}
+        catch {return [];}
+      });
+      this.packageSignature = signature;
+      const previous = this.formsWorld;
+      this.formsWorld = undefined; this.cachedRevision = -1; this.values.clear();
+      void previous?.dispose().catch(() => {});
+    }
+    return [...this.namespaces, ...this.packageNamespaces];
   }
   private cachedRevision = -1;
   private readonly values = new Map<string, Section>();
@@ -153,13 +181,15 @@ export class NativeSettings {
     }));
   }
   private namespace(id: string): Namespace {
-    const ns = this.namespaces.find(row => row.id === id);
+    const ns = this.all().find(row => row.id === id);
     if (!ns) throw new RemoteError('settings/rejected', 'No configurable plugin entry', {ns: id});
     return ns;
   }
   private row(ns: string): {revision: number; user: Section} {
     return this.documents.get(ns);
   }
+  /** The environment's own edits of a namespace, before its inherited configuration. */
+  user(id: string): Section {return this.row(id).user;}
   value(id: string): Section {
     const revision = this.revision;
     if (revision !== this.cachedRevision) {this.values.clear(); this.cachedRevision = revision;}
@@ -176,7 +206,7 @@ export class NativeSettings {
     return settingsRemote.methods['settings/update'].result.create().parse(descriptor);
   }
   async describe(): Promise<SettingsDescribeValue> {
-    const visible = new Set(this.namespaces.filter(ns => !ns.hidden).map(ns => ns.id));
+    const visible = new Set(this.all().filter(ns => !ns.hidden).map(ns => ns.id));
     return {writable: true, hasDocument: this.host.openDocument !== undefined, namespaces: (await this.forms().describe()).filter(row => visible.has(row.ns)).map(row => settingsRemote.methods['settings/update'].result.create().parse(row))};
   }
   /** Reject a user section its namespace would not accept: unknown or non-live fields, schema or provider failures. */
@@ -192,7 +222,7 @@ export class NativeSettings {
   }
   /** The environment's configuration as official profile patch rows, secrets left out. */
   document(): string {
-    const rows = this.namespaces.flatMap(ns => {
+    const rows = this.all().flatMap(ns => {
       const {user} = this.row(ns.id);
       if (Object.keys(user).length === 0) return [];
       const form = volatileForm(ns.schema);
@@ -216,7 +246,7 @@ export class NativeSettings {
     for (const [index, row] of parsed.entries()) {
       if (!object(row) || typeof row.id !== 'string') throw new Error(`Row ${index + 1} needs an id`);
       if (Object.keys(row).some(key => key !== 'id' && key !== 'config')) throw new Error(`Row ${index + 1} accepts only id and config`);
-      const ns = this.namespaces.find(item => item.id === row.id);
+      const ns = this.all().find(item => item.id === row.id);
       if (!ns) throw new Error(`"${row.id}" is not a configurable plugin entry`);
       if (next.has(ns.id)) throw new Error(`"${ns.id}" appears more than once`);
       const config = row.config ?? {};
@@ -241,7 +271,7 @@ export class NativeSettings {
     const changes = await this.documents.transaction(tx => {
       const next = this.validateDocument(text);
       const changes: {id: string; revision: number}[] = [];
-      for (const ns of this.namespaces) {
+      for (const ns of this.all()) {
         const current = tx.get(ns.id), user = next.get(ns.id) ?? {};
         if (JSON.stringify(user) === JSON.stringify(current.user)) continue;
         this.check(ns, user);
