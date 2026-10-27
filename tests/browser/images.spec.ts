@@ -17,11 +17,22 @@ test('the original composer admits an image and reloads its authorized native ga
   await expect(page.getByRole('img', {name: 'red-card.png', exact: true})).toBeVisible();
   await page.getByRole('button', {name: 'Send message', exact: true}).click();
   await expect(page.getByText('Tenant: ' + me.tenantId, {exact: true})).toBeVisible({timeout: 45_000});
-  const loaded = page.waitForResponse(response => response.url().endsWith('/native/api/session/attachment'), {timeout: 45_000});
+  let payload: {result: {ok: boolean; value: {attachment: {mediaType: string}}}} | undefined;
+  const loaded = page.waitForResponse(async response => {
+    if (!response.url().endsWith('/native/api/session/attachment')) return false;
+    // Consume the body when it arrives. A late response from the old document
+    // can lose its Chromium resource during reload; keep waiting for the gallery.
+    try {payload = await response.json(); return true;}
+    catch (error) {
+      if (error instanceof Error && error.message.includes('No resource with given identifier found')) return false;
+      throw error;
+    }
+  }, {timeout: 45_000});
   await page.reload();
-  const payload = await (await loaded).json();
-  expect(payload.result.ok).toBe(true);
-  expect(payload.result.value.attachment.mediaType).toBe('image/webp');
+  await loaded;
+  expect(payload).toBeDefined();
+  expect(payload!.result.ok).toBe(true);
+  expect(payload!.result.value.attachment.mediaType).toBe('image/webp');
   const image = page.getByRole('img', {name: 'red-card.png', exact: true});
   await expect(image).toBeVisible({timeout: 45_000});
   await expect.poll(() => image.evaluate(node => (node as HTMLImageElement).complete && (node as HTMLImageElement).naturalWidth === 64)).toBe(true);
