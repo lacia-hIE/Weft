@@ -23,6 +23,11 @@ jobs:
     name: Published local DSH (${{ matrix.dsh }})
     needs: build
     runs-on: ubuntu-latest
+    # Same pinned image as the browser shards: Chromium and its OS packages are
+    # preinstalled, so no step waits on apt mirrors.
+    container:
+      image: mcr.microsoft.com/playwright:v1.58.2-noble@sha256:6446946a1d9fd62d9ae501312a2d76a43ee688542b21622056a372959b65d63d
+      options: --init --ipc=host
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -31,6 +36,7 @@ jobs:
     env:
       WEFT_LOCAL_DSH_TEST: '1'
       WEFT_LOCAL_DSH_VERSION: ${{ matrix.dsh }}
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -46,7 +52,6 @@ jobs:
         run: npm install --prefix .generated/local-dsh --no-audit --no-fund @deepseek-ai/dsh@${{ matrix.dsh }}
       - name: Native profile package manager
         run: npm install --global pnpm@11.28.5
-      - run: npx playwright install --with-deps chromium
       - name: Native local Host through the production relay
         run: npx playwright test tests/browser/local-host-native.spec.ts
       - name: Retain native Host diagnostics and browser traces
