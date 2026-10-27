@@ -73,9 +73,12 @@ test('the IM bundle bridges Feishu, QQ and WeChat conversations to native Sessio
   });
   const api = nativeClient(() => runtime), tenant = tenantId('alpha'), base = `/v1/tenants/${tenant}/environments/default`;
   const hook = (path: string, init?: RequestInit) => runtime.dispatchFetch(url('anonymous', `/v1/plugin-hooks/${tenant}/default/${encodeURIComponent(plugin.name)}${path}`), init as never);
+  let last = '';
   const waitFor = async <T>(read: () => T | undefined | Promise<T | undefined>, label: string): Promise<T> => {
     for (const end = Date.now() + 60_000; Date.now() < end; await delay(250)) {const value = await read(); if (value !== undefined && value !== false) return value as T;}
-    throw new Error(`${label} did not happen: ${JSON.stringify(sent)}`);
+    const installations = (await (await runtime.dispatchFetch(url('alpha', base + '/native/package-installations'))).json() as {installations: Installation[]}).installations
+      .map(({name, enabled, approved, lastError, permissions}) => ({name, enabled, approved, lastError, permissions}));
+    throw new Error(`${label} did not happen: ${JSON.stringify({last, sent, installations})}`);
   };
   const configure = async (id: string, patch: Record<string, unknown>) => {
     const ns = entryNamespace(plugin.name, id);
@@ -98,7 +101,8 @@ test('the IM bundle bridges Feishu, QQ and WeChat conversations to native Sessio
     // Feishu: plain URL verification, then an encrypted and signed message event.
     const challenge = await waitFor(async () => {
       const response = await hook('/feishu', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({type: 'url_verification', challenge: 'feishu-challenge', token: 'feishu-verify'})});
-      return response.status === 200 ? await response.json() as {challenge: string} : undefined;
+      if (response.status !== 200) {last = `${response.status} ${await response.text()}`; return undefined;}
+      return await response.json() as {challenge: string};
     }, 'Feishu route');
     assert.deepEqual(challenge, {challenge: 'feishu-challenge'});
     const feishu = async (messageId: string, openId: string, raw = false) => {
