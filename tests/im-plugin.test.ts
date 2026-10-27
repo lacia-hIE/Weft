@@ -1,27 +1,19 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {createCipheriv, createHash, createPrivateKey, createPublicKey, randomBytes, sign, verify} from 'node:crypto';
-import {readdirSync, readFileSync} from 'node:fs';
-import {join} from 'node:path';
+import {readFileSync} from 'node:fs';
 import {setTimeout as delay} from 'node:timers/promises';
 import {Response, type V4FetchHandler} from 'miniflare';
 import type {SettingsDescribeValue} from '@deepseek-ai/dsh-settings/types';
+import type {BundleInfo} from '@deepseek-ai/dsh-plugin-manager/types';
 import {buildPackage} from '../apps/plugin-builder/server.mjs';
-import {archiveFiles} from './helpers/package-fixture.ts';
 import {createRuntime, tenantId, url} from './helpers/miniflare.ts';
 import {nativeClient} from './helpers/native.ts';
 import type {Installation} from '../packages/package-install/src/contracts.ts';
 import {entryNamespace} from '../packages/package-install/src/contracts.ts';
 
-/** The repository's plugin as the public registry would serve it. */
-function imPackage() {
-  const root = 'plugins/im', files: Record<string, string> = {};
-  for (const path of ['package.json', 'cordis.patch.yml', 'README.md', ...readdirSync(join(root, 'src')).map(file => 'src/' + file)]) files[path] = readFileSync(join(root, path), 'utf8');
-  const manifest = JSON.parse(files['package.json']!) as {name: string; version: string};
-  const bytes = archiveFiles(files);
-  const tarball = `https://registry.npmjs.org/${manifest.name}/-/dsh-im-${manifest.version}.tgz`;
-  return {...manifest, bytes, manifest: {...manifest, dist: {tarball, integrity: 'sha512-' + createHash('sha512').update(bytes).digest('base64')}}};
-}
+/** The repository plugin this deployment ships; the build packs it from plugins/im. */
+const plugin = JSON.parse(readFileSync('plugins/im/package.json', 'utf8')) as {name: string; version: string};
 
 /** Every model request answers with plain text. */
 const textModel: V4FetchHandler = async () => {
@@ -39,8 +31,9 @@ const qqKey = (() => {
   return {key, public: createPublicKey(key)};
 })();
 
-test('the IM bundle bridges Feishu, QQ and WeChat conversations to native Sessions through environment egress', {timeout: 300000}, async () => {
-  const plugin = imPackage(), sent: {host: string; path: string; body: Record<string, unknown>; authorization: string | null}[] = [];
+test('the deployment-bundled IM plugin bridges Feishu, QQ and WeChat conversations to native Sessions through environment egress', {timeout: 300000}, async () => {
+  let registry = 0;
+  const sent: {host: string; path: string; body: Record<string, unknown>; authorization: string | null}[] = [];
   let status = 0, updates = 0;
   const runtime = createRuntime(undefined, {packages: true,
     bindings: {MODEL_BACKEND: 'deepseek', DEEPSEEK_API_KEY: 'im-fixture', DEEPSEEK_BASE_URL: 'https://im-model.test/anthropic'},
@@ -48,7 +41,7 @@ test('the IM bundle bridges Feishu, QQ and WeChat conversations to native Sessio
     outbound: async (request, mf) => {
       const target = new URL(request.url);
       if (target.hostname === 'im-model.test') return textModel(request, mf);
-      if (target.hostname === 'registry.npmjs.org') return request.url === plugin.manifest.dist.tarball ? new Response(plugin.bytes) : Response.json(plugin.manifest);
+      if (target.hostname === 'registry.npmjs.org') {registry++; return new Response('not found', {status: 404});}
       const text = request.method === 'GET' ? '' : await request.text();
       const body = text ? JSON.parse(text) as Record<string, unknown> : {};
       const record = () => sent.push({host: target.hostname, path: target.pathname + target.search, body, authorization: request.headers.get('authorization')});
@@ -87,7 +80,16 @@ test('the IM bundle bridges Feishu, QQ and WeChat conversations to native Sessio
     await api.call('settings/update', {ns, patch, expectedRevision: form.revision});
   };
   try {
-    await api.call('pluginManager/installBundle', {spec: `${plugin.name}@${plugin.version}`, options: {requestId: crypto.randomUUID()}});
+    // The Plugins page offers the deployment's plugin before installation, without a registry.
+    const offered = (await api.call<BundleInfo[]>('pluginManager/listBundles', {})).find(bundle => bundle.name === plugin.name)!;
+    assert.equal(offered.installed, false);
+    assert.equal(offered.availability, 'missing');
+    assert.deepEqual(offered.installTarget, {spec: `${plugin.name}@${plugin.version}`, version: plugin.version});
+    assert.deepEqual(offered.rows.map(row => row.rowId), ['im-core', 'im-feishu', 'im-weixin', 'im-qq']);
+    const installed = await api.call<{application: string}>('pluginManager/installBundle', {spec: offered.installTarget!.spec, options: {requestId: crypto.randomUUID()}});
+    assert.equal(installed.application, 'applied', JSON.stringify(installed));
+    assert.equal(registry, 0, 'A bundled plugin never reaches the npm registry');
+    assert.equal((await api.call<BundleInfo[]>('pluginManager/listBundles', {})).filter(bundle => bundle.name === plugin.name).length, 1, 'An installed bundled plugin is listed once');
     const row = (await (await runtime.dispatchFetch(url('alpha', base + '/native/package-installations'))).json() as {installations: Installation[]}).installations[0]!;
     assert.equal(row.hostScope, 'environment');
     assert.deepEqual(row.configs?.map(entry => entry.id).sort(), ['im-core', 'im-feishu', 'im-qq', 'im-weixin']);

@@ -23,8 +23,11 @@ import {LOCAL_HOST_BUNDLE} from '../packages/local-host-connector/compatibility.
 execFileSync(process.execPath, [resolve('scripts/workspace-container.mjs'), '--check'], {stdio: 'inherit'});
 execFileSync(process.execPath, [resolve('scripts/plugin-builder.mjs'), '--check'], {stdio: 'inherit'});
 import {officialProfilePlugin} from './official-profile.mjs';
+import {writeBundledPackages} from './bundled-packages.mjs';
 
 const officialModules = await officialProfilePlugin();
+// Repository plugins offered by this deployment without a registry.
+writeBundledPackages();
 
 // Bundles have no adjacent package.json at runtime. Preserve upstream attribution
 // while converting this one Node loader operation to a static JSON import.

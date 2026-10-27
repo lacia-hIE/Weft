@@ -36,6 +36,10 @@ Client 在工作台页面执行，具有页面代码的信任级别；用户在�
 
 公开 npm 元数据与归档只由 Supervisor 下载并校验 SHA-512。32 个无冲突依赖、16 个环境安装；归档单个 4 MiB、合计 12 MiB；解包 64 MiB、4096 文件；patch 最多 16 个文件、128 条操作、64 个条目；每半编译代码最多 1 MiB。拒绝安装脚本、私有源、Git/本地路径、原生扩展、Node 内置导入、YAML 表达式、别名/循环和配置越界。原版包格式已经接通，不表示所有依赖 Node 或未桥接服务的原版插件都能运行。
 
+## 部署内置插件
+
+仓库 `plugins/` 下的插件（目前是 [`@weft/dsh-im`](../../plugins/im/README.md)）在构建时按 npm 发布的文件集打成确定性的 tar.gz，记录 SHA-512 与 patch 条目，随 Worker 部署。原版 Plugins 页把尚未安装的内置插件列为按需条目（`availability: missing`，带 `installTarget`），安装时解析器直接使用内置归档，不访问 npm；之后的离线构建、产物摘要、逐项审批、授权与条目配置与 npm 安装完全相同。内置包名始终解析到部署内置的版本，同名的 npm 包不能替代它；只接受部署所带的精确版本。内置插件不能带 npm 依赖。部署新版本后，已安装的旧版本保持运行，可在详情页以新版本构建更新并重新审批。
+
 ## 条目配置
 
 安装检查时，facet 同时读取每个 Host 条目原版 `Config` 的 Schemastery JSON，随产物一起计入摘要。只有对象类型、能 JSON 往返并接受包自身 patch 配置的 schema 才可编辑；含函数或自定义 transform 的条目继续只用包内配置。每个可编辑条目成为一个原版 Settings namespace，名字即 Plugins 页的行 id（`installed/<包名>/<条目 id>`，Loader 把 `:` 当作条目路径，故不用），因此原版详情页直接显示表单，沿用 revision 冲突、schema 校验和 `role('secret')` 遮盖。环境配置文档同样列出这些行，环境复制随文档带上非密钥字段。

@@ -106,6 +106,7 @@ import {EnvironmentPackages, environmentFacetName} from '../../package-install/s
 import {workerHostServices, environmentHostServices} from '../../native-plugins/src/services.ts';
 import type {Artifact, Installation} from '../../package-install/src/contracts.ts';
 import {PackageInstaller} from '../../package-install/src/host.ts';
+import {bundledPackageInfo} from '../../package-install/src/bundled.ts';
 import {mountWorkspace, ComputerFileSystem} from '../../workspace/src/provider.ts';
 import { ModelConfigurationError, type ModelEnvironment } from '../../model-provider/src/index.ts';
 import {SqliteModelUploadIndex, type ModelUploadOperation} from '../../model-provider/src/files-protocol.ts';
@@ -838,7 +839,7 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
       const volume = {...scope, workspaceId: 'default'};
       read = readNativePresets(profiles, defaultId, endpoint, args, ctx => mountWorkspace(ctx, {scope: volume, transport: this.env.WORKSPACES.getByName(workspaceAddress(volume)), cwd: '/workspace', fileTools: false}), enablement, this.ctx.storage).then(async response => {
         const result = await response.json() as {value: unknown};
-        if (endpoint === 'pluginManager/listBundles') result.value = [...result.value as unknown[], ...packages.bundles(), ...optionalBundleInfo(bundleStates), ...environmentPlugins.bundles(readConfig)];
+        if (endpoint === 'pluginManager/listBundles') result.value = [...result.value as unknown[], ...packages.bundles(), ...bundledPackageInfo(name => packages.get(name) !== undefined), ...optionalBundleInfo(bundleStates), ...environmentPlugins.bundles(readConfig)];
         if (endpoint === 'pluginManager/listPlugins') result.value = [...result.value as unknown[], ...packages.plugins(), ...optionalBundlePlugins(bundleStates), ...environmentPlugins.inventory(readConfig)];
         if (endpoint === 'pluginInventory/list') {const inventory = result.value as {entries: unknown[]}; inventory.entries.push(...packages.plugins(), ...optionalBundlePlugins(bundleStates), ...environmentPlugins.inventory(readConfig));}
         return JSON.stringify(result);

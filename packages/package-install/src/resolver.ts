@@ -1,6 +1,7 @@
 import sharedVersions from '../../../.generated/package-platform-versions.json';
 import {maxSatisfying, valid, validRange, satisfies} from 'semver';
 import {declarationSchema, exactSpec, type Declaration, type PackageLock} from './contracts.ts';
+import {bundledPackage} from './bundled.ts';
 
 interface Manifest {
   name: string; version: string; description?: string;
@@ -34,6 +35,8 @@ async function json(address: string, signal: AbortSignal): Promise<unknown> {
   return JSON.parse(new TextDecoder().decode(await limitedBytes(await fetch(address, {redirect: 'manual', signal}), 4 * 1024 * 1024)));
 }
 export async function inspectPackage(spec: string, signal: AbortSignal): Promise<{manifest: Manifest; declaration: Declaration}> {
+  const bundled = bundledPackage(spec);
+  if (bundled) return {manifest: bundled.manifest, declaration: bundled.declaration};
   const match = exactSpec.exec(spec);
   const bare = /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/.test(spec);
   if ((!match || !valid(match[2]!)) && !bare) throw new Error('Use a public npm package name or exact public npm version, for example @scope/plugin@1.2.3');
@@ -54,6 +57,8 @@ export async function inspectPackage(spec: string, signal: AbortSignal): Promise
 }
 /** Registry access is confined to the supervisor; the build receives verified archives and has no network. */
 export async function resolvePackage(spec: string, signal: AbortSignal): Promise<ResolvedPackage> {
+  const bundled = bundledPackage(spec);
+  if (bundled) return bundled;
   const {manifest, declaration} = await inspectPackage(spec, signal);
   const selected = new Map<string, Manifest>([[manifest.name, manifest]]);
   const queue = [manifest];

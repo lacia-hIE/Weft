@@ -13,7 +13,7 @@ Channels inject `im`; other plugins can do the same to add a channel. Every chan
 
 ## Host services
 
-`sessionController`, `storageDomain` and `webServer`, plus outbound HTTPS. In Weft the bundle runs as an environment Host: approve network access when reviewing it, then configure each entry on its Plugins page. Routes are served at `/v1/plugin-hooks/<tenant>/<environment>/@weft%2Fdsh-im/<path>`.
+`sessionController`, `storageDomain` and `webServer`, plus outbound HTTPS. In Weft the deployment ships this bundle: install it from the Plugins page (no npm registry is used), approve network and route access when reviewing it, then configure each entry on its detail page. Routes are served at `/v1/plugin-hooks/<tenant>/<environment>/@weft%2Fdsh-im/<path>`.
 
 ## Channel setup
 
