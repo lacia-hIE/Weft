@@ -54,8 +54,9 @@ test('an installed entry is configured through native Settings, secrets stay red
     assert.equal(await saved('configured'), 'from-patch|');
 
     const edited = await api.call<SettingsNamespaceView>('settings/update', {ns, patch: {value: 'edited', token: 'secret-token'}, expectedRevision: initial.revision});
-    assert.equal(edited.value.value, 'edited');
-    assert.notEqual(edited.value.token, 'secret-token', 'Secret fields are redacted for clients');
+    const value = edited.value as {value?: unknown; token?: unknown};
+    assert.equal(value.value, 'edited');
+    assert.notEqual(value.token, 'secret-token', 'Secret fields are redacted for clients');
     assert.equal((await api.raw('settings/update', {ns, patch: {value: 'stale'}, expectedRevision: initial.revision})).result.error?.code, 'settings/conflict');
     assert.equal((await api.raw('settings/update', {ns, patch: {value: 42}, expectedRevision: edited.revision})).result.error?.code, 'settings/rejected', 'The plugin schema rejects a mistyped field');
     assert.equal((await api.raw('settings/update', {ns, patch: {unknown: true}, expectedRevision: edited.revision})).result.error?.code, 'settings/rejected');
