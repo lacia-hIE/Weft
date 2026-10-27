@@ -61,6 +61,17 @@ class ImBridge {
     for (const part of chunks(text, channel.maxChars ?? 2000)) await channel.send(target, part);
   }
 
+  /** Forget one bot's routes before removing its credentials. */
+  async clear(channel) {
+    await this.ready;
+    for (const [key, row] of this.conversations.entries()) if (row.channel === channel) {
+      this.followers.get(key)?.abort();
+      this.followers.delete(key);
+      await this.conversations.delete(key);
+    }
+    for (const key of this.seen.keys()) if (key.startsWith(channel + ':')) await this.seen.delete(key);
+  }
+
   /**
    * Accept one inbound message. Redeliveries of the same channel message are ignored.
    * @param {{channel: string, conversation: string, title?: string, sender: string, senderName?: string, text: string, messageId: string, target: unknown, group?: boolean}} message
@@ -93,7 +104,9 @@ class ImBridge {
     }
     if (command === 'new' || !row) {
       this.followers.get(key)?.abort();
-      const created = await this.ctx.sessionController.create({cwd: '/workspace', ...(this.config.agentPreset ? {agentPreset: this.config.agentPreset} : {})});
+      this.followers.delete(key);
+      const preset = channel.agentPreset || this.config.agentPreset;
+      const created = await this.ctx.sessionController.create({cwd: channel.workspace || '/workspace', ...(preset ? {agentPreset: preset} : {})});
       row = {sessionId: created.sessionId, delivered: -1, pending: [], target: message.target, channel: message.channel};
       await this.conversations.put(key, row);
       if (this.config.titlePrefix !== false) {
@@ -157,7 +170,7 @@ class ImBridge {
       }
     });
     this.followers.set(key, task);
-    void task.pending.finally(() => this.followers.delete(key));
+    void task.pending.finally(() => {if (this.followers.get(key) === task) this.followers.delete(key);});
   }
 }
 

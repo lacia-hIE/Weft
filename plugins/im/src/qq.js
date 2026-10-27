@@ -1,5 +1,6 @@
 import Schema from '@deepseek-ai/schemastery';
 import {bytes, fromHex, header, hex, json, readBody, tokenCache} from './shared.js';
+import {botSettings, managementKey, registerManagement} from './management.js';
 
 const API = 'https://api.sgroup.qq.com';
 const TOKEN = 'https://bots.qq.com/app/getAppAccessToken';
@@ -26,6 +27,7 @@ const concat = (...parts) => {const result = new Uint8Array(parts.reduce((size, 
 export const name = 'dsh-im-qq';
 export const inject = ['im', 'webServer'];
 export const Config = Schema.object({
+  ...botSettings(), managementKey: managementKey(),
   enabled: Schema.boolean().default(false).description('Receive callback events at /qq and reply through the QQ bot API.'),
   appId: Schema.string().default('').description('AppID of the bot.'),
   appSecret: Schema.string().role('secret').default('').description('AppSecret; it also signs and verifies callbacks.'),
@@ -34,21 +36,24 @@ export const Config = Schema.object({
 });
 
 export function apply(ctx, config) {
-  if (!config.enabled) return;
-  const signing = keys(config.appSecret);
-  void signing.catch(() => {});
   const token = tokenCache(async () => {
     const response = await fetch(TOKEN, {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({appId: config.appId, clientSecret: config.appSecret})});
     const body = await response.json().catch(() => ({}));
     if (!response.ok || !body.access_token) throw new Error(`QQ token request failed: ${body.message ?? response.status}`);
     return {value: body.access_token, expiresAt: Date.now() + Number(body.expires_in ?? 7200) * 1000};
   });
+  registerManagement(ctx, 'qq', config, () => token.get());
+  if (!config.enabled) return;
+  if (!config.appSecret) throw new Error('QQ AppSecret is required');
+  const signing = keys(config.appSecret);
+  void signing.catch(() => {});
   const sequences = new Map();
   const post = async (path, body) => {
     const response = await fetch(`${API}${path}`, {method: 'POST', headers: {'content-type': 'application/json', authorization: `QQBot ${await token.get()}`}, body: JSON.stringify(body)});
     if (!response.ok) throw new Error(`QQ API ${path} failed: ${response.status} ${(await response.text()).slice(0, 200)}`);
   };
   ctx.effect(() => ctx.im.channel('qq', {
+    workspace: config.workspace, agentPreset: config.agentPreset,
     maxChars: config.maxChars,
     allows: sender => config.allowedSenders.includes(sender),
     async send(target, text) {

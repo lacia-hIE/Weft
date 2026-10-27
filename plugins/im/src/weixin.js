@@ -1,6 +1,7 @@
 import Schema from '@deepseek-ai/schemastery';
-import {background, json, sleep} from './shared.js';
+import {background, header, json, sleep} from './shared.js';
 import {qrSvg} from './qr.js';
+import {botSettings} from './management.js';
 
 const BASE = 'https://ilinkai.weixin.qq.com/';
 const PROTOCOL = '2.4.6';
@@ -28,7 +29,7 @@ async function call(base, endpoint, {method = 'POST', body, token, signal} = {})
   return response.json();
 }
 const textOf = message => (message?.item_list ?? []).filter(item => item?.type === 1 && typeof item.text_item?.text === 'string').map(item => item.text_item.text).join('\n');
-const page = (title, body, refresh) => `<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">${refresh ? '<meta http-equiv="refresh" content="3">' : ''}<title>${title}</title></head><body><h1>${title}</h1>${body}</body></html>`;
+const page = (title, body, refresh) => `<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><meta name="viewport" content="width=device-width,initial-scale=1">${refresh ? '<meta http-equiv="refresh" content="3">' : ''}<title>${title}</title></head><body><h1>${title}</h1>${body}</body></html>`;
 const escape = text => String(text).replace(/[&<>"']/g, char => `&#${char.charCodeAt(0)};`);
 
 /**
@@ -38,6 +39,7 @@ const escape = text => String(text).replace(/[&<>"']/g, char => `&#${char.charCo
 export const name = 'dsh-im-weixin';
 export const inject = ['im', 'webServer', 'storageDomain'];
 export const Config = Schema.object({
+  ...botSettings(),
   enabled: Schema.boolean().default(false).description('Log in at /weixin/login and long-poll messages.'),
   loginKey: Schema.string().role('secret').default('').description('Required as ?key= on the login page; anyone with the page can bind a WeChat account.'),
   allowedSenders: Schema.array(Schema.string()).default([]).description('User ids allowed besides the account that scanned the login code.'),
@@ -45,12 +47,13 @@ export const Config = Schema.object({
 });
 
 export async function apply(ctx, config) {
-  if (!config.enabled) return;
   const domain = await ctx.storageDomain.open(DOMAIN);
   ctx.effect(() => () => domain.close(), 'dsh-im weixin storage');
   const state = () => domain.global.get();
   const save = patch => domain.global.set({...state(), ...patch});
-  let poller, login;
+  let poller, login, starting;
+  // QR status polling cannot survive a plugin restart; do not serve an orphaned code.
+  if (state().state === 'login') await save({state: 'idle', qrcode: undefined, qrcodeUrl: undefined});
 
   const poll = () => {
     if (poller && !poller.signal.aborted) return;
@@ -59,6 +62,7 @@ export async function apply(ctx, config) {
         const current = state();
         try {
           const response = await call(current.baseUrl, 'ilink/bot/getupdates', {body: {get_updates_buf: current.cursor ?? ''}, token: current.token, signal: AbortSignal.any([signal, AbortSignal.timeout(45_000)])});
+          if (signal.aborted) return;
           if (response.errcode === -14 || response.ret === -14) {await save({state: 'expired', error: '登录已失效，请重新扫码。'}); return;}
           if ((response.ret ?? 0) !== 0) throw new Error(`getupdates rejected: ${response.ret}`);
           for (const message of response.msgs ?? []) {
@@ -81,12 +85,13 @@ export async function apply(ctx, config) {
     });
   };
 
-  const beginLogin = async () => {
-    login?.abort();
+  const createLogin = async () => {
     const created = await call(BASE, 'ilink/bot/get_bot_qrcode?bot_type=3', {body: {local_token_list: []}});
     if (!created?.qrcode || !created.qrcode_img_content) throw new Error('WeChat did not return a login code');
     const url = new URL(created.qrcode_img_content);
     if (url.protocol !== 'https:' || !isWeixinHost(url.hostname)) throw new Error('WeChat returned an untrusted login URL');
+    login?.abort();
+    poller?.abort();
     await save({state: 'login', qrcode: created.qrcode, qrcodeUrl: url.toString(), error: undefined});
     login = background(ctx, 'dsh-im weixin login', async signal => {
       let base = BASE;
@@ -96,22 +101,53 @@ export async function apply(ctx, config) {
         catch (error) {
           if (signal.aborted) return;
           if (error?.name === 'TimeoutError') continue;
-          await save({state: 'idle', error: `扫码状态查询失败：${error instanceof Error ? error.message : String(error)}`});
+          await save({state: 'idle', qrcode: undefined, qrcodeUrl: undefined, error: `扫码状态查询失败：${error instanceof Error ? error.message : String(error)}`});
           return;
         }
+        if (signal.aborted) return;
         if (status.status === 'confirmed') {
           await save({state: 'online', token: status.bot_token, baseUrl: apiBase(status.baseurl), botId: status.ilink_bot_id, owner: status.ilink_user_id, cursor: '', qrcode: undefined, qrcodeUrl: undefined});
           poll();
           return;
         }
-        if (status.status === 'expired') {await save({state: 'idle', error: '二维码已过期，请刷新页面重新获取。'}); return;}
+        if (status.status === 'expired') {await save({state: 'idle', qrcode: undefined, qrcodeUrl: undefined, error: '二维码已过期，请重新获取。'}); return;}
         if (status.status === 'scaned_but_redirect' && status.redirect_host) base = apiBase(status.redirect_host);
         await sleep(1000, signal);
       }
     });
   };
+  // Multiple browser requests share one QR creation rather than invalidating each other's code.
+  const beginLogin = () => starting ??= createLogin().finally(() => {starting = undefined;});
+  const authorized = request => !!config.loginKey && header(request, 'authorization') === `Bearer ${config.loginKey}`;
+  const statusView = () => {
+    const current = state();
+    return {state: config.enabled ? current.state : 'disabled', botId: current.botId, owner: current.owner, error: current.error,
+      ...(current.state === 'login' ? {qrcodeUrl: current.qrcodeUrl} : {})};
+  };
+  const reply = (response, code, value) => {
+    response.setHeader('cache-control', 'no-store');
+    json(response, code, value);
+  };
+  ctx.effect(() => ctx.webServer.register({kind: 'exact', path: '/weixin/status', handler: (request, response) => {
+    if (!authorized(request)) {reply(response, 403, {error: 'login key required'}); return;}
+    if (request.method !== 'GET') {reply(response, 405, {error: 'GET required'}); return;}
+    reply(response, 200, statusView());
+  }}), 'dsh-im weixin status route');
+
+  ctx.effect(() => ctx.webServer.register({kind: 'exact', path: '/weixin/disconnect', handler: async (request, response) => {
+    if (!authorized(request)) {reply(response, 403, {error: 'login key required'}); return;}
+    if (request.method !== 'POST') {reply(response, 405, {error: 'POST required'}); return;}
+    login?.abort(); poller?.abort();
+    if (starting) await starting.catch(() => {});
+    login?.abort(); poller?.abort();
+    await ctx.im.clear('weixin');
+    await domain.global.set({state: 'idle'});
+    reply(response, 200, {state: 'idle'});
+  }}), 'dsh-im weixin disconnect route');
+  if (!config.enabled) return;
 
   ctx.effect(() => ctx.im.channel('weixin', {
+    workspace: config.workspace, agentPreset: config.agentPreset,
     maxChars: config.maxChars,
     allows: sender => sender === state().owner || config.allowedSenders.includes(sender),
     async send(target, text) {
@@ -127,6 +163,15 @@ export async function apply(ctx, config) {
 
   ctx.effect(() => ctx.webServer.register({kind: 'exact', path: '/weixin/login', handler: async (request, response) => {
     const query = new URL(request.url, 'https://plugin.invalid').searchParams;
+    if (request.method === 'POST') {
+      if (!authorized(request)) {reply(response, 403, {error: 'login key required'}); return;}
+      try {
+        if (!['online', 'login'].includes(state().state) || query.get('reset') === '1') await beginLogin();
+        reply(response, 200, statusView());
+      } catch (error) {reply(response, 502, {error: error instanceof Error ? error.message : String(error)});}
+      return;
+    }
+    if (request.method !== 'GET') {reply(response, 405, {error: 'GET or POST required'}); return;}
     if (!config.loginKey || query.get('key') !== config.loginKey) {json(response, 403, {error: 'login key required'}); return;}
     const html = (status, body) => {response.writeHead(status, {'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store'}); response.end(body);};
     const current = state();
@@ -134,7 +179,7 @@ export async function apply(ctx, config) {
       html(200, page('微信已连接', `<p>机器人账号：${escape(current.botId ?? '')}</p><p>扫码人：${escape(current.owner ?? '')}</p><p>如需更换账号，在地址后加 <code>&amp;reset=1</code>。</p>`));
       return;
     }
-    try {if (current.state !== 'login' || query.get('reset') === '1') {poller?.abort(); await beginLogin();}}
+    try {if (current.state !== 'login' || query.get('reset') === '1') await beginLogin();}
     catch (error) {html(502, page('无法获取二维码', `<p>${escape(error instanceof Error ? error.message : String(error))}</p>`)); return;}
     const next = state();
     html(200, page('用微信扫码登录', `${qrSvg(next.qrcodeUrl)}<p>请用作为机器人的微信扫码并确认，页面会自动刷新。</p>${next.error ? `<p>${escape(next.error)}</p>` : ''}`, true));

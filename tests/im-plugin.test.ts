@@ -6,6 +6,7 @@ import {setTimeout as delay} from 'node:timers/promises';
 import {Response, type V4FetchHandler} from 'miniflare';
 import type {SettingsDescribeValue} from '@deepseek-ai/dsh-settings/types';
 import type {BundleInfo} from '@deepseek-ai/dsh-plugin-manager/types';
+import type {SessionListValue} from '@deepseek-ai/dsh-api-session-controller/types';
 import {buildPackage} from '../apps/plugin-builder/server.mjs';
 import {createRuntime, tenantId, url} from './helpers/miniflare.ts';
 import {nativeClient} from './helpers/native.ts';
@@ -35,6 +36,7 @@ test('the deployment-bundled IM plugin bridges Feishu, QQ and WeChat conversatio
   let registry = 0;
   const sent: {host: string; path: string; body: Record<string, unknown>; authorization: string | null}[] = [];
   let status = 0, updates = 0;
+  let loginMode: 'confirm' | 'wait' | 'expire' = 'confirm';
   const runtime = createRuntime(undefined, {packages: true,
     bindings: {MODEL_BACKEND: 'deepseek', DEEPSEEK_API_KEY: 'im-fixture', DEEPSEEK_BASE_URL: 'https://im-model.test/anthropic'},
     packageBuilder: async request => Response.json(await buildPackage(JSON.parse(await request.text()))),
@@ -53,7 +55,7 @@ test('the deployment-bundled IM plugin bridges Feishu, QQ and WeChat conversatio
       if (target.hostname === 'api.sgroup.qq.com') {record(); return Response.json({id: 'sent'});}
       if (target.hostname === 'ilinkai.weixin.qq.com') {
         if (target.pathname === '/ilink/bot/get_bot_qrcode') return Response.json({qrcode: 'qr-1', qrcode_img_content: 'https://liteapp.weixin.qq.com/q/fixture?qrcode=qr-1&bot_type=3'});
-        if (target.pathname === '/ilink/bot/get_qrcode_status') return Response.json(status++ === 0 ? {status: 'wait'} : {status: 'confirmed', bot_token: 'wx-token', baseurl: 'ilinkai.weixin.qq.com', ilink_bot_id: 'bot@im.bot', ilink_user_id: 'owner@im.wechat'});
+        if (target.pathname === '/ilink/bot/get_qrcode_status') return Response.json(loginMode === 'wait' ? {status: 'wait'} : loginMode === 'expire' ? {status: 'expired'} : status++ === 0 ? {status: 'wait'} : {status: 'confirmed', bot_token: 'wx-token', baseurl: 'ilinkai.weixin.qq.com', ilink_bot_id: 'bot@im.bot', ilink_user_id: 'owner@im.wechat'});
         if (target.pathname === '/ilink/bot/getupdates') {
           record();
           if (updates++ === 0) return Response.json({ret: 0, get_updates_buf: 'cursor-1', msgs: [{message_id: 101, from_user_id: 'owner@im.wechat', message_type: 1, context_token: 'ctx-1', item_list: [{type: 1, text_item: {text: '你好'}}]}]});
@@ -94,6 +96,7 @@ test('the deployment-bundled IM plugin bridges Feishu, QQ and WeChat conversatio
     assert.equal(row.hostScope, 'environment');
     assert.deepEqual(row.configs?.map(entry => entry.id).sort(), ['im-core', 'im-feishu', 'im-qq', 'im-weixin']);
     assert.equal(row.permissions.sessions && row.permissions.storage && row.permissions.routes, true, 'The bundle-provided im service is not a Host service');
+    assert.equal(row.permissions.client, true, 'The bundle includes the IM settings page');
     const approve = (permissions: Installation['permissions']) => runtime.dispatchFetch(url('alpha', base + '/native/package-installations'), {method: 'POST', headers: {'content-type': 'application/json'},
       body: JSON.stringify({operation: 'approve', name: row.name, digest: row.digest, permissions})});
     const current = async () => (await (await runtime.dispatchFetch(url('alpha', base + '/native/package-installations'))).json() as {installations: Installation[]}).installations[0]!;
@@ -105,9 +108,19 @@ test('the deployment-bundled IM plugin bridges Feishu, QQ and WeChat conversatio
     assert.equal(parked.lastError, undefined);
     assert.equal((await hook('/feishu', {method: 'POST', body: '{}'})).status, 404, 'Routes stay closed until granted');
     assert.equal((await approve({...row.permissions, network: true, routes: true})).status, 200);
-    await configure('im-feishu', {enabled: true, appId: 'cli_fixture', appSecret: 'feishu-secret', verificationToken: 'feishu-verify', encryptKey: 'feishu-encrypt', allowedSenders: ['ou_allowed']});
-    await configure('im-qq', {enabled: true, appId: '1020', appSecret: qqSecret, allowedSenders: ['qq-user']});
-    await configure('im-weixin', {enabled: true, loginKey: 'login-key-fixture'});
+    await configure('im-feishu', {enabled: true, managementKey: 'feishu-management', appId: 'cli_fixture', appSecret: 'feishu-secret', verificationToken: 'feishu-verify', encryptKey: 'feishu-encrypt', allowedSenders: ['ou_allowed']});
+    await configure('im-qq', {enabled: true, managementKey: 'qq-management', appId: '1020', appSecret: qqSecret, allowedSenders: ['qq-user']});
+    await api.call('directoryPicker/createDirectory', {path: '/workspace', name: 'weixin-fixture'});
+    await configure('im-weixin', {enabled: true, loginKey: 'login-key-fixture', workspace: '/workspace/weixin-fixture'});
+    for (const [channel, key, botId] of [['feishu', 'feishu-management', 'cli_fixture'], ['qq', 'qq-management', '1020']] as const) {
+      assert.equal((await hook(`/${channel}/status`)).status, 403);
+      const checked = await hook(`/${channel}/status`, {headers: {authorization: `Bearer ${key}`}});
+      assert.equal(checked.status, 200);
+      const view = await checked.json() as {state: string; botId: string; checkedAt: number};
+      assert.deepEqual(Object.keys(view).sort(), ['botId', 'checkedAt', 'state']);
+      assert.equal(view.state, 'ready'); assert.equal(view.botId, botId);
+      assert.ok(view.checkedAt > 0);
+    }
 
     // Feishu: plain URL verification, then an encrypted and signed message event.
     const challenge = await waitFor(async () => {
@@ -153,7 +166,20 @@ test('the deployment-bundled IM plugin bridges Feishu, QQ and WeChat conversatio
     assert.deepEqual(qqReply.body, {content: 'IM_REPLY', msg_type: 0, msg_id: 'qq-msg-1', msg_seq: 1});
     assert.equal(qqReply.authorization, 'QQBot qq-token');
 
-    // WeChat: the login page needs its key, shows a QR code and the scan starts the long poll.
+    // WeChat: the settings page starts QR login through a header capability; status never returns a token.
+    assert.equal((await hook('/weixin/status')).status, 403);
+    assert.equal((await hook('/weixin/login', {method: 'POST'})).status, 403);
+    const headers = {authorization: 'Bearer login-key-fixture'};
+    const idle = await hook('/weixin/status', {headers});
+    assert.equal(idle.headers.get('cache-control'), 'no-store');
+    assert.equal((await idle.json() as {state: string}).state, 'idle');
+    assert.equal((await hook('/weixin/status', {method: 'POST', headers})).status, 405);
+    const started = await hook('/weixin/login', {method: 'POST', headers});
+    assert.equal(started.status, 200);
+    const qr = await started.json() as {state: string; qrcodeUrl: string};
+    assert.equal(qr.state, 'login');
+    assert.match(qr.qrcodeUrl, /^https:\/\/liteapp.weixin.qq.com\//);
+    // The original keyed login page remains available.
     assert.equal((await hook('/weixin/login')).status, 403);
     const login = await hook('/weixin/login?key=login-key-fixture');
     assert.equal(login.status, 200);
@@ -167,9 +193,73 @@ test('the deployment-bundled IM plugin bridges Feishu, QQ and WeChat conversatio
     assert.ok(sent.filter(row => row.path === '/ilink/bot/getupdates').slice(1).every(row => row.body.get_updates_buf === 'cursor-1'), 'The long poll resumes from the stored cursor');
     const online = await (await hook('/weixin/login?key=login-key-fixture')).text();
     assert.match(online, /bot@im\.bot/);
+    const publicState = await (await hook('/weixin/status', {headers})).json();
+    assert.deepEqual(publicState, {state: 'online', botId: 'bot@im.bot', owner: 'owner@im.wechat'});
+    assert.doesNotMatch(JSON.stringify(publicState), /wx-token|qrcode|cursor/);
+    // Rotating a redacted login key reloads the channel while retaining the connected account.
+    await configure('im-weixin', {loginKey: 'rotated-key'});
+    const rotated = await waitFor(async () => {
+      const response = await hook('/weixin/status', {headers: {authorization: 'Bearer rotated-key'}});
+      return response.status === 200 ? await response.json() : undefined;
+    }, 'rotated WeChat capability');
+    assert.deepEqual(rotated, publicState);
+    assert.equal((await hook('/weixin/status', {headers})).status, 403);
+    const rotatedHeaders = {authorization: 'Bearer rotated-key'};
+    await configure('im-weixin', {enabled: false});
+    const paused = await waitFor(async () => {
+      const response = await hook('/weixin/status', {headers: rotatedHeaders});
+      const view = await response.json() as {state: string; owner?: string};
+      return view.state === 'disabled' ? view : undefined;
+    }, 'paused WeChat account');
+    assert.equal(paused.owner, 'owner@im.wechat');
+    assert.equal((await hook('/weixin/login', {method: 'POST', headers: rotatedHeaders})).status, 404);
+    await configure('im-weixin', {enabled: true});
+    await waitFor(async () => {
+      const view = await (await hook('/weixin/status', {headers: rotatedHeaders})).json() as {state: string};
+      return view.state === 'online' ? true : undefined;
+    }, 'resumed WeChat account');
 
     // One native Session per admitted conversation; the refused sender opened none.
-    const sessions = await api.call<{items: {sessionId: string; title?: string}[]}>('session/list', {_request: {}});
+    const sessions = await api.call<SessionListValue>('session/list', {_request: {}});
     assert.equal(sessions.items.length, 3, JSON.stringify(sessions.items));
+    let weixinWorkspace = false;
+    for (const session of sessions.items) {
+      const history = await api.follow(session.sessionId);
+      try {
+        const opening = await history.next();
+        if (opening.type === 'snapshot' && opening.header.cwd === '/workspace/weixin-fixture') weixinWorkspace = true;
+      } finally {await history.close();}
+    }
+    assert.equal(weixinWorkspace, true, 'WeChat created its native Session in the configured workspace');
+    // Restarting during a scan clears the orphaned code, and expiry clears it too.
+    loginMode = 'wait';
+    assert.equal((await hook('/weixin/login?reset=1', {method: 'POST', headers: {authorization: 'Bearer rotated-key'}})).status, 200);
+    await configure('im-weixin', {loginKey: 'after-restart'});
+    const newHeaders = {authorization: 'Bearer after-restart'};
+    const restarted = await waitFor(async () => {
+      const response = await hook('/weixin/status', {headers: newHeaders});
+      return response.status === 200 ? await response.json() as {state: string; qrcodeUrl?: string} : undefined;
+    }, 'scan restart');
+    assert.equal(restarted.state, 'idle');
+    assert.equal(restarted.qrcodeUrl, undefined);
+    assert.equal((await hook('/weixin/login', {method: 'POST', headers: newHeaders})).status, 200);
+    loginMode = 'expire';
+    const expired = await waitFor(async () => {
+      const response = await hook('/weixin/status', {headers: newHeaders});
+      const view = await response.json() as {state: string; error?: string; qrcodeUrl?: string};
+      return view.state === 'idle' && view.error ? view : undefined;
+    }, 'QR expiry');
+    assert.equal(expired.qrcodeUrl, undefined);
+    assert.match(expired.error!, /二维码已过期/);
+    assert.equal((await hook('/weixin/disconnect', {method: 'POST'})).status, 403);
+    assert.deepEqual(await (await hook('/weixin/disconnect', {method: 'POST', headers: newHeaders})).json(), {state: 'idle'});
+    assert.deepEqual(await (await hook('/weixin/status', {headers: newHeaders})).json(), {state: 'idle'});
+    // A removed account does not retain IM message deduplication or its old chat binding.
+    loginMode = 'confirm'; updates = 0;
+    assert.equal((await hook('/weixin/login', {method: 'POST', headers: newHeaders})).status, 200);
+    await waitFor(async () => {
+      const list = await api.call<{items: unknown[]}>('session/list', {_request: {}});
+      return list.items.length === 4 ? true : undefined;
+    }, 'fresh Session after removing the WeChat account');
   } finally {await runtime.dispose();}
 });

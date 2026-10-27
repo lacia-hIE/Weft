@@ -10,6 +10,9 @@ import { nativePluginModel } from '../helpers/native-plugin-model.ts';
 import {nativeSubagentModel} from '../helpers/native-subagent-model.ts';
 import {WebSocketServer,WebSocket as NodeWebSocket} from 'ws';
 import {startLocalDsh} from '../helpers/local-dsh.ts';
+import {buildPackage} from '../../apps/plugin-builder/server.mjs';
+import {Response as FixtureResponse} from 'miniflare';
+import type {V4FetchHandler} from 'miniflare';
 
 // Test-only bridge. Production serves directly from the authenticated Worker.
 // Native Access identities are supplied by Miniflare, never application headers.
@@ -28,6 +31,23 @@ const key = live
   : undefined;
 if (live && !key) throw new Error("Missing live model configuration");
 const runtimeDirectory = subagents ? mkdtempSync(join(tmpdir(), 'weft-browser-subagents-')) : undefined;
+const im: {packages?: boolean; packageBuilder?: V4FetchHandler; outbound?: V4FetchHandler} = process.env.WEFT_BROWSER_IM === '1' ? {
+  packages: true,
+  packageBuilder: async request => FixtureResponse.json(await buildPackage(JSON.parse(await request.text()))),
+  outbound: async request => {
+    const url = new URL(request.url);
+    if (url.hostname === 'open.feishu.cn' && url.pathname.endsWith('/tenant_access_token/internal')) {
+      const body = await request.json() as {app_secret?: string};
+      return FixtureResponse.json(body.app_secret === 'invalid-fixture' ? {code: 1, msg: 'secret echo: invalid-fixture'} : {code: 0, tenant_access_token: 'fixture-token', expire: 7200});
+    }
+    if (url.hostname === 'bots.qq.com') return FixtureResponse.json({access_token: 'qq-fixture-token', expires_in: '7200'});
+    if (url.hostname === 'ilinkai.weixin.qq.com') {
+      if (url.pathname.endsWith('/get_bot_qrcode')) return FixtureResponse.json({qrcode: 'browser-qr', qrcode_img_content: 'https://liteapp.weixin.qq.com/q/browser-qr'});
+      if (url.pathname.endsWith('/get_qrcode_status')) return FixtureResponse.json({status: 'wait'});
+    }
+    return new FixtureResponse('Not found', {status: 404});
+  },
+} : {};
 const modelOptions = key
     ? {
         scriptPath: "dist/worker.js",
@@ -37,7 +57,7 @@ const modelOptions = key
     : queue ? {browser: true, images: true, bindings: {MODEL_BACKEND: 'deepseek', DEEPSEEK_API_KEY: 'queue-browser-fixture', DEEPSEEK_BASE_URL: 'https://browser-model.test/anthropic'}, outbound: queue.outbound}
       : plugins ? {browser: true, images: true, bindings: {MODEL_BACKEND: 'deepseek', DEEPSEEK_API_KEY: 'plugin-browser-fixture', DEEPSEEK_BASE_URL: 'https://model.test/anthropic'}, outbound: plugins.outbound}
         : subagents ? {browser: true, images: true, bindings: {MODEL_BACKEND: 'deepseek', DEEPSEEK_API_KEY: 'subagent-browser-fixture', DEEPSEEK_BASE_URL: 'https://subagent-model.test/anthropic'}, outbound: subagents.outbound}
-        : { browser: true, images: true, ...(production ? {scriptPath: "dist/worker.js"} : {}) };
+        : { browser: true, images: true, ...im, ...(production ? {scriptPath: "dist/worker.js"} : {}) };
 let runtime = createRuntime(runtimeDirectory, modelOptions);
 let restarting: Promise<void> | undefined;
 await runtime.ready;

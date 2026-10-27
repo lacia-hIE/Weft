@@ -1,5 +1,6 @@
 import Schema from '@deepseek-ai/schemastery';
 import {bytes, header, hex, json, readBody, sha256, tokenCache} from './shared.js';
+import {botSettings, managementKey, registerManagement} from './management.js';
 
 const HOSTS = {feishu: 'https://open.feishu.cn', lark: 'https://open.larksuite.com'};
 
@@ -25,6 +26,7 @@ async function signed(request, body, encryptKey) {
 export const name = 'dsh-im-feishu';
 export const inject = ['im', 'webServer'];
 export const Config = Schema.object({
+  ...botSettings(), managementKey: managementKey(),
   enabled: Schema.boolean().default(false).description('Receive events at /feishu and reply through the open platform.'),
   domain: Schema.union(['feishu', 'lark']).default('feishu').description('feishu: open.feishu.cn; lark: open.larksuite.com.'),
   appId: Schema.string().default('').description('App ID of the self-built app.'),
@@ -36,7 +38,6 @@ export const Config = Schema.object({
 });
 
 export function apply(ctx, config) {
-  if (!config.enabled) return;
   const base = HOSTS[config.domain] ?? HOSTS.feishu;
   const token = tokenCache(async () => {
     const response = await fetch(`${base}/open-apis/auth/v3/tenant_access_token/internal`, {method: 'POST', headers: {'content-type': 'application/json; charset=utf-8'}, body: JSON.stringify({app_id: config.appId, app_secret: config.appSecret})});
@@ -44,6 +45,8 @@ export function apply(ctx, config) {
     if (!response.ok || body.code !== 0 || !body.tenant_access_token) throw new Error(`Feishu token request failed: ${body.msg ?? response.status}`);
     return {value: body.tenant_access_token, expiresAt: Date.now() + Number(body.expire ?? 7200) * 1000};
   });
+  registerManagement(ctx, 'feishu', config, () => token.get());
+  if (!config.enabled) return;
   const api = async (path, body) => {
     for (let retry = 0; ; retry++) {
       const response = await fetch(`${base}${path}`, {method: 'POST', headers: {'content-type': 'application/json; charset=utf-8', authorization: `Bearer ${await token.get()}`}, body: JSON.stringify(body)});
@@ -55,6 +58,7 @@ export function apply(ctx, config) {
     }
   };
   ctx.effect(() => ctx.im.channel('feishu', {
+    workspace: config.workspace, agentPreset: config.agentPreset,
     maxChars: config.maxChars,
     allows: sender => config.allowedSenders.includes(sender),
     async send(target, text) {
