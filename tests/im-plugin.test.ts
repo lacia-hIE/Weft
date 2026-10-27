@@ -6,7 +6,8 @@ import {setTimeout as delay} from 'node:timers/promises';
 import {Response, type V4FetchHandler} from 'miniflare';
 import type {SettingsDescribeValue} from '@deepseek-ai/dsh-settings/types';
 import type {BundleInfo} from '@deepseek-ai/dsh-plugin-manager/types';
-import type {SessionListValue} from '@deepseek-ai/dsh-api-session-controller/types';
+import type {SessionListValue, SessionPage} from '@deepseek-ai/dsh-api-session-controller/types';
+import type {SessionTitleEventData} from '@deepseek-ai/dsh-session-title';
 import {buildPackage} from '../apps/plugin-builder/server.mjs';
 import {createRuntime, tenantId, url} from './helpers/miniflare.ts';
 import {nativeClient} from './helpers/native.ts';
@@ -129,9 +130,9 @@ test('the deployment-bundled IM plugin bridges Feishu, QQ and WeChat conversatio
       return await response.json() as {challenge: string};
     }, 'Feishu route');
     assert.deepEqual(challenge, {challenge: 'feishu-challenge'});
-    const feishu = async (messageId: string, openId: string, raw = false) => {
+    const feishu = async (messageId: string, openId: string, raw = false, messageText = '请帮忙') => {
       const event = {schema: '2.0', header: {event_id: crypto.randomUUID(), event_type: 'im.message.receive_v1', token: 'feishu-verify', app_id: 'cli_fixture'},
-        event: {sender: {sender_id: {open_id: openId}, sender_type: 'user'}, message: {message_id: messageId, chat_id: 'oc_chat', chat_type: 'p2p', message_type: 'text', content: JSON.stringify({text: '请帮忙'})}}};
+        event: {sender: {sender_id: {open_id: openId}, sender_type: 'user'}, message: {message_id: messageId, chat_id: 'oc_chat', chat_type: 'p2p', message_type: 'text', content: JSON.stringify({text: messageText})}}};
       const iv = randomBytes(16), cipher = createCipheriv('aes-256-cbc', createHash('sha256').update('feishu-encrypt').digest(), iv);
       const body = JSON.stringify({encrypt: Buffer.concat([iv, cipher.update(JSON.stringify(event)), cipher.final()]).toString('base64')});
       const timestamp = String(Math.floor(Date.now() / 1000)), nonce = 'nonce-' + messageId;
@@ -222,15 +223,33 @@ test('the deployment-bundled IM plugin bridges Feishu, QQ and WeChat conversatio
     // One native Session per admitted conversation; the refused sender opened none.
     const sessions = await api.call<SessionListValue>('session/list', {_request: {}});
     assert.equal(sessions.items.length, 3, JSON.stringify(sessions.items));
+    const channelTitles = new Set<string>();
     let weixinWorkspace = false;
     for (const session of sessions.items) {
       const history = await api.follow(session.sessionId);
       try {
         const opening = await history.next();
         if (opening.type === 'snapshot' && opening.header.cwd === '/workspace/weixin-fixture') weixinWorkspace = true;
+        if (opening.type === 'snapshot') {
+          const title = opening.records.findLast(record => record.event.type === 'session/title')?.event;
+          assert.ok(title && title.type === 'session/title', JSON.stringify(opening.records));
+          const data = title.data as unknown as SessionTitleEventData;
+          assert.notEqual(data.source.kind, 'user', 'IM must not pin sender ids through explicit rename');
+          assert.ok(data.messageSeqs.length, 'Native title citations survive channel decoration');
+          assert.doesNotMatch(data.title, /oc_chat|qq-user|owner@im/);
+          channelTitles.add(data.title.split(' · ')[0]!);
+        }
       } finally {await history.close();}
     }
     assert.equal(weixinWorkspace, true, 'WeChat created its native Session in the configured workspace');
+    assert.deepEqual([...channelTitles].sort(), ['QQ', '微信', '飞书'].sort());
+    // Explicit renames retain their user pin and do not stack channel prefixes.
+    const renamed = await api.call<{title: string; seq: number}>('session/rename', {request: {sessionId: sessions.items[0]!.sessionId, title: '整理项目计划'}});
+    assert.match(renamed.title, /^(微信|飞书|QQ) · 整理项目计划$/);
+    const renamedPage = await api.call<SessionPage>('session/page', {request: {address: {kind: 'session', sessionId: sessions.items[0]!.sessionId}, throughSeq: renamed.seq}});
+    const pinned = renamedPage.records.at(-1)!.event;
+    assert.equal(pinned.type, 'session/title');
+    assert.equal((pinned.data as unknown as SessionTitleEventData).source.kind, 'user');
     // Restarting during a scan clears the orphaned code, and expiry clears it too.
     loginMode = 'wait';
     assert.equal((await hook('/weixin/login?reset=1', {method: 'POST', headers: {authorization: 'Bearer rotated-key'}})).status, 200);
@@ -261,5 +280,19 @@ test('the deployment-bundled IM plugin bridges Feishu, QQ and WeChat conversatio
       const list = await api.call<{items: unknown[]}>('session/list', {_request: {}});
       return list.items.length === 4 ? true : undefined;
     }, 'fresh Session after removing the WeChat account');
+    await configure('im-core', {titlePrefix: false});
+    await feishu('om_new_unlabeled', 'ou_allowed', false, '/new');
+    const unlabeled = await waitFor(async () => {
+      const list = await api.call<SessionListValue>('session/list', {_request: {}});
+      return list.items.find(item => item.blank);
+    }, 'new Session with channel titles disabled');
+    await feishu('om_unlabeled_prompt', 'ou_allowed');
+    await waitFor(async () => {
+      const list = await api.call<SessionListValue>('session/list', {_request: {}});
+      const title = list.items.find(item => item.sessionId === unlabeled.sessionId)?.projections?.values.title;
+      if (!title) return undefined;
+      assert.doesNotMatch(title, /^(微信|飞书|QQ) · /);
+      return true;
+    }, 'native automatic title without a channel prefix');
   } finally {await runtime.dispose();}
 });

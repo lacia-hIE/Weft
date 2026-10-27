@@ -2,6 +2,7 @@ import React from 'react';
 import {qrSvg} from './qr.js';
 import {zh, en} from './client-locales.js';
 import {WeixinLogoGlyph, FeishuLogoGlyph, QqLogoGlyph} from './channel-logos.js';
+import {installSessionChannelLogos} from './session-channel-logos.js';
 import './client.css';
 
 const h = React.createElement;
@@ -23,6 +24,7 @@ export function hookBase(base = document.baseURI) {
 export const name = 'dsh-im-settings';
 export const inject = ['slots', 'locale', 'configForms'];
 export function apply(ctx) {
+  ctx.effect(() => installSessionChannelLogos(), 'dsh-im Session channel logos');
   ctx.effect(() => ctx.locale.register(NS, {zh, en}), 'dsh-im dictionaries');
   const forms = Object.fromEntries(channels.map(channel => [channel, {
     scope: ctx.configForms.get(namespace(channel)),
@@ -93,7 +95,7 @@ function ImSettings({forms, core, t}) {
   };
   return h('section', {className: 'weft-im dim-page', 'aria-label': t('title')},
     h('header', {className: 'dim-title'},
-      h('div', {className: 'dim-brand'}, h('div', {className: 'dim-brandHeading'}, h('strong', {className: 'dim-brandName'}, 'DSH-IM'), h('span', {className: 'dim-brandVersion'}, 'v0.3.0')), h('p', null, t('tagline'))),
+      h('div', {className: 'dim-brand'}, h('div', {className: 'dim-brandHeading'}, h('strong', {className: 'dim-brandName'}, 'DSH-IM'), h('span', {className: 'dim-brandVersion'}, 'v0.3.1')), h('p', null, t('tagline'))),
       h('div', {className: 'im-title-actions'},
         h('a', {href: 'https://github.com/xmanrui/dsh-im', target: '_blank', rel: 'noopener noreferrer', className: 'im-help'}, t('help')),
         h(Action, {'aria-label': t('generalSettings'), 'aria-pressed': selected === 'general', onClick: () => setSelected(selected === 'general' ? 'weixin' : 'general')}, h(Icon, {kind: 'settings'})))),

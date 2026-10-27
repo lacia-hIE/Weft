@@ -1,6 +1,6 @@
 # Third-party notices
 
-The channel logos and selected interface styles are adapted from [xmanrui/dsh-im](https://github.com/xmanrui/dsh-im), commit `b9baa78bf5750df9a2b340982e672c56c76e68e1`. The connection flow and layout follow that project, with transport and persistence adapted to Weft.
+The channel logos, Session channel title parsing and browser decoration, Host title decoration (`packages/harness-runtime/src/im-session-titles.ts`), and selected interface styles are adapted from [xmanrui/dsh-im](https://github.com/xmanrui/dsh-im), commit `b9baa78bf5750df9a2b340982e672c56c76e68e1`. The connection flow and layout follow that project, with transport and persistence adapted to Weft.
 
 MIT License
 

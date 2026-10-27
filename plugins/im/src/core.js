@@ -107,18 +107,17 @@ class ImBridge {
       this.followers.delete(key);
       const preset = channel.agentPreset || this.config.agentPreset;
       const created = await this.ctx.sessionController.create({cwd: channel.workspace || '/workspace', ...(preset ? {agentPreset: preset} : {})});
-      row = {sessionId: created.sessionId, delivered: -1, pending: [], target: message.target, channel: message.channel};
+      row = {sessionId: created.sessionId, delivered: -1, pending: [], target: message.target, channel: message.channel, titlePrefix: this.config.titlePrefix !== false};
       await this.conversations.put(key, row);
-      if (this.config.titlePrefix !== false) {
-        const title = `[${message.channel}] ${message.title ?? message.senderName ?? message.conversation}`.slice(0, 80);
-        await this.ctx.sessionController.rename({sessionId: row.sessionId, title}).catch(() => {});
-      }
       if (command === 'new') {
         await this.send(message.channel, message.target, '已开始新会话。');
         return 'command';
       }
     }
-    const id = await requestId(seenKey);
+    const stableId = await requestId(seenKey);
+    // Durable native prompt provenance lets the Host decorate automatic titles
+    // without pinning an opaque sender id as an explicit user rename.
+    const id = row.titlePrefix ? `${message.channel}-${stableId}` : stableId;
     row = await this.conversations.update(key, current => ({...current, target: message.target, pending: [...new Set([...(current.pending ?? []), id])].slice(-32)}));
     const content = message.group && message.senderName ? `${message.senderName}：${text}` : text;
     await this.ctx.sessionController.prompt({sessionId: row.sessionId, requestId: id, mode: 'queue', content: [{type: 'text', text: content}]});
@@ -180,7 +179,7 @@ export const provide = 'im';
 export const inject = ['sessionController', 'storageDomain'];
 export const Config = Schema.object({
   agentPreset: Schema.string().description('Agent preset for new conversations; the environment default when empty.'),
-  titlePrefix: Schema.boolean().default(true).description('Prefix Session titles with the channel and conversation name.'),
+  titlePrefix: Schema.boolean().default(true).description('Label automatic titles of new Sessions with their channel.'),
 });
 export function apply(ctx, config) {
   ctx.provide('im', new ImBridge(ctx, config));

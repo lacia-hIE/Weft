@@ -157,3 +157,82 @@ test('IM setup follows the channel rail, binding, QR and bot card flow with dura
   await expect(page.getByRole('button', {name: 'IM bots', exact: true})).toHaveCount(0);
   await expect(page.locator('link[data-plugin-css="' + row.digest + '"]')).toHaveCount(0);
 });
+
+test('IM conversations show channel logos and readable native titles in the tree and search, and restore on unload', async ({page, request}, testInfo) => {
+  test.skip(process.env.WEFT_BROWSER_IM !== '1', 'Requires the IM package builder fixture');
+  const plugin = JSON.parse(readFileSync('plugins/im/package.json', 'utf8')) as {name: string; version: string};
+  const {tenantId} = await (await request.get('/v1/me')).json();
+  const environment = 'im-titles-' + crypto.randomUUID().slice(0, 8);
+  const base = `/v1/tenants/${tenantId}/environments/${environment}`;
+  expect((await request.post(`/v1/tenants/${tenantId}/environments`, {data: {id: environment, name: environment}})).status()).toBe(201);
+  const rpc = async (method: string, args: object) => {
+    const answer = await (await request.post(`${base}/native/api/${method}`, {data: {type: 'client-request', rpcId: crypto.randomUUID(), method, payload: {args}}})).json();
+    expect(answer.result.ok, JSON.stringify(answer)).toBe(true);
+    return answer.result.value;
+  };
+  await rpc('pluginManager/installBundle', {spec: `${plugin.name}@${plugin.version}`, options: {requestId: crypto.randomUUID()}});
+  const installation = (await (await request.get(base + '/native/package-installations')).json()).installations[0];
+  expect((await request.post(base + '/native/package-installations', {data: {operation: 'approve', name: installation.name, digest: installation.digest, permissions: installation.permissions}})).status()).toBe(200);
+  const sessions: {channel: string; label: string; id: string}[] = [];
+  for (const [channel, label] of [['weixin', '微信'], ['feishu', '飞书'], ['qq', 'QQ']]) {
+    const {sessionId} = await rpc('session/create', {request: {}});
+    sessions.push({channel: channel!, label: label!, id: sessionId});
+    await rpc('session/prompt', {request: {sessionId, requestId: `${channel}-${crypto.randomUUID()}`, mode: 'queue', content: [{type: 'text', text: 'Plan channel-logo-regression milestones'}]}});
+  }
+  await expect(async () => {
+    const list = (await rpc('session/list', {_request: {}})).items;
+    for (const session of sessions) {
+      const row = list.find((item: {sessionId: string}) => item.sessionId === session.id);
+      expect(row).toMatchObject({blank: false, running: false});
+      expect(row.projections.values.title).toMatch(new RegExp(`^${session.label} · `));
+    }
+  }).toPass({timeout: 45_000});
+  for (const session of sessions) await rpc('session/rename', {request: {sessionId: session.id, title: 'Quarterly milestones'}});
+  const legacy = (await rpc('session/create', {request: {}})).sessionId;
+  await rpc('session/prompt', {request: {sessionId: legacy, requestId: crypto.randomUUID(), mode: 'queue', content: [{type: 'text', text: 'Legacy channel conversation'}]}});
+  await expect(async () => expect((await rpc('session/list', {_request: {}})).items.find((item: {sessionId: string}) => item.sessionId === legacy).running).toBe(false)).toPass({timeout: 30_000});
+  await rpc('session/rename', {request: {sessionId: legacy, title: '[weixin] Legacy contact'}});
+  const ordinary = (await rpc('session/create', {request: {}})).sessionId;
+  await rpc('session/prompt', {request: {sessionId: ordinary, requestId: crypto.randomUUID(), mode: 'queue', content: [{type: 'text', text: 'Discuss 微信 · ordinary Web session'}]}});
+  await page.setViewportSize({width: 1440, height: 1000});
+  await page.goto('/agents/' + environment);
+  await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
+  const marked = '[data-weft-im-session-channel]';
+  for (const session of sessions) {
+    const row = page.locator(`[data-row-key="session:${session.id}"]`);
+    const title = row.locator(marked);
+    await expect(title).toHaveAttribute('data-weft-im-session-channel', session.channel, {timeout: 45_000});
+    await expect(title).toHaveAttribute('data-weft-im-session-text', 'Quarterly milestones');
+    // Preserve React's text node and accessible channel name; the loaded logo
+    // and clipped visual text come from plugin-owned CSS pseudo-elements.
+    await expect(title).toHaveText(`${session.label} · Quarterly milestones`);
+    const style = await title.evaluate(element => ({before: getComputedStyle(element, '::before').backgroundImage, after: getComputedStyle(element, '::after').content}));
+    expect(style.before).toContain('data:image/svg+xml');
+    expect(style.after).toContain('Quarterly milestones');
+  }
+  await expect(page.locator(`[data-row-key="session:${legacy}"]`).locator(marked)).toHaveAttribute('data-weft-im-session-channel', 'weixin');
+  await expect(page.locator(`[data-row-key="session:${ordinary}"]`).locator(marked)).toHaveCount(0);
+  await page.screenshot({path: testInfo.outputPath('im-session-logos.png')});
+  // The native rename dialog receives the full persisted title and remains usable.
+  const feishu = page.locator(`[data-row-key="session:${sessions[1]!.id}"]`);
+  await feishu.locator(marked).click();
+  await feishu.locator(marked).dblclick();
+  const dialog = page.getByRole('dialog', {name: 'Rename session', exact: true});
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole('textbox').fill('Updated roadmap');
+  await dialog.getByRole('button', {name: 'Rename', exact: true}).click();
+  await expect(feishu.locator(marked)).toHaveAttribute('data-weft-im-session-text', 'Updated roadmap');
+  await page.getByRole('button', {name: 'Search sessions', exact: true}).click();
+  await page.getByPlaceholder('Search session names', {exact: true}).fill('channel-logo-regression');
+  const results = page.getByRole('tree', {name: 'Search results', exact: true});
+  await expect(results.getByRole('treeitem')).toHaveCount(3, {timeout: 45_000});
+  for (const session of sessions) await expect(results.locator(`[data-weft-im-session-channel="${session.channel}"]`)).toHaveCount(1);
+  await rpc('pluginManager/setBundleEnabled', {name: plugin.name, enabled: false});
+  await expect(page.locator(marked)).toHaveCount(0);
+  await expect(page.locator('style[data-plugin-css="weft-im-session-channel-logos"]')).toHaveCount(0);
+  await expect(results.getByText('飞书 · Updated roadmap', {exact: true})).toBeVisible();
+  await rpc('pluginManager/setBundleEnabled', {name: plugin.name, enabled: true});
+  await expect(results.locator(marked)).toHaveCount(3);
+  await page.reload();
+  await expect(page.locator(`[data-row-key="session:${sessions[1]!.id}"]`).locator(marked)).toHaveAttribute('data-weft-im-session-text', 'Updated roadmap', {timeout: 45_000});
+});

@@ -2,6 +2,8 @@
 
 This project bundles selected source from DeepSeek Harness and its vendored libraries. Their original notices remain in the pinned checkout fetched by `npm run upstream:prepare`. npm dependency licenses remain in their installed packages.
 
+The IM plugin UI and Session channel title decoration adapt MIT-licensed code from xmanrui/dsh-im. Its source revision and full copyright/license notice are preserved in [plugins/im/THIRD_PARTY_NOTICES.md](plugins/im/THIRD_PARTY_NOTICES.md).
+
 ## DeepSeek Harness
 
 MIT License

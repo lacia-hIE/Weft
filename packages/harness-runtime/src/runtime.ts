@@ -9,6 +9,7 @@ import { RemoteError } from '@deepseek-ai/dsh-typert-protocol';
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt';
 import { installModelSelectionProjection, mountModelSelection, selectLiveHarnessModel } from './model-selection.ts';
 import type { ModelSelection } from '@deepseek-ai/dsh-api-session-controller/types';
+import {installImSessionTitles} from './im-session-titles.ts';
 
 /** Trusted dependencies supplied by the platform; a Context belongs to one session. */
 export interface RuntimeOptions {
@@ -75,6 +76,7 @@ export async function openHarnessSession(options: RuntimeOptions): Promise<Harne
     await mountOfficialProfile(ctx, 'core', options.presentation === true, options.profileOverrides);
     if (options.presentation) installModelSelectionProjection(ctx);
     if (options.presentation) await ctx.plugin(SessionTitle, { fallbackMaxWords: 5, fallbackMaxBytes: 40, maxTitleBytes: 80 });
+    if (options.presentation) installImSessionTitles(ctx);
     await ctx.plugin(SystemPrompt, { personaPrefix: options.persona });
     await mountOfficialProfile(ctx, 'agents', options.presentation === true, options.profileOverrides);
     if (options.mountPersistence) await options.mountPersistence(ctx);
@@ -135,7 +137,8 @@ export async function renameLiveHarnessSession(ctx: Context, agent: Agent, title
   try {
     const accepted = ctx.sessionTitle.rename(agent.session, title);
     await ctx.get('sessionPersistence')?.flush();
-    return {title: accepted.title, seq: accepted.eventSeq};
+    const latest = ctx.sessionTitle.get(agent.session) ?? accepted;
+    return {title: latest.title, seq: latest.eventSeq};
   } catch (error) {
     if (error instanceof SessionTitleInvalidError) throw new RemoteError('session/title-invalid', 'Title must not be empty', {sessionId: agent.session.id});
     throw error;
