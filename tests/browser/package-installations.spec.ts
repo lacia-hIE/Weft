@@ -21,8 +21,8 @@ test('native bundle detail reviews the original patch and artifact without a sec
   await page.getByRole('button',{name:'Plugins',exact:true}).click({timeout:45000});
   await expect(page.getByRole('button',{name:'View Package installations',exact:true})).toHaveCount(0);
   await page.getByRole('button',{name:'View @fixture/review',exact:true}).click();
-  await page.getByRole('button',{name:'Review artifact and permissions',exact:true}).click();
-  await expect(page.getByText('SHA-256: '+digest,{exact:true})).toBeVisible();
+  await page.getByRole('button',{name:'Review artifact and grants',exact:true}).click();
+  await expect(page.getByText(digest,{exact:true})).toBeVisible();
   await expect(page.getByText(/Client modules execute in the workbench/)).toBeVisible();
   await page.getByRole('button',{name:'Approve this version and enable',exact:true}).click();
   await expect(page.getByText('Enabled',{exact:true})).toBeVisible();
@@ -109,11 +109,11 @@ test('native bundle details stage updates, approve exact versions and restore Cl
     await page.getByRole('button',{name:'Build update',exact:true}).click();
     await expect(styled).toContainText('1.2.3');
     await page.getByRole('button',{name:'Review update',exact:true}).click();
-    await expect(page.getByText('SHA-256: '+row.candidate!.digest,{exact:true})).toBeVisible();
+    await expect(page.getByText(row.candidate!.digest,{exact:true})).toBeVisible();
     await page.getByRole('button',{name:'Approve this version and enable',exact:true}).click();
   }
   await update('1.2.4');await expect(styled).toContainText('1.2.4');await expect(styled).toHaveCount(1);await expect(page.locator('link[data-plugin-css]')).toHaveCount(1);
-  await page.getByRole('button',{name:'Restore previous version (1.2.3)',exact:true}).click();await expect(styled).toContainText('1.2.3');
+  await page.getByRole('button',{name:'Restore previous version · v1.2.3',exact:true}).click();await expect(styled).toContainText('1.2.3');
   await page.getByRole('button',{name:'Discard update',exact:true}).click();
   await update('1.2.5');await expect(styled).toContainText('1.2.3');await expect(page.getByRole('alert').filter({hasText:'Client activation failed for 1.2.5.'})).toBeVisible();
   await expect(page.locator('link[data-plugin-css]')).toHaveCount(1);
