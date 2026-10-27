@@ -38,7 +38,7 @@ test('an installed entry is configured through native Settings, secrets stay red
       await api.call('session/prompt', {request: {sessionId, requestId: crypto.randomUUID(), mode: 'queue', content: [{type: 'text', text: 'SAVE_PACKAGE ' + crypto.randomUUID()}]}});
       for (;;) {const frame = await follow.next(); if (frame.type === 'event' && frame.event.type === 'turn/end') break;}
     } finally {await follow.close();}
-    return (await runtime.dispatchFetch(url('alpha', base + '/workspaces/default/files?path=/workspace/package-result.txt'))).text();
+    return (await (await runtime.dispatchFetch(url('alpha', base + '/workspaces/default/files?path=/workspace/package-result.txt'))).json() as {value: {content: string}}).value.content;
   };
   try {
     await api.call('pluginManager/installBundle', {spec: `${fixture.name}@${fixture.version}`, options: {requestId: crypto.randomUUID()}});
