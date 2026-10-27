@@ -32,7 +32,7 @@ test('global plugins show deployment wiring and policy switches persist through 
   expect(snapshot.entries.length).toBeGreaterThan(150);
   await expect(globals).toHaveAttribute('data-plugin-count', String(snapshot.entries.length));
   await globals.getByRole('button', {name: 'Global plugins', exact: true}).click();
-  await expect(globals.locator('[data-plugin-entry="mcp-resources"]')).toContainText('Not implemented');
+  await expect(globals.locator('[data-plugin-entry="session-projection-cache"]')).toContainText('Not implemented');
   await expect(globals.locator('[data-plugin-entry="subprocess"]')).toContainText('Platform replacement');
   await expect(globals.locator('[data-plugin-entry="command-feedback"]')).toContainText('Disabled for Session loading');
   await rpc('pluginManager/setPluginEnabled', {id: 'command-feedback', enabled: true});

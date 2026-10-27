@@ -35,7 +35,7 @@ test('inventory covers the pinned official profile and durable management retire
     assert.ok(globals.every(row => row.fiberPhase === null), 'deployment inventory does not invent live Session fiber states');
     const description = (id: string) => JSON.stringify(globals.find(row => row.entryId === id)?.meta?.description);
     assert.match(description('subprocess'), /Platform replacement/);
-    assert.match(description('mcp-resources'), /Not implemented/);
+    assert.match(description('session-projection-cache'), /Not implemented/);
     assert.match(description('office-to-pdf'), /Not connected/);
     assert.match(description('tool-bash'), /Agent presets/);
     assert.match(description('agent-loop'), /Mounted by Weft/);
