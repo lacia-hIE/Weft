@@ -67,7 +67,7 @@ EnvironmentDO 的数据库只登记安装和调度元数据，不保存插件代
 
 环境 Host 的 `new WebSocket('wss://…')` 握手同样走出口检查。监督者持有远端连接，向插件交出配对的另一端：双向转发、关闭码透传，超限以 1009 关闭，授权撤销以 1008 关闭两端。出站连接不能休眠，EnvironmentDO 在连接打开期间常驻计费；部署或驱逐会断开连接，联网的环境 Host 运行时 EnvironmentDO 每 60 秒设置看门狗 Alarm，重启后重新激活，由插件自身的重连逻辑恢复连接与游标。
 
-Cloudflare Access 断言和内部认证头不会转发给第三方。授权并不提供浏览器登录 Cookie；插件自己的目标服务认证由已授权的凭据服务或其配置处理。流式外部 SSE/MCP、长期渠道 WebSocket 仍需后续适配。
+Cloudflare Access 断言和内部认证头不会转发给第三方。授权并不提供浏览器登录 Cookie；插件自己的目标服务认证由已授权的凭据服务或其配置处理。外部 SSE、长轮询和渠道 WebSocket 走上文的环境 Host 出口档位；远程 MCP 服务器不经第三方插件，见[原生 MCP](../validation/native-mcp.md)。
 
 ## 原版 webhookRuntime
 

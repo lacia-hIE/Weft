@@ -59,6 +59,8 @@ export const LOADED: Record<string, {world: 'session'; phase: ProfilePhase; nati
   'web-deepseek-api': {world: 'session', phase: 'late', native: true},
   'repeat-tool-reminder': {world: 'session', phase: 'late', native: true},
   'spill-policy': {world: 'session', phase: 'late', native: true},
+  // Its shared resource tools appear once an environment configures an MCP server (`mcp-servers`).
+  'mcp-resources': {world: 'session', phase: 'late', native: true},
 };
 
 /** Original packages that Weft's world setup mounts today. */
@@ -118,7 +120,6 @@ export const PENDING: Record<string, string> = {
   // Its checkpoints serve the official session list snapshots and search hydration; Weft's session list is its own
   // DurableSessionIndex and activation replays the log as the original does, so only search would gain.
   'session-projection-cache': 'projection checkpoint records in SessionDO storage (only session search would use them)',
-  'mcp-resources': 'MCP client and server provisioning per environment',
 };
 
 /** Browser rows: served by the Boot Graph from the official client builds. */

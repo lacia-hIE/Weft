@@ -66,6 +66,8 @@ export function overlayProblems(): string[] {
 }
 
 /** Package specifiers the enabled rows load; the build bundles exactly these modules. */
+/** Original modules a Session creates entries of from environment configuration, not from a profile row. */
+export const CONFIGURED_MODULES = ['@deepseek-ai/dsh-mcp-client'];
 export function enabledModuleNames(): string[] {
-  return [...new Set(enabledEntries().map(entry => entry.name))].sort();
+  return [...new Set([...enabledEntries().map(entry => entry.name), ...CONFIGURED_MODULES])].sort();
 }

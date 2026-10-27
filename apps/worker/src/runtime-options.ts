@@ -28,6 +28,8 @@ import { controlFor, controlScope, type NativeSessionContext } from '../../../pa
 import {mountNativeComposition, nativePresetDefinition} from '../../../packages/native-composition/src/index.ts';
 import type {Context} from '@deepseek-ai/cordis';
 import AgentLoop from '@deepseek-ai/dsh-agent-loop';
+import {mcpEntries, reconcileMcpServers} from '../../../packages/native-mcp/src/index.ts';
+import type {EntryOptions} from '@deepseek-ai/cordis-plugin-loader';
 import {updateVolatile} from '@deepseek-ai/cosmokit';
 import {mountNativeAttachments} from '../../../packages/native-attachments/src/index.ts';
 import {mountSessionExport} from '../../../packages/harness-runtime/src/session-export.ts';
@@ -88,6 +90,7 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
   let reconcileChanges: (() => Promise<void>) | undefined;
   let reconcilePlugins: Awaited<ReturnType<typeof mountEnvironmentPlugins>> | undefined;
   let runtimeChoice: WorkspaceRuntimeChoice | undefined;
+  let mcp: EntryOptions[] = [];
   const options: RuntimeOptions = {
     sessionId: scope.sessionId,
     persona: profile ? `${presentation ? profile.spec.persona : rootPersona(profile)}\n${profile.spec.allowClientPlugins ? presentation ? NATIVE_PLUGIN_GUIDE : CLIENT_PLUGIN_GUIDE : ''}` : persona,
@@ -120,6 +123,7 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
       // Settings edits to official profile rows reach a live Session before its next turn.
       if (presentation && world) {
         profileOverrides = await reconcileProfileOverrides(world, profileOverrides, context.profileOverrides);
+        mcp = await reconcileMcpServers(world, mcp, mcpEntries(context.mcpServers ?? []));
         const boundary = activeAgent && world.sessionProjections.stateOf(activeAgent.session, 'turnBoundary');
         // Assembly also runs between steps and model selection can refresh while a turn is active.
         // Change policy fibers only at that turn's first assembly, or while the Agent is idle.
@@ -146,6 +150,8 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
     mountPersistence: async ctx => { await ctx.plugin(SqliteSessionPersistence, {storage}); },
     mountTools: async ctx => {
       registerIdentityTool(ctx, scope.tenantId);
+      // Remote MCP servers mount after the profile's late rows, beside the original MCP resources tools.
+      if (presentation) mcp = await reconcileMcpServers(ctx, mcp, mcpEntries(context.mcpServers ?? []));
       if (presentation) forwardNativeNotifications(ctx, env, owner, () => activeAgent !== undefined);
       // run_code programs run in per-run Dynamic Workers; PTC presentation waits for this service.
       if (presentation) await ctx.plugin(WorkerPtcRuntime, {...(env.LOADER ? {loader: env.LOADER} : {}), cwd});

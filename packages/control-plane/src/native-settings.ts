@@ -26,6 +26,7 @@ import {MANAGEABLE_PROFILE_ROWS, isManageableProfileRow, type ProfileEnablement}
 import {environmentPlugins} from '../../native-composition/src/extensions.ts';
 import {EnvironmentSettings} from '../../native-environment/src/settings.ts';
 import {SettingsConflictError} from '@deepseek-ai/dsh-settings';
+import {MCP_NAMESPACE, McpServersConfig, validateMcpServers, type McpServer} from '../../native-mcp/src/index.ts';
 import type {Enablement} from '../../plugin-registry/src/types.ts';
 
 export const PROFILE_PLUGINS_NAMESPACE = 'weft-plugin-enablement';
@@ -160,6 +161,7 @@ export class NativeSettings {
       }},
       {id: MARKET_NAMESPACE, schema: PluginMarket.Config, base: () => ({}), autoGenerate: false, validate: () => {}, hidden: true},
       {id: WORKSPACE_RUNTIME_NAMESPACE, schema: WorkspaceRuntimeConfig, base: () => ({}), autoGenerate: false, validate: () => {}},
+      {id: MCP_NAMESPACE, schema: McpServersConfig, base: () => ({}), autoGenerate: true, validate: value => {validateMcpServers((plainConfig(McpServersConfig(value as never)) as {servers: McpServer[]}).servers);}},
       {id: PROFILE_PLUGINS_NAMESPACE, schema: ProfilePluginsConfig, base: () => ({}), autoGenerate: false, validate: () => {}, hidden: true},
       {id: 'ui-settings', schema: DeveloperToolsConfig, base: () => ({}), autoGenerate: false, validate: () => {}},
       {id: 'ui-settings-general', schema: WelcomeConfig, base: () => ({}), autoGenerate: false, validate: () => {}},

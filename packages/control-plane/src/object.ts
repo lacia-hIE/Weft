@@ -75,6 +75,8 @@ export interface NativeSessionContext {
   /** Where the environment's workspace commands run. */
   workspaceRuntime: {shell: WorkspaceShell; containerInstance: ContainerInstance};
   pluginPlan: import('../../plugin-registry/src/types.ts').PluginPlan;
+  /** Remote MCP servers, with their header values; only Sessions read them. */
+  mcpServers: import('../../native-mcp/src/index.ts').McpServer[];
 }
 import {openPermissionWorld} from '../../native-environment/src/permissions.ts';
 import { NativeWorkspaces } from './native-workspaces.ts';
@@ -99,6 +101,7 @@ import {NativePluginPlatform} from '../../native-plugins/src/platform.ts';
 import {webhookDelivery,webhookSessionRequest} from '../../native-plugins/src/webhook-contracts.ts';
 import {entryNamespace, entrySchemasSchema, isEntryNamespace, permissionSchema} from '../../package-install/src/contracts.ts';
 import {bundleLeaves} from '../../package-install/src/composition.ts';
+import {MCP_NAMESPACE} from '../../native-mcp/src/index.ts';
 import {EnvironmentPackages, environmentFacetName} from '../../package-install/src/environment.ts';
 import {workerHostServices, environmentHostServices} from '../../native-plugins/src/services.ts';
 import type {Artifact, Installation} from '../../package-install/src/contracts.ts';
@@ -474,6 +477,7 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
       profileEnablement: settings.profileEnablement(),
       workspaceRuntime: settings.value(WORKSPACE_RUNTIME_NAMESPACE) as NativeSessionContext['workspaceRuntime'],
       pluginPlan: settings.pluginPlan(),
+      mcpServers: settings.value(MCP_NAMESPACE).servers as NativeSessionContext['mcpServers'],
     };
     return Response.json(context);
   }
