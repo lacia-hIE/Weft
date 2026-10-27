@@ -67,8 +67,12 @@ export interface InstallJob {
 }
 export const exactSpec = /^((?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*)@(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/;
 export const entryId = (name: string) => `installed:${name}` as PluginEntryId;
-/** The Settings namespace of one installed entry, which is also its Plugin Manager row id. */
-export const entryNamespace = (name: string, id: string) => `${entryId(name)}/${id}`;
+/**
+ * The Settings namespace of one installed entry, which is also its Plugin
+ * Manager row id. The Loader reads `:` as an entry path, so it is not used.
+ */
+export const entryNamespace = (name: string, id: string) => `installed/${name}/${id}`;
+export const isEntryNamespace = (ns: string) => ns.startsWith('installed/');
 export async function sha256(value: string | Uint8Array): Promise<string> {
   const data = typeof value === 'string' ? new TextEncoder().encode(value) : value;
   const digest = await crypto.subtle.digest('SHA-256', data as BufferSource);

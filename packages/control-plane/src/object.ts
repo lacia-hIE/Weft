@@ -97,7 +97,7 @@ import {environmentPlugins} from '../../native-composition/src/extensions.ts';
 import {Context} from '@deepseek-ai/cordis';
 import {NativePluginPlatform} from '../../native-plugins/src/platform.ts';
 import {webhookDelivery,webhookSessionRequest} from '../../native-plugins/src/webhook-contracts.ts';
-import {entryId, entryNamespace, entrySchemasSchema, permissionSchema} from '../../package-install/src/contracts.ts';
+import {entryNamespace, entrySchemasSchema, isEntryNamespace, permissionSchema} from '../../package-install/src/contracts.ts';
 import {bundleLeaves} from '../../package-install/src/composition.ts';
 import {EnvironmentPackages, environmentFacetName} from '../../package-install/src/environment.ts';
 import {workerHostServices, environmentHostServices} from '../../native-plugins/src/services.ts';
@@ -261,7 +261,7 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
         this.nativeEvents.emit(event, args);
         if (event === 'settings/document-updated' && ([PRESET_NAMESPACE, PROFILE_PLUGINS_NAMESPACE].includes(String(args[0])) || environmentPlugins.hasNamespace(String(args[0])))) this.nativeEvents.emit('plugin-manager/changed', [{reason: 'plugin'}]);
         // An installed entry's configuration restarts its activations with the new value.
-        if (event === 'settings/document-updated' && String(args[0]).startsWith(entryId(''))) {
+        if (event === 'settings/document-updated' && isEntryNamespace(String(args[0]))) {
           this.nativeEvents.emit('plugin-manager/changed', [{reason: 'plugin'}]);
           this.ctx.waitUntil(this.reconcileEnvironmentPackages(scope));
         }
