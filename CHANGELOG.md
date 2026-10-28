@@ -4,6 +4,9 @@ Application versions use `vX.Y.Z`; local connector versions are independent. See
 
 ## Unreleased / 未发布
 
+- Local connector `0.2.6` uses carrier protocol 3: HTTP bodies and native Mux messages keep 16 chunks in flight per stream, and text responses are gzip compressed between the device and the relay. Remote pages through a local Host load several times faster. The relay accepts protocol 3 only; upgrade the connector together with Weft.
+- 本地连接插件 `0.2.6` 使用传输协议 3：HTTP 正文与原版 Mux 消息每条流最多 16 块在途，文本响应在设备与中继之间以 gzip 传输，远程打开本地 Host 页面明显更快。中继只接受协议 3，插件需与 Weft 同步升级。
+
 - Local connector `0.2.5` supports DSH `0.2.1-rc.4` and DeepSeek Harness Desktop, whose Host runs the same release with its Desktop profile; CI validates that launch.
 - 本地连接插件 `0.2.5` 支持 DSH `0.2.1-rc.4` 与 DeepSeek Harness 桌面 App（其 Host 以 desktop profile 运行同一发布版），CI 验证该启动方式。
 

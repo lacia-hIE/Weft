@@ -1,6 +1,8 @@
 // Opaque native messages are fragmented only on the private device carrier.
 // The browser and DSH keep their original Remote Mux protocol.
 export const MAX_MUX_BYTES=8*1024*1024;
+// Fragments (and HTTP body chunks) a stream may have unacknowledged on the carrier.
+export const WINDOW=16;
 const CHUNK=32*1024;
 const encode=bytes=>{let value='';for(const byte of bytes)value+=String.fromCharCode(byte);return btoa(value);};
 const decode=value=>{
@@ -23,7 +25,7 @@ export class MuxChannel {
         const queue=this.outgoing.get(id)??[];
         if(queue.length>=1024||(!this.outgoing.has(id)&&this.outgoing.size>=64))throw new Error('Mux queue limit');
         this.reserve(bytes.length);
-        const state={bytes,message:crypto.randomUUID(),seq:0,offset:0,resolve,reject,timer:undefined};queue.push(state);this.outgoing.set(id,queue);
+        const state={bytes,message:crypto.randomUUID(),seq:0,acked:0,count:Math.max(1,Math.ceil(bytes.length/CHUNK)),resolve,reject,timer:undefined};queue.push(state);this.outgoing.set(id,queue);
         if(queue.length===1)this.next(id);
       }catch(error){reject(error);this.drop(id,error);}
     });
@@ -32,8 +34,10 @@ export class MuxChannel {
     const state=this.outgoing.get(id)?.[0];if(!state)return;
     try{
       clearTimeout(state.timer);state.timer=this.timer(id);
-      const end=Math.min(state.offset+CHUNK,state.bytes.length);
-      this.sendFrame({type:'ws-fragment',id,message:state.message,seq:state.seq,body:encode(state.bytes.subarray(state.offset,end)),end:end===state.bytes.length});
+      for(;state.seq<state.count&&state.seq-state.acked<WINDOW;state.seq++){
+        const offset=state.seq*CHUNK,end=Math.min(offset+CHUNK,state.bytes.length);
+        this.sendFrame({type:'ws-fragment',id,message:state.message,seq:state.seq,body:encode(state.bytes.subarray(offset,end)),end:end===state.bytes.length});
+      }
     }catch(error){this.drop(id,error);}
   }
   handle(frame){
@@ -45,9 +49,9 @@ export class MuxChannel {
       if(frame.type==='ws-fragment-ack'){
         const queue=this.outgoing.get(id),state=queue?.[0];
         if(!state)return true; // A closed stream may have a late acknowledgement.
-        if(frame.message!==state.message||frame.seq!==state.seq)throw new Error('Invalid fragment acknowledgement');
-        clearTimeout(state.timer);state.offset=Math.min(state.offset+CHUNK,state.bytes.length);state.seq++;
-        if(state.offset===state.bytes.length){queue.shift();this.buffered-=state.bytes.length;state.resolve();if(!queue.length)this.outgoing.delete(id);}
+        if(frame.message!==state.message||frame.seq!==state.acked||state.acked>=state.seq)throw new Error('Invalid fragment acknowledgement');
+        clearTimeout(state.timer);state.acked++;
+        if(state.acked===state.count){queue.shift();this.buffered-=state.bytes.length;state.resolve();if(!queue.length)this.outgoing.delete(id);}
         queueMicrotask(()=>{if(this.outgoing.get(id)===queue)this.next(id);});return true;
       }
       let state=this.incoming.get(id);

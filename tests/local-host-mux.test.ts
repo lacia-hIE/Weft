@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {MuxChannel} from '../packages/local-host-connector/mux.mjs';
+import {MuxChannel,WINDOW} from '../packages/local-host-connector/mux.mjs';
 
 test('fragmented Mux preserves Unicode and order across concurrent browser streams',async()=>{
   const delivered:Record<string,string[]>={};let frames=0;
@@ -40,5 +40,16 @@ test('invalid fragments and queue budgets close only the offending stream and re
     await assert.rejects(channel.send('overflow','1234'),/buffer limit/);channel.drop('queued');await waiting;
     const clean=assert.rejects(channel.send('clean','1234567890'),/closed/);channel.drop('clean');await clean;
     await assert.rejects(channel.send('oversized','12345678901'),/message limit/);
+  }finally{channel.close();}
+});
+
+test('a stream keeps a window of fragments in flight and refills it on each acknowledgement',async()=>{
+  const frames:Record<string,unknown>[]=[];const channel=new MuxChannel(frame=>frames.push(frame),()=>{},()=>{});
+  try{
+    const sent=assert.rejects(channel.send('bulk','x'.repeat(40*32*1024)),/closed/);
+    assert.equal(frames.length,WINDOW);assert.deepEqual(frames.map(frame=>frame.seq),Array.from({length:WINDOW},(_,index)=>index));
+    channel.handle({type:'ws-fragment-ack',id:'bulk',message:frames[0]!.message as string,seq:0});await Promise.resolve();
+    assert.equal(frames.length,WINDOW+1);assert.equal(frames.at(-1)!.seq,WINDOW);
+    channel.drop('bulk');await sent;
   }finally{channel.close();}
 });

@@ -37,13 +37,15 @@ application，仅匹配同一域名的 **`/v1/local-hosts/*`**，使用 Bypass �
 
 Cloudflare 是 TLS 终点，中继会处理传输内容；本版不提供端到端加密。每个
 租户最多 64 条网页连接、每个中继实例最多 64 个在途 HTTP 请求，正文分块
-32 KiB 并逐块确认，文件不会整体读入内存。
-0.2.0 使用传输协议 2：原版 Mux 完整消息最多 8 MiB，经设备连接拆成 32 KiB
-字节块，逐块确认并保持每条网页连接的消息顺序；单个设备方向的待发送与重组
+32 KiB，文件不会整体读入内存。
+0.2.6 使用传输协议 3，中继与插件必须同为协议 3，旧版插件会被判为版本不兼容。
+HTTP 正文与原版 Mux 消息都按 32 KiB 分块，每条流最多 16 块未确认（滑动窗口），
+中继在浏览器取走一块后才确认，往返延迟不再按块累加。脚本、样式、JSON 等文本响应
+在设备连接上以 gzip 传输，由中继还原后交给浏览器。
+原版 Mux 完整消息最多 8 MiB，保持每条网页连接的消息顺序；单个设备方向的待发送与重组
 缓冲合计最多 16 MiB，单连接排队最多 1024 条消息，允许终端按键等小消息突发。
 慢消费者、乱序或超限只关闭
 对应网页流，其他标签页继续使用。超时或重连会释放未完成片段，不重放调用。
-中继继续接受旧版插件的协议 1（原版消息仍限 4 MiB）。HTTP 文件正文独立流式传输。
 更大的历史快照仍需要原版分页支持，不承诺无限消息大小。
 
 带内容修订号的 `/plugins/` 和 `/assets/` 成功响应可在浏览器私有缓存中复用，
@@ -60,8 +62,8 @@ Cloudflare 是 TLS 终点，中继会处理传输内容；本版不提供端到�
    `0.1.7-rc.2` 等旧版需要先升级：`npm install -g @deepseek-ai/dsh@0.2.1-rc.4`，然后重新启动 DSH。
    在 Weft 首页选择「连接本地 DSH」，输入名称并点击「生成配对码」和「复制配对码」。
 2. 在本地原版 DSH 或桌面 App 的「插件」页添加 npm 包 `@laciaproject/dsh-local-host`，
-   或执行 `dsh plugin --profile web add @laciaproject/dsh-local-host@0.2.5`。桌面 App 也可在完全退出后执行
-   `dsh plugin --profile desktop add @laciaproject/dsh-local-host@0.2.5`（需先打开过一次桌面 App 以初始化 profile）。也可下载
+   或执行 `dsh plugin --profile web add @laciaproject/dsh-local-host@0.2.6`。桌面 App 也可在完全退出后执行
+   `dsh plugin --profile desktop add @laciaproject/dsh-local-host@0.2.6`（需先打开过一次桌面 App 以初始化 profile）。也可下载
    页面提供的 `.tgz`，以其绝对路径安装。它原生声明 `dsh.bundle.patch`。
    安装完成后点击「立即启用」。已装过旧名 `@weft/dsh-local-host` 的用户，应先移除旧包再安装新包；配对文件保留。
 3. 在本机「插件」列表打开「Weft 本地连接」（`@laciaproject/dsh-local-host`）的详情页，直接填写「配对码」并点击「保存并连接」，无需重启。

@@ -18,8 +18,8 @@ Untested releases remain rejected by both the native installer and the relay.
 2. Install `@laciaproject/dsh-local-host` from the native DSH Plugins page.
    Select **Enable now** when installation completes.
    The downloadable tarball remains available for offline installation by absolute path.
-   CLI: `dsh plugin --profile web add @laciaproject/dsh-local-host@0.2.5`, or for Desktop (fully quit, opened once
-   before) `dsh plugin --profile desktop add @laciaproject/dsh-local-host@0.2.5`.
+   CLI: `dsh plugin --profile web add @laciaproject/dsh-local-host@0.2.6`, or for Desktop (fully quit, opened once
+   before) `dsh plugin --profile desktop add @laciaproject/dsh-local-host@0.2.6`.
 3. Open **Plugins → Weft local connection** (`@laciaproject/dsh-local-host`) on the local DSH page, paste the code
    and select **Save and connect**. The plugin saves settings on this computer;
    no JSON download, manual file editing or restart is needed. Settings survive
@@ -60,10 +60,13 @@ V1 supports the native `/api/`, `/plugins/` and `/assets/` routes. Plugins with
 custom root routes, external origins, HMR endpoints, or absolute root resource
 URLs may need mount support. There is no command replay after a disconnect;
 the native client re-establishes streams and refreshes authoritative Host state.
-Protocol 2 carries native messages up to 8 MiB in acknowledged 32 KiB fragments,
-with a 16 MiB aggregate buffer budget per device direction. Slow or overflowing
-streams close individually; interrupted messages are discarded. The server also
-accepts protocol 1 from older connectors. HTTP file bodies remain streamed.
+Protocol 3 carries native messages up to 8 MiB and HTTP bodies in 32 KiB chunks,
+with up to 16 unacknowledged chunks per stream and a 16 MiB aggregate Mux buffer
+budget per device direction. Text responses (scripts, styles, JSON) are gzip
+compressed on the device carrier and restored by the relay. Slow or overflowing
+streams close individually; interrupted messages are discarded. Connector 0.2.6
+and the Weft relay must both speak protocol 3; older connectors are rejected as
+incompatible and must be upgraded.
 
 Releases use the fixed GitHub repository `lacia-hIE/Weft`, workflow
 `publish-local-host.yml`, and environment `npm-production` on `main`. The

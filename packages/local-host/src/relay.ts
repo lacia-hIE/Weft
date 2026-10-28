@@ -1,15 +1,13 @@
 /** Carrier only: the native Host owns RPC, sessions, files and plugin resources. */
-export const LOCAL_PROTOCOL = 'weft-local-host/1';
-export const LOCAL_PROTOCOL_V2 = 'weft-local-host/2';
-export function supportsLocalProtocol(protocol:string|null):boolean{return protocol===LOCAL_PROTOCOL||protocol===LOCAL_PROTOCOL_V2;}
-import {MuxChannel} from '../../local-host-connector/mux.mjs';
+export const LOCAL_PROTOCOL = 'weft-local-host/3';
+import {MuxChannel,WINDOW} from '../../local-host-connector/mux.mjs';
 export const MAX_FRAME = 16 * 1024 * 1024;
-const MAX_MUX_FRAME=4*1024*1024;
 export const CHUNK_BYTES = 32 * 1024;
 const LIMIT = 64;
 type SocketIdentity={role:'host'|'browser';environmentId:string;id?:string;hostId?:string;protocol?:string;connectedAt?:number};
 type Frame={type:string;id:string;[key:string]:unknown};
-type Pending={socket:WebSocket;resolve:(response:Response)=>void;reject:(error:Error)=>void;controller?:ReadableStreamDefaultController<Uint8Array>;ack?:(()=>void)|undefined;responseAck?:boolean;cache:string;timer:ReturnType<typeof setTimeout>;abort:()=>void;cleanup:()=>void};
+// uploaded: chunks sent to the Host and not yet acknowledged; received: response chunks not yet handed to the browser.
+type Pending={socket:WebSocket;resolve:(response:Response)=>void;reject:(error:Error)=>void;controller?:ReadableStreamDefaultController<Uint8Array>;wake?:(()=>void)|undefined;uploaded:number;received:number;cache:string;timer:ReturnType<typeof setTimeout>;abort:()=>void;cleanup:()=>void;settle?:()=>void};
 export function localPath(path:string):boolean {
   path=path.split('?')[0]!;
   return path.startsWith('/')&&!path.startsWith('//')&&!/[\\\r\n\0]/.test(path)&&!/%(?:2f|5c|2e)/i.test(path)
@@ -40,17 +38,18 @@ export class LocalHostRelay {
   host(environmentId:string):WebSocket|undefined{return this.ctx.getWebSockets('local-host').find(socket=>{
     const a=socket.deserializeAttachment() as SocketIdentity;if(a.environmentId!==environmentId||socket.readyState!==1)return false;
     const seen=this.ctx.getWebSocketAutoResponseTimestamp(socket)?.getTime()??a.connectedAt??0;
-    if(a.protocol===LOCAL_PROTOCOL_V2&&Date.now()-seen>75_000){socket.close(1012,'Device heartbeat expired');this.closed(socket);return false;}
+    if(a.protocol!==LOCAL_PROTOCOL){socket.close(1012,'Carrier protocol replaced');this.closed(socket);return false;}
+    if(Date.now()-seen>75_000){socket.close(1012,'Device heartbeat expired');this.closed(socket);return false;}
     return true;
   });}
   disconnect(environmentId:string):void {
     for(const socket of this.ctx.getWebSockets()) {const a=socket.deserializeAttachment() as SocketIdentity|null;if(a?.environmentId===environmentId){if(a.role==='host'){this.channels.get(a.id!)?.close();this.channels.delete(a.id!);}socket.close(1000,'Local environment disconnected');}}
     for(const [id,p] of this.pending)if((p.socket.deserializeAttachment() as SocketIdentity).environmentId===environmentId)this.fail(id,new Error('Local Host disconnected'));
   }
-  acceptHost(environmentId:string,protocol=LOCAL_PROTOCOL):Response {
+  acceptHost(environmentId:string):Response {
     this.disconnect(environmentId);
     const pair=new WebSocketPair(),socket=pair[1];
-    socket.serializeAttachment({role:'host',environmentId,id:crypto.randomUUID(),protocol,connectedAt:Date.now()} satisfies SocketIdentity);
+    socket.serializeAttachment({role:'host',environmentId,id:crypto.randomUUID(),protocol:LOCAL_PROTOCOL,connectedAt:Date.now()} satisfies SocketIdentity);
     this.ctx.acceptWebSocket(socket,['local-host']);
     return new Response(null,{status:101,webSocket:pair[0]});
   }
@@ -73,7 +72,7 @@ export class LocalHostRelay {
       const timer=setTimeout(()=>this.fail(id,new Error('Local Host response timed out')),30_000);
       const resource=new URL(path,'https://local.invalid');
       const cache=request.method==='GET'&&(resource.pathname.startsWith('/plugins/')||resource.pathname.startsWith('/assets/'))&&/^[a-f0-9]{64}$/.test(resource.searchParams.get('rev')??'')?'private, max-age=31536000, immutable':'private, no-store';
-      this.pending.set(id,{socket,resolve,reject,timer,abort,cache,cleanup:()=>{request.signal.removeEventListener('abort',abort);void reader?.cancel().catch(()=>{});}});
+      this.pending.set(id,{socket,resolve,reject,timer,abort,cache,uploaded:0,received:0,cleanup:()=>{request.signal.removeEventListener('abort',abort);void reader?.cancel().catch(()=>{});}});
       request.signal.addEventListener('abort',abort,{once:true});
     });
     void result.catch(()=>{});
@@ -84,7 +83,8 @@ export class LocalHostRelay {
       const upload=(async()=>{
         try {if(reader)for(;;){const chunk=await reader.read();if(chunk.done)break;for(let offset=0;offset<chunk.value.length;offset+=CHUNK_BYTES){
           const p=this.pending.get(id);if(!p)return;
-          await new Promise<void>((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('Upload timed out')),30_000);p.ack=()=>{clearTimeout(timer);resolve();};socket.send(JSON.stringify({type:'chunk',id,body:encode(chunk.value.subarray(offset,offset+CHUNK_BYTES))}));});
+          while(p.uploaded>=WINDOW){await new Promise<void>((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('Upload timed out')),30_000);p.wake=()=>{clearTimeout(timer);resolve();};});if(!this.pending.has(id))return;}
+          p.uploaded++;socket.send(JSON.stringify({type:'chunk',id,body:encode(chunk.value.subarray(offset,offset+CHUNK_BYTES))}));
         }}
         if(this.pending.has(id))socket.send(JSON.stringify({type:'end',id}));
         }catch{this.fail(id,new Error('Local upload failed'));}finally{reader?.releaseLock();}
@@ -101,44 +101,41 @@ export class LocalHostRelay {
     if(typeof data!=='string'||data.length>MAX_FRAME){socket.close(1009,'Frame limit');this.closed(socket);return;}
     if(identity.role==='browser') {
       const host=this.host(identity.environmentId);if(!host||(host.deserializeAttachment() as SocketIdentity).id!==identity.hostId){socket.close(1011,'Local Host offline');return;}
-      if((host.deserializeAttachment() as SocketIdentity).protocol===LOCAL_PROTOCOL_V2){void this.channel(host).send(identity.id!,data).catch(()=>{});return;}
-      if(new TextEncoder().encode(data).length>MAX_MUX_FRAME){socket.close(1009,'Native Mux frame limit');this.closed(socket);return;}
-      host.send(JSON.stringify({type:'ws-data',id:identity.id,text:data}));return;
+      void this.channel(host).send(identity.id!,data).catch(()=>{});return;
     }
     const current=this.host(identity.environmentId)?.deserializeAttachment() as SocketIdentity|undefined;
     if(current?.id!==identity.id)return;
     let frame:Frame;try{frame=JSON.parse(data) as Frame;if(typeof frame.type!=='string'||typeof frame.id!=='string'||frame.id.length>80)throw new Error();}catch{socket.close(1008,'Invalid frame');this.closed(socket);return;}
-    if(identity.protocol===LOCAL_PROTOCOL_V2&&this.channel(socket).handle(frame))return;
-    if(frame.type.startsWith('ws-')){
+    if(this.channel(socket).handle(frame))return;
+    if(frame.type==='ws-close'){
       const browser=this.ctx.getWebSockets('local-browser').find(s=>{const a=s.deserializeAttachment() as SocketIdentity;return a.id===frame.id&&a.environmentId===identity.environmentId&&a.hostId===identity.id;});
-      if(!browser)return;
-      if(frame.type==='ws-data'&&typeof frame.text==='string'){
-        if(identity.protocol===LOCAL_PROTOCOL_V2||new TextEncoder().encode(frame.text).length>MAX_MUX_FRAME){browser.close(1009,'Native Mux frame limit');return;}
-        browser.send(frame.text);
-      }
-      else if(frame.type==='ws-close'){this.channels.get(identity.id!)?.drop(frame.id);browser.close(1011,'Local stream ended');}return;
+      this.channels.get(identity.id!)?.drop(frame.id);browser?.close(1011,'Local stream ended');return;
     }
     const p=this.pending.get(frame.id);if(!p||(p.socket.deserializeAttachment() as SocketIdentity).id!==identity.id)return;
     try {
       clearTimeout(p.timer);p.timer=setTimeout(()=>this.fail(frame.id,new Error('Local Host stream idle timeout')),30_000);
-      if(frame.type==='ack'){const ack=p.ack;p.ack=undefined;ack?.();return;}
+      if(frame.type==='ack'){p.uploaded=Math.max(0,p.uploaded-1);const wake=p.wake;p.wake=undefined;wake?.();return;}
       if(frame.type==='response'){
         if(p.controller)throw new Error('Duplicate response');
         if(!Number.isInteger(frame.status)||Number(frame.status)<200||Number(frame.status)>599||!Array.isArray(frame.headers))throw new Error('Invalid response');
         const headers=new Headers();for(const [key,value] of frame.headers as [string,string][])if(responseHeaders.has(key.toLowerCase()))headers.set(key,value);
         headers.set('cache-control',[200,304].includes(Number(frame.status))?p.cache:'private, no-store');headers.set('x-content-type-options','nosniff');headers.set('vary','Cookie');
-        const body=new ReadableStream<Uint8Array>({start:controller=>{p.controller=controller;},pull:()=>{if(p.responseAck){p.responseAck=false;socket.send(JSON.stringify({type:'ack',id:frame.id}));}},cancel:()=>this.fail(frame.id,new Error('Response cancelled'))},{highWaterMark:1});
-        p.resolve(new Response([204,205,304].includes(Number(frame.status))?null:body,{status:Number(frame.status),headers}));
+        if(frame.encoding!==undefined&&frame.encoding!=='gzip')throw new Error('Invalid encoding');
+        // The queue holds at most WINDOW chunks, so WINDOW minus desiredSize
+        // is what is still queued; every chunk beyond that reached the browser.
+        const settle=()=>{const queued=WINDOW-(p.controller?.desiredSize??WINDOW);for(;p.received>queued;p.received--)socket.send(JSON.stringify({type:'ack',id:frame.id}));};
+        const body=new ReadableStream<Uint8Array>({start:controller=>{p.controller=controller;},pull:settle,cancel:()=>this.fail(frame.id,new Error('Response cancelled'))},{highWaterMark:WINDOW});
+        p.settle=settle;
+        p.resolve(new Response([204,205,304].includes(Number(frame.status))?null:frame.encoding==='gzip'?body.pipeThrough(new DecompressionStream('gzip') as unknown as TransformStream<Uint8Array,Uint8Array>):body,{status:Number(frame.status),headers}));
       }else if(frame.type==='chunk'&&typeof frame.body==='string'){
-        if(!p.controller||p.responseAck)throw new Error('Response overflow');p.controller.enqueue(decode(frame.body));
-        if((p.controller.desiredSize??0)>0)socket.send(JSON.stringify({type:'ack',id:frame.id}));else p.responseAck=true;
+        if(!p.controller||p.received>=WINDOW)throw new Error('Response overflow');p.controller.enqueue(decode(frame.body));p.received++;p.settle?.();
       }else if(frame.type==='end'){
         p.controller?.close();clearTimeout(p.timer);p.cleanup();this.pending.delete(frame.id);
       }else if(frame.type==='error')this.fail(frame.id,new Error('Local Host operation failed'));
       else throw new Error('Invalid frame');
     }catch{this.fail(frame.id,new Error('Invalid local response'));}
   }
-  private fail(id:string,error:Error):void {const p=this.pending.get(id);if(!p)return;clearTimeout(p.timer);p.cleanup();this.pending.delete(id);p.ack?.();p.reject(error);try{p.controller?.error(error);}catch{}try{p.socket.send(JSON.stringify({type:'cancel',id}));}catch{}}
+  private fail(id:string,error:Error):void {const p=this.pending.get(id);if(!p)return;clearTimeout(p.timer);p.cleanup();this.pending.delete(id);p.wake?.();p.reject(error);try{p.controller?.error(error);}catch{}try{p.socket.send(JSON.stringify({type:'cancel',id}));}catch{}}
   closed(socket:WebSocket):void {
     const a=socket.deserializeAttachment() as SocketIdentity;
     if(a.role==='host'){this.channels.get(a.id!)?.close();this.channels.delete(a.id!);for(const [id,p] of this.pending)if((p.socket.deserializeAttachment() as SocketIdentity).id===a.id)this.fail(id,new Error('Local Host disconnected'));for(const browser of this.ctx.getWebSockets('local-browser'))if((browser.deserializeAttachment() as SocketIdentity).hostId===a.id)browser.close(1011,'Local Host disconnected');}
