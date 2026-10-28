@@ -27,7 +27,7 @@ Weft is an independent adaptation of [DeepSeek Harness](https://github.com/deeps
 | Native Cordis bundles | Install npm packages declaring `dsh.bundle.patch`, or review and load agent-written plugins |
 | Local DSH connection | Use your local Host's workbench, files, plugins and terminals through an outbound connection |
 
-Environment copies exclude conversation history, managed credentials and running processes. Local Host connections support DSH `0.2.1-rc.2` and `0.2.1-rc.3`.
+Environment copies exclude conversation history, managed credentials and running processes. Local Host connections support DSH `0.2.1-rc.2`, `0.2.1-rc.3` and `0.2.1-rc.4`, from `dsh web` or DeepSeek Harness Desktop.
 
 ## Quick start
 

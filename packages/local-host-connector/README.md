@@ -1,22 +1,25 @@
 # Weft local Host connector
 
-A native DSH Host plugin for **DSH 0.2.1-rc.2 and 0.2.1-rc.3**, installed through the original
+A native DSH Host plugin for **DSH 0.2.1-rc.2, 0.2.1-rc.3 and 0.2.1-rc.4**, installed through the original
 `dsh.bundle.patch` mechanism. Run `dsh web` with its loopback listener. The
 connector opens an outbound TLS WebSocket to your Weft deployment; no inbound
 port or local certificate is needed with the default HTTP loopback listener.
-Install in the `dsh web` profile; a Desktop-only IPC Host is not supported in V1.
+Install it in the `dsh web` profile or in DeepSeek Harness Desktop: Desktop's Host runs the same npm release
+with its `desktop` profile on a random loopback port, so the connector works unchanged. While Desktop is fully
+quit or restarting for an update, the Weft environment shows offline and reconnects when the Host starts.
 
 Connector 0.2.x supports both releases and adds native connection settings and
 fragmented transport. Existing pairing files can be kept. As of 2026-10-25 the
 newest published release is rc.3 (`next`); npm `latest` still resolves to rc.2.
-Install rc.3 explicitly with `npm install -g @deepseek-ai/dsh@0.2.1-rc.3`.
+Install the newest explicitly with `npm install -g @deepseek-ai/dsh@0.2.1-rc.4`.
 Untested releases remain rejected by both the native installer and the relay.
 
 1. In Weft, choose **连接本地 DSH**, generate a connection and copy its pairing code.
 2. Install `@laciaproject/dsh-local-host` from the native DSH Plugins page.
    Select **Enable now** when installation completes.
    The downloadable tarball remains available for offline installation by absolute path.
-   CLI: `dsh plugin --profile web add @laciaproject/dsh-local-host@0.2.4`.
+   CLI: `dsh plugin --profile web add @laciaproject/dsh-local-host@0.2.5`, or for Desktop (fully quit, opened once
+   before) `dsh plugin --profile desktop add @laciaproject/dsh-local-host@0.2.5`.
 3. Open **Plugins → Weft local connection** (`@laciaproject/dsh-local-host`) on the local DSH page, paste the code
    and select **Save and connect**. The plugin saves settings on this computer;
    no JSON download, manual file editing or restart is needed. Settings survive
@@ -28,7 +31,7 @@ Untested releases remain rejected by both the native installer and the relay.
 4. Return to Weft. The environment becomes available when DSH connects.
 
 Older DSH versions, including `0.1.7-rc.2`, must be upgraded first:
-`npm install -g @deepseek-ai/dsh@0.2.1-rc.3`, then restart `dsh web`.
+`npm install -g @deepseek-ai/dsh@0.2.1-rc.4`, then restart `dsh web`.
 The connector reports an upgrade instruction when the Host cannot publish its release identity.
 
 If an earlier tarball installed `@weft/dsh-local-host`, remove that bundle before

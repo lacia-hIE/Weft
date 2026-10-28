@@ -2,8 +2,10 @@
 
 当前目标为 **DSH `0.2.1-rc.3`**，提交 `1f81c047fc48fa190a683e469daa699857e9afe8`。这是固定的适配基线，不随 npm `latest` 或上游分支自动更新。
 
-本地 Host 连接插件独立支持 `0.2.1-rc.2` 与最新发布的 `0.2.1-rc.3`
-（提交 `1f81c047fc48fa190a683e469daa699857e9afe8`）。rc.2 → rc.3 的
+本地 Host 连接插件独立支持 `0.2.1-rc.2`、`0.2.1-rc.3` 与最新发布的 `0.2.1-rc.4`。rc.3 → rc.4（`504a01a9578abc2c6f1fb896b1dc322c9fe24f66`）
+只改动对话会话骨架、DeepSeek 账号提供方和 MCP 客户端连接（ACP 诊断不再写入 stdout），连接插件依赖的 WebServer、
+浏览器认证、Client Modules 与 Remote 协议未变。桌面 App 的 Host 以 `desktop` profile 运行同一发布版，CI 以 rc.4 验证该启动方式。
+rc.3 为提交 `1f81c047fc48fa190a683e469daa699857e9afe8`；rc.2 → rc.3 的
 WebServer、Client Modules、Connection、Session 存储格式和 Host Remote 协议实现
 未变；Client Session 接口仅调整注释。rc.3 的原版客户端包含插件入口菜单与
 空白会话草稿复用修复，整体由本机 Host 提供，不混入云端的 Boot Graph。

@@ -1,12 +1,17 @@
 # 使用本地 DSH 环境
 
-本地模式支持 **DSH 0.2.1-rc.2、0.2.1-rc.3**。本机运行原版 `dsh web`，安装
-`@laciaproject/dsh-local-host` Host 组合包；Weft 提供环境目录、设备配对与出站连接中继。
+本地模式支持 **DSH 0.2.1-rc.2、0.2.1-rc.3、0.2.1-rc.4**。本机运行原版 `dsh web` 或
+DeepSeek Harness 桌面 App，安装 `@laciaproject/dsh-local-host` Host 组合包；Weft 提供环境目录、设备配对与出站连接中继。
 会话、预设、模型凭据、工作区、Git、终端和插件均由本地 Host 管理。
-第一版接入原版 `dsh web` profile；仅有 Desktop IPC 的宿主暂不支持。
 
-截至 2026-10-25，最新发布版为 `0.2.1-rc.3`（npm `next`），npm `latest`
-仍为 `0.2.1-rc.2`。要使用 rc.3，执行 `npm install -g @deepseek-ai/dsh@0.2.1-rc.3`。
+桌面 App 内置的 Host 与 `dsh web` 是同一个 npm 发布版：它以 `desktop` profile 调用原版 `runProfile`，
+在 `127.0.0.1` 的随机端口监听，插件 profile 由 Web 模板初始化。连接插件依赖的 WebServer、浏览器认证与
+Client Modules 两者一致，因此无需单独的桌面版本。关闭窗口只是隐藏，Host 和任务继续运行；完全退出或更新重启期间，
+Weft 中的环境显示离线，Host 重新启动后自动重连。仅依赖 Electron 私有 IPC 的能力（账号登录窗口、更新提示、原生拖放）
+不经过 Weft 中转。
+
+截至 2026-10-28，最新发布版为 `0.2.1-rc.4`。要使用 rc.4，执行 `npm install -g @deepseek-ai/dsh@0.2.1-rc.4`；
+桌面 App 按自身渠道更新。
 已安装旧连接插件的用户可下载并升级到 **0.2.1**，再升级本地 DSH；
 已有配对配置及本地数据可以保留。插件安装器、Host 和中继使用同一份明确的
 版本清单，未审查的后续版本会被拒绝。CI 分别安装这两个 npm 原版验证原生
@@ -51,11 +56,12 @@ Cloudflare 是 TLS 终点，中继会处理传输内容；本版不提供端到�
 
 ## 用户安装
 
-1. 本机先运行 DSH `0.2.1-rc.2` 或 `0.2.1-rc.3` 的 `dsh web`。`0.1.7-rc.2` 等旧版需要先升级：
-   `npm install -g @deepseek-ai/dsh@0.2.1-rc.3`，然后重新启动 DSH。
+1. 本机先运行 DSH `0.2.1-rc.2`、`0.2.1-rc.3` 或 `0.2.1-rc.4` 的 `dsh web`，或打开同版本的 DeepSeek Harness 桌面 App。
+   `0.1.7-rc.2` 等旧版需要先升级：`npm install -g @deepseek-ai/dsh@0.2.1-rc.4`，然后重新启动 DSH。
    在 Weft 首页选择「连接本地 DSH」，输入名称并点击「生成配对码」和「复制配对码」。
-2. 在本地原版 DSH「插件」页添加 npm 包 `@laciaproject/dsh-local-host`，
-   或执行 `dsh plugin --profile web add @laciaproject/dsh-local-host@0.2.4`。也可下载
+2. 在本地原版 DSH 或桌面 App 的「插件」页添加 npm 包 `@laciaproject/dsh-local-host`，
+   或执行 `dsh plugin --profile web add @laciaproject/dsh-local-host@0.2.5`。桌面 App 也可在完全退出后执行
+   `dsh plugin --profile desktop add @laciaproject/dsh-local-host@0.2.5`（需先打开过一次桌面 App 以初始化 profile）。也可下载
    页面提供的 `.tgz`，以其绝对路径安装。它原生声明 `dsh.bundle.patch`。
    安装完成后点击「立即启用」。已装过旧名 `@weft/dsh-local-host` 的用户，应先移除旧包再安装新包；配对文件保留。
 3. 在本机「插件」列表打开「Weft 本地连接」（`@laciaproject/dsh-local-host`）的详情页，直接填写「配对码」并点击「保存并连接」，无需重启。

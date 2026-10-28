@@ -36,7 +36,7 @@ Weft 适合希望自行托管 Web 编程助手、通过浏览器访问远程工�
 | Worker 数据与文档处理 | 可恢复的 JavaScript 任务、原版审批流程，以及通过 Cloudflare Workers AI 将 Office、PDF、图片等内容提取为 Markdown |
 | Cordis 插件 | 从 npm 安装原版 bundle，或在创造模式下由 Agent 编写插件，审核后加载 |
 | 用户隔离 | 使用 Cloudflare Access 身份，将数据与运行权限限定在所属用户和环境 |
-| 本地 DSH 环境 | 安装原生 Host 连接插件，通过出站连接在 Web 使用本机的会话、插件、文件与终端；支持 DSH `0.2.1-rc.2`、`0.2.1-rc.3` |
+| 本地 DSH 环境 | 安装原生 Host 连接插件，通过出站连接在 Web 使用本机的会话、插件、文件与终端；支持 DSH `0.2.1-rc.2`、`0.2.1-rc.3`、`0.2.1-rc.4` 的 `dsh web` 和桌面 App |
 
 本地模式从首页「连接本地 DSH」开始，复制配对码，在本机 DSH 的插件页安装
 `@laciaproject/dsh-local-host`，粘贴配对码并点击「保存并连接」。配置由插件保存，无需下载 JSON。
