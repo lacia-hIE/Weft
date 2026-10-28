@@ -2,7 +2,13 @@ import WebSocket from 'ws';
 import {MuxChannel,MAX_MUX_BYTES,WINDOW} from './mux.mjs';
 const PROTOCOL='weft-local-host/3',CHUNK=32*1024,MAX_FRAME=16*1024*1024,MAX_ACTIVE=64,BACKLOG=8*1024*1024;
 // Only the private carrier is compressed; the relay restores the native bytes.
-const compressible=type=>/^(?:text\/|application\/(?:javascript|json|xml|wasm)|image\/svg\+xml)/i.test(type??'');
+// Event streams stay uncompressed because gzip holds bytes until it flushes.
+const compressible=type=>!/^text\/event-stream/i.test(type??'')&&/^(?:text\/[\w.+-]+|application\/(?:javascript|json|xml|wasm)|image\/svg\+xml)\s*(?:;|$)/i.test(type??'');
+// gzip emits many small pieces; full chunks keep each window slot carrying 32 KiB.
+const rechunk=()=>{let pending=new Uint8Array(0);return new TransformStream({
+  transform(chunk,controller){const joined=new Uint8Array(pending.length+chunk.length);joined.set(pending);joined.set(chunk,pending.length);let offset=0;for(;joined.length-offset>=CHUNK;offset+=CHUNK)controller.enqueue(joined.subarray(offset,offset+CHUNK));pending=joined.slice(offset);},
+  flush(controller){if(pending.length)controller.enqueue(pending);},
+});};
 const allowed=value=>{if(typeof value!=='string')return false;const path=value.split('?')[0];return path.startsWith('/')&&!path.startsWith('//')&&!/[\\\r\n\0]/.test(path)&&!/%(?:2f|5c|2e)/i.test(path)&&!path.split(/[/?#]/).includes('..')&&(path==='/'||path.startsWith('/api/')||path.startsWith('/plugins/')||path.startsWith('/assets/'));};
 const headersAllowed=new Set(['content-type','accept','range','if-none-match','if-modified-since']);
 const replyHeaders=new Set(['content-type','content-disposition','etag','last-modified','accept-ranges','content-range']);
@@ -76,7 +82,7 @@ export function runTunnel(socket,{origin,cookie,signal,onOpen=()=>{}}) {
         clearTimeout(state.timer);
         const gzip=response.status===200&&response.body!==null&&!response.headers.has('content-range')&&compressible(response.headers.get('content-type'));
         send({type:'response',id,status:response.status,headers:[...response.headers].filter(([key])=>replyHeaders.has(key)),...(gzip?{encoding:'gzip'}:{})});
-        await sendBody(id,gzip?response.body.pipeThrough(new CompressionStream('gzip')):response.body,state);
+        await sendBody(id,gzip?response.body.pipeThrough(new CompressionStream('gzip')).pipeThrough(rechunk()):response.body,state);
       }catch{try{send({type:'error',id});}catch{}}
       finally{release(id);}
     })();
