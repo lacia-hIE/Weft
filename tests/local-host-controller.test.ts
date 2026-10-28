@@ -7,13 +7,14 @@ import {join} from 'node:path';
 import {createController} from '../packages/local-host-connector/controller.mjs';
 // @ts-expect-error Published Node plugin is JavaScript.
 import {apply} from '../packages/local-host-connector/index.mjs';
+import {SUPPORTED_DSH_VERSIONS} from '../packages/local-host-connector/compatibility.mjs';
 
 test('older Hosts without release identity report an upgrade instruction before starting a connection',async()=>{
   for(const graph of [{entries:[]},undefined,{release:{version:'0.1.7-rc.2'}}]){
     await assert.rejects(apply({clientModules:{graph:()=>graph}}),error=>{
       assert.ok(error instanceof Error);assert.equal(error.name,'Error');
-      assert.match(error.message,/supports DSH 0\.2\.1-rc\.2, 0\.2\.1-rc\.3/);
-      assert.match(error.message,/npm install -g @deepseek-ai\/dsh@0\.2\.1-rc\.3/);
+      assert.ok(error.message.includes(`supports DSH ${SUPPORTED_DSH_VERSIONS.join(', ')}`),error.message);
+      assert.ok(error.message.includes(`npm install -g @deepseek-ai/dsh@${SUPPORTED_DSH_VERSIONS.at(-1)}`),error.message);
       return true;
     });
   }
