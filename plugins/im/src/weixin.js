@@ -1,7 +1,7 @@
 import Schema from '@deepseek-ai/schemastery';
 import {background, header, json, sleep} from './shared.js';
 import {qrSvg} from './qr.js';
-import {botSettings} from './management.js';
+import {botSettings, channelSettings, registerModelCatalog} from './management.js';
 
 const BASE = 'https://ilinkai.weixin.qq.com/';
 const PROTOCOL = '2.4.6';
@@ -47,6 +47,7 @@ export const Config = Schema.object({
 });
 
 export async function apply(ctx, config) {
+  registerModelCatalog(ctx, 'weixin', config);
   const domain = await ctx.storageDomain.open(DOMAIN);
   ctx.effect(() => () => domain.close(), 'dsh-im weixin storage');
   const state = () => domain.global.get();
@@ -147,9 +148,8 @@ export async function apply(ctx, config) {
   if (!config.enabled) return;
 
   ctx.effect(() => ctx.im.channel('weixin', {
-    workspace: config.workspace, agentPreset: config.agentPreset,
+    ...channelSettings(config, () => state().owner, () => state().botId),
     maxChars: config.maxChars,
-    allows: sender => sender === state().owner || config.allowedSenders.includes(sender),
     async send(target, text) {
       const current = state();
       if (current.state !== 'online') throw new Error('WeChat account is not logged in');

@@ -22,9 +22,10 @@ export async function apply(ctx){
     const bytes=(await poll.arrayBuffer()).byteLength;
     await write('poll.txt',poll.status+':'+bytes);
     const socket=new WebSocket('wss://gateway.example.test/socket');
+    socket.binaryType='arraybuffer';
     const received=[];
     socket.addEventListener('open',()=>socket.send('hello'));
-    socket.addEventListener('message',event=>{received.push(String(event.data));if(received.length===1)socket.send('x'.repeat(2*1024*1024));});
+    socket.addEventListener('message',event=>{received.push(typeof event.data==='string'?event.data:'binary:'+Array.from(new Uint8Array(event.data)).join(','));if(received.length===1)socket.send(new Uint8Array([0,255,42]).buffer);else socket.send(new Uint8Array(2*1024*1024).buffer);});
     socket.addEventListener('close',event=>{void write('socket.txt',received.join(',')+'|'+event.code);});
   })().catch(error=>write('error.txt',String(error?.stack??error)));
 }`;
@@ -40,7 +41,10 @@ test('an environment Host long-polls, streams large bodies and holds a bounded o
       assert.equal(request.headers.get('upgrade')?.toLowerCase(), 'websocket');
       const pair = new WebSocketPair(), client = pair[0], server = pair[1];
       server.accept();
-      server.addEventListener('message', event => {if (event.data === 'hello') server.send('welcome');});
+      server.addEventListener('message', event => {
+        if (event.data === 'hello') server.send('welcome');
+        else {assert.ok(event.data instanceof ArrayBuffer); assert.deepEqual([...new Uint8Array(event.data)], [0, 255, 42]); server.send(event.data);}
+      });
       return new Response(null, {status: 101, webSocket: client});
     }
     return request.url === fixture.manifest.dist.tarball ? new Response(fixture.bytes) : Response.json(fixture.manifest);
@@ -59,7 +63,7 @@ test('an environment Host long-polls, streams large bodies and holds a bounded o
     assert.equal((await runtime.dispatchFetch(url('alpha', base + '/native/package-installations'), {method: 'POST', headers: {'content-type': 'application/json'},
       body: JSON.stringify({operation: 'approve', name: row.name, digest: row.digest, permissions: {...row.permissions, network: true}})})).status, 200);
     assert.equal(await wait('poll.txt'), '200:1200000', 'Environment egress waits for held headers and streams beyond the session buffer');
-    assert.equal(await wait('socket.txt'), 'welcome|1009', 'The relay delivers messages and closes on an oversized one');
+    assert.equal(await wait('socket.txt'), 'welcome,binary:0,255,42|1009', 'The relay preserves binary frames and closes on an oversized binary message');
     assert.equal(handshakes, 1);
     assert.equal(await read('error.txt'), undefined);
   } finally {await runtime.dispose();}

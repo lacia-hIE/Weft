@@ -95,7 +95,7 @@ export async function pluginFetch(request: Request, authorized: () => Promise<vo
 
 /** Codes a peer may send; reserved and absent codes close normally. */
 const closeCode = (code: number) => code === 1000 || (code >= 1001 && code <= 1014 && ![1004, 1005, 1006].includes(code)) || (code >= 3000 && code <= 4999) ? code : 1000;
-const messageSize = (data: unknown) => typeof data === 'string' ? data.length : data instanceof ArrayBuffer ? data.byteLength : ArrayBuffer.isView(data) ? data.byteLength : 0;
+const messageSize = (data: unknown) => typeof data === 'string' ? data.length : data instanceof ArrayBuffer ? data.byteLength : ArrayBuffer.isView(data) ? data.byteLength : data instanceof Blob ? data.size : 0;
 /**
  * Relay one outbound WebSocket through a pair the plugin holds. The relay owns
  * the remote socket, so revocation and the message budget close both sides.
@@ -106,6 +106,9 @@ async function socket(url: URL, request: Request, authorized: () => Promise<void
   if (!remote) return new Response(response.body, {status: response.status, statusText: response.statusText, headers: response.headers});
   await authorized().catch(error => {remote.accept(); remote.close(1008, 'Plugin network capability was revoked'); throw error;});
   const [client, server] = Object.values(new WebSocketPair()) as [WebSocket, WebSocket];
+  // Binary frames must remain bytes across both relay legs. With the browser
+  // default, message.data is a Blob and send() coerces it to "[object Blob]".
+  remote.binaryType = 'arraybuffer'; server.binaryType = 'arraybuffer';
   remote.accept(); server.accept();
   let closed = false;
   const close = (code: number, reason: string) => {

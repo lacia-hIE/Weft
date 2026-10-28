@@ -13,6 +13,7 @@ import {startLocalDsh} from '../helpers/local-dsh.ts';
 import {buildPackage} from '../../apps/plugin-builder/server.mjs';
 import {Response as FixtureResponse} from 'miniflare';
 import type {V4FetchHandler} from 'miniflare';
+import {imQrFixture} from '../helpers/im-qr.ts';
 
 // Test-only bridge. Production serves directly from the authenticated Worker.
 // Native Access identities are supplied by Miniflare, never application headers.
@@ -31,21 +32,17 @@ const key = live
   : undefined;
 if (live && !key) throw new Error("Missing live model configuration");
 const runtimeDirectory = subagents ? mkdtempSync(join(tmpdir(), 'weft-browser-subagents-')) : undefined;
+const imGateway = process.env.WEFT_BROWSER_IM === '1' ? imQrFixture() : undefined;
 const im: {packages?: boolean; packageBuilder?: V4FetchHandler; outbound?: V4FetchHandler} = process.env.WEFT_BROWSER_IM === '1' ? {
   packages: true,
   packageBuilder: async request => FixtureResponse.json(await buildPackage(JSON.parse(await request.text()))),
-  outbound: async request => {
+  outbound: async (request, mf) => {
     const url = new URL(request.url);
-    if (url.hostname === 'open.feishu.cn' && url.pathname.endsWith('/tenant_access_token/internal')) {
-      const body = await request.json() as {app_secret?: string};
-      return FixtureResponse.json(body.app_secret === 'invalid-fixture' ? {code: 1, msg: 'secret echo: invalid-fixture'} : {code: 0, tenant_access_token: 'fixture-token', expire: 7200});
-    }
-    if (url.hostname === 'bots.qq.com') return FixtureResponse.json({access_token: 'qq-fixture-token', expires_in: '7200'});
     if (url.hostname === 'ilinkai.weixin.qq.com') {
       if (url.pathname.endsWith('/get_bot_qrcode')) return FixtureResponse.json({qrcode: 'browser-qr', qrcode_img_content: 'https://liteapp.weixin.qq.com/q/browser-qr'});
       if (url.pathname.endsWith('/get_qrcode_status')) return FixtureResponse.json({status: 'wait'});
     }
-    return new FixtureResponse('Not found', {status: 404});
+    return imGateway!.outbound(request, mf);
   },
 } : {};
 const modelOptions = key
@@ -68,6 +65,11 @@ const cert = join(tlsDirectory, 'cert.pem'), keyFile = join(tlsDirectory, 'key.p
 execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', keyFile, '-out', cert, '-subj', '/CN=localhost', '-addext', 'subjectAltName=IP:127.0.0.1,DNS:localhost', '-days', '1'], {stdio: 'ignore'});
 const server = createSecureServer({key: readFileSync(keyFile), cert: readFileSync(cert), allowHTTP1: true}, async (request, response) => {
   try {
+    if (imGateway && request.url === '/__test/im-qr' && request.method === 'POST') {
+      const input: Buffer[] = []; for await (const part of request) input.push(Buffer.from(part));
+      const {channel, mode} = JSON.parse(Buffer.concat(input).toString()) as {channel: 'qq' | 'feishu'; mode: 'wait' | 'confirm' | 'expire' | 'deny' | 'invalid'};
+      imGateway.mode(channel, mode); response.writeHead(204); response.end(); return;
+    }
     if(localDsh&&request.url==='/__test/local-host'){
       const fixture=await localFixture;response.writeHead(200,{'content-type':'application/json'});response.end(JSON.stringify({project:fixture?.project,base:fixture?.base,localUrl:fixture?.localUrl,pairingCode:fixture?.pairingCode,bundlePath:fixture?.bundlePath}));return;
     }
@@ -144,6 +146,7 @@ server.listen(4173, "127.0.0.1", () => {
   console.log("Browser verification server ready on 4173");
 });
 async function close(): Promise<void> {
+  imGateway?.close();
   if(localFixture)await(await localFixture.catch(()=>undefined))?.stop();
   for(const socket of sockets.clients)socket.terminate();sockets.close();
   server.close();

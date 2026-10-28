@@ -56,8 +56,11 @@ export function background(ctx, name, work) {
   return {signal: controller.signal, abort: reason => controller.abort(reason), pending};
 }
 export const sleep = (ms, signal) => new Promise((resolve, reject) => {
-  const timer = setTimeout(resolve, ms);
-  signal?.addEventListener('abort', () => {clearTimeout(timer); reject(signal.reason);}, {once: true});
+  if (signal?.aborted) {reject(signal.reason); return;}
+  const done = () => {signal?.removeEventListener('abort', abort); resolve();};
+  const timer = setTimeout(done, ms);
+  const abort = () => {clearTimeout(timer); signal?.removeEventListener('abort', abort); reject(signal.reason);};
+  signal?.addEventListener('abort', abort, {once: true});
 });
 
 /** A cached bearer token refreshed shortly before it expires. */

@@ -797,7 +797,7 @@ export class SessionDO extends DurableObject<Env> {
     return {sessionId: header.id, updatedAt: last.time ?? header.createdAt, running: active?.status === 'running', agentAvailable: active !== undefined, blank: !turn, ...(header.cwd ? {cwd: header.cwd} : {}), formatStatus: 'current' as const};
   }
 
-  async nativeSelectModel(input: SessionScope, raw: unknown): Promise<Response> {
+  async nativeSelectModel(input: SessionScope, raw: unknown, persistDefault = true): Promise<Response> {
     const scope = this.assertScope(input);
     const {request} = sessionRemote.methods['session/selectModel'].input({strict: true}).create().parse({request: raw});
     if (request.sessionId !== scope.sessionId) throw new Error('Session identity mismatch');
@@ -813,7 +813,7 @@ export class SessionDO extends DurableObject<Env> {
     });
     await this.publishNativeSummary(scope);
     const owner = controlScope(scope.tenantId, scope.environmentId);
-    await controlFor(this.env, owner).nativeSaveDefaultModel(owner, value.selected);
+    if (persistDefault) await controlFor(this.env, owner).nativeSaveDefaultModel(owner, value.selected);
     return Response.json(sessionRemote.methods['session/selectModel'].result.create().parse(value));
   }
 

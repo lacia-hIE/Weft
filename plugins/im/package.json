@@ -1,6 +1,6 @@
 {
   "name": "@weft/dsh-im",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Connect Feishu, WeChat and QQ conversations to DeepSeek Harness Sessions.",
   "license": "MIT",
   "type": "module",
@@ -12,7 +12,7 @@
     "./qq": "./src/qq.js",
     "./package.json": "./package.json"
   },
-  "files": ["src", "cordis.patch.yml", "README.md", "THIRD_PARTY_NOTICES.md"],
+  "files": ["src", "cordis.patch.yml", "README.md", "PARITY.md", "THIRD_PARTY_NOTICES.md"],
   "dsh": {
     "client": {"platform": "web"},
     "bundle": {"patch": "./cordis.patch.yml"}

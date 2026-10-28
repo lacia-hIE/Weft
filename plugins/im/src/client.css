@@ -179,9 +179,11 @@
 .weft-im .im-callback input {width: 100%; font-size: 11px;}
 .weft-im .im-notice {margin: 0; padding: 9px 11px; border: 1px solid var(--dsw-alias-border-l1, #eef0f3); border-radius: 8px; background: var(--dsw-alias-bg-module-platform, #f7f8fa); font-size: 12px; overflow-wrap: anywhere;}
 .weft-im .im-error {color: var(--dsw-alias-state-error-primary, #d54941); border-color: color-mix(in srgb, #d54941 25%, transparent); background: color-mix(in srgb, #d54941 6%, transparent);}
-.weft-im .im-settings {display: grid; gap: 12px;}
+.weft-im .im-settings {min-width: 0; display: grid; gap: 12px;}
+.weft-im .dim-botSettingsTabPanel {min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px;}
 .weft-im .im-settings h3 {margin: 0; font-size: 17px;}
-.weft-im .im-checkbox {display: flex; align-items: center; gap: 8px;}
+.weft-im .im-checkbox {min-width: 0; display: flex; align-items: center; gap: 8px; overflow-wrap: anywhere;}
+.weft-im .im-checkbox input {flex-shrink: 0;}
 .weft-im .im-bot-options {display: grid; gap: 6px; margin: 12px 0;}
 .weft-im .im-card-footer {display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; border-top: 1px solid var(--dsw-alias-border-l1, #eef0f3); padding-top: 10px;}
 .weft-im .im-card-footer .im-button {font-size: 12px; min-height: 30px; padding: 4px 8px;}
@@ -215,6 +217,14 @@
   .weft-im .im-channel-toolbar {align-items: flex-start; flex-wrap: wrap;}
 }
 @media (pointer: coarse) {.weft-im .im-button, .weft-im .dim-channel {min-height: 44px;}}
+.weft-im .im-settings-scene {min-width: 0; margin: 0; padding: 16px; border: 1px solid var(--dsw-alias-border-primary, #dfe2e7); border-radius: 12px; display: grid; gap: 14px;}
+.weft-im .im-settings-scene legend {padding: 0 6px; font-weight: 600;}
+.weft-im .im-policy-user {display: flex; align-items: end; flex-wrap: wrap; gap: 12px;}
+.weft-im .im-policy-user .dim-credentialField {flex: 1 1 160px;}
+.weft-im .im-context-fields {min-width: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(130px, 100%), 1fr)); gap: 12px;}
+.weft-im .im-model-settings {display: grid; gap: 12px; min-width: 0;}
+.weft-im .dim-botSettingsTabsBar {overflow-x: auto;}
+.weft-im .dim-botSettingsTabsList {width: max-content; min-width: 100%;}
 @media (prefers-reduced-motion: reduce) {.weft-im *, .weft-im *::after {transition: none !important;}}
 .weft-im .dim-panel .dim-workspacePath {min-width: 0; max-width: 100%; grid-column: 1 / -1; grid-row: 2; display: block; overflow: hidden; color: var(--dsw-alias-label-primary, #1f2329); font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; white-space: normal;}
 @container (max-width: 480px) {

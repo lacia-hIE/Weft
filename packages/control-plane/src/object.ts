@@ -713,6 +713,11 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
   }
   async nativePackageSession(scope: ControlScope, receipt: {name: string; digest: string; activationId: string}, method: string, raw: unknown): Promise<unknown> {
     this.nativePackageAuthorize(scope, receipt, 'sessions');
+    if (method === 'modelCatalog') {
+      sessionRemote.methods['session/modelCatalog'].input({strict: true}).create().parse(raw);
+      const {value} = await (await this.nativeModelRemote(scope, 'session/modelCatalog', raw)).json() as {value: unknown};
+      return value;
+    }
     if (method === 'list') {
       sessionRemote.methods['session/list'].input({strict: true}).create().parse({_request: raw});
       return (await this.nativeSessionList(scope)).json();
@@ -738,6 +743,11 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
     if (this.nativeSessionRoot(scope, sessionId) !== sessionId) throw new Error('Session is outside this environment or is not a root Session');
     const address = {...scope, sessionId};
     const target = this.env.SESSIONS.getByName(sessionAddress(address));
+    if (method === 'selectModel') {
+      const {request} = sessionRemote.methods['session/selectModel'].input({strict: true}).create().parse({request: raw});
+      // Bot-specific selection must not change the environment's default model.
+      return (await target.nativeSelectModel(address, request, false)).json();
+    }
     if (method === 'prompt') {
       const {request} = sessionRemote.methods['session/prompt'].input({strict: true}).create().parse({request: raw});
       await target.nativePrompt(address, request); return {accepted: true};

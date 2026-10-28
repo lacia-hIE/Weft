@@ -1,6 +1,10 @@
 import Schema from '@deepseek-ai/schemastery';
 import {bytes, fromHex, header, hex, json, readBody, tokenCache} from './shared.js';
-import {botSettings, managementKey, registerManagement} from './management.js';
+import {botSettings, channelSettings, managementKey, registerModelCatalog} from './management.js';
+
+import {connectionMode, qrAccount} from './qr-account.js';
+import {qqQr} from './qr-providers.js';
+import {qqSocket} from './channel-sockets.js';
 
 const API = 'https://api.sgroup.qq.com';
 const TOKEN = 'https://bots.qq.com/app/getAppAccessToken';
@@ -25,9 +29,9 @@ const concat = (...parts) => {const result = new Uint8Array(parts.reduce((size, 
  * passive replies to C2C and group @ messages through the v2 message API.
  */
 export const name = 'dsh-im-qq';
-export const inject = ['im', 'webServer'];
+export const inject = ['im', 'webServer', 'storageDomain'];
 export const Config = Schema.object({
-  ...botSettings(), managementKey: managementKey(),
+  ...botSettings(), managementKey: managementKey(), connectionMode: connectionMode(),
   enabled: Schema.boolean().default(false).description('Receive callback events at /qq and reply through the QQ bot API.'),
   appId: Schema.string().default('').description('AppID of the bot.'),
   appSecret: Schema.string().role('secret').default('').description('AppSecret; it also signs and verifies callbacks.'),
@@ -35,27 +39,50 @@ export const Config = Schema.object({
   maxChars: Schema.natural().min(200).max(5000).default(2000),
 });
 
-export function apply(ctx, config) {
-  const token = tokenCache(async () => {
-    const response = await fetch(TOKEN, {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({appId: config.appId, clientSecret: config.appSecret})});
+export async function apply(ctx, config) {
+  registerModelCatalog(ctx, 'qq', config);
+  const requestToken = async credentials => {
+    if (!credentials?.appId || !credentials.appSecret) throw new Error('QQ credentials are required');
+    const response = await fetch(TOKEN, {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({appId: credentials.appId, clientSecret: credentials.appSecret})});
     const body = await response.json().catch(() => ({}));
-    if (!response.ok || !body.access_token) throw new Error(`QQ token request failed: ${body.message ?? response.status}`);
+    if (!response.ok || !body.access_token) throw new Error('QQ token request failed');
     return {value: body.access_token, expiresAt: Date.now() + Number(body.expires_in ?? 7200) * 1000};
-  });
-  registerManagement(ctx, 'qq', config, () => token.get());
+  };
+  let gateway;
+  const token = tokenCache(() => requestToken(account.credentials()));
+  const receive = async payload => {
+    if (payload.op !== 0) return;
+    const event = payload.d ?? {};
+    if (payload.t === 'C2C_MESSAGE_CREATE') {
+      const openid = event.author?.user_openid;
+      if (!openid || typeof event.content !== 'string') return;
+      await ctx.im.receive({channel: 'qq', conversation: 'c2c:' + openid, sender: openid, text: event.content, messageId: event.id,
+        target: {kind: 'c2c', id: openid, msgId: event.id}});
+    } else if (payload.t === 'GROUP_AT_MESSAGE_CREATE') {
+      const group = event.group_openid, member = event.author?.member_openid;
+      if (!group || !member || typeof event.content !== 'string') return;
+      await ctx.im.receive({channel: 'qq', conversation: 'group:' + group, sender: member, group: true, text: event.content.replace(/<@!?[^>]+>/g, '').trim(), messageId: event.id,
+        target: {kind: 'group', id: group, msgId: event.id}});
+    }
+  };
+  const account = await qrAccount(ctx, 'qq', config, {...qqQr, validate: requestToken, changed: () => {token.clear(); gateway = undefined;},
+    connect: async (credentials, signal, online) => {
+      try {await (gateway ??= qqSocket(credentials, () => token.get(), receive))(signal, online);}
+      catch (error) {token.clear(); throw error;}
+    }});
   if (!config.enabled) return;
-  if (!config.appSecret) throw new Error('QQ AppSecret is required');
-  const signing = keys(config.appSecret);
-  void signing.catch(() => {});
   const sequences = new Map();
   const post = async (path, body) => {
-    const response = await fetch(`${API}${path}`, {method: 'POST', headers: {'content-type': 'application/json', authorization: `QQBot ${await token.get()}`}, body: JSON.stringify(body)});
-    if (!response.ok) throw new Error(`QQ API ${path} failed: ${response.status} ${(await response.text()).slice(0, 200)}`);
+    for (let retry = 0; ; retry++) {
+      const response = await fetch(`${API}${path}`, {method: 'POST', headers: {'content-type': 'application/json', authorization: `QQBot ${await token.get()}`}, body: JSON.stringify(body)});
+      if (response.status === 401 && retry === 0) {token.clear(); continue;}
+      if (!response.ok) throw new Error(`QQ API ${path} failed: ${response.status}`);
+      return;
+    }
   };
   ctx.effect(() => ctx.im.channel('qq', {
-    workspace: config.workspace, agentPreset: config.agentPreset,
+    ...channelSettings(config, () => account.owner(), () => account.credentials()?.appId),
     maxChars: config.maxChars,
-    allows: sender => config.allowedSenders.includes(sender),
     async send(target, text) {
       const path = target.kind === 'group' ? `/v2/groups/${encodeURIComponent(target.id)}/messages` : `/v2/users/${encodeURIComponent(target.id)}/messages`;
       // Each part of one passive reply needs its own msg_seq for the same msg_id.
@@ -68,6 +95,11 @@ export function apply(ctx, config) {
     },
   }), 'dsh-im qq channel');
 
+  account.launch();
+  if (config.connectionMode === 'qr') return;
+  if (!config.appSecret) throw new Error('QQ AppSecret is required');
+  const signing = keys(config.appSecret);
+  void signing.catch(() => {});
   ctx.effect(() => ctx.webServer.register({kind: 'exact', path: '/qq', handler: async (request, response) => {
     if (request.method !== 'POST') {json(response, 405, {error: 'method not allowed'}); return;}
     const raw = await readBody(request);
@@ -86,18 +118,6 @@ export function apply(ctx, config) {
       json(response, 401, {error: 'invalid signature'}); return;
     }
     json(response, 200, {op: 12, d: 0});
-    if (payload.op !== 0) return;
-    const event = payload.d ?? {};
-    if (payload.t === 'C2C_MESSAGE_CREATE') {
-      const openid = event.author?.user_openid;
-      if (!openid || typeof event.content !== 'string') return;
-      await ctx.im.receive({channel: 'qq', conversation: 'c2c:' + openid, sender: openid, text: event.content, messageId: event.id,
-        target: {kind: 'c2c', id: openid, msgId: event.id}});
-    } else if (payload.t === 'GROUP_AT_MESSAGE_CREATE') {
-      const group = event.group_openid, member = event.author?.member_openid;
-      if (!group || !member || typeof event.content !== 'string') return;
-      await ctx.im.receive({channel: 'qq', conversation: 'group:' + group, sender: member, group: true, text: event.content, messageId: event.id,
-        target: {kind: 'group', id: group, msgId: event.id}});
-    }
+    await receive(payload);
   }}), 'dsh-im qq route');
 }

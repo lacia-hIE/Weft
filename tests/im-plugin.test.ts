@@ -6,8 +6,9 @@ import {setTimeout as delay} from 'node:timers/promises';
 import {Response, type V4FetchHandler} from 'miniflare';
 import type {SettingsDescribeValue} from '@deepseek-ai/dsh-settings/types';
 import type {BundleInfo} from '@deepseek-ai/dsh-plugin-manager/types';
-import type {SessionListValue, SessionPage} from '@deepseek-ai/dsh-api-session-controller/types';
+import type {ModelCatalog, SessionListValue, SessionPage} from '@deepseek-ai/dsh-api-session-controller/types';
 import type {SessionTitleEventData} from '@deepseek-ai/dsh-session-title';
+import type {SessionEventMap} from '@deepseek-ai/dsh-session';
 import {buildPackage} from '../apps/plugin-builder/server.mjs';
 import {createRuntime, tenantId, url} from './helpers/miniflare.ts';
 import {nativeClient} from './helpers/native.ts';
@@ -38,12 +39,21 @@ test('the deployment-bundled IM plugin bridges Feishu, QQ and WeChat conversatio
   const sent: {host: string; path: string; body: Record<string, unknown>; authorization: string | null}[] = [];
   let status = 0, updates = 0;
   let loginMode: 'confirm' | 'wait' | 'expire' = 'confirm';
+  let busyStarted = false, releaseBusy: (() => void) | undefined;
+  const modelCalls: {model: string; output_config?: {effort: string}}[] = [];
   const runtime = createRuntime(undefined, {packages: true,
     bindings: {MODEL_BACKEND: 'deepseek', DEEPSEEK_API_KEY: 'im-fixture', DEEPSEEK_BASE_URL: 'https://im-model.test/anthropic'},
     packageBuilder: async request => Response.json(await buildPackage(JSON.parse(await request.text()))),
     outbound: async (request, mf) => {
       const target = new URL(request.url);
-      if (target.hostname === 'im-model.test') return textModel(request, mf);
+      if (target.hostname === 'im-model.test') {
+        modelCalls.push(await request.clone().json() as typeof modelCalls[number]);
+        if (!busyStarted && (await request.clone().text()).includes('IM_SETTINGS_BUSY_TASK')) {
+          busyStarted = true;
+          await new Promise<void>(resolve => {releaseBusy = resolve;});
+        }
+        return textModel(request, mf);
+      }
       if (target.hostname === 'registry.npmjs.org') {registry++; return new Response('not found', {status: 404});}
       const text = request.method === 'GET' ? '' : await request.text();
       const body = text ? JSON.parse(text) as Record<string, unknown> : {};
@@ -81,6 +91,15 @@ test('the deployment-bundled IM plugin bridges Feishu, QQ and WeChat conversatio
     const form = (await api.call<SettingsDescribeValue>('settings/describe', {})).namespaces.find(row => row.ns === ns);
     assert.ok(form, `${ns} has a native Settings form`);
     await api.call('settings/update', {ns, patch, expectedRevision: form.revision});
+  };
+  const currentPage = async (sessionId: string) => {
+    const stream = await api.follow(sessionId);
+    try {
+      const opening = await stream.next();
+      assert.equal(opening.type, 'snapshot');
+      if (opening.type !== 'snapshot') throw new Error('Expected Session snapshot');
+      return opening;
+    } finally {await stream.close();}
   };
   try {
     // The Plugins page offers the deployment's plugin before installation, without a registry.
@@ -130,9 +149,9 @@ test('the deployment-bundled IM plugin bridges Feishu, QQ and WeChat conversatio
       return await response.json() as {challenge: string};
     }, 'Feishu route');
     assert.deepEqual(challenge, {challenge: 'feishu-challenge'});
-    const feishu = async (messageId: string, openId: string, raw = false, messageText = '请帮忙') => {
+    const feishu = async (messageId: string, openId: string, raw = false, messageText = '请帮忙', group = false) => {
       const event = {schema: '2.0', header: {event_id: crypto.randomUUID(), event_type: 'im.message.receive_v1', token: 'feishu-verify', app_id: 'cli_fixture'},
-        event: {sender: {sender_id: {open_id: openId}, sender_type: 'user'}, message: {message_id: messageId, chat_id: 'oc_chat', chat_type: 'p2p', message_type: 'text', content: JSON.stringify({text: messageText})}}};
+        event: {sender: {sender_id: {open_id: openId}, sender_type: 'user'}, message: {message_id: messageId, chat_id: group ? 'oc_group' : 'oc_chat', chat_type: group ? 'group' : 'p2p', message_type: 'text', content: JSON.stringify({text: messageText})}}};
       const iv = randomBytes(16), cipher = createCipheriv('aes-256-cbc', createHash('sha256').update('feishu-encrypt').digest(), iv);
       const body = JSON.stringify({encrypt: Buffer.concat([iv, cipher.update(JSON.stringify(event)), cipher.final()]).toString('base64')});
       const timestamp = String(Math.floor(Date.now() / 1000)), nonce = 'nonce-' + messageId;
@@ -294,5 +313,89 @@ test('the deployment-bundled IM plugin bridges Feishu, QQ and WeChat conversatio
       assert.doesNotMatch(title, /^(微信|飞书|QQ) · /);
       return true;
     }, 'native automatic title without a channel prefix');
-  } finally {await runtime.dispose();}
+
+    // Scene-specific access applies before commands and native Session admission.
+    const policyScene = (mode: string, users: {id: string; canExecuteCommands: boolean}[] = []) => ({mode,
+      open: {defaultCanExecuteCommands: false, commandPermissionOverrides: users}, allowlist: {users}});
+    await configure('im-feishu', {managementKey: 'settings-regression', groupResponseMode: 'all', busyMessageMode: 'steer',
+      accessPolicy: {direct: policyScene('open', [{id: 'ou_allowed', canExecuteCommands: true}]), group: policyScene('allowlist', [{id: 'ou_group', canExecuteCommands: false}])},
+      contextEnhancement: {direct: {enabled: true, fields: ['channel', 'senderId'], guidance: 'Use only supplied fields.'}, group: {enabled: false, fields: ['senderId'], guidance: ''}}});
+    await waitFor(async () => (await hook('/feishu/status', {headers: {authorization: 'Bearer settings-regression'}})).status === 200 ? true : undefined, 'updated settings activation');
+    const beforeCommands = (await api.call<SessionListValue>('session/list', {_request: {}})).items.length;
+    await feishu('settings-no-command', 'ou_stranger', false, '/new');
+    const commandDenied = await waitFor(() => sent.find(row => row.path === '/open-apis/im/v1/messages/settings-no-command/reply'), 'private command denied');
+    assert.match(commandDenied.body.content as string, /没有执行命令/);
+    await feishu('settings-group-denied', 'ou_stranger', false, 'group access denied', true);
+    const groupDenied = await waitFor(() => sent.find(row => row.path === '/open-apis/im/v1/messages/settings-group-denied/reply'), 'group sender denied');
+    assert.match(groupDenied.body.content as string, /尚未授权/);
+    assert.equal((await api.call<SessionListValue>('session/list', {_request: {}})).items.length, beforeCommands);
+
+    await feishu('settings-open-chat', 'ou_stranger', false, 'SCENE_OPEN_CHAT');
+    await waitFor(() => sent.find(row => row.path === '/open-apis/im/v1/messages/settings-open-chat/reply'), 'open private conversation reply');
+    const privatePage = await currentPage(unlabeled.sessionId);
+    const privateUser = privatePage.records.findLast(record => record.event.type === 'user/message')!.event;
+    const privateText = JSON.stringify(privateUser.data);
+    assert.match(privateText, /dsh_im_source/);
+    assert.match(privateText, /ou_stranger/);
+    assert.match(privateText, /Use only supplied fields/);
+    assert.doesNotMatch(privateText, /chatId|conversationType|botId|threadId/);
+    await feishu('settings-group-chat', 'ou_group', false, 'SCENE_GROUP_CHAT', true);
+    await waitFor(() => sent.find(row => row.path === '/open-apis/im/v1/messages/settings-group-chat/reply'), 'all-message group reply without mention');
+    // Find the group prompt across new Sessions, without depending on generated titles.
+    const newPages = await Promise.all((await api.call<SessionListValue>('session/list', {_request: {}})).items.filter(item => !sessions.items.some(old => old.sessionId === item.sessionId)).map(item => currentPage(item.sessionId)));
+    const groupUser = newPages.flatMap(page => page.records).find(record => record.event.type === 'user/message' && JSON.stringify(record.event.data).includes('SCENE_GROUP_CHAT'));
+    assert.ok(groupUser);
+    assert.doesNotMatch(JSON.stringify(groupUser.event.data), /dsh_im_source|Use only supplied fields/);
+    await feishu('settings-group-stop', 'ou_group', false, '/stop', true);
+    const groupCommandDenied = await waitFor(() => sent.find(row => row.path === '/open-apis/im/v1/messages/settings-group-stop/reply'), 'group command permission denied');
+    assert.match(groupCommandDenied.body.content as string, /没有执行命令/);
+    await feishu('settings-manual-steer', 'ou_allowed', false, '/steer SCENE_STEER');
+    await waitFor(() => sent.find(row => row.path === '/open-apis/im/v1/messages/settings-manual-steer/reply'), 'manual steer reply');
+    await feishu('settings-busy-task', 'ou_allowed', false, 'IM_SETTINGS_BUSY_TASK');
+    await waitFor(() => busyStarted ? true : undefined, 'model task running');
+    await feishu('settings-auto-steer', 'ou_allowed', false, 'AUTO_STEER_TEXT');
+    await feishu('settings-no-steer-permission', 'ou_stranger', false, 'QUEUED_WITHOUT_COMMAND_PERMISSION');
+    await waitFor(async () => {
+      const page = await currentPage(unlabeled.sessionId);
+      const splices = page.records.filter(record => record.event.type === 'agent/inbox/spliced').map(record => ({data: record.event.data as unknown as SessionEventMap['agent/inbox/spliced']}));
+      if (!splices.some(event => JSON.stringify(event.data.inserted).includes('QUEUED_WITHOUT_COMMAND_PERMISSION'))) return undefined;
+      assert.equal(splices.find(event => JSON.stringify(event.data.inserted).includes('AUTO_STEER_TEXT'))?.data.target, 'next-step');
+      assert.equal(splices.find(event => JSON.stringify(event.data.inserted).includes('QUEUED_WITHOUT_COMMAND_PERMISSION'))?.data.target, 'next-turn');
+      return true;
+    }, 'steering versus queue permission boundary');
+    releaseBusy?.();
+    await waitFor(() => sent.find(row => row.path === '/open-apis/im/v1/messages/settings-no-steer-permission/reply'), 'busy task reply');
+    // Host catalog and bot model selection share native contracts, while the
+    // bot's selection never becomes the environment default.
+    assert.equal((await hook('/feishu/catalog')).status, 403);
+    const catalogHeaders = {authorization: 'Bearer settings-regression'};
+    assert.equal((await hook('/feishu/catalog', {method: 'POST', headers: catalogHeaders})).status, 405);
+    const catalog = await (await hook('/feishu/catalog', {headers: catalogHeaders})).json() as ModelCatalog;
+    const hostDefault = (await api.call<ModelCatalog>('session/modelCatalog', {})).default;
+    assert.ok(catalog.groups.some(group => group.id === 'deepseek-official' && group.models.some(model => model.id === 'deepseek-flash')));
+    await configure('im-feishu', {modelSelection: {provider: 'deepseek-official', model: 'deepseek-flash', reasoningEffort: 'low'}, managementKey: 'model-regression'});
+    await waitFor(async () => (await hook('/feishu/catalog', {headers: {authorization: 'Bearer model-regression'}})).status === 200 ? true : undefined, 'model settings activation');
+    assert.equal((await currentPage(unlabeled.sessionId)).records.filter(record => record.event.type === 'model/selection').length, 0, 'existing Sessions are not reconfigured');
+    await feishu('settings-new-model-session', 'ou_allowed', false, '/new');
+    await waitFor(() => sent.find(row => row.path === '/open-apis/im/v1/messages/settings-new-model-session/reply'), 'new Session with bot model');
+    const selectedSession = (await api.call<SessionListValue>('session/list', {_request: {}})).items.find(item => item.blank);
+    assert.ok(selectedSession);
+    const selectedPage = await currentPage(selectedSession.sessionId);
+    const selection = selectedPage.records.find(record => record.event.type === 'model/selection');
+    assert.equal((selection?.event.data as {model: string}).model, 'deepseek-flash');
+    assert.deepEqual((await api.call<ModelCatalog>('session/modelCatalog', {})).default, hostDefault);
+    await feishu('settings-model-prompt', 'ou_allowed', false, 'Use my bot model selection');
+    await waitFor(() => sent.find(row => row.path === '/open-apis/im/v1/messages/settings-model-prompt/reply'), 'selected model inference');
+    assert.ok(modelCalls.some(call => call.model === 'deepseek-flash' && call.output_config?.effort === 'low'), 'the bot model and reasoning effort reach the inference request');
+    assert.deepEqual((await api.call<ModelCatalog>('session/modelCatalog', {})).default, hostDefault);
+    const beforeInvalid = (await api.call<SessionListValue>('session/list', {_request: {}})).items.length;
+    await configure('im-feishu', {modelSelection: {provider: 'deepseek-official', model: 'not-in-catalog'}, managementKey: 'invalid-model-regression'});
+    await waitFor(async () => (await hook('/feishu/catalog', {headers: {authorization: 'Bearer invalid-model-regression'}})).status === 200 ? true : undefined, 'invalid saved model activation');
+    await feishu('settings-invalid-model', 'ou_allowed', false, '/new');
+    const unavailable = await waitFor(() => sent.find(row => row.path === '/open-apis/im/v1/messages/settings-invalid-model/reply'), 'unavailable model explanation');
+    assert.match(unavailable.body.content as string, /无法创建新会话/);
+    assert.equal((await api.call<SessionListValue>('session/list', {_request: {}})).items.length, beforeInvalid, 'unavailable models do not create orphan Sessions');
+    await feishu('settings-keep-old-model', 'ou_allowed', false, 'Keep using the existing Session');
+    await waitFor(() => sent.find(row => row.path === '/open-apis/im/v1/messages/settings-keep-old-model/reply'), 'old route after rejected model');
+  } finally {releaseBusy?.(); await runtime.dispose();}
 });
