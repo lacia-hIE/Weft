@@ -7,7 +7,7 @@ const identity = (row: Installation) => JSON.stringify([row.digest, row.activati
 export function installedServices(row: Installation): string[] {
   const p = row.permissions;
   return [...(p.files !== 'none' ? ['fs'] : []), ...(p.tools || row.hostScope==='environment' ? ['tools'] : []), ...(p.timer ? ['timer'] : []),
-    ...(p.storage ? ['storage', 'storageDomain'] : []), ...(p.sessions ? ['sessionController','weftSessionEvents','webhookRuntime'] : []), ...(p.credentials ? ['credentials'] : []), ...(p.routes ? ['webServer'] : [])];
+    ...(p.storage ? ['storage', 'storageDomain'] : []), ...(p.sessions ? ['sessionController','weftSessionEvents','webhookRuntime'] : []), ...(p.credentials ? ['credentials'] : []), ...(p.connections ? ['weftConnections'] : []), ...(p.routes ? ['webServer'] : [])];
 }
 interface Active {row: Installation; runId: string; fiber?: Fiber}
 /** A single environment-owned activation, independent of open browser pages and Sessions. */
@@ -96,14 +96,21 @@ export class EnvironmentPackages {
       .map(active => this.platform.deliverSessionEvent(active.runId, event)));
     for (const result of results) if (result.status === 'rejected') console.warn('weft.package.session-event.failed', {reason: result.reason instanceof Error ? result.reason.message : String(result.reason)});
   }
+  /** Hand gateway events to the package that owns the connection, in order. */
+  async dispatchConnection(name: string, connectionId: string, events: unknown[]): Promise<'ok' | 'unknown'> {
+    await this.reconcile();
+    const active = this.active.get(name);
+    if (!active) throw new Error('Background package is not active');
+    return this.platform.deliverConnectionEvents(active.runId, connectionId, events);
+  }
   async tick(): Promise<void> {
     await this.reconcile();
     for (const active of this.active.values()) {
       try {await this.platform.tick(active.runId);} catch (error) {await this.stopNow(active.row.name); await this.owner.failed(active.row, error instanceof Error ? error.message : String(error));}
     }
   }
-  /** Whether an active Host may hold connections that end with this object's eviction. */
-  networked(): boolean {return [...this.active.values()].some(active => active.row.permissions.network === true);}
+  /** Whether an active Host may hold connections that end with this object's eviction; gateway users keep theirs in the gateway. */
+  networked(): boolean {return [...this.active.values()].some(active => active.row.permissions.network === true && !active.row.permissions.connections);}
   async nextAlarm(): Promise<number | undefined> {
     const values = await Promise.all([...this.active.values()].map(active => this.platform.nextAlarm(active.runId)));
     const due = values.filter((value): value is number => value !== undefined);

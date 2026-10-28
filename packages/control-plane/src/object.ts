@@ -104,6 +104,7 @@ import {bundleLeaves} from '../../package-install/src/composition.ts';
 import {MCP_NAMESPACE} from '../../native-mcp/src/index.ts';
 import {EnvironmentPackages, environmentFacetName} from '../../package-install/src/environment.ts';
 import {workerHostServices, environmentHostServices} from '../../native-plugins/src/services.ts';
+import type {ConnectionGateway, GatewayEvent} from '../../connection-gateway/src/index.ts';
 import type {Artifact, Installation} from '../../package-install/src/contracts.ts';
 import {PackageInstaller} from '../../package-install/src/host.ts';
 import {bundledPackageInfo} from '../../package-install/src/bundled.ts';
@@ -125,6 +126,9 @@ export interface HarnessEnvironment extends ModelEnvironment {
   ENVIRONMENTS: DurableObjectNamespace<EnvironmentDO>;
   WORKSPACES: DurableObjectNamespace<WorkspaceDO>;
   SESSIONS: DurableObjectNamespace<SessionDO>;
+  /** Shared outbound connection gateway shards; see docs/architecture/connection-gateway.md. */
+  GATEWAYS?: DurableObjectNamespace<ConnectionGateway>;
+  WEFT_GATEWAY_SHARDS?: string;
   // Environment internals receive no D1 binding in their type contract.
 }
 
@@ -169,6 +173,8 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
       if(at!==null && await this.ctx.storage.get('weft_paused_alarm')===undefined)await this.ctx.storage.put('weft_paused_alarm',at);
       this.nativeEvents.close();this.nativeControl.close();this.lifecycle.closeStreams();
       await this.environmentPackages?.dispose();this.environmentPackages=undefined;
+      // A stopped environment keeps no sockets; its packages reopen them when it resumes.
+      await this.closeGatewayConnections(scope);
       await this.nativeWorkspaces?.dispose();this.nativeWorkspaces=undefined;
       await this.nativeSearch?.dispose();this.nativeSearch=undefined;
       await this.market?.dispose();this.market=undefined;
@@ -545,7 +551,7 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
           artifact.hostScope = background ? 'environment' : 'session';
           artifact.permissions = {...artifact.permissions, network: true,
             storage: inject.some(name => name === 'storage' || name === 'storageDomain'), sessions: inject.includes('sessionController') || inject.includes('weftSessionEvents') || inject.includes('webhookRuntime'),
-            credentials: inject.includes('credentials'), routes: inject.includes('webServer'), tools:inject.includes('tools'), background};
+            credentials: inject.includes('credentials'), routes: inject.includes('webServer'), tools:inject.includes('tools'), connections: inject.includes('weftConnections'), background};
           const configs = entrySchemasSchema.parse(await platform.configSchemas(runId));
           if (configs.length) artifact.configs = configs; else delete artifact.configs;
         } finally {await platform.release(runId, true); await context.fiber.dispose();}
@@ -553,6 +559,7 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
       changed: async () => {this.presetReads.clear(); await this.nativeEvent(scope, 'plugin-manager/changed', [{reason: 'install'}]); this.ctx.waitUntil(this.reconcileEnvironmentPackages(scope));},
       alarm: at => this.requestPackageAlarm(at),
       revoke: async name => {
+        await this.closeGatewayConnections(scope, name);
         await this.environmentPackages?.stop(name);
         this.ctx.facets.abort(environmentFacetName(name), new Error('Background package was revoked'));
         const sessions = await this.sessionIndex(scope);
@@ -597,7 +604,7 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
     await this.backgroundPackages(scope).reconcile();
     await this.schedulePackageAlarm(scope);
   }
-  nativePackageAuthorize(scope: ControlScope, receipt: {name: string; digest: string; activationId: string}, permission: 'network' | 'sessions' | 'credentials' | 'files' | 'routes' | 'tools'): Installation {
+  nativePackageAuthorize(scope: ControlScope, receipt: {name: string; digest: string; activationId: string}, permission: 'network' | 'sessions' | 'credentials' | 'files' | 'routes' | 'tools' | 'connections'): Installation {
     this.scope(scope);
     const row = this.packages(scope).registry.get(receipt.name);
     if (!row?.enabled || !row.approved || row.digest !== receipt.digest || (row.activationId ?? row.digest) !== receipt.activationId || row.hostScope !== 'environment' || !row.permissions.background) throw new Error('Background package capability was revoked');
@@ -692,6 +699,63 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
     const response = await this.backgroundPackages(scope).fetch(name, request);
     await this.schedulePackageAlarm(scope);
     return response;
+  }
+  private gatewayKey(scope: ControlScope, name: string, connectionId: string): string {return JSON.stringify([scope.tenantId, scope.environmentId, name, connectionId]);}
+  private gateway(shard: number) {
+    if (!this.env.GATEWAYS) throw new Error('Connection gateway is unavailable');
+    return this.env.GATEWAYS.getByName('gateway-' + shard);
+  }
+  private gatewayShard(name: string, connectionId: string): number | undefined {
+    return this.ctx.storage.sql.exec<{shard: number}>('SELECT shard FROM weft_gateway_connections WHERE package=? AND connection_id=?', name, connectionId).toArray()[0]?.shard;
+  }
+  /** Close a package's (or every package's) gateway connections; unreachable shards drop them at the next lease. */
+  private async closeGatewayConnections(scope: ControlScope, name?: string): Promise<void> {
+    const rows = this.ctx.storage.sql.exec<{package: string; connection_id: string; shard: number}>('SELECT package, connection_id, shard FROM weft_gateway_connections').toArray().filter(row => name === undefined || row.package === name);
+    if (!rows.length) return;
+    await Promise.allSettled(rows.map(row => this.gateway(row.shard).close(this.gatewayKey(scope, row.package, row.connection_id))));
+    for (const row of rows) this.ctx.storage.sql.exec('DELETE FROM weft_gateway_connections WHERE package=? AND connection_id=?', row.package, row.connection_id);
+  }
+  /**
+   * Place a connection fill-first: the lowest shard with room takes it, so idle
+   * shards stay empty and asleep. A known connection stays on its shard.
+   */
+  async nativeConnectionOpen(scope: ControlScope, receipt: {name: string; digest: string; activationId: string}, connectionId: string, version: string, spec: unknown): Promise<void> {
+    this.nativePackageAuthorize(scope, receipt, 'connections'); this.nativePackageAuthorize(scope, receipt, 'network');
+    if (!/^[\w.-]{1,64}$/.test(connectionId) || typeof version !== 'string') throw new Error('Invalid connection id');
+    const known = this.gatewayShard(receipt.name, connectionId), shards = Math.max(1, Number(this.env.WEFT_GATEWAY_SHARDS ?? 8) || 8);
+    const input = {key: this.gatewayKey(scope, receipt.name, connectionId), scope: {tenantId: scope.tenantId, environmentId: scope.environmentId}, receipt: {name: receipt.name, digest: receipt.digest, activationId: receipt.activationId}, connectionId, version, spec};
+    for (const shard of known === undefined ? Array.from({length: shards}, (_, index) => index) : [known]) {
+      if (!('ok' in await this.gateway(shard).open(input))) continue;
+      this.ctx.storage.sql.exec('INSERT OR REPLACE INTO weft_gateway_connections (package, connection_id, shard) VALUES (?, ?, ?)', receipt.name, connectionId, shard);
+      return;
+    }
+    throw new Error('Every connection gateway shard is full');
+  }
+  async nativeConnectionCall(scope: ControlScope, receipt: {name: string; digest: string; activationId: string}, connectionId: string, operation: 'status' | 'send' | 'update' | 'reconnect' | 'close', argument?: unknown): Promise<unknown> {
+    this.nativePackageAuthorize(scope, receipt, 'connections');
+    const shard = this.gatewayShard(receipt.name, connectionId);
+    if (shard === undefined) {if (operation === 'status' || operation === 'close') return null; throw new Error('Connection is not open');}
+    const gateway = this.gateway(shard), key = this.gatewayKey(scope, receipt.name, connectionId);
+    switch (operation) {
+      case 'status': return gateway.status(key);
+      case 'send': return gateway.send(key, argument as never);
+      case 'update': return gateway.update(key, argument);
+      case 'reconnect': return gateway.reconnect(key);
+      case 'close': await gateway.close(key); this.ctx.storage.sql.exec('DELETE FROM weft_gateway_connections WHERE package=? AND connection_id=?', receipt.name, connectionId); return null;
+    }
+  }
+  /** Gateway → package. A stopped environment throws so the gateway retries; a revoked receipt ends the connection. */
+  async nativeConnectionDeliver(scope: ControlScope, receipt: {name: string; digest: string; activationId: string}, connectionId: string, events: GatewayEvent[]): Promise<'ok' | 'unknown' | 'revoked'> {
+    this.scope(scope);
+    if (this.lifecycle.mode !== 'active') throw new Error('Environment is stopped');
+    try {this.nativePackageAuthorize(scope, receipt, 'connections');} catch {return 'revoked';}
+    if (this.gatewayShard(receipt.name, connectionId) === undefined) return 'unknown';
+    return this.backgroundPackages(scope).dispatchConnection(receipt.name, connectionId, events);
+  }
+  nativeConnectionLease(scope: ControlScope, receipt: {name: string; digest: string; activationId: string}, connectionIds: string[]): string[] {
+    this.scope(scope);
+    try {this.nativePackageAuthorize(scope, receipt, 'connections');} catch {return [];}
+    return connectionIds.filter(connectionId => this.gatewayShard(receipt.name, connectionId) !== undefined);
   }
   /** Record one package's interest in a root Session's turn ends; see docs/architecture/session-turn-notifications.md. */
   nativePackageWatchSession(scope: ControlScope, receipt: {name: string; digest: string; activationId: string}, sessionId: string, watch: boolean): void {
@@ -1087,6 +1151,7 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
     });
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS native_child_owners (id TEXT PRIMARY KEY, parent_id TEXT NOT NULL, root_id TEXT NOT NULL)');
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_session_watches (package TEXT NOT NULL, session_id TEXT NOT NULL, PRIMARY KEY(package, session_id)) STRICT');
+    ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_gateway_connections (package TEXT NOT NULL, connection_id TEXT NOT NULL, shard INTEGER NOT NULL, PRIMARY KEY(package, connection_id)) STRICT');
     ctx.storage.sql.exec(
       "CREATE TABLE IF NOT EXISTS client_plugins (id TEXT PRIMARY KEY, revision TEXT NOT NULL, enabled INTEGER NOT NULL)",
     );

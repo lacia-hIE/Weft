@@ -6,7 +6,7 @@ export const permissionSchema = z.object({
   tools: z.boolean().default(false), timer: z.boolean().default(false),
   client: z.boolean().default(false),
   network: z.boolean().optional(), storage: z.boolean().optional(), sessions: z.boolean().optional(),
-  credentials: z.boolean().optional(), routes: z.boolean().optional(), background: z.boolean().optional(),
+  credentials: z.boolean().optional(), routes: z.boolean().optional(), background: z.boolean().optional(), connections: z.boolean().optional(),
 }).strict();
 export const declarationSchema = z.object({patch: z.union([z.string().min(1).max(200), z.array(z.string().min(1).max(200)).min(1).max(16)])}).strict();
 export type Permissions = z.infer<typeof permissionSchema>;

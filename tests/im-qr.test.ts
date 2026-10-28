@@ -88,15 +88,16 @@ test('QQ and Feishu QR creation bind privately, survive reload, and deliver nati
         await wait(async () => provider.sockets.qq.length > count && (await status('qq')).state === 'online' ? true : undefined);
         assert.ok(provider.frames.some(item => item.channel === 'qq' && (item.frame as {op: number}).op === 6), 'QQ resumes an established gateway session');
       }
-      // Reloading the channel closes its old socket and recovers stored credentials.
+      // The socket lives in the connection gateway: reloading the channel recovers stored credentials and keeps it.
       const before = provider.sockets[channel].length;
       await configure(channel, {managementKey: channel + '-rotated'});
       await wait(async () => {
         const response = await hook(channel, 'status', 'GET', channel + '-rotated');
         if (response.status !== 200) return undefined;
         const current = await response.json() as {state: string; botId: string};
-        return current.state === 'online' && current.botId === account.botId && provider.sockets[channel].length > before ? true : undefined;
+        return current.state === 'online' && current.botId === account.botId ? true : undefined;
       });
+      assert.equal(provider.sockets[channel].length, before, 'a plugin reload does not reopen the gateway connection');
       await configure(channel, {enabled: false});
       await wait(async () => (await status(channel, channel + '-rotated')).state === 'disabled' ? true : undefined);
       await configure(channel, {enabled: true});

@@ -37,7 +37,7 @@ const escape = text => String(text).replace(/[&<>"']/g, char => `&#${char.charCo
  * background long poll of getupdates; replies carry each user's context token.
  */
 export const name = 'dsh-im-weixin';
-export const inject = ['im', 'webServer', 'storageDomain'];
+export const inject = ['im', 'webServer', 'storageDomain', 'weftConnections'];
 export const Config = Schema.object({
   ...botSettings(),
   enabled: Schema.boolean().default(false).description('Log in at /weixin/login and long-poll messages.'),
@@ -52,39 +52,41 @@ export async function apply(ctx, config) {
   ctx.effect(() => () => domain.close(), 'dsh-im weixin storage');
   const state = () => domain.global.get();
   const save = patch => domain.global.set({...state(), ...patch});
-  let poller, login, starting;
+  let connection, login, starting;
   // QR status polling cannot survive a plugin restart; do not serve an orphaned code.
   if (state().state === 'login') await save({state: 'idle', qrcode: undefined, qrcodeUrl: undefined});
 
+  /** The long poll lives in the shared gateway; the cursor advances once a batch is handled here. */
   const poll = () => {
-    if (poller && !poller.signal.aborted) return;
-    poller = background(ctx, 'dsh-im weixin updates', async signal => {
-      for (let failures = 0; !signal.aborted && state().state === 'online';) {
+    const account = state();
+    connection = ctx.weftConnections.poll('weixin', {
+      version: `${account.botId}:${account.session ?? ''}`,
+      open() {
         const current = state();
-        try {
-          const response = await call(current.baseUrl, 'ilink/bot/getupdates', {body: {get_updates_buf: current.cursor ?? ''}, token: current.token, signal: AbortSignal.any([signal, AbortSignal.timeout(45_000)])});
-          if (signal.aborted) return;
-          if (response.errcode === -14 || response.ret === -14) {await save({state: 'expired', error: '登录已失效，请重新扫码。'}); return;}
-          if ((response.ret ?? 0) !== 0) throw new Error(`getupdates rejected: ${response.ret}`);
-          for (const message of response.msgs ?? []) {
-            // 2 is the bot's own message.
-            if (message?.message_type === 2) continue;
-            const sender = message?.from_user_id, id = message?.message_id ?? message?.client_id, text = textOf(message);
-            if (!sender || id === undefined || !text) continue;
-            await ctx.im.receive({channel: 'weixin', conversation: sender, sender, text, messageId: String(id), target: {to: sender, contextToken: message.context_token}});
-          }
-          if (typeof response.get_updates_buf === 'string' && response.get_updates_buf) await save({cursor: response.get_updates_buf});
-          failures = 0;
-        } catch (error) {
-          if (signal.aborted) return;
-          // A timed-out long poll is an empty batch.
-          if (error?.name === 'TimeoutError') continue;
-          console.warn(`dsh-im weixin: ${error instanceof Error ? error.message : String(error)}`);
-          await sleep(Math.min(60_000, 2000 * 2 ** failures++), signal);
+        if (current.state !== 'online') throw new Error('WeChat account is not logged in');
+        return {request: {url: new URL('ilink/bot/getupdates', current.baseUrl).href, method: 'POST', headers: headers(current.token),
+          body: `{"get_updates_buf":{{cursor}},"base_info":${JSON.stringify({channel_version: PROTOCOL, bot_agent: 'Weft-dsh-im/0.1'})}}`},
+        cursor: {path: 'get_updates_buf', initial: current.cursor ?? ''}, deliverWhen: {path: 'msgs', nonEmpty: true},
+        failWhen: [{path: 'ret', notIn: [0, null]}, {path: 'errcode', notIn: [0, null]}], timeoutMs: 45_000};
+      },
+      async response(body) {
+        for (const message of body.msgs ?? []) {
+          // 2 is the bot's own message.
+          if (message?.message_type === 2) continue;
+          const sender = message?.from_user_id, id = message?.message_id ?? message?.client_id, text = textOf(message);
+          if (!sender || id === undefined || !text) continue;
+          await ctx.im.receive({channel: 'weixin', conversation: sender, sender, text, messageId: String(id), target: {to: sender, contextToken: message.context_token}});
         }
-      }
+        if (typeof body.get_updates_buf === 'string' && body.get_updates_buf) await save({cursor: body.get_updates_buf});
+      },
+      async failed(body, current) {
+        if (body?.errcode === -14 || body?.ret === -14) {await save({state: 'expired', error: '登录已失效，请重新扫码。'}); await current.close(); return;}
+        console.warn(`dsh-im weixin: getupdates rejected: ${body?.ret ?? body?.errcode}`);
+        await current.reconnect();
+      },
     });
   };
+  const stopPolling = async () => {connection = undefined; await ctx.weftConnections.close('weixin').catch(() => {});};
 
   const createLogin = async () => {
     const created = await call(BASE, 'ilink/bot/get_bot_qrcode?bot_type=3', {body: {local_token_list: []}});
@@ -92,7 +94,7 @@ export async function apply(ctx, config) {
     const url = new URL(created.qrcode_img_content);
     if (url.protocol !== 'https:' || !isWeixinHost(url.hostname)) throw new Error('WeChat returned an untrusted login URL');
     login?.abort();
-    poller?.abort();
+    await stopPolling();
     await save({state: 'login', qrcode: created.qrcode, qrcodeUrl: url.toString(), error: undefined});
     login = background(ctx, 'dsh-im weixin login', async signal => {
       let base = BASE;
@@ -107,7 +109,7 @@ export async function apply(ctx, config) {
         }
         if (signal.aborted) return;
         if (status.status === 'confirmed') {
-          await save({state: 'online', token: status.bot_token, baseUrl: apiBase(status.baseurl), botId: status.ilink_bot_id, owner: status.ilink_user_id, cursor: '', qrcode: undefined, qrcodeUrl: undefined});
+          await save({state: 'online', token: status.bot_token, baseUrl: apiBase(status.baseurl), botId: status.ilink_bot_id, owner: status.ilink_user_id, session: crypto.randomUUID(), cursor: '', qrcode: undefined, qrcodeUrl: undefined});
           poll();
           return;
         }
@@ -138,13 +140,15 @@ export async function apply(ctx, config) {
   ctx.effect(() => ctx.webServer.register({kind: 'exact', path: '/weixin/disconnect', handler: async (request, response) => {
     if (!authorized(request)) {reply(response, 403, {error: 'login key required'}); return;}
     if (request.method !== 'POST') {reply(response, 405, {error: 'POST required'}); return;}
-    login?.abort(); poller?.abort();
+    login?.abort(); await stopPolling();
     if (starting) await starting.catch(() => {});
-    login?.abort(); poller?.abort();
+    login?.abort(); await stopPolling();
     await ctx.im.clear('weixin');
     await domain.global.set({state: 'idle'});
     reply(response, 200, {state: 'idle'});
   }}), 'dsh-im weixin disconnect route');
+  // Only an enabled, logged-in account keeps a long poll in the gateway.
+  if (!config.enabled || state().state !== 'online') await stopPolling();
   if (!config.enabled) return;
 
   ctx.effect(() => ctx.im.channel('weixin', {

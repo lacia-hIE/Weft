@@ -143,12 +143,12 @@ export class PackageInstaller {
   approve(name: string, digest: string, grants?: Installation['permissions']): Promise<void> {
     return this.exclusive(async () => {
       const artifact = await this.artifact(name, digest, false);
-      if (grants && ((grants.files === 'write' && artifact.permissions.files !== 'write') || (grants.files !== 'none' && artifact.permissions.files === 'none') || (['tools', 'timer', 'client', 'network', 'storage', 'sessions', 'credentials', 'routes', 'background'] as const).some(key => grants[key] && !artifact.permissions[key]))) throw new Error('Approval exceeds bundle capability limits');
+      if (grants && ((grants.files === 'write' && artifact.permissions.files !== 'write') || (grants.files !== 'none' && artifact.permissions.files === 'none') || (['tools', 'timer', 'client', 'network', 'storage', 'sessions', 'credentials', 'routes', 'background', 'connections'] as const).some(key => grants[key] && !artifact.permissions[key]))) throw new Error('Approval exceeds bundle capability limits');
       const row = this.registry.get(name);
       const target = row?.digest === digest ? row : row?.candidate?.digest === digest ? row.candidate : undefined;
       if (!row || !target) throw new Error('Approval is stale');
       if (artifact.hostScope === 'environment' && !(grants ?? artifact.permissions).background) throw new Error('This plugin requires environment background permission');
-      const next: Installation = {...revision(target), activationId: crypto.randomUUID(), permissions: grants ?? {...artifact.permissions, network: false, credentials: false, routes: false}, approved: true, enabled: true,
+      const next: Installation = {...revision(target), activationId: crypto.randomUUID(), permissions: grants ?? {...artifact.permissions, network: false, credentials: false, routes: false, connections: false}, approved: true, enabled: true,
         ...(target !== row ? {previous: revision(row), rollbackOnFailure:true as const} : { ...(row.previous ? {previous: row.previous} : {}), ...(row.candidate ? {candidate: row.candidate} : {}) })};
       await this.replace(row, next);
     });

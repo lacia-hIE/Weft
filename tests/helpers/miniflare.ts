@@ -160,6 +160,7 @@ export function createRuntime(
               useSQLite: true,
             },
             ENVIRONMENTS: { className: "EnvironmentDO", scriptName: "alpha", useSQLite: true },
+            GATEWAYS: { className: "ConnectionGatewayDO", scriptName: "alpha", useSQLite: true },
             TENANTS: {
               className: "TenantDO",
               scriptName: "alpha",

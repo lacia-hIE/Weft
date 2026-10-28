@@ -1,6 +1,6 @@
 # 出站长连接网关
 
-状态：设计稿，未实现。
+状态：已实现。代码在 `packages/connection-gateway`（`ConnectionGatewayDO`）、`packages/native-plugins/src/connections.ts`（插件服务）和 EnvironmentDO 的 `nativeConnection*` 方法；IM 0.6.0 起使用。
 
 环境 Host 现在直接持有出站 WebSocket 和长轮询（见 [Worker Host 的 HTTPS 出口](worker-host-plugins.md#https-出口)）。出站连接不能休眠，EnvironmentDO 因此 24 小时按 128 MB 计费；联网插件即使没有建立任何连接，也会被每 60 秒一次的看门狗 Alarm 唤醒。开了 IM 的环境越多，常驻 DO 就越多。
 
@@ -19,7 +19,7 @@
 | --- | --- | --- |
 | 1–2 个 | 在账号含有的 40 万 GB-s 内 | 无差别 |
 | 10 个 | 约 324 万 GB-s/月，约 $35 | 1 个分片，约 $4 |
-| 100 个 | 约 3240 万 GB-s/月，约 $400 | 1–2 个分片，约 $4–8 |
+| 100 个 | 约 3240 万 GB-s/月，约 $400 | 1 个分片（容量内），约 $4 |
 
 按每个常驻 DO 每月 0.125 GB × 2,592,000 秒估算，单价为每百万 GB-s $12.50。环境侧剩余的成本是每条业务消息、每次续租和每次重连各一次 DO 请求。
 
@@ -28,36 +28,36 @@
 `inject: ['weftConnections']` 与 `storage`、`sessionController` 一样，会使包归入环境宿主。审核页新增一行「外部长连接」能力（高风险）；没有同时授予「访问外部 HTTPS 服务」时不能获批。
 
 ```js
-ctx.weftConnections.socket('feishu', {
-  // 每次需要（重新）建立连接时调用，可在这里换取新的 ticket 或 token
-  async open(state) {
-    return {
-      url,
-      heartbeat: {everyMs: 120_000, binary: pingFrame},
-      drop: [{bytesInclude: PONG_HEADER}],
-      idleMs: 360_000,
-    };
+const connection = ctx.weftConnections.socket('feishu', {
+  version: `${appId}:${fingerprint}`,        // 账号标识；与网关记录不同时替换连接
+  async open(state) {                        // 需要（重新）建连时调用，可在这里换取新的 URL 或 token
+    return {url, heartbeat: {everyMs: 120_000, frame: {base64: ping}}, drop: [{bytesInclude: PONG_HEADER}], idleMs: 360_000};
   },
-  async message(frame, connection) { /* 处理事件，再 connection.send(ack) */ },
-  async closed(info) { /* 记录状态；返回 false 停止重连 */ },
+  async connected(connection) { /* 例如 update({state: {online: true}}) */ },
+  async message(data, connection, state) { /* 处理事件，再 connection.send(ack) */ },
+  async closed(info, connection) { /* 返回 false 停止；否则调用 open(state) 重连 */ },
 });
 
 ctx.weftConnections.poll('weixin', {
-  async open(state) {
+  version: botId,
+  open(state) {
     return {
       request: {url, method: 'POST', headers, body: '{"get_updates_buf":{{cursor}}}'},
-      cursor: 'get_updates_buf',
+      cursor: {path: 'get_updates_buf', initial: savedCursor},
       deliverWhen: {path: 'msgs', nonEmpty: true},
-      failWhen: {path: 'ret', notIn: [0, null]},
+      failWhen: [{path: 'ret', notIn: [0, null]}],
     };
   },
-  async message(response) { /* 处理 msgs；正常返回后网关才推进游标 */ },
+  async response(body) { /* 处理 msgs；正常返回后网关才推进游标 */ },
+  async failed(body, connection) { /* 例如登录过期时 close()，其他错误 reconnect() */ },
 });
+
+await ctx.weftConnections.close('qq');      // 关闭本次激活没有登记的连接，例如已停用的渠道
 ```
 
-- 处理函数在插件初始化时按稳定 ID 登记，和持久计时器一样：环境被驱逐或重新部署后，插件重新初始化并再次登记同一个 ID。规格不变时，网关保留现有连接，不会重连。
-- fiber 释放不会关闭连接，因为驱逐和部署本来就不执行 disposer。只有三种情况会关闭连接：插件显式调用 `connection.close()`、宿主撤销授权、插件停用或卸载。
-- `connection.send(data)`、`connection.update(partialSpec)`（例如收到 QQ hello 后调整心跳间隔）和 `connection.state()` 都可以在任何处理函数中调用。
+- 处理函数在插件初始化时按稳定 ID 登记，和持久计时器一样：环境被驱逐或重新部署后，插件重新初始化并再次登记同一个 ID。`version` 相同且连接仍在时，网关保留现有连接，不会重连；首次建连失败会在插件内退避重试几次。
+- fiber 释放不会关闭连接，因为驱逐和部署本来就不执行 disposer。只有四种情况会关闭连接：插件调用 `connection.close()` 或 `weftConnections.close(id)`、宿主撤销授权、插件停用或卸载、环境停止或删除。
+- `connection.send(data)`、`connection.update({heartbeat, idleMs, state})`（例如收到 QQ hello 后设置心跳，或把 `online` 写进跟踪状态）、`connection.reconnect()` 和 `connection.status()` 都可以在任何处理函数中调用。轮询连接的 `reconnect()` 在退避后重新调用 `open`。
 
 ## 声明式规则
 
@@ -95,8 +95,9 @@ ConnectionGatewayDO ──(按连接顺序、批量)──▶ EnvironmentDO.nati
 ## 部署与分片
 
 - 新建 `packages/connection-gateway`，导出 `ConnectionGatewayDO`；Worker 增加对应的 DO 绑定和 migration。
-- 分片键是 `hash(environmentId, package, connectionId) % N`。N 是部署配置，默认 4。同一个连接始终落在同一个分片上，分片数改变时需要迁移连接。
-- 每个分片设容量上限，例如 500 条连接，超出时拒绝新建并给出明确错误。单个 DO 是单线程的，消息吞吐上限需要压测确定。
+- **按最低成本分片：先填满再扩展。** 所有租户共用分片 `gateway-0`、`gateway-1`……。新连接先尝试 `gateway-0`，满了（返回 `full`）再试下一片，直到 `WEFT_GATEWAY_SHARDS`（默认 8）片都满时拒绝。环境在自己的 SQLite 里记录每条连接所在的分片，之后的发送、更新、关闭和撤销都直接找那一片，不需要协调者。
+- 没有连接的分片没有常驻 I/O，会休眠，不计时长费。连接数在一片容量以内时，整个账号只有一个常驻 DO。相比按哈希固定分 4 片（连接少时也会散落到 4 个常驻 DO），这是费用最低的布局。
+- 每片容量上限默认 500 条连接（`WEFT_GATEWAY_SHARD_CAPACITY`），以单个 DO 单线程的吞吐和 128 MB 内存为界，需要压测校准。连接关闭后释放名额；已有连接不会在分片之间迁移。
 - 网关里会同时存放不同租户的连接规格。这些规格可能带有 token，例如微信长轮询的请求头，所以存储时按 `scope` 分区，任何接口都不回显，连接关闭时一并删除。日志不记录帧内容。
 
 ## IM 插件迁移
@@ -119,6 +120,5 @@ ConnectionGatewayDO ──(按连接顺序、批量)──▶ EnvironmentDO.nati
 
 ## 待定
 
-- 默认分片数，以及单分片的连接数和吞吐上限，需要压测确定。
+- 单分片的连接数和吞吐上限，需要压测确定。
 - 各渠道对确认时限的要求（例如飞书事件 ack 的超时）能否容忍唤醒环境的延迟；如果不能，再评估由网关代发通用确认帧。
-- 是否允许不同租户共用分片，还是按租户分片，以换取更强的隔离。

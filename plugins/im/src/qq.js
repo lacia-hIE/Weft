@@ -4,7 +4,7 @@ import {botSettings, channelSettings, managementKey, registerModelCatalog} from 
 
 import {connectionMode, qrAccount} from './qr-account.js';
 import {qqQr} from './qr-providers.js';
-import {qqSocket} from './channel-sockets.js';
+import {qqConnection} from './channel-sockets.js';
 
 const API = 'https://api.sgroup.qq.com';
 const TOKEN = 'https://bots.qq.com/app/getAppAccessToken';
@@ -29,7 +29,7 @@ const concat = (...parts) => {const result = new Uint8Array(parts.reduce((size, 
  * passive replies to C2C and group @ messages through the v2 message API.
  */
 export const name = 'dsh-im-qq';
-export const inject = ['im', 'webServer', 'storageDomain'];
+export const inject = ['im', 'webServer', 'storageDomain', 'weftConnections'];
 export const Config = Schema.object({
   ...botSettings(), managementKey: managementKey(), connectionMode: connectionMode(),
   enabled: Schema.boolean().default(false).description('Receive callback events at /qq and reply through the QQ bot API.'),
@@ -48,7 +48,6 @@ export async function apply(ctx, config) {
     if (!response.ok || !body.access_token) throw new Error('QQ token request failed');
     return {value: body.access_token, expiresAt: Date.now() + Number(body.expires_in ?? 7200) * 1000};
   };
-  let gateway;
   const token = tokenCache(() => requestToken(account.credentials()));
   const receive = async payload => {
     if (payload.op !== 0) return;
@@ -65,12 +64,10 @@ export async function apply(ctx, config) {
         target: {kind: 'group', id: group, msgId: event.id}});
     }
   };
-  const account = await qrAccount(ctx, 'qq', config, {...qqQr, validate: requestToken, changed: () => {token.clear(); gateway = undefined;},
-    connect: async (credentials, signal, online) => {
-      try {await (gateway ??= qqSocket(credentials, () => token.get(), receive))(signal, online);}
-      catch (error) {token.clear(); throw error;}
-    }});
-  if (!config.enabled) return;
+  const account = await qrAccount(ctx, 'qq', config, {...qqQr, validate: requestToken, changed: () => token.clear(),
+    socket: () => qqConnection(() => token.get(), receive)});
+  // A disabled channel still closes the gateway connection it may have left open.
+  if (!config.enabled) {account.launch(); return;}
   const sequences = new Map();
   const post = async (path, body) => {
     for (let retry = 0; ; retry++) {

@@ -4,7 +4,7 @@ import {botSettings, channelSettings, managementKey, registerModelCatalog} from 
 
 import {connectionMode, qrAccount} from './qr-account.js';
 import {feishuQr} from './qr-providers.js';
-import {feishuSocket} from './channel-sockets.js';
+import {feishuConnection} from './channel-sockets.js';
 
 const HOSTS = {feishu: 'https://open.feishu.cn', lark: 'https://open.larksuite.com'};
 
@@ -28,7 +28,7 @@ async function signed(request, body, encryptKey) {
  * plugin's route and replies use the open platform message API.
  */
 export const name = 'dsh-im-feishu';
-export const inject = ['im', 'webServer', 'storageDomain'];
+export const inject = ['im', 'webServer', 'storageDomain', 'weftConnections'];
 export const Config = Schema.object({
   ...botSettings(), managementKey: managementKey(), connectionMode: connectionMode(),
   enabled: Schema.boolean().default(false).description('Receive events at /feishu and reply through the open platform.'),
@@ -68,8 +68,9 @@ export async function apply(ctx, config) {
       target: {chatId: message.chat_id, messageId: message.message_id}});
   };
   const account = await qrAccount(ctx, 'feishu', config, {...feishuQr, validate: requestToken, changed: () => token.clear(),
-    connect: (credentials, signal, online) => feishuSocket(credentials, receive)(signal, online)});
-  if (!config.enabled) return;
+    socket: credentials => feishuConnection(credentials, receive)});
+  // A disabled channel still closes the gateway connection it may have left open.
+  if (!config.enabled) {account.launch(); return;}
   const api = async (path, body) => {
     for (let retry = 0; ; retry++) {
       const response = await fetch(`${HOSTS[account.credentials()?.domain] ?? HOSTS.feishu}${path}`, {method: 'POST', headers: {'content-type': 'application/json; charset=utf-8', authorization: `Bearer ${await token.get()}`}, body: JSON.stringify(body)});

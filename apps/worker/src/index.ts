@@ -9,6 +9,7 @@ import { resolveEnvironmentRequest } from "./environment-http.ts";
 import { handleControlRequest } from './control-http.ts';
 import { handleNativeRequest } from './native-http.ts';
 import { TenantDO, EnvironmentDO, controlFor, controlScope,tenantAddress } from '../../../packages/control-plane/src/object.ts';
+import { ConnectionGateway, type GatewayScope } from '../../../packages/connection-gateway/src/index.ts';
 import type { AgentRevision } from '../../../packages/control-plane/src/contracts.ts';
 import { id } from '../../../packages/control-plane/src/contracts.ts';
 import {supportsAgentRuntime} from '../../../packages/harness-runtime/src/revision.ts';
@@ -78,6 +79,9 @@ export interface Env extends ModelEnvironment {
   WORKSPACES: DurableObjectNamespace<WorkspaceDO>;
   TENANTS: DurableObjectNamespace<TenantDO>;
   ENVIRONMENTS: DurableObjectNamespace<EnvironmentDO>;
+  GATEWAYS?: DurableObjectNamespace<ConnectionGatewayDO>;
+  /** Connections one gateway shard holds before new ones go to the next shard. */
+  WEFT_GATEWAY_SHARD_CAPACITY?: string;
   /** Platform catalogue (D1): environments and their tenant ownership. */
   CONFIG_DB: D1Database;
   ACCESS_AUD?: string;
@@ -125,6 +129,8 @@ export class EnvironmentPluginCapabilities extends WorkerEntrypoint<Env, {scope:
   async callSession(method: string, request: unknown): Promise<unknown> {return this.owner().nativePackageSession(this.ctx.props.scope, this.ctx.props, method, request);}
   async followSession(request: unknown): Promise<Response> {return this.owner().nativePackageFollow(this.ctx.props.scope, this.ctx.props, request);}
   async watchSession(sessionId: string, watch: boolean): Promise<void> {return this.owner().nativePackageWatchSession(this.ctx.props.scope, this.ctx.props, sessionId, watch);}
+  async connectionOpen(connectionId: string, version: string, spec: unknown): Promise<void> {return this.owner().nativeConnectionOpen(this.ctx.props.scope, this.ctx.props, connectionId, version, spec);}
+  async connectionCall(connectionId: string, operation: 'status' | 'send' | 'update' | 'reconnect' | 'close', argument?: unknown): Promise<unknown> {return this.owner().nativeConnectionCall(this.ctx.props.scope, this.ctx.props, connectionId, operation, argument);}
   async callFs(method: string, args: unknown[]): Promise<unknown> {return this.owner().nativePackageFs(this.ctx.props.scope, this.ctx.props, method, args);}
   async resolveCredential(ref: string): Promise<unknown> {return this.owner().nativePackageCredential(this.ctx.props.scope, this.ctx.props, ref);}
 }
@@ -147,6 +153,12 @@ function latestCompletedPrefixBoundary(events: readonly SessionEvent[]): number 
 
 /** Internal SessionDO route behind `GET .../events` with `Accept: text/event-stream`. */
 const SESSION_RESUME_PATH = '/turns/resume';
+
+/** Shared outbound connections for every environment's packages, filled shard by shard. */
+export class ConnectionGatewayDO extends ConnectionGateway<Env> {
+  protected environment(scope: GatewayScope) {return controlFor(this.env, controlScope(scope.tenantId, scope.environmentId));}
+  protected capacity(): number {return Math.max(1, Number(this.env.WEFT_GATEWAY_SHARD_CAPACITY ?? 500) || 500);}
+}
 
 export class SessionDO extends DurableObject<Env> {
   private readonly lifecycle:LifecycleGate;

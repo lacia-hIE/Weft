@@ -12,6 +12,7 @@ interface FacetApi {
     metadata(): Promise<unknown>;
     deliverWebhook(delivery: unknown): Promise<void>;
     deliverSessionEvent(event: unknown): Promise<void>;
+    deliverConnectionEvents(connectionId: string, events: unknown[]): Promise<'ok' | 'unknown'>;
     start(): Promise<unknown>;
     invoke(method: string, args: unknown): Promise<{
         value: unknown;
@@ -161,6 +162,10 @@ export class NativePluginPlatform {
     async deliverWebhook(runId:string,delivery:unknown):Promise<void> {
         const allocation=this.allocations.get(runId);if(!allocation)throw new Error('Plugin is not active');
         await this.bounded(allocation,()=>allocation.facet.deliverWebhook(delivery));
+    }
+    async deliverConnectionEvents(runId: string, connectionId: string, events: unknown[]): Promise<'ok' | 'unknown'> {
+        const allocation = this.allocations.get(runId); if (!allocation) throw new Error('Plugin is not active');
+        return this.bounded(allocation, () => allocation.facet.deliverConnectionEvents(connectionId, events));
     }
     async deliverSessionEvent(runId: string, event: unknown): Promise<void> {
         const allocation = this.allocations.get(runId); if (!allocation) throw new Error('Plugin is not active');

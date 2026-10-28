@@ -15,7 +15,8 @@ export interface EgressLimits {
 export const sessionEgress: EgressLimits = {headerMs: 15_000, idleMs: 15_000, maxRequestBytes: 1_048_576, maxResponseBytes: 1_048_576, recheckMs: 0, websocket: false, maxMessageBytes: 0};
 export const environmentEgress: EgressLimits = {headerMs: 120_000, idleMs: 300_000, maxRequestBytes: 16_777_216, maxResponseBytes: 67_108_864, recheckMs: 30_000, websocket: true, maxMessageBytes: 1_048_576};
 
-function destination(raw: string): URL {
+/** The only destinations plugin egress, including the connection gateway, may reach. */
+export function destination(raw: string): URL {
   const url = new URL(raw);
   // The WebSocket constructor's handshake is an ordinary HTTPS request.
   if (url.protocol === 'wss:') url.protocol = 'https:';

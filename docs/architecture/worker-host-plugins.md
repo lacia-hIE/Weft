@@ -4,7 +4,7 @@ Worker Host 使用标准 Cordis 导出和原版 `dsh.bundle.patch`。这一轮�
 
 ## 运行位置与权限
 
-安装阶段在隔离环境检查实际 `inject`。依赖 `storage`、`storageDomain`、`sessionController`、`weftSessionEvents`、`webhookRuntime`、`credentials` 或 `webServer` 的包归入环境宿主；其余包保留会话宿主。运行位置是检查得到的产物元数据，不是 npm 包另写的 Weft 声明。
+安装阶段在隔离环境检查实际 `inject`。依赖 `storage`、`storageDomain`、`sessionController`、`weftSessionEvents`、`weftConnections`、`webhookRuntime`、`credentials` 或 `webServer` 的包归入环境宿主；其余包保留会话宿主。运行位置是检查得到的产物元数据，不是 npm 包另写的 Weft 声明。
 
 沿用 Plugins 包详情的原版审核入口，审核精确代码摘要后授权：
 
@@ -18,6 +18,7 @@ Worker Host 使用标准 Cordis 导出和原版 `dsh.bundle.patch`。这一轮�
 | 读取环境凭据 | 原版 `credentials.resolve(ref)`，每次向所属环境解析 |
 | 环境后台运行 | 实例独立于浏览器和 Session 存在，可按持久计划唤醒 |
 | 公开 Webhook | 在所属包的独立路径内注册入口；插件负责提供方认证与验签 |
+| 外部长连接 | Weft 的 `weftConnections`，连接由共享网关持有，有消息时才唤醒环境 |
 
 新网络、凭据和公开路由权限默认不勾选。旧安装记录不自动增加权限；如需新增能力，安装新版本并重新审核。授权跟随精确产物和启用批次，撤销后旧能力引用不能继续访问环境资源。
 
@@ -56,6 +57,10 @@ EnvironmentDO 的数据库只登记安装和调度元数据，不保存插件代
 ## 会话回合通知
 
 `inject: ['weftSessionEvents']` 是 Weft 专有服务，归入「管理本环境会话」授权：`watch(sessionId)` / `unwatch(sessionId)` 订阅本环境根会话的回合结束，`onTurnEnded(handler)` 在激活时登记处理函数并返回 disposer。订阅保存在 EnvironmentDO，回合结束时由 SessionDO 通知，只投递给已获批并启用的订阅包。通知只是提示，可能丢失或重复，插件以自己的持久游标为准。设计与成本见[会话回合通知](session-turn-notifications.md)。
+
+## 外部长连接
+
+`inject: ['weftConnections']` 是 Weft 专有服务，需要单独授予「外部长连接」（高风险，同时需要外部 HTTPS 授权）。插件用 `socket(id, handlers)` / `poll(id, handlers)` 登记连接，连接由平台共享的 `ConnectionGatewayDO` 持有，心跳和控制帧由声明式规则处理，业务消息按顺序投递回插件；环境因此可以在消息之间休眠，也不再为这些包设置 60 秒看门狗。设计、分片与成本见[出站长连接网关](connection-gateway.md)。
 
 ## HTTPS 出口
 

@@ -41,6 +41,8 @@ export default defineConfig({
       SESSIONS: bindings.durableObject({ worker: deployment.workerName, exportName: 'SessionDO' }),
       WORKSPACES: bindings.durableObject({ worker: deployment.workerName, exportName: 'WorkspaceDO' }),
       ENVIRONMENTS: bindings.durableObject({ worker: deployment.workerName, exportName: 'EnvironmentDO' }),
+      // Shared outbound sockets and long polls (docs/architecture/connection-gateway.md).
+      GATEWAYS: bindings.durableObject({ worker: deployment.workerName, exportName: 'ConnectionGatewayDO' }),
       TENANTS: bindings.durableObject({ worker: deployment.workerName, exportName: 'TenantDO' }),
       CONFIG_DB: bindings.d1({ name: deployment.databaseName, ...(deployment.databaseId ? {id: deployment.databaseId} : {}) }),
       ACCESS_AUD: bindings.text(accessAudience),
@@ -58,6 +60,7 @@ export default defineConfig({
       // computerd's connection back to its WorkspaceDO.
       WorkspaceProxy: exports.worker(),
       EnvironmentDO: exports.durableObject({ storage: 'sqlite' }),
+      ConnectionGatewayDO: exports.durableObject({ storage: 'sqlite' }),
       TenantDO: exports.durableObject({ storage: 'sqlite' }),
     },
   },

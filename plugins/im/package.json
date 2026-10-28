@@ -1,6 +1,6 @@
 {
   "name": "@weft/dsh-im",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Connect Feishu, WeChat and QQ conversations to DeepSeek Harness Sessions.",
   "license": "MIT",
   "type": "module",
