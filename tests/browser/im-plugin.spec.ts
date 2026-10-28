@@ -337,6 +337,9 @@ test('QQ and Feishu QR creation handle expiry, cancellation, confirmation and du
     expect(settings.value.connectionMode).toBe('qr');
     expect(settings.value.appId).toBe('');
     await page.reload();
+    // load fires before the native Connection restores its selected Session.
+    // Opening Settings during that transition can lose the dialog on remount.
+    await expect(page.getByRole('treeitem', {name: /New Session/}).first()).toBeVisible({timeout: 45_000});
     await page.getByRole('button', {name: 'Settings', exact: true}).click({timeout: 45_000});
     await page.getByRole('button', {name: 'IM bots', exact: true}).click();
     await navigation.getByRole('tab', {name: label, exact: true}).click();
