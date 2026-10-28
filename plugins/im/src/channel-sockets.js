@@ -24,7 +24,7 @@ export function qqConnection(token, receive) {
         const interval = Number(frame.d?.heartbeat_interval);
         if (!Number.isFinite(interval) || interval < 1000) throw new Error('Invalid QQ heartbeat');
         const every = Math.min(interval, 300_000);
-        await connection.update({heartbeat: {everyMs: every, frame: {text: '{"op":1,"d":{{state.seq}}}'}}, idleMs: Math.min(every * 2, 900_000)});
+        await connection.update({heartbeat: {everyMs: every, frame: {text: '{"op":1,"d":{{state.seq}}}'}}, idleMs: Math.min(Math.max(every * 2, 5000), 900_000)});
         const accessToken = await token();
         await connection.send(JSON.stringify(state.sessionId ? {op: 6, d: {token: `QQBot ${accessToken}`, session_id: state.sessionId, seq: state.seq ?? null}}
           : {op: 2, d: {token: `QQBot ${accessToken}`, intents: 1 << 25, shard: [0, 1]}}));
