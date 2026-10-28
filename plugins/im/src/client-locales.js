@@ -1,4 +1,10 @@
 export const zh = {
+  presetUnavailable: '不可用', presetLoading: '正在读取 Agent Preset 目录…', presetFailed: '无法读取 Agent Preset 目录。',
+  chooseDirectory: '选择目录', directoryTitle: '选择机器人工作区目录', directoryHome: '主目录', directoryCrumbs: '当前目录',
+  directoryPath: '直接输入路径', directoryPathHint: '环境工作区中的绝对路径', directoryGo: '前往', directoryReading: '读取中…', directoryLoading: '正在读取目录…',
+  directoryEmpty: '这个目录中没有子文件夹。', directoryTruncated: '此目录的子文件夹过多，仅显示前一部分。', directoryRetry: '重试', directoryHidden: '显示隐藏文件夹',
+  directoryNotice: '选择后需保存配置；只影响新会话。', directorySelect: '选择此目录', newFolder: '新建文件夹', folderName: '文件夹名称', createFolder: '创建',
+  directoryFailed: '无法读取目录，请重试。', directoryUnreadable: '无法读取该目录，请确认路径存在。', directoryExists: '同名文件夹已存在。', directoryCreateFailed: '无法创建文件夹，请检查名称后重试。',
   model: '模型', reasoningEffort: '思考强度', modelDefault: '跟随模型默认', loadModels: '读取可用模型', refreshModels: '刷新模型目录',
   modelSelectionHint: '模型和思考强度仅用于新建会话。在已有聊天中发送 /new 使用新选择，不会修改宿主默认模型。修改其他设置后请先保存，再刷新目录。',
   catalogFailed: '无法读取宿主模型目录，请检查模型配置并重试。', catalogProviderFailed: '该提供方目录暂时不可用',
@@ -49,6 +55,12 @@ export const zh = {
   setupHelp: '接入说明', permissions: '插件需要浏览器模块、外部网络、Webhook 路由、持久存储、会话管理和环境后台权限。', singleBotHint: '此版本每个渠道接入一个机器人。三个渠道均支持扫码；飞书和 QQ 也支持凭据与 HTTP 回调接入。',
 };
 export const en = {
+  presetUnavailable: 'unavailable', presetLoading: 'Reading Agent Presets…', presetFailed: 'Agent Presets could not be read.',
+  chooseDirectory: 'Choose directory', directoryTitle: 'Select bot workspace directory', directoryHome: 'Home', directoryCrumbs: 'Current directory',
+  directoryPath: 'Enter a path', directoryPathHint: 'An absolute path in the environment workspace', directoryGo: 'Go', directoryReading: 'Reading…', directoryLoading: 'Reading directory…',
+  directoryEmpty: 'This directory has no subfolders.', directoryTruncated: 'This directory has too many subfolders; only the first ones are shown.', directoryRetry: 'Retry', directoryHidden: 'Show hidden folders',
+  directoryNotice: 'Save the configuration after choosing; applies to new sessions.', directorySelect: 'Select this directory', newFolder: 'New folder', folderName: 'Folder name', createFolder: 'Create',
+  directoryFailed: 'The directory could not be read. Try again.', directoryUnreadable: 'This directory cannot be read. Check that the path exists.', directoryExists: 'A folder with this name already exists.', directoryCreateFailed: 'The folder could not be created. Check the name and try again.',
   model: 'Model', reasoningEffort: 'Reasoning effort', modelDefault: 'Model default', loadModels: 'Load available models', refreshModels: 'Refresh model catalog',
   modelSelectionHint: 'Model and reasoning changes apply to new sessions. Send /new to use them in an existing chat. The Host default is unchanged. Save other edits before refreshing the catalog.',
   catalogFailed: 'Unable to load the Host model catalog. Check model configuration and retry.', catalogProviderFailed: 'Provider catalog is temporarily unavailable',

@@ -6,6 +6,8 @@ import {installSessionChannelLogos} from './session-channel-logos.js';
 import {AccessSettings, ContextSettings, ModelSettings} from './bot-settings.js';
 import {validateAccessPolicy} from './reference/access-policy.mjs';
 import {validateContextEnhancementConfig} from './reference/context-enhancement.mjs';
+import {WorkspaceField, workspaceDirectories} from './workspace-picker.js';
+import {PresetSelect, agentPresets} from './presets.js';
 import './client.css';
 
 const h = React.createElement;
@@ -35,10 +37,11 @@ export function apply(ctx) {
       ?.some(secret => secret.path.length === 1 && secret.path[0] === field && secret.set) === true,
   }]));
   const core = ctx.configForms.get(`installed/${PACKAGE}/im-core`);
+  const directories = workspaceDirectories(ctx), presets = agentPresets(ctx);
   ctx.slots.inject('settings.section', () => ctx.slots.register({name: 'settings.section', id: 'weft-im', order: 21,
-    label: () => ctx.locale.bind(NS)('title'), locale: NS}, ({t}) => h(ImSettings, {forms, core, t})));
+    label: () => ctx.locale.bind(NS)('title'), locale: NS}, ({t}) => h(ImSettings, {forms, core, directories, presets, t})));
   ctx.slots.inject('plugins.detail.section', () => ctx.slots.register({name: 'plugins.detail.section', id: 'weft-im', order: 20, locale: NS},
-    ({subject, t}) => subject.kind === 'bundle' && subject.pkg?.name === PACKAGE ? h(ImSettings, {forms, core, t}) : null));
+    ({subject, t}) => subject.kind === 'bundle' && subject.pkg?.name === PACKAGE ? h(ImSettings, {forms, core, directories, presets, t}) : null));
 }
 
 function Action({children, kind = 'secondary', className = '', ...props}) {
@@ -87,7 +90,7 @@ function useForm(scope, t) {
   return {snapshot, draft, value: {...snapshot.value, ...draft}, dirty: Object.keys(draft).length > 0, busy, error, message, edit, discard, commit, setError};
 }
 
-function ImSettings({forms, core, t}) {
+function ImSettings({forms, core, directories, presets, t}) {
   const [selected, setSelected] = React.useState('weixin');
   const id = React.useId();
   const select = channel => setSelected(channel);
@@ -112,8 +115,8 @@ function ImSettings({forms, core, t}) {
       h('div', {className: 'dim-divider', 'aria-hidden': true}),
       h('div', {className: 'dim-panel'},
         channels.map(channel => h('div', {key: channel, id: `${id}-panel-${channel}`, role: 'tabpanel', hidden: selected !== channel, 'aria-labelledby': `${id}-tab-${channel}`},
-          h(Channel, {channel, editor: forms[channel], active: selected === channel, t}))),
-        selected === 'general' ? h(GeneralSettings, {scope: core, t}) : null)));
+          h(Channel, {channel, editor: forms[channel], active: selected === channel, directories, presets, t}))),
+        selected === 'general' ? h(GeneralSettings, {scope: core, presets, t}) : null)));
 }
 
 async function channelRequest(base, channel, key, path, method, t, signal) {
@@ -134,7 +137,7 @@ async function channelRequest(base, channel, key, path, method, t, signal) {
   }
 }
 
-function Channel({channel, editor, active, t}) {
+function Channel({channel, editor, active, directories, presets, t}) {
   const form = useForm(editor.scope, t);
   const [view, setView] = React.useState('list'), [settingsTab, setSettingsTab] = React.useState('general');
   const [access, setAccess] = React.useState(), [status, setStatus] = React.useState(), [checkedAt, setCheckedAt] = React.useState();
@@ -239,7 +242,9 @@ function Channel({channel, editor, active, t}) {
           setSettingsTab(tabs[next]); document.getElementById(`${id}-tab-${tabs[next]}`)?.focus();
         }}, t(tab))))),
       h('form', {className: 'dim-botSettingsTabPanel', role: 'tabpanel', id: `${id}-${settingsTab}`, 'aria-labelledby': `${id}-tab-${settingsTab}`, onSubmit: saveSettings},
-        settingsTab === 'general' ? [field('displayName'), field('workspace'), field('agentPreset'),
+        settingsTab === 'general' ? [field('displayName'),
+          directories.available() ? h(WorkspaceField, {key: 'workspace', value: value.workspace || '/workspace', directories, disabled, onChange: path => form.edit('workspace', path), t}) : field('workspace'),
+          presets.available() ? h(PresetSelect, {key: 'agentPreset', label: t('agentPreset'), value: value.agentPreset, presets, disabled, onChange: id => form.edit('agentPreset', id), t}) : field('agentPreset'),
           h(ModelSettings, {key: 'model', selection: value.modelSelection, catalog, disabled, loadingDisabled: disabled || form.dirty, load: () => void perform('catalog'), onChange: selection => form.edit('modelSelection', selection), t}),
           h('label', {key: 'busy-mode', className: 'dim-credentialField'}, t('busyMessageMode'), h('select', {disabled, value: value.busyMessageMode || 'queue', onChange: event => form.edit('busyMessageMode', event.target.value)}, h('option', {value: 'queue'}, t('queue')), h('option', {value: 'steer'}, t('steer')))),
           h('p', {key: 'busy-hint', className: 'im-description'}, t('busyModeHint')),
@@ -289,11 +294,12 @@ function QrPanel({status, busy, channel, t, onRefresh, onClose}) {
         h('div', {className: 'dim-viewActions'}, h(Action, {kind: 'primary', disabled: busy, onClick: onRefresh}, t('refreshQr')), h(Action, {disabled: busy, onClick: onClose}, t(channel === 'weixin' ? 'back' : 'cancel'))))),
     h(Notice, {error: true}, error));
 }
-function GeneralSettings({scope, t}) {
+function GeneralSettings({scope, presets, t}) {
   const form = useForm(scope, t);
   return h('section', {className: 'im-settings', 'aria-label': t('generalSettings')}, h('h3', null, t('generalSettings')),
     h('form', {className: 'dim-botSettingsTabPanel', onSubmit: async event => {event.preventDefault(); await form.commit();}},
-      h(Field, {label: t('defaultPreset'), value: form.value.agentPreset || '', disabled: form.busy, onChange: value => form.edit('agentPreset', value)}),
+      presets.available() ? h(PresetSelect, {label: t('defaultPreset'), value: form.value.agentPreset, presets, disabled: form.busy, onChange: id => form.edit('agentPreset', id), t})
+        : h(Field, {label: t('defaultPreset'), value: form.value.agentPreset || '', disabled: form.busy, onChange: value => form.edit('agentPreset', value)}),
       h('label', {className: 'im-checkbox'}, h('input', {type: 'checkbox', disabled: form.busy, checked: form.value.titlePrefix !== false, onChange: event => form.edit('titlePrefix', event.target.checked)}), t('titlePrefix')),
       h('p', {className: 'im-description'}, t('newSessionsHint')), h('button', {type: 'submit', className: 'im-button', 'data-kind': 'primary', disabled: form.busy || !form.dirty}, t('save'))),
     h('details', {className: 'im-about'}, h('summary', null, t('setupHelp')), h('p', {className: 'im-description'}, t('permissions')), h('p', {className: 'im-description'}, t('singleBotHint'))),

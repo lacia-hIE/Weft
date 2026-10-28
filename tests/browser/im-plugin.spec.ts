@@ -54,7 +54,23 @@ test('IM setup follows the channel rail, binding, QR and bot card flow with dura
   await expect(feishu.getByRole('article', {name: 'Feishu', exact: true})).toBeVisible();
   await feishu.getByRole('button', {name: 'More settings', exact: true}).click();
   await feishu.getByLabel('Bot alias', {exact: true}).fill('Team bot');
-  await feishu.getByLabel('Workspace', {exact: true}).fill('/workspace/team');
+  // The workspace is chosen through the Host directory browser; a new folder is created in place.
+  await feishu.getByRole('button', {name: 'Choose directory', exact: true}).click();
+  const directories = page.getByRole('dialog', {name: 'Select bot workspace directory', exact: true});
+  await expect(directories.getByRole('navigation', {name: 'Current directory', exact: true})).toContainText('Home');
+  await directories.getByRole('button', {name: 'New folder', exact: true}).click();
+  await directories.getByLabel('Folder name', {exact: true}).fill('team');
+  await directories.getByRole('button', {name: 'Create', exact: true}).click();
+  await expect(directories.getByLabel('Enter a path', {exact: true})).toHaveValue('/workspace/team');
+  await page.screenshot({path: testInfo.outputPath('im-workspace-directory.png')});
+  await directories.getByRole('button', {name: 'Select this directory', exact: true}).click();
+  await expect(directories).toBeHidden();
+  await expect(feishu.getByRole('button', {name: 'Choose directory', exact: true})).toBeFocused();
+  await expect(feishu.getByText('/workspace/team', {exact: true})).toBeVisible();
+  const preset = feishu.getByRole('combobox', {name: 'Agent Preset', exact: true});
+  await expect(preset).toBeEnabled();
+  await expect(preset).toHaveValue('');
+  await expect(preset.getByRole('option', {name: 'Follow default', exact: true})).toBeAttached();
   await feishu.getByRole('button', {name: 'Save configuration', exact: true}).click();
   await expect(feishu.getByText('Configuration saved', {exact: true})).toBeVisible();
   await feishu.getByRole('tab', {name: 'Access', exact: true}).click();

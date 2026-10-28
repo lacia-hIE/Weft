@@ -240,3 +240,74 @@
   .weft-im .dim-panel .dim-botIdentity {flex: auto;}
   .weft-im .dim-listHeading {flex-wrap: wrap;}
 }
+/* Workspace directory dialog, adapted from dsh-im. The Modal portals to <body>, outside .weft-im. */
+.dim-directoryPicker.dim-directoryPicker { --dim-blue: var(--dsw-alias-state-business-primary, #3370ff); --dim-blue-soft: color-mix(in srgb, var(--dim-blue) 9%, transparent); width: min(720px, 100%); height: min(620px, 100%); min-height: 0; gap: 0; padding: 0; color: var(--dsw-alias-label-primary, #1f2329); }
+.dim-directoryPicker, .dim-directoryPicker *, .dim-directoryPicker *::before, .dim-directoryPicker *::after { box-sizing: border-box; }
+.dim-directoryPicker .dim-directoryPickerScope { min-height: 0; flex: 1; display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto; }
+.dim-directoryPicker .dim-directoryPickerHeader { min-width: 0; padding: 22px 24px 17px; border-bottom: 1px solid var(--dsw-alias-border-l1, #eef0f3); }
+.dim-directoryPicker .dim-directoryPickerHeader h3 { margin: 0 0 14px; color: var(--dsw-alias-label-primary, #1f2329); font-size: 20px; line-height: 1.35; font-weight: 680; }
+.dim-directoryPicker .dim-directoryPickerHeader > p { margin: 0; color: var(--dsw-alias-label-secondary, #646a73); font-size: 13px; }
+.dim-directoryPicker .dim-directoryCrumbs { min-width: 0; display: flex; align-items: center; flex-wrap: wrap; gap: 4px; color: var(--dsw-alias-label-tertiary, #8f959e); }
+.dim-directoryPicker .dim-directoryCrumbs button { max-width: 210px; overflow: hidden; padding: 3px 5px; border: 0; border-radius: 6px; color: var(--dsw-alias-label-secondary, #646a73); background: transparent; font: inherit; font-size: 12px; line-height: 18px; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.dim-directoryPicker .dim-directoryCrumbs button:hover:not(:disabled) { color: var(--dim-blue); background: var(--dim-blue-soft); }
+.dim-directoryPicker .dim-directoryCrumbs button[aria-current="page"] { color: var(--dsw-alias-label-primary, #1f2329); font-weight: 650; }
+.dim-directoryPicker .dim-directoryCrumbs button:focus-visible, .dim-directoryPicker .dim-directoryPathInput:focus-visible, .dim-directoryPicker .dim-directoryPathControl button:focus-visible, .dim-directoryPicker .dim-directoryList button:focus-visible, .dim-directoryPicker .dim-directoryPickerActions button:focus-visible { outline: 2px solid color-mix(in srgb, var(--dim-blue) 65%, white); outline-offset: 1px; }
+.dim-directoryPicker .dim-directoryCrumbSeparator { flex: none; font-size: 12px; }
+.dim-directoryPicker .dim-directoryPathForm { display: grid; gap: 7px; margin-top: 14px; }
+.dim-directoryPicker .dim-directoryPathMeta { min-width: 0; display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.dim-directoryPicker .dim-directoryPathMeta label { flex: none; color: var(--dsw-alias-label-secondary, #646a73); font-size: 12px; font-weight: 650; }
+.dim-directoryPicker .dim-directoryPathMeta span { min-width: 0; overflow: hidden; color: var(--dsw-alias-label-tertiary, #8f959e); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.dim-directoryPicker .dim-directoryPathControl { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) max-content; gap: 8px; }
+.dim-directoryPicker .dim-directoryPathInput { min-width: 0; height: 38px; padding: 0 11px; border: 1px solid var(--dsw-alias-border-l2, #dfe1e5); border-radius: 8px; color: var(--dsw-alias-label-primary, #1f2329); background: var(--dsw-alias-bg-layer-1, #fff); font: 12px ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace; line-height: 38px; }
+.dim-directoryPicker .dim-directoryPathInput::placeholder { color: var(--dsw-alias-label-tertiary, #8f959e); }
+.dim-directoryPicker .dim-directoryPathInput:hover:not(:disabled) { border-color: var(--dsw-alias-border-l3, #bbbfc4); }
+.dim-directoryPicker .dim-directoryPathInput:focus { border-color: var(--dim-blue); }
+.dim-directoryPicker .dim-directoryPathInput[aria-invalid="true"] { border-color: color-mix(in srgb, var(--dsw-alias-state-error-primary, #d54941) 62%, var(--dsw-alias-border-l2, #dfe1e5)); }
+.dim-directoryPicker .dim-directoryPathControl button { min-height: 38px; padding: 0 14px; border: 1px solid color-mix(in srgb, var(--dim-blue) 30%, var(--dsw-alias-border-l2, #dfe1e5)); border-radius: 8px; color: var(--dim-blue); background: var(--dim-blue-soft); font: inherit; font-size: 13px; font-weight: 650; cursor: pointer; }
+.dim-directoryPicker .dim-directoryPathControl button:hover:not(:disabled) { border-color: color-mix(in srgb, var(--dim-blue) 48%, var(--dsw-alias-border-l2, #dfe1e5)); background: color-mix(in srgb, var(--dim-blue) 13%, transparent); }
+.dim-directoryPicker .dim-directoryPathInput:disabled, .dim-directoryPicker .dim-directoryPathControl button:disabled { cursor: not-allowed; opacity: .55; }
+.dim-directoryPicker .dim-directoryPickerBody { min-height: 0; overflow-y: auto; padding: 14px 16px; scrollbar-width: thin; scrollbar-color: var(--dsw-alias-border-l2, #dfe1e5) transparent; }
+.dim-directoryPicker .dim-directoryList { display: grid; gap: 3px; margin: 0; padding: 0; list-style: none; }
+.dim-directoryPicker .dim-directoryList button { width: 100%; min-height: 46px; display: grid; grid-template-columns: 24px minmax(0, 1fr) 18px; align-items: center; gap: 10px; padding: 7px 11px; border: 0; border-radius: 9px; color: var(--dsw-alias-label-primary, #1f2329); background: transparent; font: inherit; text-align: left; cursor: pointer; }
+.dim-directoryPicker .dim-directoryList button:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover, #f7f8fa); }
+.dim-directoryPicker .dim-directoryList button:disabled, .dim-directoryPicker .dim-directoryCrumbs button:disabled { cursor: wait; opacity: .55; }
+.dim-directoryPicker .dim-directoryFolder { width: 24px; height: 24px; display: grid; place-items: center; color: var(--dsw-alias-label-secondary, #646a73); }
+.dim-directoryPicker .dim-directoryFolder svg { width: 22px; height: 22px; }
+.dim-directoryPicker .dim-directoryName { min-width: 0; overflow: hidden; font-size: 14px; line-height: 20px; text-overflow: ellipsis; white-space: nowrap; }
+.dim-directoryPicker .dim-directoryChevron { width: 18px; height: 18px; display: grid; place-items: center; color: var(--dsw-alias-label-tertiary, #8f959e); }
+.dim-directoryPicker .dim-directoryChevron svg { width: 17px; height: 17px; }
+.dim-directoryPicker .dim-directoryPickerState { min-height: 210px; display: grid; place-content: center; justify-items: center; gap: 10px; color: var(--dsw-alias-label-secondary, #646a73); text-align: center; }
+.dim-directoryPicker .dim-directoryPickerState p { margin: 0; font-size: 13px; line-height: 1.6; }
+.dim-directoryPicker .dim-directoryPickerSpinner { width: 24px; height: 24px; border: 3px solid var(--dsw-alias-border-l2, #e6e8eb); border-top-color: var(--dim-blue); border-radius: 50%; animation: dim-spin .8s linear infinite; }
+.dim-directoryPicker .dim-directoryPickerError { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 8px 0 0; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--dsw-alias-state-error-primary, #d54941) 22%, var(--dsw-alias-border-l2, #dfe1e5)); border-radius: 8px; color: var(--dsw-alias-state-error-primary, #d54941); background: color-mix(in srgb, var(--dsw-alias-state-error-primary, #d54941) 7%, var(--dsw-alias-bg-layer-1, #fff)); font-size: 12px; line-height: 1.5; }
+.dim-directoryPicker .dim-directoryPickerError button { flex: none; padding: 4px 8px; border: 0; border-radius: 6px; color: inherit; background: transparent; font: inherit; font-weight: 650; cursor: pointer; }
+.dim-directoryPicker .dim-directoryPickerTruncated { margin: 10px 4px 0; color: var(--dsw-alias-label-tertiary, #8f959e); font-size: 12px; line-height: 1.5; }
+.dim-directoryPicker .dim-directoryPickerFooter { display: grid; grid-template-columns: max-content minmax(0, 1fr) max-content; align-items: center; gap: 14px; padding: 16px 20px; border-top: 1px solid var(--dsw-alias-border-l1, #eef0f3); background: transparent; }
+.dim-directoryPicker .dim-directoryHidden { display: inline-flex; align-items: center; gap: 7px; padding: 2px 0; border: 0; color: var(--dsw-alias-label-secondary, #646a73); background: transparent; font: inherit; font-size: 12px; white-space: nowrap; cursor: pointer; }
+.dim-directoryPicker .dim-directoryHidden:focus-visible { outline: 2px solid color-mix(in srgb, var(--dim-blue) 65%, white); outline-offset: 2px; }
+.dim-directoryPicker .dim-directoryHidden:disabled { cursor: not-allowed; opacity: .52; }
+.dim-directoryPicker .dim-directoryHiddenBox { position: relative; width: 15px; height: 15px; flex: 0 0 15px; border: 1px solid var(--dsw-alias-border-l2, #c9cdd4); border-radius: 4px; background: var(--dsw-alias-bg-layer-1, #fff); }
+.dim-directoryPicker .dim-directoryHidden[aria-pressed="true"] .dim-directoryHiddenBox { border-color: var(--dim-blue); background: var(--dim-blue); }
+.dim-directoryPicker .dim-directoryHidden[aria-pressed="true"] .dim-directoryHiddenBox::after { content: ""; position: absolute; left: 4px; top: 1px; width: 4px; height: 8px; border: solid white; border-width: 0 2px 2px 0; transform: rotate(45deg); }
+.dim-directoryPicker .dim-directoryPickerNotice { min-width: 0; margin: 0; color: var(--dsw-alias-label-tertiary, #8f959e); font-size: 11px; line-height: 1.45; text-align: right; }
+.dim-directoryPicker .dim-directoryPickerActions { display: flex; gap: 8px; }
+.dim-directoryPicker .dim-directoryPickerActions button { min-height: 36px; padding: 0 14px; border: 1px solid var(--dsw-alias-border-l2, #dfe1e5); border-radius: 8px; color: var(--dsw-alias-label-primary, #1f2329); background: var(--dsw-alias-bg-layer-1, #fff); font: inherit; font-size: 13px; font-weight: 560; white-space: nowrap; cursor: pointer; }
+.dim-directoryPicker .dim-directoryPickerActions .dim-directoryPickerPrimary { border-color: var(--dim-blue); color: #fff; background: var(--dim-blue); }
+.dim-directoryPicker .dim-directoryPickerActions button:hover:not(:disabled) { filter: brightness(.97); }
+.dim-directoryPicker .dim-directoryPickerActions button:disabled { cursor: not-allowed; opacity: .52; }
+.dim-directoryPicker .dim-directoryTools { display: flex; align-items: center; gap: 14px; }
+.dim-directoryPicker .dim-directoryNewFolder { padding: 2px 0; border: 0; color: var(--dim-blue); background: transparent; font: inherit; font-size: 12px; font-weight: 600; white-space: nowrap; cursor: pointer; }
+.dim-directoryPicker .dim-directoryNewFolder:disabled { cursor: not-allowed; opacity: .52; }
+.dim-directoryPicker .dim-directoryFolderForm { display: grid; grid-template-columns: max-content minmax(0, 1fr) max-content; align-items: center; gap: 10px; padding: 12px 20px; border-top: 1px solid var(--dsw-alias-border-l1, #eef0f3); }
+.dim-directoryPicker .dim-directoryFolderForm label { color: var(--dsw-alias-label-secondary, #646a73); font-size: 12px; font-weight: 650; }
+@media (max-width: 640px) {
+  .dim-directoryPicker.dim-directoryPicker { height: 100%; min-height: 0; border-radius: 14px; }
+  .dim-directoryPicker .dim-directoryPickerHeader { padding: 18px 17px 14px; }
+  .dim-directoryPicker .dim-directoryPickerHeader h3 { font-size: 18px; }
+  .dim-directoryPicker .dim-directoryPathMeta span { display: none; }
+  .dim-directoryPicker .dim-directoryPickerBody { padding: 10px; }
+  .dim-directoryPicker .dim-directoryPickerFooter { grid-template-columns: minmax(0, 1fr) max-content; gap: 10px; padding: 13px 14px; }
+  .dim-directoryPicker .dim-directoryPickerNotice { grid-column: 1 / -1; grid-row: 1; text-align: left; }
+  .dim-directoryPicker .dim-directoryFolderForm { grid-template-columns: minmax(0, 1fr); padding: 12px 14px; }
+}
+@media (prefers-reduced-motion: reduce) { .dim-directoryPicker .dim-directoryPickerSpinner { animation-duration: 1.8s; } }
