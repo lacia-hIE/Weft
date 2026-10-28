@@ -1,4 +1,4 @@
-import {mkdtempSync,mkdirSync,writeFileSync} from 'node:fs';
+import {copyFileSync,mkdtempSync,mkdirSync,writeFileSync} from 'node:fs';
 import {join,resolve} from 'node:path';
 import {tmpdir} from 'node:os';
 import {spawn,execFileSync,type ChildProcess} from 'node:child_process';
@@ -26,7 +26,12 @@ export async function startLocalDsh(runtime:Miniflare,certificate:string):Promis
   let trace='';
   const log=(chunk:Buffer)=>{trace=(trace+chunk.toString()).slice(-2*1024*1024);writeFileSync('.generated/local-dsh-native.log',trace.replace(/([?&]token=)[^\s\x1b"<>]+/g,'$1[redacted]'),{mode:0o600});};
   let child!:ChildProcess,failed:Error|undefined;
-  const launch=()=>{failed=undefined;child=spawn(executable,['--profile','web','--no-open','--port',String(port)],{cwd:project,env:environment,stdio:['ignore','pipe','pipe']});child.stdout?.on('data',log);child.stderr?.on('data',log);child.on('error',error=>{failed=error;});};
+  // WEFT_LOCAL_DSH_PROFILE=desktop boots the release the way Desktop's Host child does (random loopback port, Desktop profile).
+  const desktop=process.env.WEFT_LOCAL_DSH_PROFILE==='desktop',runtimeDir=resolve('.generated/local-dsh'),desktopHost=join(runtimeDir,'desktop-profile-host.mjs');
+  if(desktop)copyFileSync(resolve('tests/fixtures/desktop-profile-host.mjs'),desktopHost);
+  const launch=()=>{failed=undefined;child=desktop
+    ?spawn(process.execPath,[desktopHost,runtimeDir,join(environment.DSH_HOME,'profiles','desktop')],{cwd:project,env:environment,stdio:['ignore','pipe','pipe']})
+    :spawn(executable,['--profile','web','--no-open','--port',String(port)],{cwd:project,env:environment,stdio:['ignore','pipe','pipe']});child.stdout?.on('data',log);child.stderr?.on('data',log);child.on('error',error=>{failed=error;});};
   launch();
   const stop=async()=>{
     const target=child;if(target.exitCode!==null||target.signalCode!==null)return;
@@ -38,7 +43,7 @@ export async function startLocalDsh(runtime:Miniflare,certificate:string):Promis
   try{
     for(let attempt=0;attempt<180;attempt++){
       if(failed||child.exitCode!==null)throw new Error('Published DSH startup failed; see local-dsh-native.log');
-      const localUrl=trace.match(/https?:\/\/(?:localhost|127\.0\.0\.1):\d+\/[^\s\x1b"<>]*[?&]token=[A-Za-z0-9._~%+-]+/)?.[0];
+      const localUrl=desktop?trace.match(/WEFT_DESKTOP_READY (\S+)/)?.[1]:trace.match(/https?:\/\/(?:localhost|127\.0\.0\.1):\d+\/[^\s\x1b"<>]*[?&]token=[A-Za-z0-9._~%+-]+/)?.[0];
       if(localUrl)return {project,base,stop,restart,localUrl,pairingCode,bundlePath};
       await new Promise(resolve=>setTimeout(resolve,500));
     }

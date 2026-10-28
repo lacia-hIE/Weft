@@ -20,7 +20,7 @@ concurrency:
 
 jobs:
   local-host:
-    name: Published local DSH (${{ matrix.dsh }})
+    name: Published local DSH (${{ matrix.dsh }}${{ matrix.profile == 'desktop' && ', Desktop profile' || '' }})
     needs: build
     runs-on: ubuntu-latest
     # Same pinned image as the browser shards: Chromium and its OS packages are
@@ -33,9 +33,15 @@ jobs:
       fail-fast: false
       matrix:
         dsh: ['0.2.1-rc.2', '0.2.1-rc.3']
+        profile: [web]
+        # Desktop's Host child boots the same release with its own profile; Electron itself is not needed.
+        include:
+          - dsh: '0.2.1-rc.3'
+            profile: desktop
     env:
       WEFT_LOCAL_DSH_TEST: '1'
       WEFT_LOCAL_DSH_VERSION: ${{ matrix.dsh }}
+      WEFT_LOCAL_DSH_PROFILE: ${{ matrix.profile }}
       PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
     steps:
       - uses: actions/checkout@v4
@@ -58,7 +64,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: local-dsh-results-${{ matrix.dsh }}
+          name: local-dsh-results-${{ matrix.dsh }}-${{ matrix.profile }}
           path: |
             .generated/local-dsh-native.log
             test-results
