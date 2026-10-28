@@ -7,7 +7,7 @@ const identity = (row: Installation) => JSON.stringify([row.digest, row.activati
 export function installedServices(row: Installation): string[] {
   const p = row.permissions;
   return [...(p.files !== 'none' ? ['fs'] : []), ...(p.tools || row.hostScope==='environment' ? ['tools'] : []), ...(p.timer ? ['timer'] : []),
-    ...(p.storage ? ['storage', 'storageDomain'] : []), ...(p.sessions ? ['sessionController','webhookRuntime'] : []), ...(p.credentials ? ['credentials'] : []), ...(p.routes ? ['webServer'] : [])];
+    ...(p.storage ? ['storage', 'storageDomain'] : []), ...(p.sessions ? ['sessionController','weftSessionEvents','webhookRuntime'] : []), ...(p.credentials ? ['credentials'] : []), ...(p.routes ? ['webServer'] : [])];
 }
 interface Active {row: Installation; runId: string; fiber?: Fiber}
 /** A single environment-owned activation, independent of open browser pages and Sessions. */
@@ -88,6 +88,13 @@ export class EnvironmentPackages {
     await this.reconcile();
     const results=await Promise.allSettled([...this.active.values()].filter(active=>active.row.permissions.sessions).map(active=>this.platform.deliverWebhook(active.runId,delivery)));
     if(results.some(result=>result.status==='rejected'))throw new Error('A Worker webhook receiver is unavailable');
+  }
+  /** Hand a root Session's turn end to the watching packages that may still manage Sessions. */
+  async dispatchSessionEvent(packages: readonly string[], event: unknown): Promise<void> {
+    await this.reconcile();
+    const results = await Promise.allSettled([...this.active.values()].filter(active => packages.includes(active.row.name) && active.row.permissions.sessions)
+      .map(active => this.platform.deliverSessionEvent(active.runId, event)));
+    for (const result of results) if (result.status === 'rejected') console.warn('weft.package.session-event.failed', {reason: result.reason instanceof Error ? result.reason.message : String(result.reason)});
   }
   async tick(): Promise<void> {
     await this.reconcile();

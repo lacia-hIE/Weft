@@ -103,7 +103,7 @@ function ImSettings({forms, core, directories, presets, t}) {
   };
   return h('section', {className: 'weft-im dim-page', 'aria-label': t('title')},
     h('header', {className: 'dim-title'},
-      h('div', {className: 'dim-brand'}, h('div', {className: 'dim-brandHeading'}, h('strong', {className: 'dim-brandName'}, 'DSH-IM'), h('span', {className: 'dim-brandVersion'}, 'v0.4.0')), h('p', null, t('tagline'))),
+      h('div', {className: 'dim-brand'}, h('div', {className: 'dim-brandHeading'}, h('strong', {className: 'dim-brandName'}, 'DSH-IM'), h('span', {className: 'dim-brandVersion'}, 'v0.5.0')), h('p', null, t('tagline'))),
       h('div', {className: 'im-title-actions'},
         h('a', {href: 'https://github.com/xmanrui/dsh-im', target: '_blank', rel: 'noopener noreferrer', className: 'im-help'}, t('help')),
         h(Action, {'aria-label': t('generalSettings'), 'aria-pressed': selected === 'general', onClick: () => setSelected(selected === 'general' ? 'weixin' : 'general')}, h(Icon, {kind: 'settings'})))),
@@ -248,6 +248,9 @@ function Channel({channel, editor, active, directories, presets, t}) {
           h(ModelSettings, {key: 'model', selection: value.modelSelection, catalog, disabled, loadingDisabled: disabled || form.dirty, load: () => void perform('catalog'), onChange: selection => form.edit('modelSelection', selection), t}),
           h('label', {key: 'busy-mode', className: 'dim-credentialField'}, t('busyMessageMode'), h('select', {disabled, value: value.busyMessageMode || 'queue', onChange: event => form.edit('busyMessageMode', event.target.value)}, h('option', {value: 'queue'}, t('queue')), h('option', {value: 'steer'}, t('steer')))),
           h('p', {key: 'busy-hint', className: 'im-description'}, t('busyModeHint')),
+          h('label', {key: 'session-sync', className: 'dim-credentialField'}, t('sessionSync'), h('select', {disabled, value: value.sessionSync || 'scheduled', onChange: event => form.edit('sessionSync', event.target.value)},
+            h('option', {value: 'scheduled'}, t('sessionSyncScheduled')), h('option', {value: 'all'}, t('sessionSyncAll')), h('option', {value: 'off'}, t('sessionSyncOff')))),
+          h('p', {key: 'session-sync-hint', className: 'im-description'}, t('sessionSyncHint')),
           h('p', {key: 'new', className: 'im-description'}, t('newSessionsHint')),
           h('label', {key: 'chars', className: 'dim-credentialField'}, t('maxChars'), h('input', {type: 'number', min: 200, max: channel === 'feishu' ? 10000 : channel === 'qq' ? 5000 : 4000, disabled, value: value.maxChars, onChange: event => form.edit('maxChars', Number(event.target.value))})),
           channel !== 'weixin' && snapshot.value.connectionMode !== 'qr' ? h('div', {key: 'callback'}, h(Callback, {url: `${base}/${channel}`, copied, setCopied, t, onError: form.setError})) : null] : settingsTab === 'access' ? h(AccessSettings, {channel, value, edit: form.edit, disabled, t})

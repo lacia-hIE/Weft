@@ -21,6 +21,7 @@ export const botSettings = () => ({
   workspace: Schema.string().default('/workspace').description('Workspace for new conversations.'),
   agentPreset: Schema.string().default('').description('Agent preset for new conversations; empty follows the shared IM default.'),
   busyMessageMode: Schema.union(['queue', 'steer']).default('queue').description('Queue new text or add it to the current task.'),
+  sessionSync: Schema.union(['scheduled', 'all', 'off']).default('scheduled').description('Send turns the chat did not start: schedule results, or also Web turns in private chats.'),
   modelSelection: Schema.union([Schema.const(null), Schema.object({provider: Schema.string().min(1), model: Schema.string().min(1), reasoningEffort: Schema.string()})]).default(null).description('Model and optional reasoning effort for new Sessions; null follows the Host default.'),
   // Null preserves the legacy allowlist until the administrator explicitly saves a policy.
   accessPolicy: Schema.union([Schema.const(null), Schema.object({direct: scenePolicy(), group: scenePolicy()})]).default(null),
@@ -31,7 +32,7 @@ export const botSettings = () => ({
 export function channelSettings(config, owner, botId) {
   return {
     workspace: config.workspace, agentPreset: config.agentPreset,
-    busyMessageMode: config.busyMessageMode, contextEnhancement: config.contextEnhancement, modelSelection: config.modelSelection,
+    busyMessageMode: config.busyMessageMode, sessionSync: config.sessionSync, contextEnhancement: config.contextEnhancement, modelSelection: config.modelSelection,
     botId,
     access(message, isCommand = false) {
       if (message.sender && message.sender === owner()) return {allowed: true};

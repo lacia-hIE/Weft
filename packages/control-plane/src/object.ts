@@ -544,7 +544,7 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
           const background = inject.some(name => (environmentHostServices as readonly string[]).includes(name));
           artifact.hostScope = background ? 'environment' : 'session';
           artifact.permissions = {...artifact.permissions, network: true,
-            storage: inject.some(name => name === 'storage' || name === 'storageDomain'), sessions: inject.includes('sessionController') || inject.includes('webhookRuntime'),
+            storage: inject.some(name => name === 'storage' || name === 'storageDomain'), sessions: inject.includes('sessionController') || inject.includes('weftSessionEvents') || inject.includes('webhookRuntime'),
             credentials: inject.includes('credentials'), routes: inject.includes('webServer'), tools:inject.includes('tools'), background};
           const configs = entrySchemasSchema.parse(await platform.configSchemas(runId));
           if (configs.length) artifact.configs = configs; else delete artifact.configs;
@@ -692,6 +692,25 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
     const response = await this.backgroundPackages(scope).fetch(name, request);
     await this.schedulePackageAlarm(scope);
     return response;
+  }
+  /** Record one package's interest in a root Session's turn ends; see docs/architecture/session-turn-notifications.md. */
+  nativePackageWatchSession(scope: ControlScope, receipt: {name: string; digest: string; activationId: string}, sessionId: string, watch: boolean): void {
+    this.nativePackageAuthorize(scope, receipt, 'sessions'); id.parse(sessionId);
+    if (!watch) {this.ctx.storage.sql.exec('DELETE FROM weft_session_watches WHERE package=? AND session_id=?', receipt.name, sessionId); return;}
+    if (this.nativeSessionRoot(scope, sessionId) !== sessionId) throw new Error('Session is outside this environment');
+    this.ctx.storage.sql.exec('INSERT OR IGNORE INTO weft_session_watches (package, session_id) VALUES (?, ?)', receipt.name, sessionId);
+  }
+  /** A root Session finished a turn. Best-effort: watchers recover a missed hint from their own cursor. */
+  async nativeSessionTurnEnded(scope: ControlScope, sessionId: string, seq: number): Promise<void> {
+    this.scope(scope); id.parse(sessionId);
+    if (this.lifecycle.mode !== 'active' || !Number.isSafeInteger(seq) || seq < 0) return;
+    const watching = this.ctx.storage.sql.exec<{package: string}>('SELECT package FROM weft_session_watches WHERE session_id=?', sessionId).toArray().map(row => row.package);
+    if (!watching.length) return;
+    // Removal leaves watches behind; they lapse here instead of in every uninstall path.
+    const installed = new Set(this.packages(scope).registry.list().map(row => row.name));
+    for (const name of watching.filter(name => !installed.has(name))) this.ctx.storage.sql.exec('DELETE FROM weft_session_watches WHERE package=?', name);
+    const live = watching.filter(name => installed.has(name));
+    if (live.length) await this.backgroundPackages(scope).dispatchSessionEvent(live, {sessionId, seq});
   }
   async nativePackageFollow(scope: ControlScope, receipt: {name: string; digest: string; activationId: string}, raw: unknown): Promise<Response> {
     this.nativePackageAuthorize(scope, receipt, 'sessions');
@@ -1067,6 +1086,7 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
       await this.seedAgents();
     });
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS native_child_owners (id TEXT PRIMARY KEY, parent_id TEXT NOT NULL, root_id TEXT NOT NULL)');
+    ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_session_watches (package TEXT NOT NULL, session_id TEXT NOT NULL, PRIMARY KEY(package, session_id)) STRICT');
     ctx.storage.sql.exec(
       "CREATE TABLE IF NOT EXISTS client_plugins (id TEXT PRIMARY KEY, revision TEXT NOT NULL, enabled INTEGER NOT NULL)",
     );

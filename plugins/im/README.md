@@ -17,13 +17,13 @@ Channels inject `im`; other plugins can do the same to add a channel. Every chan
 
 ## Host services
 
-`sessionController`, `storageDomain` and `webServer`, plus outbound HTTPS. In Weft the deployment ships this bundle: install it from the Plugins page (no npm registry is used), then approve its browser module, network, routes, persistent storage, sessions and environment background access. Open **Settings → IM bots** (中文：**设置 → IM 机器人**) or the bundle detail page to configure channels.
+`sessionController`, `weftSessionEvents` (Weft's [turn notifications](../../docs/architecture/session-turn-notifications.md)), `storageDomain` and `webServer`, plus outbound HTTPS. In Weft the deployment ships this bundle: install it from the Plugins page (no npm registry is used), then approve its browser module, network, routes, persistent storage, sessions and environment background access. Open **Settings → IM bots** (中文：**设置 → IM 机器人**) or the bundle detail page to configure channels.
 
 The page follows [xmanrui/dsh-im](https://github.com/xmanrui/dsh-im): the channel rail leads to an empty-state introduction, QR or credential binding, a bot card, and **More settings → General / Access**. The brand header, channel logos, surfaces, QR instructions, status indicators and responsive layout are adapted from that project's UI. See [third-party notices](THIRD_PARTY_NOTICES.md) for its MIT license and source revision.
 
-If upgrading from 0.1.0–0.3.1, build an update to **0.4.0** in the plugin's bundle review, approve the new artifact with browser module access, then refresh the workbench. Channel configuration and the connected WeChat account persist across this update. The settings page and stylesheet unload when the bundle is disabled or removed.
+If upgrading from 0.1.0–0.4.0, build an update to **0.5.0** in the plugin's bundle review, approve the new artifact with browser module access, then refresh the workbench. Channel configuration and the connected WeChat account persist across this update. The settings page and stylesheet unload when the bundle is disabled or removed.
 
-Deploy the matching Weft build before upgrading to 0.4.0: Feishu's binary WebSocket protocol also requires the updated Host egress relay. Updating only the plugin artifact on an older Weft Host does not add that relay fix.
+Deploy the matching Weft build before upgrading to 0.5.0: Feishu's binary WebSocket protocol requires the updated Host egress relay, and 0.5.0 injects the Host's `weftSessionEvents` service. On an older Weft Host the plugin cannot activate.
 
 Routes are served at `/v1/plugin-hooks/<tenant>/<environment>/@weft%2Fdsh-im/<path>`.
 
@@ -35,7 +35,7 @@ Routes are served at `/v1/plugin-hooks/<tenant>/<environment>/@weft%2Fdsh-im/<pa
 
 Each bot card offers **Check connection**, **Pause / Resume**, **Remove bot** and **More settings**. For manually bound Feishu/QQ bots, credential checks request a provider token and report **Credentials verified**; HTTP callback setup must still be completed in the provider console. QR-created bots report the actual WebSocket connection state. Expired or declined authorization can be refreshed, and **Cancel** stops the current attempt. Cancelled or failed replacements preserve the existing QR account. Pausing, reloading or rotating the management key preserves completed bindings; unfinished attempts are cancelled on reload. QR credentials are held in the channel's environment storage and never returned by management routes or configuration forms. WeChat displays its actual iLink login status. Removing a bot clears its credentials and IM conversation bindings while preserving the native AI Sessions. Pausing preserves its credentials and bindings.
 
-In **More settings → General**, edit the bot alias, workspace, Agent Preset and reply length. **Choose directory** opens a browser over the environment workspace (the Host `uiWorkspace` directory service), where you can open folders, enter a path or create a folder before selecting it; save the configuration afterwards. The Agent Preset list comes from the Host roster (`remote.agentPresets`); **Follow default** uses the Host default, and a saved preset that is no longer available stays listed and marked. On a Host without these services both fall back to text fields. Workspace and preset changes apply to newly created Sessions (send `/new` in an existing chat). **Access** edits the allowed-user list. The header's **General settings** sets the shared Agent Preset fallback and Session title prefix.
+In **More settings → General**, edit the bot alias, workspace, Agent Preset, reply length and **Session sync**. Session sync sends turns the chat did not start back to it: *Scheduled tasks only* (default) delivers schedule results to private and group chats; *Scheduled tasks and Web turns* also delivers Web turns to private chats, prefixed with the Web question; *Off* delivers neither. Bindings made before 0.5.0 start syncing at their first turn after the upgrade. **Choose directory** opens a browser over the environment workspace (the Host `uiWorkspace` directory service), where you can open folders, enter a path or create a folder before selecting it; save the configuration afterwards. The Agent Preset list comes from the Host roster (`remote.agentPresets`); **Follow default** uses the Host default, and a saved preset that is no longer available stays listed and marked. On a Host without these services both fall back to text fields. Workspace and preset changes apply to newly created Sessions (send `/new` in an existing chat). **Access** edits the allowed-user list. The header's **General settings** sets the shared Agent Preset fallback and Session title prefix.
 
 New IM Sessions use the native content-based automatic title, labeled `微信 · …`, `飞书 · …` or `QQ · …`, instead of pinning a raw chat/user ID. In the Session tree and search results, the loaded channel logo replaces the visual text prefix; the full title remains accessible, searchable and editable. Native status dots and row actions are preserved. Disabling the title-prefix option applies to new Sessions. Older `[weixin]`, `[feishu]` and `[qq]` titles also receive logos; their pinned titles remain editable, or send `/new` to start with automatic titles. The title decorator ignores inherited prompts in Web forks. Disabling the bundle removes its visual decoration and restores the plain text prefixes.
 
@@ -43,7 +43,9 @@ This Worker version connects one bot per channel and supports Feishu, WeChat and
 
 中文操作：从左侧选择渠道。微信、飞书和 QQ 均可点击「扫码接入机器人」，飞书／QQ 也保留「手动接入」；接入后在机器人卡片上检查连接、暂停／恢复或移除。通过「更多设置」修改别名、工作区、Agent Preset、消息处理、访问权限与上下文增强；右上角齿轮打开通用设置。每个渠道当前支持一个机器人。飞书／QQ 扫码后通过长连接收消息，无需配置 HTTP 回调；只有手动接入需要在平台后台配置回调。飞书仍需按平台要求确认权限、发布或审批。扫码凭据仅保存在服务端，取消或失败不会覆盖已有绑定。
 
-升级 0.4.0 前须先部署配套的 Weft 版本：飞书的二进制长连接依赖本次 Host 网络转发修正，模型设置依赖新增的原生目录与会话模型接口；仅更新旧 Host 上的插件包不足以启用这些能力。机器人选择模型不会改写全局默认模型。
+升级 0.5.0 前须先部署配套的 Weft 版本：飞书的二进制长连接依赖 Host 网络转发修正，模型设置依赖原生目录与会话模型接口，会话回推依赖新增的 `weftSessionEvents` 回合通知；在旧 Host 上插件无法激活。机器人选择模型不会改写全局默认模型。
+
+「更多设置 → 通用 → 会话回推」把不是从这个聊天发起的回合结果发回来：默认「仅定时任务」，定时任务结果发到私聊和群聊；「定时任务和 Web 回合」还会把 Web 上的回合发到私聊，并附带 Web 上的提问；「关闭」都不发。0.5.0 之前绑定的会话，从升级后的第一个回合开始回推，不补发更早的回合。
 
 0.3.1 会根据聊天内容自动生成新会话标题，保留原生标题更新，并附加「微信／飞书／QQ」标识；会话列表和搜索结果用渠道图标显示该标识，状态提示、无障碍名称和重命名保持可用。旧会话的渠道前缀也支持图标，但旧版固定的 ID 标题需手动修改，或发送 `/new` 使用自动标题。标题前缀开关只影响新会话；升级插件后刷新工作台生效。
 

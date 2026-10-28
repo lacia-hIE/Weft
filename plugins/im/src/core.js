@@ -16,7 +16,7 @@ const HELP = [
   '/help 显示本帮助',
 ].join('\n');
 
-/** Text of an assistant message's text blocks. */
+/** Text of a message's text blocks. */
 function textOf(message) {
   const content = Array.isArray(message?.content) ? message.content : [];
   return content.filter(block => block?.type === 'text' && typeof block.text === 'string').map(block => block.text).join('').trim();
@@ -42,8 +42,11 @@ class ImBridge {
       ctx.effect(() => () => domain.close(), 'dsh-im storage');
       this.conversations = domain.table('conversations');
       this.seen = domain.table('seen');
+      ctx.effect(() => ctx.weftSessionEvents.onTurnEnded(event => this.turnEnded(event)), 'dsh-im turn notifications');
       // Replies interrupted by a restart are delivered from their durable cursor.
-      for (const [key, row] of this.conversations.entries()) if (row.pending?.length) this.follow(key);
+      for (const [key, row] of this.conversations.entries()) if (row.pending?.length || (row.notified ?? -1) > row.delivered) this.follow(key);
+      // Bindings from before turn notifications start syncing at their first notified turn.
+      for (const [key, row] of this.conversations.entries()) if (!row.watched) void this.watch(key, row.sessionId);
     });
     void this.ready.catch(() => {});
   }
@@ -74,6 +77,7 @@ class ImBridge {
       this.followers.get(key)?.abort();
       this.followers.delete(key);
       await this.conversations.delete(key);
+      await this.ctx.weftSessionEvents.unwatch(row.sessionId).catch(() => {});
     }
     for (const key of this.seen.keys()) if (key.startsWith(channel + ':')) await this.seen.delete(key);
   }
@@ -129,8 +133,11 @@ class ImBridge {
       }
       this.followers.get(key)?.abort();
       this.followers.delete(key);
-      row = {sessionId: created.sessionId, delivered: -1, pending: [], target: message.target, channel: message.channel, titlePrefix: this.config.titlePrefix !== false};
+      const previous = row?.sessionId;
+      row = {sessionId: created.sessionId, delivered: -1, pending: [], target: message.target, channel: message.channel, group: !!message.group, titlePrefix: this.config.titlePrefix !== false, syncFrom: 0};
       await this.conversations.put(key, row);
+      await this.watch(key, created.sessionId);
+      if (previous) await this.ctx.weftSessionEvents.unwatch(previous).catch(() => {});
       if (command === 'new') {
         await this.send(message.channel, message.target, '已开始新会话。');
         return 'command';
@@ -140,7 +147,7 @@ class ImBridge {
     // Durable native prompt provenance lets the Host decorate automatic titles
     // without pinning an opaque sender id as an explicit user rename.
     const id = row.titlePrefix ? `${message.channel}-${stableId}` : stableId;
-    row = await this.conversations.update(key, current => ({...current, target: message.target, pending: [...new Set([...(current.pending ?? []), id])].slice(-32)}));
+    row = await this.conversations.update(key, current => ({...current, target: message.target, group: !!message.group, pending: [...new Set([...(current.pending ?? []), id])].slice(-32)}));
     const body = command === 'steer' ? text.replace(/^\/steer\b\s*/i, '') : text;
     const content = message.group && message.senderName ? `${message.senderName}：${body}` : body;
     const captured = captureContextEnhancementSource({botId: channel.botId?.(), getSettings: () => channel.contextEnhancement}, message.group ? 'group' : 'direct', withSentAt(() => ({
@@ -153,20 +160,51 @@ class ImBridge {
     return 'accepted';
   }
 
+  /** Subscribe to the bound Session's turn ends; a failure retries at the next activation. */
+  async watch(key, sessionId) {
+    try {
+      await this.ctx.weftSessionEvents.watch(sessionId);
+      await this.conversations.update(key, current => current?.sessionId === sessionId ? {...current, watched: true} : current);
+    } catch (error) {console.warn(`dsh-im watch ${key}: ${error instanceof Error ? error.message : String(error)}`);}
+  }
+
+  /** A hint only: the cursor decides what is delivered, so repeats and losses are harmless. */
+  async turnEnded({sessionId, seq}) {
+    await this.ready;
+    for (const [key, row] of [...this.conversations.entries()]) {
+      if (row.sessionId !== sessionId || seq <= row.delivered) continue;
+      await this.conversations.update(key, current => current?.sessionId !== sessionId ? current
+        : {...current, notified: Math.max(current.notified ?? -1, seq), syncFrom: current.syncFrom ?? seq});
+      this.follow(key);
+    }
+  }
+
+  /**
+   * Whether a turn the chat did not start is sent there: schedule results go to
+   * every chat unless sync is off; other turns only to private chats with full sync.
+   */
+  mirrored(row, messages, seq) {
+    if (!messages.length || row.syncFrom === undefined || seq < row.syncFrom) return undefined;
+    const mode = this.channels.get(row.channel)?.sessionSync ?? 'scheduled';
+    if (mode === 'off') return undefined;
+    if (messages.some(data => data?.source?.kind === 'schedule')) return 'schedule';
+    return mode === 'all' && row.group === false ? 'web' : undefined;
+  }
+
   /** Deliver each finished turn of a conversation's Session once, from its durable cursor. */
   follow(key) {
     if (this.followers.has(key)) return;
     const task = background(this.ctx, 'dsh-im follow ' + key, async signal => {
       for (let attempt = 0; !signal.aborted; attempt++) {
         const row = this.conversations.get(key);
-        if (!row?.pending?.length) return;
+        if (!row?.pending?.length && !((row?.notified ?? -1) > row?.delivered)) return;
         const idle = new AbortController();
         let timer;
         const touch = () => {clearTimeout(timer); timer = setTimeout(() => idle.abort(new Error('Session follow was idle')), FOLLOW_IDLE_MS);};
         try {
           touch();
           let reply = '';
-          const consumed = new Set();
+          const consumed = new Set(), foreign = [];
           for await (const frame of this.ctx.sessionController.follow({address: {kind: 'session', sessionId: row.sessionId}}, AbortSignal.any([signal, idle.signal]))) {
             touch();
             const events = frame?.type === 'snapshot' ? (frame.records ?? []).map(entry => entry.event) : frame?.type === 'event' ? [frame.event] : [];
@@ -174,22 +212,29 @@ class ImBridge {
               const current = this.conversations.get(key);
               if (!current || current.sessionId !== row.sessionId) return;
               if (!event || event.seq <= current.delivered) continue;
-              if (event.type === 'turn/start') {reply = ''; consumed.clear();}
+              if (event.type === 'turn/start') {reply = ''; consumed.clear(); foreign.length = 0;}
               else if (event.type === 'user/message') {
                 // Native message ids differ from RPC ids. Keep requests pending
                 // through turn/end so a restart during generation resumes delivery.
                 const id = event.data?.source?.rpcId ?? event.data?.id;
-                if (current.pending.includes(id)) consumed.add(id);
+                if (current.pending.includes(id)) consumed.add(id); else foreign.push(event.data);
               } else if (event.type === 'assistant/message') {
                 const text = textOf(event.data?.message);
                 if (text) reply = text;
               } else if (event.type === 'turn/end') {
                 const reason = event.data?.reason;
                 const text = reply || (reason && reason !== 'completed' && reason !== 'end_turn' ? `（本轮未完成：${reason}）` : '');
+                const mirror = consumed.size ? undefined : this.mirrored(current, foreign, event.seq);
                 if (text && consumed.size) await this.send(current.channel, current.target, text);
+                else if (reply && mirror) {
+                  const asked = mirror === 'web' ? foreign.map(data => textOf(data)).filter(Boolean).join('\n').slice(0, 500) : '';
+                  // Mirrored turns are best effort: a refused send advances the cursor instead of repeating.
+                  try {await this.send(current.channel, current.target, asked ? `（Web）${asked}\n\n${reply}` : reply);}
+                  catch (error) {console.warn(`dsh-im mirror ${key}: ${error instanceof Error ? error.message : String(error)}`);}
+                }
                 const next = await this.conversations.update(key, value => ({...value, delivered: event.seq, pending: value.pending.filter(id => !consumed.has(id))}));
                 reply = '';
-                if (!next.pending.length) return;
+                if (!next.pending.length && !((next.notified ?? -1) > next.delivered)) return;
               }
             }
           }
@@ -204,8 +249,9 @@ class ImBridge {
     void task.pending.finally(() => {
       if (this.followers.get(key) !== task) return;
       this.followers.delete(key);
-      // A new prompt can arrive between the final cursor write and cleanup.
-      if (!this.closed && this.conversations.get(key)?.pending?.length) this.follow(key);
+      // A new prompt or notification can arrive between the final cursor write and cleanup.
+      const row = this.conversations.get(key);
+      if (!this.closed && (row?.pending?.length || (row?.notified ?? -1) > row?.delivered)) this.follow(key);
     });
   }
 }
@@ -213,7 +259,7 @@ class ImBridge {
 // The bundle's own service: sibling entries inject it, the Host does not provide it.
 export const name = 'dsh-im-core';
 export const provide = 'im';
-export const inject = ['sessionController', 'storageDomain'];
+export const inject = ['sessionController', 'storageDomain', 'weftSessionEvents'];
 export const Config = Schema.object({
   agentPreset: Schema.string().description('Agent preset for new conversations; the environment default when empty.'),
   titlePrefix: Schema.boolean().default(true).description('Label automatic titles of new Sessions with their channel.'),

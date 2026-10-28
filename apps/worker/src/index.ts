@@ -124,6 +124,7 @@ export class EnvironmentPluginCapabilities extends WorkerEntrypoint<Env, {scope:
   async cancelWebhook(operationId:string):Promise<void> {return this.owner().nativePackageCancelWebhook(this.ctx.props.scope,this.ctx.props,operationId);}
   async callSession(method: string, request: unknown): Promise<unknown> {return this.owner().nativePackageSession(this.ctx.props.scope, this.ctx.props, method, request);}
   async followSession(request: unknown): Promise<Response> {return this.owner().nativePackageFollow(this.ctx.props.scope, this.ctx.props, request);}
+  async watchSession(sessionId: string, watch: boolean): Promise<void> {return this.owner().nativePackageWatchSession(this.ctx.props.scope, this.ctx.props, sessionId, watch);}
   async callFs(method: string, args: unknown[]): Promise<unknown> {return this.owner().nativePackageFs(this.ctx.props.scope, this.ctx.props, method, args);}
   async resolveCredential(ref: string): Promise<unknown> {return this.owner().nativePackageCredential(this.ctx.props.scope, this.ctx.props, ref);}
 }
@@ -241,6 +242,8 @@ export class SessionDO extends DurableObject<Env> {
         runtime.options.onEvent?.(event, session);
         // Titles can commit after the turn (the first-prompt LLM title row); list summaries follow them.
         if (event.type === 'session/title') this.ctx.waitUntil(this.publishNativeSummary(scope).catch(() => { /* The next turn or rename republishes. */ }));
+        // Subagent turns belong to their parent's turn; watchers hear about root turns only.
+        if (event.type === 'turn/end' && session.id === scope.sessionId) this.ctx.waitUntil(this.notifyTurnEnded(scope, event.seq).catch(() => { /* Watchers recover from their own cursor. */ }));
       }, beforeAssembly: async () => {
         await pluginsReady.promise; await runtime.options.beforeAssembly?.();
         const live = this.nativeHost;
@@ -291,6 +294,12 @@ export class SessionDO extends DurableObject<Env> {
   private nativeCwd(sessionId: string): string {
     const row = this.ctx.storage.sql.exec<{header_json: string}>('SELECT header_json FROM harness_sessions WHERE id=?', sessionId).toArray()[0];
     return workspacePath(row ? (JSON.parse(row.header_json) as {cwd?: string}).cwd ?? '/workspace' : '/workspace');
+  }
+  /** Tell the environment once the turn end is durable, so a watcher's read sees it. */
+  private async notifyTurnEnded(scope: SessionScope, seq: number): Promise<void> {
+    await this.nativeHost?.ctx.get('sessionPersistence')?.flush();
+    const owner = controlScope(scope.tenantId, scope.environmentId);
+    await controlFor(this.env, owner).nativeSessionTurnEnded(owner, scope.sessionId, seq);
   }
   private async publishNativeSummary(scope: SessionScope): Promise<void> {
     const group = await (await this.nativeReadSummaryGroup(scope)).text();

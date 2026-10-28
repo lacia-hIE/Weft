@@ -1,4 +1,6 @@
 export const zh = {
+  sessionSync: '会话回推', sessionSyncScheduled: '仅定时任务', sessionSyncAll: '定时任务和 Web 回合', sessionSyncOff: '关闭',
+  sessionSyncHint: '把不是从这个聊天发起的回合结果发回来。定时任务结果发到私聊和群聊；Web 回合只发到私聊，并附带 Web 上的提问。',
   presetUnavailable: '不可用', presetLoading: '正在读取 Agent Preset 目录…', presetFailed: '无法读取 Agent Preset 目录。',
   chooseDirectory: '选择目录', directoryTitle: '选择机器人工作区目录', directoryHome: '主目录', directoryCrumbs: '当前目录',
   directoryPath: '直接输入路径', directoryPathHint: '环境工作区中的绝对路径', directoryGo: '前往', directoryReading: '读取中…', directoryLoading: '正在读取目录…',
@@ -55,6 +57,8 @@ export const zh = {
   setupHelp: '接入说明', permissions: '插件需要浏览器模块、外部网络、Webhook 路由、持久存储、会话管理和环境后台权限。', singleBotHint: '此版本每个渠道接入一个机器人。三个渠道均支持扫码；飞书和 QQ 也支持凭据与 HTTP 回调接入。',
 };
 export const en = {
+  sessionSync: 'Session sync', sessionSyncScheduled: 'Scheduled tasks only', sessionSyncAll: 'Scheduled tasks and Web turns', sessionSyncOff: 'Off',
+  sessionSyncHint: 'Send results of turns this chat did not start. Schedule results go to private and group chats; Web turns go to private chats only, with the Web question.',
   presetUnavailable: 'unavailable', presetLoading: 'Reading Agent Presets…', presetFailed: 'Agent Presets could not be read.',
   chooseDirectory: 'Choose directory', directoryTitle: 'Select bot workspace directory', directoryHome: 'Home', directoryCrumbs: 'Current directory',
   directoryPath: 'Enter a path', directoryPathHint: 'An absolute path in the environment workspace', directoryGo: 'Go', directoryReading: 'Reading…', directoryLoading: 'Reading directory…',
