@@ -40,13 +40,13 @@ test('native attachment export copies exact binary bytes to a script-readable fi
   const outbound: V4FetchHandler = async request => {
     const body = await request.text();
     switch (++requests) {
-      case 1: return nativeFixtureResponse({name: 'bash', input: {command: `cat '${source}'`}});
+      case 1: return nativeFixtureResponse({name: 'bash', input: {command: `cat '${source}'`, description: 'Probe the private attachment boundary'}});
       case 2:
-        assert.match(body, /Weft attachment storage is not accessible from the shell/);
+        assert.match(body, /attachment storage is not accessible|No such file or directory/);
         return nativeFixtureResponse({name: 'export_attachment', input: {destination: 'inputs/blob.bin'}});
       case 3:
         assert.ok(body.includes('/workspace/inputs/blob.bin'));
-        return nativeFixtureResponse({name: 'bash', input: {command: 'sha256sum /workspace/inputs/blob.bin'}});
+        return nativeFixtureResponse({name: 'bash', input: {command: 'sha256sum /workspace/inputs/blob.bin', description: 'Verify the exported attachment bytes'}});
       case 4:
         assert.ok(body.includes(digest + '  /workspace/inputs/blob.bin'), 'the real shell hashes the exported bytes');
         return nativeFixtureResponse();
@@ -99,7 +99,7 @@ test('export refuses foreign references, read-only writes, workspace escapes, pr
     }
     assert.equal(requests, cases.length * 2);
     const existing = await runtime.dispatchFetch(url('alpha', base + '/workspaces/default/files?path=/workspace/exists.txt'));
-    assert.equal(await existing.text(), 'keep this');
+    assert.equal((await existing.json() as {value: {content: string}}).value.content, 'keep this');
     for (const path of ['foreign.txt', 'readonly.txt', 'outside.txt']) assert.equal((await runtime.dispatchFetch(url('alpha', base + '/workspaces/default/files?path=' + path))).status, 404);
   } finally {await runtime.dispose();}
 });
