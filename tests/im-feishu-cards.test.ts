@@ -81,9 +81,9 @@ test('failed card updates retain the full Markdown answer; rejected inline cards
     fail('update', 300313);
     await assert.rejects(channel.updateReply(card, '**complete answer**', false));
     await channel.send(target, '**complete answer**');
+    assert.deepEqual(JSON.parse(calls.at(-1).body.content).body.elements, [{tag: 'markdown', content: '**complete answer**'}]);
     assert.equal((await status()).reply.failure.stage, 'update');
     assert.equal((await status()).reply.failure.code, 300313);
-    assert.deepEqual(JSON.parse(calls.at(-1).body.content).body.elements, [{tag: 'markdown', content: '**complete answer**'}]);
     fail('markdown', 230099);
     await channel.send(target, '**last resort**');
     assert.equal(calls.at(-1).body.msg_type, 'text');

@@ -550,7 +550,9 @@ test('the deployment-bundled IM plugin bridges Feishu, QQ and WeChat conversatio
     assert.ok(sent.some(row => row.path.includes('/elements/answer/content') && row.body.content === 'FIRST_PART_FINAL_PART'));
     const cardMessage = sent.find(row => row.path === '/open-apis/im/v1/messages/om_stream/reply');
     assert.equal(cardMessage?.body.msg_type, 'interactive');
-    const streamingStatus = await (await hook('/feishu/status', {headers: {authorization: 'Bearer feishu-management'}})).json() as {reply: {mode: string; failure?: unknown}};
+    const statusResponse = await hook('/feishu/status', {headers: {authorization: 'Bearer invalid-model-regression'}});
+    assert.equal(statusResponse.status, 200);
+    const streamingStatus = await statusResponse.json() as {reply: {mode: string; failure?: unknown}};
     assert.equal(streamingStatus.reply.mode, 'streaming');
     assert.equal(streamingStatus.reply.failure, undefined, 'A successful new streaming reply clears the previous failure');
   } finally {releaseCard?.(); releaseBusy?.(); await runtime.dispose();}
