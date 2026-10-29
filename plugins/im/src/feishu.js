@@ -54,6 +54,14 @@ export async function apply(ctx, config) {
     return {value: body.tenant_access_token, expiresAt: Date.now() + Number(body.expire ?? 7200) * 1000};
   };
   const token = tokenCache(() => requestToken(account.credentials()));
+  let replyStatus;
+  const replyFailure = (stage, error, mode = 'markdown') => {
+    // Provider messages can echo credentials or user content. Expose only fixed
+    // stages and numeric codes, including in logs and capability-protected status.
+    const failure = {stage, ...(Number.isInteger(error?.code) ? {code: error.code} : {}), ...(Number.isInteger(error?.status) ? {status: error.status} : {})};
+    replyStatus = {mode, failure, checkedAt: Date.now()};
+    console.warn('dsh-im feishu: reply fallback', JSON.stringify(failure));
+  };
   let identity;
   // Resolve the bot's own open_id, never its App ID, owner ID or display name.
   const botOpenId = () => identity ??= (async () => {
@@ -105,7 +113,7 @@ export async function apply(ctx, config) {
     await ctx.im.receive({channel: 'feishu', conversation: message.chat_id, chatId: message.chat_id, sender: senderId, senderName: sender?.name, sentAt: Number(message.create_time) || undefined, group, text, attachments, messageId: message.message_id,
       target: {chatId: message.chat_id, messageId: message.message_id}});
   };
-  const account = await qrAccount(ctx, 'feishu', config, {...feishuQr, validate: requestToken, changed: () => {token.clear(); identity = undefined;},
+  const account = await qrAccount(ctx, 'feishu', config, {...feishuQr, validate: requestToken, status: () => replyStatus ? {reply: replyStatus} : {}, changed: () => {token.clear(); identity = undefined; replyStatus = undefined;},
     socket: credentials => feishuConnection(credentials, receive)});
   // A disabled channel still closes the gateway connection it may have left open.
   if (!config.enabled) {account.launch(); return;}
@@ -115,7 +123,7 @@ export async function apply(ctx, config) {
       const value = await response.json().catch(() => ({}));
       // 99991663/99991661: the tenant token expired or is invalid.
       if ((value.code === 99991663 || value.code === 99991661) && retry === 0) {token.clear(); continue;}
-      if (!response.ok || value.code !== 0) throw new Error(`Feishu API ${path} failed: ${value.msg ?? response.status}`);
+      if (!response.ok || value.code !== 0) throw Object.assign(new Error('Feishu API request failed'), {code: value.code, status: response.status});
       return value;
     }
   };
@@ -128,27 +136,32 @@ export async function apply(ctx, config) {
     ...channelSettings(config, () => account.owner(), () => account.credentials()?.appId),
     maxChars: config.maxChars,
     async startReply(target, uuid) {
-      const response = await api('/open-apis/cardkit/v1/cards', {type: 'card_json', data: JSON.stringify({schema: '2.0',
-        config: {streaming_mode: true, summary: {content: '正在生成…'}},
-        body: {elements: [{tag: 'markdown', element_id: 'answer', content: '正在思考…'}]},
-      })});
-      const id = response.data?.card_id;
-      if (!id) throw new Error('Feishu did not return card_id');
-      await sendMessage(target, 'interactive', {type: 'card', data: {card_id: id}}, uuid);
-      return {id, sequence: 0, content: '正在思考…'};
+      try {
+        const response = await api('/open-apis/cardkit/v1/cards', {type: 'card_json', data: JSON.stringify({schema: '2.0',
+          config: {update_multi: true, streaming_mode: true, summary: {content: '正在生成…'}},
+          body: {elements: [{tag: 'markdown', element_id: 'answer', content: '正在思考…'}]},
+        })});
+        const id = response.data?.card_id;
+        if (!id) throw new Error('Feishu did not return card_id');
+        await sendMessage(target, 'interactive', {type: 'card', data: {card_id: id}}, uuid);
+        replyStatus = {mode: 'streaming', checkedAt: Date.now()};
+        return {id, sequence: 0, content: '正在思考…'};
+      } catch (error) {replyFailure('create', error); throw error;}
     },
     async updateReply(card, text, final) {
-      const content = text.slice(0, 28_000);
-      if (content !== card.content) {
-        const seq = ++card.sequence;
-        await api(`/open-apis/cardkit/v1/cards/${encodeURIComponent(card.id)}/elements/answer/content`, {content, sequence: seq, uuid: `${card.id}_${seq}`}, 'PUT');
-        card.content = content;
-      }
-      if (final) {
-        const seq = ++card.sequence;
-        await api(`/open-apis/cardkit/v1/cards/${encodeURIComponent(card.id)}/settings`, {settings: JSON.stringify({config: {streaming_mode: false, summary: {content: content.slice(0, 100) || '回答完成'}}}), sequence: seq, uuid: `${card.id}_${seq}`}, 'PATCH');
-        if (text.length > 28_000) throw new Error('Full answer requires text delivery');
-      }
+      try {
+        const content = text.slice(0, 28_000);
+        if (content !== card.content) {
+          const seq = ++card.sequence;
+          await api(`/open-apis/cardkit/v1/cards/${encodeURIComponent(card.id)}/elements/answer/content`, {content, sequence: seq, uuid: `${card.id}_${seq}`}, 'PUT');
+          card.content = content;
+        }
+        if (final) {
+          const seq = ++card.sequence;
+          await api(`/open-apis/cardkit/v1/cards/${encodeURIComponent(card.id)}/settings`, {settings: JSON.stringify({config: {streaming_mode: false, summary: {content: content.slice(0, 100) || '回答完成'}}}), sequence: seq, uuid: `${card.id}_${seq}`}, 'PATCH');
+          if (text.length > 28_000) throw new Error('Full answer requires complete Markdown delivery');
+        }
+      } catch (error) {replyFailure(final ? 'finish' : 'update', error); throw error;}
     },
     async sendFile(target, file) {
       const form = new FormData();
@@ -164,12 +177,22 @@ export async function apply(ctx, config) {
       await sendMessage(target, file.image ? 'image' : 'file', {[file.image ? 'image_key' : 'file_key']: key}, file.deliveryId);
     },
     async send(target, text) {
-      const content = JSON.stringify({text});
-      if (target.messageId) {
-        try {await api(`/open-apis/im/v1/messages/${encodeURIComponent(target.messageId)}/reply`, {msg_type: 'text', content}); return;}
-        catch { /* A deleted or expired message cannot be replied to; send to the chat instead. */ }
+      const deliver = async (type, content) => {
+        if (target.messageId) {
+          try {await sendMessage(target, type, content); return;}
+          catch { /* A deleted or expired message cannot be replied to; send to the chat instead. */ }
+        }
+        await sendMessage({chatId: target.chatId}, type, content);
+      };
+      // Inline cards use the ordinary message API and need no CardKit write
+      // permission. Preserve Markdown for fallback, commands and mirrored turns.
+      try {
+        await deliver('interactive', {schema: '2.0', config: {update_multi: true}, body: {elements: [{tag: 'markdown', content: text}]}});
+        replyStatus = {...replyStatus, mode: 'markdown', checkedAt: Date.now()};
+      } catch (error) {
+        replyFailure('markdown', error, 'text');
+        await deliver('text', {text});
       }
-      await api('/open-apis/im/v1/messages?receive_id_type=chat_id', {receive_id: target.chatId, msg_type: 'text', content});
     },
   }), 'dsh-im feishu channel');
 

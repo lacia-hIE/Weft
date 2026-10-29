@@ -63,7 +63,9 @@ Deploy the matching Weft Host before upgrading the bundle to 0.7.0. Approve work
 
 模型可调用 `im_send_file`，指定工作区文件的绝对路径，向本会话绑定的聊天回传文件；`asImage: true` 发送 PNG / JPEG / WebP / GIF 图片。工具使用宿主提供的真实调用会话，不能用参数指定其他聊天。单个回传文件最多 10 MiB；平台权限和额度仍可能拒绝。投递结果不确定时不自动重发，也不自动把图片改发为文件。
 
-微信通过 iLink `getconfig` / `sendtyping` 显示并刷新“正在输入”，结束、取消或接入失败时停止。QQ 私聊发送并刷新原生输入状态；QQ 群聊没有该接口，结束后私聊状态由平台到期清除。飞书通过 CardKit 单卡流式展示实际回答文本增量，结束时关闭 streaming mode；缺少卡片权限或更新失败时用文字交付完整答案。长于卡片预算的回答也保留完整文字交付。
+微信通过 iLink `getconfig` / `sendtyping` 显示并刷新“正在输入”，结束、取消或接入失败时停止。QQ 私聊发送并刷新原生输入状态；QQ 群聊没有该接口，结束后私聊状态由平台到期清除。飞书的 HTTP 回调与 WebSocket 共用 CardKit 单卡流式展示，结束时关闭 streaming mode；缺少卡片权限、更新失败或回答超出卡片预算时，完整回答改用普通 Markdown 卡片分段交付。普通卡片通过消息 API 内联发送，不依赖 CardKit 写权限；普通卡片也发送失败时再退回纯文本。命令回复和 Web/定时任务回推同样优先使用 Markdown 卡片。
+
+0.7.2 在飞书「检查连接」结果中显示本次插件运行期间最近的回复格式，以及卡片失败的阶段、数字错误码和 HTTP 状态；这些诊断不包含服务商原始错误文本、消息正文或凭据。凭据验证成功不代表 CardKit 权限已经开通：手动接入及已有应用需在飞书开放平台添加「创建与更新卡片」（`cardkit:card:write`）权限，并发布新的应用版本。重新发送一条消息后检查结果；流式卡片权限失败也应保留普通 Markdown 卡片展示。飞书 Markdown 支持范围以其客户端规范为准。
 
 Validation runs in the `Test` GitHub Actions workflow on the `ci` branch. The unit shards include `tests/im-media.test.ts`, `tests/im-plugin.test.ts`, `tests/im-qr.test.ts` and `tests/im-session-turns.test.ts`; Browser 1/2 also runs the installed IM settings regression. Provider fixtures cover native file admission above the JSON bridge limit, iLink encryption and input status, QQ input status, real environment-tool file return, and a card update before model completion. Real-account acceptance remains separate.
 

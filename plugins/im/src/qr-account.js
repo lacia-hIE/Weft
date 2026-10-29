@@ -88,7 +88,7 @@ export async function qrAccount(ctx, channel, config, provider) {
     if (request.method !== method) {json(response, 405, {error: `${method} required`}); return;}
     try {json(response, 200, await run());} catch {json(response, 502, {error: 'channel_operation_failed'});}
   }}), `${channel} ${path}`);
-  route('status', 'GET', () => view(true));
+  route('status', 'GET', async () => ({...await view(true), ...provider.status?.()}));
   route('login', 'POST', () => {if (!config.enabled || config.connectionMode !== 'qr') throw new Error('QR setup is disabled'); return begin();});
   route('cancel', 'POST', async () => {cancel(); return view();});
   route('disconnect', 'POST', async () => {

@@ -1,4 +1,7 @@
 export const zh = {
+  replyStreaming: '最近回复：流式卡片', replyMarkdown: '最近回复：Markdown 卡片', replyText: '最近回复：纯文本',
+  cardFallbackHint: '卡片接口失败，已尝试降级发送。请检查“创建与更新卡片”权限（cardkit:card:write）并发布应用版本。',
+  cardStage_create: '创建卡片', cardStage_update: '更新卡片', cardStage_finish: '结束流式卡片', cardStage_markdown: '发送 Markdown 卡片',
   sessionSync: '会话回推', sessionSyncScheduled: '仅定时任务', sessionSyncAll: '定时任务和 Web 回合', sessionSyncOff: '关闭',
   sessionSyncHint: '把不是从这个聊天发起的回合结果发回来。定时任务结果发到私聊和群聊；Web 回合只发到私聊，并附带 Web 上的提问。',
   presetUnavailable: '不可用', presetLoading: '正在读取 Agent Preset 目录…', presetFailed: '无法读取 Agent Preset 目录。',
@@ -57,6 +60,9 @@ export const zh = {
   setupHelp: '接入说明', permissions: '插件需要浏览器模块、外部网络、Webhook 路由、持久存储、会话管理和环境后台权限。', singleBotHint: '此版本每个渠道接入一个机器人。三个渠道均支持扫码；飞书和 QQ 也支持凭据与 HTTP 回调接入。',
 };
 export const en = {
+  replyStreaming: 'Latest reply: streaming card', replyMarkdown: 'Latest reply: Markdown card', replyText: 'Latest reply: plain text',
+  cardFallbackHint: 'A card API failed and fallback delivery was attempted. Check Create and update cards (cardkit:card:write) permission and publish the app version.',
+  cardStage_create: 'Create card', cardStage_update: 'Update card', cardStage_finish: 'Finish streaming card', cardStage_markdown: 'Send Markdown card',
   sessionSync: 'Session sync', sessionSyncScheduled: 'Scheduled tasks only', sessionSyncAll: 'Scheduled tasks and Web turns', sessionSyncOff: 'Off',
   sessionSyncHint: 'Send results of turns this chat did not start. Schedule results go to private and group chats; Web turns go to private chats only, with the Web question.',
   presetUnavailable: 'unavailable', presetLoading: 'Reading Agent Presets…', presetFailed: 'Agent Presets could not be read.',

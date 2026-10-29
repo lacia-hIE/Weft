@@ -113,7 +113,20 @@ test('the deployment-bundled IM plugin bridges Feishu, QQ and WeChat conversatio
         if (target.pathname === '/open-apis/bot/v3/info') {record(); return Response.json(botIdentityAvailable ? {code: 0, bot: {open_id: 'ou_fixture_bot'}} : {code: 1});}
         if (target.pathname.includes('/resources/')) return new Response(attachmentBytes);
         record();
-        if (cardsEnabled && target.pathname === '/open-apis/cardkit/v1/cards') return Response.json({code: 0, data: {card_id: 'fixture-card'}});
+        if (!cardsEnabled && target.pathname.startsWith('/open-apis/cardkit/')) return Response.json({code: 99991672, msg: 'Access denied. cardkit:card:write is required.'});
+        if (target.pathname === '/open-apis/cardkit/v1/cards') {
+          assert.equal(request.method, 'POST');
+          const card = JSON.parse(body.data as string);
+          assert.equal(card.schema, '2.0');
+          assert.equal(card.config.streaming_mode, true);
+          assert.equal(card.body.elements[0].tag, 'markdown');
+          return Response.json({code: 0, data: {card_id: 'fixture-card'}});
+        }
+        if (target.pathname.includes('/elements/answer/content')) assert.equal(request.method, 'PUT');
+        if (target.pathname.endsWith('/settings')) {
+          assert.equal(request.method, 'PATCH');
+          assert.equal(JSON.parse(body.settings as string).config.streaming_mode, false);
+        }
         return Response.json({code: 0, data: {}});
       }
       if (target.hostname === 'bots.qq.com') return Response.json({access_token: 'qq-token', expires_in: '7200'});
@@ -246,14 +259,19 @@ test('the deployment-bundled IM plugin bridges Feishu, QQ and WeChat conversatio
     assert.equal((await feishu('om_forged', 'ou_allowed', true)).status, 401, 'Unsigned Feishu events are refused');
     assert.equal((await feishu('om_1', 'ou_allowed')).status, 200);
     const feishuReply = await waitFor(() => sent.find(row => row.host === 'open.feishu.cn' && row.path === '/open-apis/im/v1/messages/om_1/reply'), 'Feishu reply');
-    assert.deepEqual(JSON.parse(feishuReply.body.content as string), {text: 'IM_REPLY'});
+    assert.equal(feishuReply.body.msg_type, 'interactive', 'Missing CardKit permission still delivers a Markdown card');
+    assert.deepEqual(JSON.parse(feishuReply.body.content as string).body.elements, [{tag: 'markdown', content: 'IM_REPLY'}]);
+    const cardStatus = await (await hook('/feishu/status', {headers: {authorization: 'Bearer feishu-management'}})).json() as {reply: {mode: string; failure: {stage: string; code: number}}};
+    assert.equal(cardStatus.reply.mode, 'markdown');
+    assert.equal(cardStatus.reply.failure.stage, 'create');
+    assert.equal(cardStatus.reply.failure.code, 99991672);
     assert.equal(feishuReply.authorization, 'Bearer feishu-token');
     assert.equal((await feishu('om_1', 'ou_allowed')).status, 200, 'A redelivered event is acknowledged');
     await feishu('om_file', 'ou_allowed');
     await waitFor(() => sent.find(row => row.path === '/open-apis/im/v1/messages/om_file/reply'), 'Feishu file prompt');
     await feishu('om_2', 'ou_stranger');
     const denied = await waitFor(() => sent.find(row => row.path === '/open-apis/im/v1/messages/om_2/reply'), 'Feishu denial');
-    assert.match(JSON.parse(denied.body.content as string).text as string, /ou_stranger/);
+    assert.match(JSON.parse(denied.body.content as string).body.elements[0].content as string, /ou_stranger/);
 
     // QQ: the callback validation is signed with the AppSecret seed; events must be signed by the platform.
     const plain = {op: 13, d: {plain_token: 'plain-token', event_ts: '1700000000'}};
@@ -532,5 +550,8 @@ test('the deployment-bundled IM plugin bridges Feishu, QQ and WeChat conversatio
     assert.ok(sent.some(row => row.path.includes('/elements/answer/content') && row.body.content === 'FIRST_PART_FINAL_PART'));
     const cardMessage = sent.find(row => row.path === '/open-apis/im/v1/messages/om_stream/reply');
     assert.equal(cardMessage?.body.msg_type, 'interactive');
+    const streamingStatus = await (await hook('/feishu/status', {headers: {authorization: 'Bearer feishu-management'}})).json() as {reply: {mode: string; failure?: unknown}};
+    assert.equal(streamingStatus.reply.mode, 'streaming');
+    assert.equal(streamingStatus.reply.failure, undefined, 'A successful new streaming reply clears the previous failure');
   } finally {releaseCard?.(); releaseBusy?.(); await runtime.dispose();}
 });

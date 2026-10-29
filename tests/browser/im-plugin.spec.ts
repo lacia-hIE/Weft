@@ -118,6 +118,12 @@ test('IM setup follows the channel rail, binding, QR and bot card flow with dura
   await feishu.getByRole('button', {name: 'Back to bot list', exact: true}).click();
   await feishu.getByRole('button', {name: 'Check connection', exact: true}).click();
   await expect(feishu.getByText('Credentials verified', {exact: true})).toBeVisible();
+  await page.route('**/feishu/status', route => route.fulfill({json: {state: 'ready', botId: 'cli_browser', reply: {mode: 'markdown', failure: {stage: 'create', code: 99991672, status: 200}}}}));
+  await feishu.getByRole('button', {name: 'Check connection', exact: true}).click();
+  await expect(feishu.getByText('Latest reply: Markdown card', {exact: true})).toBeVisible();
+  await expect(feishu.getByText(/Check Create and update cards/)).toContainText('cardkit:card:write');
+  await expect(feishu.getByText(/Check Create and update cards/)).toContainText('99991672');
+  await page.unroute('**/feishu/status');
   await feishu.getByRole('button', {name: 'Manual setup', exact: true}).click();
   await expect(feishu.getByLabel('App Secret', {exact: true})).toHaveValue('');
   await feishu.getByLabel('App ID', {exact: true}).fill('cli_browser_updated');
