@@ -60,3 +60,14 @@ SessionDO SQLite 保存回执、FileAttachmentRef 和接受它的 requestId；�
 | 真实 DeepSeek 页面 | 4 项通过，包含上传文件的真实工具读取 | `.generated/native-attachments-release-live.log` |
 
 独立浏览器用例共 15 项，其中 12 项使用原版 UI，3 项为显式过渡入口。全量运行中出现的失败和修正后的专项结果分别保留，复测不重复计数。选择后的记录为 `.generated/native-attachments-local-validation.json`；允许用户登录后的云端运行仍需单独验收。
+
+
+## 将附件交给脚本处理
+
+`.weft` 是宿主私有存储，shell、Python、容器和后台脚本均不能直接访问，调整 chmod 或 sandbox mode 不会开放它。Agent 可调用 `export_attachment`，例如 `{"destination":"inputs/lobster.webp"}`，将本会话最近一条带附件消息中的单个附件复制到普通工作区，然后用脚本读取导出的路径。多个附件时用 `source` 指定当前会话中的附件 ID 或完整宿主路径。
+
+导出遵守当前会话沙箱：只读模式拒绝，workspace-write 限于会话项目目录。目标必须不存在且不能位于 `.weft`，不支持符号链接；复制按 64 KiB 分块完成，在事务中校验大小和 SHA-256，并更新工作区版本及变更通知。单次最多 64 MiB，副本与私有附件使用独立 inode，导出不会开放其他附件或整个私有目录。
+
+文件附件导出原样字节，包括 IM 保留的原图；只有原生图片引用时，导出已存储的规范化 WebP，并在结果中返回 `sourceType: "image"` 和 mediaType。已在图片准入阶段丢弃的上传原件不能通过导出恢复。`read_image` 负责向模型展示图片，不代替二进制文件导出。
+
+`tests/native-attachment-export.test.ts` 在 CI 中验证真实模型工具调用、shell 摘要读取、大于 JSON 桥限制的二进制文件、跨会话引用拒绝、只读与项目目录边界、私有目标和覆盖拒绝，以及图片导出字节与原生附件读取结果一致。

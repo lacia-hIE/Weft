@@ -223,7 +223,7 @@ jobs:
       # Keep this named check separate so provider/Host integration failures are
       # visible before the broader unit shard finishes. The full suite still runs.
       - name: Native IM provider and streaming regressions
-        run: npx tsx --test --test-concurrency=1 --test-timeout=300000 tests/im-media.test.ts tests/im-plugin.test.ts tests/im-qr.test.ts tests/im-session-turns.test.ts tests/im-session-titles.test.ts
+        run: npx tsx --test --test-concurrency=1 --test-timeout=300000 tests/im-media.test.ts tests/im-plugin.test.ts tests/im-qr.test.ts tests/im-session-turns.test.ts tests/im-session-titles.test.ts tests/native-attachment-export.test.ts
 
   browser:
     name: Browser ${{ matrix.shard }}/2

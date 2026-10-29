@@ -1,3 +1,8 @@
+import {createHash} from 'node:crypto';
+import type {FileAttachmentRef} from '@deepseek-ai/dsh-attachment';
+import type {ShellSandbox} from './shell.ts';
+import {storedFilePath} from '../../../.generated/official-file-reference.ts';
+import {ATTACHMENT_ROOT, UPLOAD_CHUNK_BYTES} from '../../native-attachments/src/protocol.ts';
 import { posix } from 'node:path';
 import { Workspace, type WorkspaceObserver, type WorkspaceRegisteredBackend } from '@cloudflare/computer';
 import { FsError } from '@deepseek-ai/dsh-fs';
@@ -135,6 +140,30 @@ export class WorkspaceStore {
     this.computer.provider().writeFileSync(path, after, 'utf8');
     const revision = this.version(path);
     return { operation: before === null ? 'create' : 'update', before, after, version: String(revision), revision };
+  }
+
+  /** Copy verified immutable bytes into a separate inode; scripts never gain a private-storage mount. */
+  exportAttachment(ref: FileAttachmentRef, destination: string, policy: ShellSandbox): {path: string; bytes: number; attachmentId: string; version: string} {
+    return this.storage.transactionSync(() => {
+      const path = this.guardedPath(destination), root = workspacePath(policy.root);
+      if (path === ATTACHMENT_PRIVATE_ROOT || path.startsWith(ATTACHMENT_PRIVATE_ROOT + '/')) throw new FsError('Attachment storage is immutable', 'FS_PERMISSION_DENIED');
+      if (policy.mode === 'read-only' || policy.mode === 'workspace-write' && path !== root && !path.startsWith(root + '/')) throw new FsError('Attachment export is outside the writable Session workspace', 'FS_SANDBOX_DENIED');
+      if (this.metadata(path)) throw new FsError('Export destination already exists; choose a new file', 'FS_STALE_VERSION');
+      if (ref.bytes > 64 * 1024 * 1024) throw new FsError('Attachment export exceeds 64 MiB', 'FS_TOO_LARGE');
+      const source = this.guardedPath(storedFilePath(ATTACHMENT_ROOT, ref));
+      const fs = this.computer.provider(), stat = fs.statSync(source);
+      if (!stat.isFile() || stat.size !== ref.bytes) throw new FsError('Attachment bytes do not match their reference', 'FS_IO_ERROR');
+      fs.mkdirSync(posix.dirname(path), {recursive: true});
+      fs.createFileSync(path);
+      const hash = createHash('sha256');
+      for (let offset = 0; offset < ref.bytes; offset += UPLOAD_CHUNK_BYTES) {
+        const bytes = fs.readRangeSync(source, offset, Math.min(UPLOAD_CHUNK_BYTES, ref.bytes - offset));
+        if (bytes.byteLength !== Math.min(UPLOAD_CHUNK_BYTES, ref.bytes - offset)) throw new FsError('Attachment read was incomplete', 'FS_IO_ERROR');
+        hash.update(bytes); fs.writeRangeSync(path, bytes, offset);
+      }
+      if ('sha256:' + hash.digest('hex') !== ref.attachmentId) throw new FsError('Attachment digest verification failed', 'FS_IO_ERROR');
+      return {path, bytes: ref.bytes, attachmentId: String(ref.attachmentId), version: String(this.version(path))};
+    });
   }
 
   /** Every operation, including version checks and Computer mutations, shares one SQL transaction. */

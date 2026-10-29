@@ -1,4 +1,5 @@
 import {createHash} from 'node:crypto';
+import {z} from 'zod';
 import { DurableObject } from 'cloudflare:workers';
 import { FsError } from '@deepseek-ai/dsh-fs';
 import { WorkerShellBackend } from '@cloudflare/computer/backends/worker-shell';
@@ -451,6 +452,22 @@ export class WorkspaceDO extends DurableObject<Env> {
       if (uploadId && !committed) {
         try {this.files.attachments.execute({type: 'abort', sessionId, uploadId}); await this.ctx.storage.sync();} catch {}
       }
+    }
+  }
+  async exportAttachment(input: WorkspaceScope, ref: FileAttachmentRef, destination: string, policy: ShellSandbox): Promise<Response> {
+    const scope = workspaceScopeSchema.safeParse(input);
+    if (!scope.success || !this.ctx.id.equals(this.env.WORKSPACES.idFromName(workspaceAddress(scope.data)))) return Response.json({error: 'Workspace scope mismatch'}, {status: 403});
+    try {
+      const parsed = attachmentOperationSchema.parse({type: 'read', ref, offset: 0});
+      if (parsed.type !== 'read') throw new Error('Invalid export reference');
+      const sandbox = z.object({mode: z.enum(['read-only', 'workspace-write', 'danger-full-access']), root: z.string().min(1).max(2048)}).strict().parse(policy);
+      const value = this.files.exportAttachment(parsed.ref as FileAttachmentRef, workspacePath(destination), sandbox);
+      await this.ctx.storage.sync();
+      this.invalidate(value.path);
+      return Response.json({value}, {headers: {'cache-control': 'private, no-store'}});
+    } catch (error) {
+      const failure = error instanceof FsError ? error : new FsError('Attachment export failed', 'FS_IO_ERROR');
+      return Response.json({error: failure.message, code: failure.code}, {status: fsStatus(failure.code)});
     }
   }
   async readAttachment(input: WorkspaceScope, ref: FileAttachmentRef): Promise<Response> {
