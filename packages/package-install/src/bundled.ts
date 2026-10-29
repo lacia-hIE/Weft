@@ -3,6 +3,11 @@ import type {BundleInfo} from '@deepseek-ai/dsh-plugin-manager/types';
 import {declarationSchema} from './contracts.ts';
 import type {ResolvedPackage} from './resolver.ts';
 
+/** A shipped identity stays local even when a caller selected a registry. */
+export function namesBundledPackage(spec: string): boolean {
+  return bundledPackages.some(item => spec === item.name || spec.startsWith(item.name + '@'));
+}
+
 /**
  * Repository plugins this deployment ships as npm archives. A bundled name is
  * always resolved here, so a registry package of the same name cannot stand in.

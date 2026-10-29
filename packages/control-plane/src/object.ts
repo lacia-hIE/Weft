@@ -107,7 +107,7 @@ import {workerHostServices, environmentHostServices} from '../../native-plugins/
 import type {ConnectionGateway, GatewayEvent} from '../../connection-gateway/src/index.ts';
 import type {Artifact, Installation} from '../../package-install/src/contracts.ts';
 import {PackageInstaller} from '../../package-install/src/host.ts';
-import {bundledPackageInfo} from '../../package-install/src/bundled.ts';
+import {bundledPackageInfo, namesBundledPackage} from '../../package-install/src/bundled.ts';
 import {mountWorkspace, ComputerFileSystem} from '../../workspace/src/provider.ts';
 import { ModelConfigurationError, type ModelEnvironment } from '../../model-provider/src/index.ts';
 import {SqliteModelUploadIndex, type ModelUploadOperation} from '../../model-provider/src/files-protocol.ts';
@@ -1016,7 +1016,8 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
       } catch (error) {return Response.json({value: {changed: false, application: 'failed', stage: 'enable', target: name, error: {code: 'operation-error', diagnostic: error instanceof Error ? error.message : String(error)}}});}
     }
     const options = (args.options ?? {}) as {requestId?: string; registry?: string | null; approvedBuilds?: string[]};
-    const unsupportedRegistry = options.registry != null && options.registry.replace(/\/$/, '') !== 'https://registry.npmjs.org';
+    // Deployment archives own these names independently of the dialog's registry selection.
+    const unsupportedRegistry = !namesBundledPackage(String(args.spec)) && options.registry != null && options.registry.replace(/\/$/, '') !== 'https://registry.npmjs.org';
     if (endpoint === 'pluginManager/registries') return Response.json({value: {registry: 'https://registry.npmjs.org/', fallbackRegistries: [], resolved: 'https://registry.npmjs.org/'}});
     if (endpoint === 'pluginManager/inspect') return Response.json({value: unsupportedRegistry
       ? {status: 'refused', problem: 'invalid-spec', reason: 'Only the public npm registry is supported in v1; private registries are never retried publicly.'}

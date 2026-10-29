@@ -1,6 +1,7 @@
 import {artifactKey, artifactSchema, sha256, type Artifact, revision, type Installation, type PackageRevision, type InstallJob} from './contracts.ts';
 import {PackageRegistry} from './registry.ts';
 import {inspectPackage, resolvePackage} from './resolver.ts';
+import {namesBundledPackage} from './bundled.ts';
 
 interface Owner {
   state: DurableObjectState; scope: {tenantId: string; environmentId?: string}; bucket: R2Bucket | undefined;
@@ -48,7 +49,7 @@ export class PackageInstaller {
   async inspect(spec: string) {
     try {
       const {manifest} = await inspectPackage(spec, AbortSignal.timeout(20_000));
-      return {status: 'accepted', kind: 'registry', name: manifest.name, version: manifest.version, description: manifest.description, bundle: true, registry: 'https://registry.npmjs.org/'};
+      return {status: 'accepted', kind: 'registry', name: manifest.name, version: manifest.version, description: manifest.description, bundle: true, registry: namesBundledPackage(spec) ? null : 'https://registry.npmjs.org/'};
     } catch (error) {return {status: 'refused', problem: 'invalid-spec', reason: error instanceof Error ? error.message : String(error)};}
   }
   async start(spec: string, requestId: string): Promise<InstallJob> {

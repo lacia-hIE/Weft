@@ -98,7 +98,7 @@ test('the deployment-bundled IM plugin bridges Feishu, QQ and WeChat conversatio
         assert.equal(Buffer.concat([decipher.update(bytes), decipher.final()]).toString(), 'real workspace file');
         return new Response('', {headers: {'x-encrypted-param': 'returned-wx-file'}});
       }
-      if (target.hostname === 'registry.npmjs.org') {registry++; return new Response('not found', {status: 404});}
+      if (['registry.npmjs.org', 'custom-registry.test'].includes(target.hostname)) {registry++; return new Response('not found', {status: 404});}
       if (target.hostname === 'open.feishu.cn' && target.pathname === '/open-apis/im/v1/files') {
         const form = await request.formData(), file = form.get('file');
         assert.ok(file && typeof file !== 'string');
@@ -175,7 +175,24 @@ test('the deployment-bundled IM plugin bridges Feishu, QQ and WeChat conversatio
     assert.equal(offered.availability, 'missing');
     assert.deepEqual(offered.installTarget, {spec: `${plugin.name}@${plugin.version}`, version: plugin.version});
     assert.deepEqual(offered.rows.map(row => row.rowId), ['im-core', 'im-feishu', 'im-weixin', 'im-qq']);
-    const installed = await api.call<{application: string}>('pluginManager/installBundle', {spec: offered.installTarget!.spec, options: {requestId: crypto.randomUUID()}});
+    const customRegistry = 'https://custom-registry.test/';
+    for (const spec of [plugin.name, offered.installTarget!.spec]) {
+      const inspection = await api.call<{status: string; name: string; version: string; registry: string | null}>('pluginManager/inspect', {spec, options: {registry: customRegistry}});
+      assert.equal(inspection.status, 'accepted');
+      assert.equal(inspection.name, plugin.name);
+      assert.equal(inspection.version, plugin.version);
+      assert.equal(inspection.registry, null, 'The UI receives no npm registry for a deployment archive');
+    }
+    const unavailable = await api.call<{status: string; reason: string}>('pluginManager/inspect', {spec: plugin.name + '@99.0.0', options: {registry: customRegistry}});
+    assert.equal(unavailable.status, 'refused');
+    assert.match(unavailable.reason, /This deployment includes/);
+    for (const spec of ['@private/fixture@1.0.0', plugin.name + '-other']) {
+      assert.equal((await api.call<{status: string}>('pluginManager/inspect', {spec, options: {registry: customRegistry}})).status, 'refused');
+      assert.equal((await api.call<{application: string}>('pluginManager/installBundle', {spec, options: {registry: customRegistry}})).application, 'failed');
+    }
+    assert.equal((await api.call<{application: string}>('pluginManager/installBundle', {spec: plugin.name, options: {registry: customRegistry, approvedBuilds: ['unsafe-install-script']}})).application, 'failed');
+    assert.equal(registry, 0, 'Inspection and refusal never contact either registry');
+    const installed = await api.call<{application: string}>('pluginManager/installBundle', {spec: offered.installTarget!.spec, options: {registry: customRegistry, requestId: crypto.randomUUID()}});
     assert.equal(installed.application, 'applied', JSON.stringify(installed));
     assert.equal(registry, 0, 'A bundled plugin never reaches the npm registry');
     assert.equal((await api.call<BundleInfo[]>('pluginManager/listBundles', {})).filter(bundle => bundle.name === plugin.name).length, 1, 'An installed bundled plugin is listed once');
