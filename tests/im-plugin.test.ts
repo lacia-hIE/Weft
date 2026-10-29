@@ -183,9 +183,9 @@ test('the deployment-bundled IM plugin bridges Feishu, QQ and WeChat conversatio
       assert.equal(inspection.version, plugin.version);
       assert.equal(inspection.registry, null, 'The UI receives no npm registry for a deployment archive');
     }
-    const unavailable = await api.call<{status: string; reason: string}>('pluginManager/inspect', {spec: plugin.name + '@99.0.0', options: {registry: customRegistry}});
-    assert.equal(unavailable.status, 'refused');
-    assert.match(unavailable.reason, /This deployment includes/);
+    const unavailableBundledVersion = await api.call<{status: string; reason: string}>('pluginManager/inspect', {spec: plugin.name + '@99.0.0', options: {registry: customRegistry}});
+    assert.equal(unavailableBundledVersion.status, 'refused');
+    assert.match(unavailableBundledVersion.reason, /This deployment includes/);
     for (const spec of ['@private/fixture@1.0.0', plugin.name + '-other']) {
       assert.equal((await api.call<{status: string}>('pluginManager/inspect', {spec, options: {registry: customRegistry}})).status, 'refused');
       assert.equal((await api.call<{application: string}>('pluginManager/installBundle', {spec, options: {registry: customRegistry}})).application, 'failed');
