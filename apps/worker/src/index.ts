@@ -47,7 +47,7 @@ import {readSessionReferenceMetadata} from '../../../packages/native-query/src/r
 import {WorkspaceSubprocess} from '../../../packages/workspace/src/subprocess.ts';
 import { buildForkSeed } from '@deepseek-ai/dsh-session/fork';
 import { runHarnessTurn, initializeHarnessSession, renameHarnessSession, renameLiveHarnessSession, selectHarnessModel } from '../../../packages/harness-runtime/src/runtime.ts';
-import { selectLiveHarnessModel } from '../../../packages/harness-runtime/src/model-selection.ts';
+import { currentModelSelection, selectLiveHarnessModel } from '../../../packages/harness-runtime/src/model-selection.ts';
 import { NativeSessionHost, NativeHostReplacedError } from './native-session-host.ts';
 import {mountOfficialTeam} from '../../../packages/native-bundles/src/runtime.ts';
 import {replaceNativePreset, nativePresetDefinition} from '../../../packages/native-composition/src/index.ts';
@@ -734,7 +734,7 @@ export class SessionDO extends DurableObject<Env> {
     let image, imageError;
     if (options.image) {
       try {
-        const route = host.ctx.agents.selectionFor(host.agent).current;
+        const route = currentModelSelection(host.agent);
         const model = route ? await host.ctx.llm.resolveModelInfo(route.provider, route.model) : undefined;
         if (model?.inputModalities && !model.inputModalities.includes('image')) throw new Error('当前模型不支持图片输入，已保留原图文件。');
         const mediaType = host.ctx.attachments.imageLimits.mediaTypes.find(type => type === options.mediaType);

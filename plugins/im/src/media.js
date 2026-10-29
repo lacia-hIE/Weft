@@ -63,7 +63,7 @@ export async function sendWeixinAttachment(call, current, target, file) {
   const key = randomBytes(16), filekey = randomBytes(16).toString('hex');
   const cipher = createCipheriv('aes-128-ecb', key, null);
   const encrypted = Buffer.concat([cipher.update(file.data), cipher.final()]);
-  const upload = await call(current.baseUrl, 'ilink/bot/getuploadurl', {token: current.token, body: {
+  const upload = await call(current.baseUrl, 'ilink/bot/getuploadurl', {token: current.token, signal: file.signal, body: {
     filekey, media_type: file.image ? 1 : 3, to_user_id: target.to, rawsize: file.data.length,
     rawfilemd5: createHash('md5').update(file.data).digest('hex'), filesize: encrypted.length, no_need_thumb: true, aeskey: key.toString('hex'),
   }});
@@ -71,13 +71,14 @@ export async function sendWeixinAttachment(call, current, target, file) {
   const url = upload.upload_full_url || `${CDN}/upload?encrypted_query_param=${encodeURIComponent(upload.upload_param ?? '')}&filekey=${filekey}`;
   const checked = checkedUrl(url, ['novac2c.cdn.weixin.qq.com']);
   if (!['/c2c/upload'].includes(checked.pathname) || !upload.upload_full_url && !upload.upload_param) throw new Error('微信上传地址无效。');
-  const response = await fetch(checked, {method: 'POST', body: encrypted, headers: {'content-type': 'application/octet-stream'}, redirect: 'manual', signal: AbortSignal.timeout(60_000)});
+  const response = await fetch(checked, {method: 'POST', body: encrypted, headers: {'content-type': 'application/octet-stream'}, redirect: 'manual', signal: AbortSignal.any([...(file.signal ? [file.signal] : []), AbortSignal.timeout(60_000)])});
   const param = response.headers.get('x-encrypted-param');
   await response.body?.cancel();
   if (!response.ok || !param) throw new Error('微信附件上传失败。');
   const media = {encrypt_query_param: param, aes_key: base64(Buffer.from(key.toString('hex'))), encrypt_type: 1};
   const item = file.image ? {type: 2, image_item: {media, mid_size: encrypted.length}} : {type: 4, file_item: {media, file_name: file.name, len: String(file.data.length)}};
-  const sent = await call(current.baseUrl, 'ilink/bot/sendmessage', {token: current.token, body: {msg: {
+  file.signal?.throwIfAborted();
+  const sent = await call(current.baseUrl, 'ilink/bot/sendmessage', {token: current.token, signal: file.signal, body: {msg: {
     from_user_id: '', to_user_id: target.to, client_id: file.deliveryId, message_type: 2, message_state: 2,
     item_list: [item], ...(target.contextToken ? {context_token: target.contextToken} : {}),
   }}});

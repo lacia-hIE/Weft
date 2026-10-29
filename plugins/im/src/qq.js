@@ -72,9 +72,9 @@ export async function apply(ctx, config) {
   // A disabled channel still closes the gateway connection it may have left open.
   if (!config.enabled) {account.launch(); return;}
   const sequences = new Map();
-  const post = async (path, body) => {
+  const post = async (path, body, signal) => {
     for (let retry = 0; ; retry++) {
-      const response = await fetch(`${API}${path}`, {method: 'POST', headers: {'content-type': 'application/json', authorization: `QQBot ${await token.get()}`}, body: JSON.stringify(body)});
+      const response = await fetch(`${API}${path}`, {method: 'POST', headers: {'content-type': 'application/json', authorization: `QQBot ${await token.get()}`}, body: JSON.stringify(body), signal});
       if (response.status === 401 && retry === 0) {token.clear(); continue;}
       if (!response.ok) throw new Error(`QQ API ${path} failed: ${response.status}`);
       return response.json();
@@ -96,9 +96,10 @@ export async function apply(ctx, config) {
       await post(messagePath(target) + '/messages', {msg_type: 6, input_notify: {input_type: 1, input_second: 60}, msg_id: target.msgId, msg_seq: sequence(target)});
     },
     async sendFile(target, file) {
-      const media = await post(messagePath(target) + '/files', {file_type: file.image ? 1 : 4, file_data: base64(file.data), file_name: file.name, srv_send_msg: false});
+      const media = await post(messagePath(target) + '/files', {file_type: file.image ? 1 : 4, file_data: base64(file.data), file_name: file.name, srv_send_msg: false}, file.signal);
+      file.signal?.throwIfAborted();
       if (!media.file_info) throw new Error('QQ 未返回文件上传凭据。');
-      await post(messagePath(target) + '/messages', {msg_type: 7, content: ' ', media: {file_info: media.file_info}, msg_id: target.msgId, msg_seq: sequence(target)});
+      await post(messagePath(target) + '/messages', {msg_type: 7, content: ' ', media: {file_info: media.file_info}, msg_id: target.msgId, msg_seq: sequence(target)}, file.signal);
     },
     async send(target, text) {
       const path = target.kind === 'group' ? `/v2/groups/${encodeURIComponent(target.id)}/messages` : `/v2/users/${encodeURIComponent(target.id)}/messages`;

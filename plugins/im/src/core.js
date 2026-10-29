@@ -40,6 +40,7 @@ class ImBridge {
     this.followers = new Map();
     this.activities = new Map();
     this.inbound = new Map();
+    this.fileSends = new Map();
     this.closed = false;
     ctx.effect(() => () => {this.closed = true;}, 'dsh-im bridge lifetime');
     this.ready = ctx.storageDomain.open(DOMAIN).then(domain => {
@@ -77,6 +78,14 @@ class ImBridge {
   async sendFile(args, exec) {
     await this.ready;
     const sessionId = this.ctx.sessionController.callerSessionId();
+    const key = `${sessionId}:${exec.callId}`;
+    if (this.fileSends.has(key)) return this.fileSends.get(key);
+    const work = this.sendFileOnce(args, exec, sessionId);
+    this.fileSends.set(key, work);
+    try {return await work;} finally {if (this.fileSends.get(key) === work) this.fileSends.delete(key);}
+  }
+
+  async sendFileOnce(args, exec, sessionId) {
     const entry = [...this.conversations.entries()].find(([, row]) => row.sessionId === sessionId);
     if (!entry) throw new Error('当前会话没有绑定 IM 聊天。');
     const [, row] = entry, channel = this.channels.get(row.channel);
@@ -96,7 +105,7 @@ class ImBridge {
     exec.signal.throwIfAborted();
     // Reserve before the first provider call. An uncertain send is never repeated automatically.
     await this.deliveries.put(deliveryId, {status: 'sending', name, at: Date.now()});
-    await channel.sendFile(row.target, {data, name, image, deliveryId: await requestId(deliveryId)});
+    await channel.sendFile(row.target, {data, name, image, signal: exec.signal, deliveryId: await requestId(deliveryId)});
     await this.deliveries.put(deliveryId, {status: 'sent', name, at: Date.now()});
     return {status: 'sent', name};
   }

@@ -75,7 +75,10 @@ test('the deployment-bundled IM plugin bridges Feishu, QQ and WeChat conversatio
             controller.enqueue(event('message_start', {message: {usage: {input_tokens: 10, output_tokens: 0}}}));
             controller.enqueue(event('content_block_start', {index: 0, content_block: {type: 'text', text: ''}}));
             controller.enqueue(event('content_block_delta', {index: 0, delta: {type: 'text_delta', text: 'FIRST_PART'}}));
+            let released = false;
             releaseCard = () => {
+              if (released) return;
+              released = true;
               controller.enqueue(event('content_block_delta', {index: 0, delta: {type: 'text_delta', text: '_FINAL_PART'}}));
               controller.enqueue(event('content_block_stop', {index: 0}));
               controller.enqueue(event('message_delta', {delta: {stop_reason: 'end_turn'}, usage: {output_tokens: 3}}));
@@ -89,7 +92,8 @@ test('the deployment-bundled IM plugin bridges Feishu, QQ and WeChat conversatio
       if (target.hostname === 'novac2c.cdn.weixin.qq.com') return new Response(wxEncryptedFile);
       if (target.hostname === 'registry.npmjs.org') {registry++; return new Response('not found', {status: 404});}
       if (target.hostname === 'open.feishu.cn' && target.pathname === '/open-apis/im/v1/files') {
-        const form = await request.formData(), file = form.get('file') as File;
+        const form = await request.formData(), file = form.get('file');
+        assert.ok(file && typeof file !== 'string');
         assert.equal(await file.text(), 'real workspace file');
         return Response.json({code: 0, data: {file_key: 'returned-file-key'}});
       }
@@ -293,7 +297,7 @@ test('the deployment-bundled IM plugin bridges Feishu, QQ and WeChat conversatio
     assert.equal(sessions.items.length, 3, JSON.stringify(sessions.items));
     for (const session of sessions.items) {
       const page = await currentPage(session.sessionId);
-      const files = page.records.flatMap(record => record.event.type === 'user/message' ? record.event.data.content.filter(part => part.type === 'file') : []);
+      const files = page.records.flatMap(record => record.event.type === 'user/message' ? (record.event.data as unknown as SessionEventMap['user/message']).content.filter(part => part.type === 'file') : []);
       assert.ok(files.length, 'Each IM channel admits files into native Session history');
       assert.equal(files[0]!.attachment.bytes, attachmentBytes.length);
       assert.equal(files[0]!.attachment.attachmentId, 'sha256:' + createHash('sha256').update(attachmentBytes).digest('hex'));

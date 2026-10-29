@@ -142,8 +142,9 @@ export async function apply(ctx, config) {
       if (!file.image) form.set('file_name', file.name);
       form.set(file.image ? 'image' : 'file', new Blob([file.data]), file.name);
       const base = HOSTS[account.credentials()?.domain] ?? HOSTS.feishu;
-      const response = await fetch(base + `/open-apis/im/v1/${file.image ? 'images' : 'files'}`, {method: 'POST', headers: {authorization: `Bearer ${await token.get()}`}, body: form, redirect: 'manual', signal: AbortSignal.timeout(60_000)});
+      const response = await fetch(base + `/open-apis/im/v1/${file.image ? 'images' : 'files'}`, {method: 'POST', headers: {authorization: `Bearer ${await token.get()}`}, body: form, redirect: 'manual', signal: AbortSignal.any([...(file.signal ? [file.signal] : []), AbortSignal.timeout(60_000)])});
       const value = await response.json();
+      file.signal?.throwIfAborted();
       const key = value.data?.[file.image ? 'image_key' : 'file_key'];
       if (!response.ok || value.code !== 0 || !key) throw new Error('飞书附件上传失败，请检查资源权限。');
       await sendMessage(target, file.image ? 'image' : 'file', {[file.image ? 'image_key' : 'file_key']: key}, file.deliveryId);
