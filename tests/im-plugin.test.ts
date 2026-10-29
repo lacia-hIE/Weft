@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {createCipheriv, createHash, createPrivateKey, createPublicKey, randomBytes, sign, verify} from 'node:crypto';
+import {createCipheriv, createDecipheriv, createHash, createPrivateKey, createPublicKey, randomBytes, sign, verify} from 'node:crypto';
 import {readFileSync} from 'node:fs';
 import {setTimeout as delay} from 'node:timers/promises';
 import {Response, type V4FetchHandler} from 'miniflare';
@@ -35,7 +35,8 @@ const qqKey = (() => {
 })();
 
 test('the deployment-bundled IM plugin bridges Feishu, QQ and WeChat conversations to native Sessions through environment egress', {timeout: 300000}, async () => {
-  let registry = 0, cardsEnabled = false;
+  let registry = 0, cardsEnabled = false, wxReturnPending = false;
+  let wxUploadKey: string | undefined;
   let releaseCard: (() => void) | undefined;
   const attachmentBytes = Buffer.alloc(2 * 1024 * 1024, 97);
   const wxFileKey = Buffer.alloc(16, 9), wxCipher = createCipheriv('aes-128-ecb', wxFileKey, null);
@@ -89,7 +90,14 @@ test('the deployment-bundled IM plugin bridges Feishu, QQ and WeChat conversatio
         return textModel(request, mf);
       }
       if (target.hostname === 'multimedia.nt.qq.com') return new Response(attachmentBytes);
-      if (target.hostname === 'novac2c.cdn.weixin.qq.com') return new Response(wxEncryptedFile);
+      if (target.hostname === 'novac2c.cdn.weixin.qq.com') {
+        if (request.method === 'GET') return new Response(wxEncryptedFile);
+        assert.ok(wxUploadKey);
+        const decipher = createDecipheriv('aes-128-ecb', Buffer.from(wxUploadKey, 'hex'), null);
+        const bytes = Buffer.from(await request.arrayBuffer());
+        assert.equal(Buffer.concat([decipher.update(bytes), decipher.final()]).toString(), 'real workspace file');
+        return new Response('', {headers: {'x-encrypted-param': 'returned-wx-file'}});
+      }
       if (target.hostname === 'registry.npmjs.org') {registry++; return new Response('not found', {status: 404});}
       if (target.hostname === 'open.feishu.cn' && target.pathname === '/open-apis/im/v1/files') {
         const form = await request.formData(), file = form.get('file');
@@ -108,15 +116,27 @@ test('the deployment-bundled IM plugin bridges Feishu, QQ and WeChat conversatio
         return Response.json({code: 0, data: {}});
       }
       if (target.hostname === 'bots.qq.com') return Response.json({access_token: 'qq-token', expires_in: '7200'});
-      if (target.hostname === 'api.sgroup.qq.com') {record(); return Response.json({id: 'sent'});}
+      if (target.hostname === 'api.sgroup.qq.com') {
+        record();
+        if (target.pathname.endsWith('/files')) {
+          assert.equal(Buffer.from(String(body.file_data), 'base64').toString(), 'real workspace file');
+          return Response.json({file_info: 'qq-returned-file'});
+        }
+        return Response.json({id: 'sent'});
+      }
       if (target.hostname === 'ilinkai.weixin.qq.com') {
         if (target.pathname === '/ilink/bot/get_bot_qrcode') return Response.json({qrcode: 'qr-1', qrcode_img_content: 'https://liteapp.weixin.qq.com/q/fixture?qrcode=qr-1&bot_type=3'});
         if (target.pathname === '/ilink/bot/get_qrcode_status') return Response.json(loginMode === 'wait' ? {status: 'wait'} : loginMode === 'expire' ? {status: 'expired'} : status++ === 0 ? {status: 'wait'} : {status: 'confirmed', bot_token: 'wx-token', baseurl: 'ilinkai.weixin.qq.com', ilink_bot_id: 'bot@im.bot', ilink_user_id: 'owner@im.wechat'});
         if (target.pathname === '/ilink/bot/getupdates') {
           record();
           if (updates++ === 0) return Response.json({ret: 0, get_updates_buf: 'cursor-1', msgs: [{message_id: 101, from_user_id: 'owner@im.wechat', message_type: 1, context_token: 'ctx-1', item_list: [{type: 1, text_item: {text: '你好'}}, {type: 4, file_item: {file_name: 'weixin.txt', media: {encrypt_query_param: 'wx-file', aes_key: wxFileKey.toString('base64')}}}]}]});
+          if (wxReturnPending) {
+            wxReturnPending = false;
+            return Response.json({ret: 0, get_updates_buf: 'cursor-1', msgs: [{message_id: 102, from_user_id: 'owner@im.wechat', message_type: 1, context_token: 'ctx-return', item_list: [{type: 1, text_item: {text: 'IM_RETURN_FILE'}}]}]});
+          }
           await delay(1000); return Response.json({ret: 0, get_updates_buf: 'cursor-1', msgs: []});
         }
+        if (target.pathname === '/ilink/bot/getuploadurl') {record(); wxUploadKey = String(body.aeskey); return Response.json({ret: 0, upload_param: 'wx-upload'});}
         if (target.pathname === '/ilink/bot/getconfig') {record(); return Response.json({ret: 0, typing_ticket: 'typing-ticket'});}
         if (target.pathname === '/ilink/bot/sendtyping') {record(); return Response.json({ret: 0});}
         if (target.pathname === '/ilink/bot/sendmessage') {record(); return Response.json({ret: 0});}
@@ -222,8 +242,8 @@ test('the deployment-bundled IM plugin bridges Feishu, QQ and WeChat conversatio
     const validation = await (await hook('/qq', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify(plain)})).json() as {plain_token: string; signature: string};
     assert.equal(validation.plain_token, 'plain-token');
     assert.ok(verify(null, Buffer.from('1700000000plain-token'), qqKey.public, Buffer.from(validation.signature, 'hex')));
-    const qq = async (id: string, openid: string) => {
-      const body = JSON.stringify({op: 0, id: 'event-' + id, t: 'C2C_MESSAGE_CREATE', d: {id, content: '你好', attachments: [{filename: 'qq.txt', content_type: 'text/plain', url: 'https://multimedia.nt.qq.com/fixture'}], timestamp: new Date().toISOString(), author: {user_openid: openid}}});
+    const qq = async (id: string, openid: string, content = '你好') => {
+      const body = JSON.stringify({op: 0, id: 'event-' + id, t: 'C2C_MESSAGE_CREATE', d: {id, content, attachments: [{filename: 'qq.txt', content_type: 'text/plain', url: 'https://multimedia.nt.qq.com/fixture'}], timestamp: new Date().toISOString(), author: {user_openid: openid}}});
       const timestamp = String(Math.floor(Date.now() / 1000));
       return hook('/qq', {method: 'POST', headers: {'content-type': 'application/json', 'x-signature-timestamp': timestamp, 'x-signature-ed25519': sign(null, Buffer.from(timestamp + body), qqKey.key).toString('hex')}, body});
     };
@@ -460,6 +480,11 @@ test('the deployment-bundled IM plugin bridges Feishu, QQ and WeChat conversatio
     assert.equal((await runtime.dispatchFetch(url('alpha', base + '/workspaces/default/files'), {method: 'PUT', headers: {'content-type': 'application/json'}, body: JSON.stringify({path: 'im-return.txt', content: 'real workspace file', expectedVersion: null})})).status, 200);
     await feishu('om_return_file', 'ou_allowed', false, 'IM_RETURN_FILE');
     await waitFor(() => sent.find(row => row.path === '/open-apis/im/v1/messages/om_return_file/reply' && row.body.msg_type === 'file'), 'real environment tool returned the workspace file');
+    await qq('qq-return-file', 'qq-user', 'IM_RETURN_FILE');
+    await waitFor(() => sent.find(row => row.host === 'api.sgroup.qq.com' && row.body.msg_type === 7), 'QQ tool returns the real file');
+    // The QR replacement checks above left the bot logged in; feed a fresh context through the gateway.
+    wxReturnPending = true;
+    await waitFor(() => sent.find(row => row.path === '/ilink/bot/sendmessage' && (row.body.msg as {item_list?: {type: number}[]})?.item_list?.[0]?.type === 4), 'WeChat tool returns the real encrypted file');
     cardsEnabled = true;
     await feishu('om_stream', 'ou_allowed', false, 'IM_STREAM_CARD');
     await waitFor(() => sent.find(row => row.path.includes('/elements/answer/content') && row.body.content === 'FIRST_PART'), 'live card updated before the model finishes');

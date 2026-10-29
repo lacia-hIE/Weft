@@ -9,7 +9,7 @@ const compiled = await build({entryPoints: ['plugins/im/src/core.js'], bundle: t
   // The installed-bundle compiler supplies defineTool as a Host capability too.
   // Its policy/schema enforcement is exercised by im-plugin.test.ts in workerd.
   plugins: [{name: 'host-tool-definition', setup(builder) {
-    builder.onResolve({filter: /^@deepseek-ai\/dsh-tools$/}, () => ({path: 'tools', namespace: 'host-capability'}));
+    builder.onResolve({filter: /^@deepseek-ai[/]dsh-tools$/}, () => ({path: 'tools', namespace: 'host-capability'}));
     builder.onLoad({filter: /.*/, namespace: 'host-capability'}, () => ({contents: 'export const defineTool = value => value;'}));
   }}]});
 const core = await import('data:text/javascript;base64,' + Buffer.from(compiled.outputFiles![0]!.text).toString('base64'));
@@ -155,4 +155,21 @@ test('live assistant deltas update a single card and finalize without a duplicat
     assert.equal(starts, 1);
     assert.deepEqual(fx.messages, []);
   } finally {release?.(); await fx.dispose();}
+});
+
+test('IM image admission keeps the original file alongside native visual input or its fallback note', async () => {
+  const fx = await fixture();
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jf1sAAAAASUVORK5CYII=', 'base64');
+  const attachment = {name: 'pixel.png', image: true, load: async () => png};
+  try {
+    fx.ctx.sessionController.uploadAttachment = async (_session: string, options: any, data: Uint8Array) => {
+      assert.equal(options.mediaType, 'image/png');
+      return {file: {receiptId: 'original'}, image: {type: 'image', mediaType: 'image/png', data: Buffer.from(data).toString('base64')}};
+    };
+    assert.equal(await fx.receive({attachments: [attachment]}), 'accepted');
+    assert.deepEqual(fx.prompts[0].content.slice(1), [{type: 'file', receiptId: 'original'}, {type: 'image', mediaType: 'image/png', data: png.toString('base64')}]);
+    fx.ctx.sessionController.uploadAttachment = async () => ({file: {receiptId: 'original'}, imageError: 'model has no image support'});
+    assert.equal(await fx.receive({attachments: [attachment]}), 'accepted');
+    assert.deepEqual(fx.prompts[1].content.slice(1), [{type: 'file', receiptId: 'original'}, {type: 'text', text: 'model has no image support'}]);
+  } finally {await fx.dispose();}
 });
