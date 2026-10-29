@@ -25,6 +25,15 @@ function bytesClient(runtime: ReturnType<typeof createRuntime>) {
   });
 }
 
+async function promptTurn(api: ReturnType<typeof nativeClient>, sessionId: string, content: unknown[]) {
+  const follow = await api.follow(sessionId);
+  await follow.next();
+  try {
+    await api.call('session/prompt', {request: {sessionId, requestId: crypto.randomUUID(), mode: 'queue', content}});
+    for (;;) {const frame = await follow.next(); if (frame.type === 'event' && frame.event.type === 'turn/end') break;}
+  } finally {await follow.close();}
+}
+
 test('native attachment export copies exact binary bytes to a script-readable file while the private path remains blocked', async () => {
   const bytes = Uint8Array.from({length: 1_048_607}, (_, i) => i % 251), digest = createHash('sha256').update(bytes).digest('hex');
   let source = '', requests = 0;
@@ -49,7 +58,7 @@ test('native attachment export copies exact binary bytes to a script-readable fi
     await api.call('session/create', {request: {sessionId: 'export-original'}});
     const receipt = await api.call<FileUploadValue>('fileUploads/upload', {agentId: 'export-original', request: {name: 'original.bin', data: Buffer.from(bytes).toString('base64')}});
     source = filePath(receipt.file);
-    await api.call('session/prompt', {request: {sessionId: 'export-original', requestId: crypto.randomUUID(), mode: 'queue', content: [{type: 'file', receiptId: receipt.receiptId}]}});
+    await promptTurn(api, 'export-original', [{type: 'file', receiptId: receipt.receiptId}]);
     assert.equal(requests, 4);
     const result = await bytesClient(runtime).call('/api', 'workspaceFiles/readBytes', {args: {workspaceFileScopeId: 'export-original', path: '/workspace/inputs/blob.bin', options: {}}});
     assert.ok(result.ok, JSON.stringify(result));
@@ -86,7 +95,7 @@ test('export refuses foreign references, read-only writes, workspace escapes, pr
       if (scenario.id === 'readonly') await api.call('commands/execute', {agentId: scenario.id, line: '/permission read-only', submittedAttachments: []});
       const receipt = await api.call<FileUploadValue>('fileUploads/upload', {agentId: scenario.id, request: {name: 'own.txt', data: Buffer.from('own bytes').toString('base64')}});
       input = {destination: scenario.destination, ...('source' in scenario ? {source: scenario.source} : {})}; expected = scenario.error;
-      await api.call('session/prompt', {request: {sessionId: scenario.id, requestId: crypto.randomUUID(), mode: 'queue', content: [{type: 'file', receiptId: receipt.receiptId}]}});
+      await promptTurn(api, scenario.id, [{type: 'file', receiptId: receipt.receiptId}]);
     }
     assert.equal(requests, cases.length * 2);
     const existing = await runtime.dispatchFetch(url('alpha', base + '/workspaces/default/files?path=/workspace/exists.txt'));
@@ -108,7 +117,7 @@ test('image-only export exposes the stored normalized WebP bytes without claimin
   const runtime = createRuntime(undefined, {browser: true, images: true, bindings, outbound}), api = nativeClient(() => runtime);
   try {
     await api.call('session/create', {request: {sessionId: 'image-export'}});
-    await api.call('session/prompt', {request: {sessionId: 'image-export', requestId: crypto.randomUUID(), mode: 'queue', content: [{type: 'image', mediaType: 'image/png', data: fixture.png.toString('base64')}]}});
+    await promptTurn(api, 'image-export', [{type: 'image', mediaType: 'image/png', data: fixture.png.toString('base64')}]);
     assert.equal(requests, 2);
     const history = await (await runtime.dispatchFetch(url('alpha', base + '/sessions/image-export/events'))).json() as {events: {type: string; data: unknown}[]};
     const message = history.events.find(event => event.type === 'user/message')!.data as SessionEventMap['user/message'];

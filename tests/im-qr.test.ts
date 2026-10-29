@@ -121,7 +121,7 @@ test('QQ and Feishu QR creation bind privately, survive reload, and deliver nati
       assert.equal((await status(channel, channel + '-rotated')).state, 'idle');
     }
     const sessions = await api.call<SessionListValue>('session/list', {_request: {}});
-    assert.equal(sessions.items.length, 2);
+    assert.equal(sessions.items.length, 3);
     assert.ok(provider.requests.some(item => item.host === 'accounts.larksuite.com'), 'Feishu authorization follows the Lark tenant switch');
     assert.ok(provider.requests.some(item => item.host === 'open.larksuite.com' && item.path.includes('/messages/')), 'Replies use the authorized tenant domain');
     const ack = provider.frames.find(item => item.channel === 'feishu' && (item.frame as {4?: bigint})[4] === 1n)?.frame as {1?: bigint; 2?: bigint; 8?: Uint8Array};
