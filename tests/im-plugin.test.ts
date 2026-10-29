@@ -42,7 +42,7 @@ test('the deployment-bundled IM plugin bridges Feishu, QQ and WeChat conversatio
   const wxFileKey = Buffer.alloc(16, 9), wxCipher = createCipheriv('aes-128-ecb', wxFileKey, null);
   const wxEncryptedFile = Buffer.concat([wxCipher.update(attachmentBytes), wxCipher.final()]);
   const sent: {host: string; path: string; body: Record<string, unknown>; authorization: string | null}[] = [];
-  let status = 0, updates = 0;
+  let status = 0, updates = 0, botIdentityAvailable = true;
   let loginMode: 'confirm' | 'wait' | 'expire' = 'confirm';
   let busyStarted = false, releaseBusy: (() => void) | undefined;
   const modelCalls: {model: string; output_config?: {effort: string}}[] = [];
@@ -110,6 +110,7 @@ test('the deployment-bundled IM plugin bridges Feishu, QQ and WeChat conversatio
       const record = () => sent.push({host: target.hostname, path: target.pathname + target.search, body, authorization: request.headers.get('authorization')});
       if (target.hostname === 'open.feishu.cn') {
         if (target.pathname === '/open-apis/auth/v3/tenant_access_token/internal') return Response.json({code: 0, tenant_access_token: 'feishu-token', expire: 7200});
+        if (target.pathname === '/open-apis/bot/v3/info') {record(); return Response.json(botIdentityAvailable ? {code: 0, bot: {open_id: 'ou_fixture_bot'}} : {code: 1});}
         if (target.pathname.includes('/resources/')) return new Response(attachmentBytes);
         record();
         if (cardsEnabled && target.pathname === '/open-apis/cardkit/v1/cards') return Response.json({code: 0, data: {card_id: 'fixture-card'}});
@@ -233,9 +234,9 @@ test('the deployment-bundled IM plugin bridges Feishu, QQ and WeChat conversatio
       return await response.json() as {challenge: string};
     }, 'Feishu route');
     assert.deepEqual(challenge, {challenge: 'feishu-challenge'});
-    const feishu = async (messageId: string, openId: string, raw = false, messageText = '请帮忙', group = false) => {
+    const feishu = async (messageId: string, openId: string, raw = false, messageText = '请帮忙', group = false, mentions: {key: string; id: {open_id?: string}; name?: string}[] = []) => {
       const event = {schema: '2.0', header: {event_id: crypto.randomUUID(), event_type: 'im.message.receive_v1', token: 'feishu-verify', app_id: 'cli_fixture'},
-        event: {sender: {sender_id: {open_id: openId}, sender_type: 'user'}, message: {message_id: messageId, chat_id: group ? 'oc_group' : 'oc_chat', chat_type: group ? 'group' : 'p2p', message_type: messageId === 'om_file' ? 'file' : 'text', content: JSON.stringify(messageId === 'om_file' ? {file_key: 'file-fixture', file_name: 'feishu.txt'} : {text: messageText})}}};
+        event: {sender: {sender_id: {open_id: openId}, sender_type: 'user'}, message: {message_id: messageId, chat_id: group ? 'oc_group' : 'oc_chat', chat_type: group ? 'group' : 'p2p', message_type: messageId === 'om_file' ? 'file' : 'text', mentions, content: JSON.stringify(messageId === 'om_file' ? {file_key: 'file-fixture', file_name: 'feishu.txt'} : {text: messageText})}}};
       const iv = randomBytes(16), cipher = createCipheriv('aes-256-cbc', createHash('sha256').update('feishu-encrypt').digest(), iv);
       const body = JSON.stringify({encrypt: Buffer.concat([iv, cipher.update(JSON.stringify(event)), cipher.final()]).toString('base64')});
       const timestamp = String(Math.floor(Date.now() / 1000)), nonce = 'nonce-' + messageId;
@@ -396,6 +397,26 @@ test('the deployment-bundled IM plugin bridges Feishu, QQ and WeChat conversatio
       const list = await api.call<{items: unknown[]}>('session/list', {_request: {}});
       return list.items.length === 4 ? true : undefined;
     }, 'fresh Session after removing the WeChat account');
+    // A mention of a human, another bot, @all, or a display-name lookalike is not @this bot.
+    const mention = (open_id: string, name = 'Weft') => [{key: '@_user_1', id: {open_id}, name}];
+    await feishu('mention-human', 'ou_allowed', false, 'HUMAN_ONLY', true, mention('ou_human'));
+    await feishu('mention-other-bot', 'ou_allowed', false, 'OTHER_BOT_ONLY', true, mention('ou_other_bot'));
+    await feishu('mention-all', 'ou_allowed', false, 'ALL_ONLY', true, mention('all'));
+    await feishu('mention-self', 'ou_allowed', false, 'THIS_BOT_ONLY', true, mention('ou_fixture_bot'));
+    await waitFor(() => sent.find(row => row.path === '/open-apis/im/v1/messages/mention-self/reply'), 'reply only to the bot own open_id');
+    assert.equal(sent.filter(row => row.path === '/open-apis/bot/v3/info').length, 1, 'Bot identity is cached for this activation');
+    for (const id of ['mention-human', 'mention-other-bot', 'mention-all']) assert.equal(sent.some(row => row.path === `/open-apis/im/v1/messages/${id}/reply`), false);
+    // When identity lookup fails, stay silent; a later event can retry discovery.
+    botIdentityAvailable = false;
+    await configure('im-feishu', {managementKey: 'mention-refresh'});
+    await feishu('mention-unknown', 'ou_allowed', false, 'UNKNOWN_BOT_IDENTITY', true, mention('ou_fixture_bot'));
+    botIdentityAvailable = true;
+    await feishu('mention-recovered', 'ou_allowed', false, 'RECOVERED_BOT_IDENTITY', true, mention('ou_fixture_bot'));
+    await waitFor(() => sent.find(row => row.path === '/open-apis/im/v1/messages/mention-recovered/reply'), 'retry identity after discovery failure');
+    const mentionPages = await Promise.all((await api.call<SessionListValue>('session/list', {_request: {}})).items.map(item => currentPage(item.sessionId)));
+    const mentionHistory = JSON.stringify(mentionPages.flatMap(page => page.records.filter(record => record.event.type === 'user/message')));
+    assert.match(mentionHistory, /THIS_BOT_ONLY/);
+    assert.doesNotMatch(mentionHistory, /HUMAN_ONLY|OTHER_BOT_ONLY|ALL_ONLY|UNKNOWN_BOT_IDENTITY/);
     await configure('im-core', {titlePrefix: false});
     await feishu('om_new_unlabeled', 'ou_allowed', false, '/new');
     const unlabeled = await waitFor(async () => {

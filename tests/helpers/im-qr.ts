@@ -71,6 +71,7 @@ export function imQrFixture() {
     }
     if (url.pathname.endsWith('/tenant_access_token/internal')) return Response.json(body.app_secret === 'invalid-fixture' ? {code: 1, msg: 'secret echo: invalid-fixture'} : {code: 0, tenant_access_token: 'fixture-token', expire: 7200});
     if (url.hostname === 'bots.qq.com') return Response.json(body.clientSecret === 'invalid-fixture' ? {message: 'invalid-fixture'} : {access_token: 'qq-fixture-token', expires_in: '7200'});
+    if (url.pathname === '/open-apis/bot/v3/info') return Response.json({code: 0, bot: {open_id: 'ou_qr_bot'}});
     if (url.pathname === '/gateway') return Response.json({url: 'wss://gateway.sgroup.qq.com/ws'});
     if (url.pathname === '/callback/ws/endpoint') return Response.json({code: 0, data: {URL: 'wss://msg.larksuite.com/ws?service_id=2', ClientConfig: {PingInterval: 2}}});
     if (url.pathname.startsWith('/open-apis/im/') || url.pathname.startsWith('/v2/')) {

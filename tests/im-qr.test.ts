@@ -82,6 +82,16 @@ test('QQ and Feishu QR creation bind privately, survive reload, and deliver nati
       else provider.send('feishu', {header: {event_type: 'im.message.receive_v1'}, event: {sender: {sender_type: 'user', sender_id: {open_id: 'ou_qr_owner'}}, message: {message_id: 'feishu-qr-msg', chat_id: 'oc_qr_chat', chat_type: 'p2p', message_type: 'text', content: JSON.stringify({text: 'Feishu QR native prompt'})}}}, true);
       stage = channel + ' delivery';
       await wait(() => provider.sent.some(item => item.channel === channel) ? true : undefined);
+      if (channel === 'feishu') {
+        const sendGroup = (id: string, mentioned: string) => provider.send('feishu', {header: {event_type: 'im.message.receive_v1'}, event: {
+          sender: {sender_type: 'user', sender_id: {open_id: 'ou_qr_owner'}},
+          message: {message_id: id, chat_id: 'oc_qr_group', chat_type: 'group', message_type: 'text', mentions: [{key: '@_user_1', id: {open_id: mentioned}, name: 'Same display name'}], content: JSON.stringify({text: id})},
+        }});
+        sendGroup('qr-mention-human', 'ou_someone_else');
+        sendGroup('qr-mention-self', 'ou_qr_bot');
+        await wait(() => provider.sent.some(item => item.path === '/open-apis/im/v1/messages/qr-mention-self/reply') ? true : undefined);
+        assert.equal(provider.sent.some(item => item.path === '/open-apis/im/v1/messages/qr-mention-human/reply'), false);
+      }
       if (channel === 'qq') {
         const count = provider.sockets.qq.length;
         provider.sockets.qq.at(-1)!.close(1000, 'Reconnect fixture');

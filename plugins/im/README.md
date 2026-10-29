@@ -66,3 +66,6 @@ Deploy the matching Weft Host before upgrading the bundle to 0.7.0. Approve work
 微信通过 iLink `getconfig` / `sendtyping` 显示并刷新“正在输入”，结束、取消或接入失败时停止。QQ 私聊发送并刷新原生输入状态；QQ 群聊没有该接口，结束后私聊状态由平台到期清除。飞书通过 CardKit 单卡流式展示实际回答文本增量，结束时关闭 streaming mode；缺少卡片权限或更新失败时用文字交付完整答案。长于卡片预算的回答也保留完整文字交付。
 
 Validation runs in the `Test` GitHub Actions workflow on the `ci` branch. The unit shards include `tests/im-media.test.ts`, `tests/im-plugin.test.ts`, `tests/im-qr.test.ts` and `tests/im-session-turns.test.ts`; Browser 1/2 also runs the installed IM settings regression. Provider fixtures cover native file admission above the JSON bridge limit, iLink encryption and input status, QQ input status, real environment-tool file return, and a card update before model completion. Real-account acceptance remains separate.
+
+
+0.7.1 修正飞书群聊的 @ 判断：默认仅在 `mentions[].id.open_id` 命中当前机器人自身 ID 时触发；@ 其他人、其他机器人、@all 或同名成员不会触发。自身 ID 通过当前应用的机器人信息接口获取并缓存，账号重绑或插件重载后重新获取；无法确认身份时不处理群聊 @ 消息。明确选择「所有收到的群消息」时仍按开放响应模式工作。

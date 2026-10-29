@@ -54,13 +54,27 @@ export async function apply(ctx, config) {
     return {value: body.tenant_access_token, expiresAt: Date.now() + Number(body.expire ?? 7200) * 1000};
   };
   const token = tokenCache(() => requestToken(account.credentials()));
+  let identity;
+  // Resolve the bot's own open_id, never its App ID, owner ID or display name.
+  const botOpenId = () => identity ??= (async () => {
+    const base = HOSTS[account.credentials()?.domain] ?? HOSTS.feishu;
+    const response = await fetch(base + '/open-apis/bot/v3/info', {headers: {authorization: `Bearer ${await token.get()}`}, redirect: 'manual', signal: AbortSignal.timeout(10_000)});
+    const value = await response.json();
+    if (!response.ok || value.code !== 0 || typeof value.bot?.open_id !== 'string' || !value.bot.open_id) throw new Error('Feishu bot identity is unavailable');
+    return value.bot.open_id;
+  })().catch(error => {identity = undefined; throw error;});
   const receive = async payload => {
     if (payload.header?.event_type !== 'im.message.receive_v1') return;
     const message = payload.event?.message, sender = payload.event?.sender;
     if (!message || sender?.sender_type === 'app' || !['text', 'image', 'file', 'post'].includes(message.message_type)) return;
     const group = message.chat_type !== 'p2p';
-    // In groups the bot answers only when mentioned.
-    if (group && config.groupResponseMode !== 'all' && !(message.mentions?.length)) return;
+    if (group && config.groupResponseMode !== 'all') {
+      if (!message.mentions?.some(mention => typeof mention.id?.open_id === 'string')) return;
+      let self;
+      try {self = await botOpenId();}
+      catch {console.warn('dsh-im feishu: group mention ignored because the bot identity could not be verified'); return;}
+      if (!message.mentions.some(mention => mention.id?.open_id === self)) return;
+    }
     let text = '', content;
     try {content = JSON.parse(message.content); text = String(content.text ?? '');} catch {return;}
     const resources = [];
@@ -91,7 +105,7 @@ export async function apply(ctx, config) {
     await ctx.im.receive({channel: 'feishu', conversation: message.chat_id, chatId: message.chat_id, sender: senderId, senderName: sender?.name, sentAt: Number(message.create_time) || undefined, group, text, attachments, messageId: message.message_id,
       target: {chatId: message.chat_id, messageId: message.message_id}});
   };
-  const account = await qrAccount(ctx, 'feishu', config, {...feishuQr, validate: requestToken, changed: () => token.clear(),
+  const account = await qrAccount(ctx, 'feishu', config, {...feishuQr, validate: requestToken, changed: () => {token.clear(); identity = undefined;},
     socket: credentials => feishuConnection(credentials, receive)});
   // A disabled channel still closes the gateway connection it may have left open.
   if (!config.enabled) {account.launch(); return;}
