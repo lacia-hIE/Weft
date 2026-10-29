@@ -65,6 +65,10 @@ class ImBridge {
   channel(name, channel) {
     if (this.channels.has(name)) throw new Error(`IM channel ${name} is registered twice`);
     this.channels.set(name, channel);
+    void this.ready.then(() => {
+      if (this.closed || this.channels.get(name) !== channel) return;
+      for (const [key, row] of this.conversations.entries()) if (row.channel === name && row.pending?.length) this.startActivity(key);
+    });
     return () => {if (this.channels.get(name) === channel) this.channels.delete(name);};
   }
 
@@ -136,18 +140,22 @@ class ImBridge {
   async updateCard(key, text, final = false) {
     let row = this.conversations.get(key);
     const channel = this.channels.get(row?.channel);
-    if (!channel?.startReply) return false;
+    if (!row || !channel?.startReply) return false;
+    const sessionId = row.sessionId;
+    const owns = () => this.conversations.get(key)?.sessionId === sessionId;
     try {
       if (!row.card && !row.cardFailed) {
         const card = await channel.startReply(row.target, await requestId(row.sessionId + ':' + row.pending.join(',')));
-        row = await this.conversations.update(key, current => ({...current, card}));
+        if (!owns()) return false;
+        row = await this.conversations.update(key, current => current.sessionId === sessionId ? {...current, card} : current);
       }
-      if (!row.card || row.cardFailed) return false;
+      if (!owns() || !row.card || row.cardFailed) return false;
       await channel.updateReply(row.card, text, final);
-      await this.conversations.update(key, current => ({...current, card: row.card}));
-      return true;
+      if (!owns()) return false;
+      await this.conversations.update(key, current => current.sessionId === sessionId ? {...current, card: row.card} : current);
+      return owns();
     } catch {
-      await this.conversations.update(key, current => ({...current, cardFailed: true}));
+      if (owns()) await this.conversations.update(key, current => current.sessionId === sessionId ? {...current, cardFailed: true} : current);
       return false;
     }
   }
@@ -353,6 +361,7 @@ class ImBridge {
                 const mirror = consumed.size ? undefined : this.mirrored(current, foreign, event.seq);
                 if (consumed.size) {
                   const card = await this.updateCard(key, text || '（本轮没有文本回复）', true);
+                  if (signal.aborted || this.conversations.get(key)?.sessionId !== row.sessionId) return;
                   if (text && !card) await this.send(current.channel, current.target, text);
                 }
                 else if (reply && mirror) {

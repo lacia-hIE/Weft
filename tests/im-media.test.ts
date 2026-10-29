@@ -173,3 +173,22 @@ test('IM image admission keeps the original file alongside native visual input o
     assert.deepEqual(fx.prompts[1].content.slice(1), [{type: 'file', receiptId: 'original'}, {type: 'text', text: 'model has no image support'}]);
   } finally {await fx.dispose();}
 });
+
+
+test('a delayed old card cannot overwrite the binding after a new Session starts', async () => {
+  const fx = await fixture();
+  let release: (() => void) | undefined;
+  fx.channel.startReply = async () => {await new Promise<void>(resolve => {release = resolve;}); return {id: 'old-card'};};
+  fx.channel.updateReply = async () => {throw new Error('Old card should not update');};
+  try {
+    await fx.receive({text: 'old question'});
+    const pending = fx.bridge.updateCard('test:chat', 'old answer');
+    for (let i = 0; i < 100 && !release; i++) await delay(5);
+    fx.ctx.sessionController.create = async () => ({sessionId: 'session-2'});
+    await fx.receive({text: '/new'});
+    release!();
+    assert.equal(await pending, false);
+    assert.equal(fx.tables.get('conversations')!.get('test:chat').sessionId, 'session-2');
+    assert.equal(fx.tables.get('conversations')!.get('test:chat').card, undefined);
+  } finally {release?.(); await fx.dispose();}
+});

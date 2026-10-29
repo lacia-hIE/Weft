@@ -195,6 +195,36 @@ jobs:
       - name: Unit tests
         run: npx tsx --test --test-concurrency=2 --test-timeout=300000 --test-shard=${{ matrix.shard }}/4 tests/*.test.ts
 
+  im:
+    name: IM attachments and streaming
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: build
+      - run: tar -xzf build.tgz
+      - name: Restore upstream checkout
+        id: upstream
+        uses: actions/cache/restore@v4
+        with:
+          path: deepseek-harness
+          key: upstream-${{ hashFiles('upstream.lock.json') }}
+      - name: Clone upstream checkout
+        if: steps.upstream.outputs.cache-hit != 'true'
+        run: node scripts/prepare-upstream.mjs
+      # Keep this named check separate so provider/Host integration failures are
+      # visible before the broader unit shard finishes. The full suite still runs.
+      - name: Native IM provider and streaming regressions
+        run: npx tsx --test --test-concurrency=1 --test-timeout=300000 tests/im-media.test.ts tests/im-plugin.test.ts tests/im-qr.test.ts tests/im-session-turns.test.ts tests/im-session-titles.test.ts
+
   browser:
     name: Browser ${{ matrix.shard }}/2
     needs: build

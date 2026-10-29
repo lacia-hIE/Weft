@@ -52,7 +52,7 @@ export function weixinAttachments(message) {
       async load() {
         const url = source.media?.encrypt_query_param ? `${CDN}/download?encrypted_query_param=${encodeURIComponent(source.media.encrypt_query_param)}` : source.media?.full_url;
         const encrypted = await download(url, ['novac2c.cdn.weixin.qq.com'], {}, MAX_ATTACHMENT_BYTES + 16);
-        const decipher = createDecipheriv('aes-128-ecb', weixinKey(source), null);
+        const decipher = createDecipheriv('aes-128-ecb', weixinKey(source), new Uint8Array(0));
         const data = Buffer.concat([decipher.update(encrypted), decipher.final()]);
         if (data.length > MAX_ATTACHMENT_BYTES) throw new Error('附件超过 10 MiB。');
         return data;
@@ -61,7 +61,7 @@ export function weixinAttachments(message) {
 }
 export async function sendWeixinAttachment(call, current, target, file) {
   const key = randomBytes(16), filekey = randomBytes(16).toString('hex');
-  const cipher = createCipheriv('aes-128-ecb', key, null);
+  const cipher = createCipheriv('aes-128-ecb', key, new Uint8Array(0));
   const encrypted = Buffer.concat([cipher.update(file.data), cipher.final()]);
   const upload = await call(current.baseUrl, 'ilink/bot/getuploadurl', {token: current.token, signal: file.signal, body: {
     filekey, media_type: file.image ? 1 : 3, to_user_id: target.to, rawsize: file.data.length,
