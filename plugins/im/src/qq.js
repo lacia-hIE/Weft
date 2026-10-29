@@ -1,4 +1,5 @@
 import Schema from '@deepseek-ai/schemastery';
+import {download, fileName, base64} from './media.js';
 import {bytes, fromHex, header, hex, json, readBody, tokenCache} from './shared.js';
 import {botSettings, channelSettings, managementKey, registerModelCatalog} from './management.js';
 
@@ -52,15 +53,17 @@ export async function apply(ctx, config) {
   const receive = async payload => {
     if (payload.op !== 0) return;
     const event = payload.d ?? {};
+    const attachments = (event.attachments ?? []).map(item => ({name: fileName(item.filename || 'attachment'), image: String(item.content_type ?? '').startsWith('image/'),
+      load: () => download(item.url, ['qq.com', 'qpic.cn', 'gtimg.cn'])}));
     if (payload.t === 'C2C_MESSAGE_CREATE') {
       const openid = event.author?.user_openid;
-      if (!openid || typeof event.content !== 'string') return;
-      await ctx.im.receive({channel: 'qq', conversation: 'c2c:' + openid, sender: openid, text: event.content, messageId: event.id,
+      if (!openid || typeof event.content !== 'string' && !attachments.length) return;
+      await ctx.im.receive({channel: 'qq', conversation: 'c2c:' + openid, sender: openid, text: event.content ?? '', attachments, messageId: event.id,
         target: {kind: 'c2c', id: openid, msgId: event.id}});
     } else if (payload.t === 'GROUP_AT_MESSAGE_CREATE') {
       const group = event.group_openid, member = event.author?.member_openid;
-      if (!group || !member || typeof event.content !== 'string') return;
-      await ctx.im.receive({channel: 'qq', conversation: 'group:' + group, sender: member, group: true, text: event.content.replace(/<@!?[^>]+>/g, '').trim(), messageId: event.id,
+      if (!group || !member || typeof event.content !== 'string' && !attachments.length) return;
+      await ctx.im.receive({channel: 'qq', conversation: 'group:' + group, sender: member, group: true, text: (event.content ?? '').replace(/<@!?[^>]+>/g, '').trim(), attachments, messageId: event.id,
         target: {kind: 'group', id: group, msgId: event.id}});
     }
   };
@@ -74,18 +77,33 @@ export async function apply(ctx, config) {
       const response = await fetch(`${API}${path}`, {method: 'POST', headers: {'content-type': 'application/json', authorization: `QQBot ${await token.get()}`}, body: JSON.stringify(body)});
       if (response.status === 401 && retry === 0) {token.clear(); continue;}
       if (!response.ok) throw new Error(`QQ API ${path} failed: ${response.status}`);
-      return;
+      return response.json();
     }
   };
+  const sequence = target => {
+    const seq = (sequences.get(target.msgId) ?? 0) + 1;
+    sequences.set(target.msgId, seq);
+    if (sequences.size > 500) sequences.delete(sequences.keys().next().value);
+    return seq;
+  };
+  const messagePath = target => target.kind === 'group' ? `/v2/groups/${encodeURIComponent(target.id)}` : `/v2/users/${encodeURIComponent(target.id)}`;
   ctx.effect(() => ctx.im.channel('qq', {
     ...channelSettings(config, () => account.owner(), () => account.credentials()?.appId),
     maxChars: config.maxChars,
+    typingInterval: 30_000,
+    async typing(target, active) {
+      if (!active || target.kind !== 'c2c') return;
+      await post(messagePath(target) + '/messages', {msg_type: 6, input_notify: {input_type: 1, input_second: 60}, msg_id: target.msgId, msg_seq: sequence(target)});
+    },
+    async sendFile(target, file) {
+      const media = await post(messagePath(target) + '/files', {file_type: file.image ? 1 : 4, file_data: base64(file.data), file_name: file.name, srv_send_msg: false});
+      if (!media.file_info) throw new Error('QQ 未返回文件上传凭据。');
+      await post(messagePath(target) + '/messages', {msg_type: 7, content: ' ', media: {file_info: media.file_info}, msg_id: target.msgId, msg_seq: sequence(target)});
+    },
     async send(target, text) {
       const path = target.kind === 'group' ? `/v2/groups/${encodeURIComponent(target.id)}/messages` : `/v2/users/${encodeURIComponent(target.id)}/messages`;
       // Each part of one passive reply needs its own msg_seq for the same msg_id.
-      const seq = (sequences.get(target.msgId) ?? 0) + 1;
-      sequences.set(target.msgId, seq);
-      if (sequences.size > 500) sequences.delete(sequences.keys().next().value);
+      const seq = sequence(target);
       try {await post(path, {content: text, msg_type: 0, msg_id: target.msgId, msg_seq: seq});}
       // The passive window closed during a long turn: send an active message instead.
       catch {await post(path, {content: text, msg_type: 0});}

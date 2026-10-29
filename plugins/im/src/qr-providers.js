@@ -42,7 +42,7 @@ export const feishuQr = {
     if (url.protocol !== 'https:' || !['accounts.feishu.cn', 'accounts.larksuite.com'].includes(url.hostname) || url.username || url.password) throw new Error('Untrusted Feishu registration URL');
     url.searchParams.set('from', 'sdk'); url.searchParams.set('tp', 'sdk'); url.searchParams.set('source', 'node-sdk/deepseek-harness'); url.searchParams.set('createOnly', 'true');
     url.searchParams.set('name', '{user} 的 Weft AI 助手');
-    const addons = {preset: false, scopes: {tenant: ['im:message.p2p_msg:readonly', 'im:message.group_at_msg:readonly', 'im:message.group_at_msg.include_bot:readonly', 'im:message:send_as_bot']}, events: {items: {tenant: ['im.message.receive_v1']}}};
+    const addons = {preset: false, scopes: {tenant: ['im:message.p2p_msg:readonly', 'im:message.group_at_msg:readonly', 'im:message.group_at_msg.include_bot:readonly', 'im:message:send_as_bot', 'im:resource', 'cardkit:card:write']}, events: {items: {tenant: ['im.message.receive_v1']}}};
     const compressed = await new Response(new Blob([bytes(JSON.stringify(addons))]).stream().pipeThrough(new CompressionStream('gzip'))).arrayBuffer();
     url.searchParams.set('addons', base64(compressed).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, ''));
     return {deviceCode: result.device_code, domain, url: url.href, interval: milliseconds(result.interval, 5000, 30_000), expiresAt: Date.now() + milliseconds(result.expires_in, 600_000, 600_000)};

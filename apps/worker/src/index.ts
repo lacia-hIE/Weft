@@ -126,6 +126,7 @@ export class EnvironmentPluginCapabilities extends WorkerEntrypoint<Env, {scope:
   async dispatchWebhook(delivery:unknown):Promise<void> {return this.owner().nativePackageDispatchWebhook(this.ctx.props.scope,this.ctx.props,delivery);}
   async createWebhook(operationId:string,delivery:unknown,ruleId:string,request:unknown):Promise<void> {return this.owner().nativePackageCreateWebhook(this.ctx.props.scope,this.ctx.props,operationId,delivery,ruleId,request);}
   async cancelWebhook(operationId:string):Promise<void> {return this.owner().nativePackageCancelWebhook(this.ctx.props.scope,this.ctx.props,operationId);}
+  async uploadSessionAttachment(sessionId: string, options: unknown, data: Uint8Array): Promise<unknown> {return this.owner().nativePackageAttachment(this.ctx.props.scope, this.ctx.props, sessionId, options, data);}
   async callSession(method: string, request: unknown): Promise<unknown> {return this.owner().nativePackageSession(this.ctx.props.scope, this.ctx.props, method, request);}
   async followSession(request: unknown): Promise<Response> {return this.owner().nativePackageFollow(this.ctx.props.scope, this.ctx.props, request);}
   async watchSession(sessionId: string, watch: boolean): Promise<void> {return this.owner().nativePackageWatchSession(this.ctx.props.scope, this.ctx.props, sessionId, watch);}
@@ -722,6 +723,28 @@ export class SessionDO extends DurableObject<Env> {
       if (error instanceof AttachmentError) throw new RemoteError('session/attachment-invalid', error.message, {reason: error.code});
       throw error;
     }
+  }
+  async nativePluginAttachment(input: SessionScope, raw: unknown, data: Uint8Array): Promise<unknown> {
+    const scope = this.assertScope(input);
+    const options = z.object({name: z.string().max(255), image: z.boolean().optional(), mediaType: z.string().max(100).optional()}).strict().parse(raw);
+    if (!(data instanceof Uint8Array) || data.byteLength > 10 * 1024 * 1024) throw new Error('IM attachment exceeds 10 MiB');
+    const host = await this.getNativeHost(scope);
+    const source = () => (async function* () {yield data;})();
+    const file = await host.ctx.fileUploads.uploadStream({sessionId: host.agent.id, name: options.name, data: source()});
+    let image, imageError;
+    if (options.image) {
+      try {
+        const route = host.ctx.agents.selectionFor(host.agent).current;
+        const model = route ? await host.ctx.llm.resolveModelInfo(route.provider, route.model) : undefined;
+        if (model?.inputModalities && !model.inputModalities.includes('image')) throw new Error('当前模型不支持图片输入，已保留原图文件。');
+        const mediaType = host.ctx.attachments.imageLimits.mediaTypes.find(type => type === options.mediaType);
+        if (!mediaType) throw new Error('Image type is unavailable');
+        await host.ctx.attachments.validateImage({name: options.name, mediaType, data});
+        image = {type: 'image', name: options.name, mediaType, data: Buffer.from(data).toString('base64')};
+      } catch {imageError = '图片未作为视觉输入接入（模型不支持、图片无效或图片服务未配置）；原件已作为文件保留。';}
+    }
+    await this.ctx.storage.sync();
+    return {file, ...(image ? {image} : {}), ...(imageError ? {imageError} : {})};
   }
   async nativeFileUpload(input: SessionScope, raw: unknown): Promise<Response> {
     const scope = this.assertScope(input);

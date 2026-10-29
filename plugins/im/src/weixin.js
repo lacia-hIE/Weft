@@ -1,4 +1,5 @@
 import Schema from '@deepseek-ai/schemastery';
+import {weixinAttachments, sendWeixinAttachment} from './media.js';
 import {background, header, json, sleep} from './shared.js';
 import {qrSvg} from './qr.js';
 import {botSettings, channelSettings, registerModelCatalog} from './management.js';
@@ -74,8 +75,9 @@ export async function apply(ctx, config) {
           // 2 is the bot's own message.
           if (message?.message_type === 2) continue;
           const sender = message?.from_user_id, id = message?.message_id ?? message?.client_id, text = textOf(message);
-          if (!sender || id === undefined || !text) continue;
-          await ctx.im.receive({channel: 'weixin', conversation: sender, sender, text, messageId: String(id), target: {to: sender, contextToken: message.context_token}});
+          const attachments = weixinAttachments(message);
+          if (!sender || id === undefined || !text && !attachments.length) continue;
+          await ctx.im.receive({channel: 'weixin', conversation: sender, sender, text, attachments, messageId: String(id), target: {to: sender, contextToken: message.context_token}});
         }
         if (typeof body.get_updates_buf === 'string' && body.get_updates_buf) await save({cursor: body.get_updates_buf});
       },
@@ -151,9 +153,30 @@ export async function apply(ctx, config) {
   if (!config.enabled || state().state !== 'online') await stopPolling();
   if (!config.enabled) return;
 
+  const typingTickets = new Map();
   ctx.effect(() => ctx.im.channel('weixin', {
     ...channelSettings(config, () => state().owner, () => state().botId),
     maxChars: config.maxChars,
+    async typing(target, active) {
+      const current = state();
+      if (current.state !== 'online') return;
+      let entry = typingTickets.get(target.to);
+      if (active && (!entry || entry.expires < Date.now() || entry.token !== target.contextToken)) {
+        const response = await call(current.baseUrl, 'ilink/bot/getconfig', {token: current.token, signal: AbortSignal.timeout(5000), body: {ilink_user_id: target.to, ...(target.contextToken ? {context_token: target.contextToken} : {})}});
+        if (response.ret || response.errcode || !response.typing_ticket) return;
+        entry = {ticket: response.typing_ticket, expires: Date.now() + 240_000, token: target.contextToken};
+        typingTickets.set(target.to, entry);
+        if (typingTickets.size > 500) typingTickets.delete(typingTickets.keys().next().value);
+      }
+      if (!entry) return;
+      const response = await call(current.baseUrl, 'ilink/bot/sendtyping', {token: current.token, signal: AbortSignal.timeout(5000), body: {ilink_user_id: target.to, typing_ticket: entry.ticket, status: active ? 1 : 2}});
+      if (response.ret || response.errcode || !active) typingTickets.delete(target.to);
+    },
+    async sendFile(target, file) {
+      const current = state();
+      if (current.state !== 'online') throw new Error('WeChat account is not logged in');
+      await sendWeixinAttachment(call, current, target, file);
+    },
     async send(target, text) {
       const current = state();
       if (current.state !== 'online') throw new Error('WeChat account is not logged in');

@@ -6,6 +6,8 @@ The workspace directory dialog (`src/workspace-picker.js` and its `dim-directory
 
 The browser-compatible access policy and context enhancement modules in `src/reference/` are reused from the same project's `src/channels/shared/access-policy.mjs` and `context-enhancement.mjs` at commit `b9baa78bf5750df9a2b340982e672c56c76e68e1`. They are unchanged in the parity baseline `e278ac7da82384e6e21d907c606db6545fdc1d1e` (5.7.0). The following MIT notice also applies to these modules.
 
+The attachment protocol adaptation (`src/media.js`), WeChat / QQ input indicators, and Feishu CardKit streaming follow the same project's WeChat API, QQ runtime, shared inbound-file/image policy and Feishu channel at parity baseline `e278ac7da82384e6e21d907c606db6545fdc1d1e`. Weft uses its own native Session upload receipts, Computer attachment storage and isolated tool-caller transport. The following MIT notice applies to these adaptations.
+
 MIT License
 
 Copyright (c) 2026 xmanrui

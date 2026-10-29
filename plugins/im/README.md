@@ -39,7 +39,7 @@ In **More settings → General**, edit the bot alias, workspace, Agent Preset, r
 
 New IM Sessions use the native content-based automatic title, labeled `微信 · …`, `飞书 · …` or `QQ · …`, instead of pinning a raw chat/user ID. In the Session tree and search results, the loaded channel logo replaces the visual text prefix; the full title remains accessible, searchable and editable. Native status dots and row actions are preserved. Disabling the title-prefix option applies to new Sessions. Older `[weixin]`, `[feishu]` and `[qq]` titles also receive logos; their pinned titles remain editable, or send `/new` to start with automatic titles. The title decorator ignores inherited prompts in Web forks. Disabling the bundle removes its visual decoration and restores the plain text prefixes.
 
-This Worker version connects one bot per channel and supports Feishu, WeChat and QQ. All three support QR setup; Feishu/QQ retain manual credentials and HTTP callbacks as an alternative. The Worker uses standard fetch, WebCrypto and the existing approved WebSocket egress, without requiring the reference project's Node SDK runtime. QR-created Feishu apps request only the text-message scopes and message events handled by this plugin. Secret inputs are write-only: leaving them blank preserves saved credentials. Existing per-entry configuration forms remain available for advanced settings.
+This Worker version connects one bot per channel and supports Feishu, WeChat and QQ. All three support QR setup; Feishu/QQ retain manual credentials and HTTP callbacks as an alternative. The Worker uses standard fetch, WebCrypto and the existing approved WebSocket egress, without requiring the reference project's Node SDK runtime. QR-created Feishu apps request message events, resource access and CardKit write permission. Existing apps must grant `im:resource` and `cardkit:card:write` and publish the updated permissions to use attachments and streaming cards. Secret inputs are write-only: leaving them blank preserves saved credentials. Existing per-entry configuration forms remain available for advanced settings.
 
 中文操作：从左侧选择渠道。微信、飞书和 QQ 均可点击「扫码接入机器人」，飞书／QQ 也保留「手动接入」；接入后在机器人卡片上检查连接、暂停／恢复或移除。通过「更多设置」修改别名、工作区、Agent Preset、消息处理、访问权限与上下文增强；右上角齿轮打开通用设置。每个渠道当前支持一个机器人。飞书／QQ 扫码后通过长连接收消息，无需配置 HTTP 回调；只有手动接入需要在平台后台配置回调。飞书仍需按平台要求确认权限、发布或审批。扫码凭据仅保存在服务端，取消或失败不会覆盖已有绑定。
 
@@ -55,4 +55,14 @@ Build with `npm run build`; run the backend bridge, management and native title 
 
 The `Test` workflow runs the IM backend test in its unit shards and the IM setup browser regression as a dedicated step in Browser 1/2.
 
-Only text messages are handled in this version.
+## Attachments and live replies (0.7.0)
+
+Deploy the matching Weft Host before upgrading the bundle to 0.7.0. Approve workspace file access and tool registration alongside the existing Session, storage, network, routes and background grants. The new binary upload carrier and authenticated tool caller are Host extensions, so updating only the plugin is insufficient.
+
+微信、飞书、QQ 可接收文件和图片；飞书也解析富文本中的图片。先检查聊天权限，再下载附件。单个附件最多 10 MiB，每条消息最多 10 个、合计 20 MiB；超限明确报错。原件按字节保存在会话附件中，图片交给原生 Images 解码、规范化与模型副本处理。不支持图片的模型、无效图片或未配置 Images 时保留文件，并在提示词中说明降级。附件不会自动过期或清理。
+
+模型可调用 `im_send_file`，指定工作区文件的绝对路径，向本会话绑定的聊天回传文件；`asImage: true` 发送 PNG / JPEG / WebP / GIF 图片。工具使用宿主提供的真实调用会话，不能用参数指定其他聊天。单个回传文件最多 10 MiB；平台权限和额度仍可能拒绝。投递结果不确定时不自动重发，也不自动把图片改发为文件。
+
+微信通过 iLink `getconfig` / `sendtyping` 显示并刷新“正在输入”，结束、取消或接入失败时停止。QQ 私聊发送并刷新原生输入状态；QQ 群聊没有该接口，结束后私聊状态由平台到期清除。飞书通过 CardKit 单卡流式展示实际回答文本增量，结束时关闭 streaming mode；缺少卡片权限或更新失败时用文字交付完整答案。长于卡片预算的回答也保留完整文字交付。
+
+Validation runs in the `Test` GitHub Actions workflow on the `ci` branch. The unit shards include `tests/im-media.test.ts`, `tests/im-plugin.test.ts`, `tests/im-qr.test.ts` and `tests/im-session-turns.test.ts`; Browser 1/2 also runs the installed IM settings regression. Provider fixtures cover native file admission above the JSON bridge limit, iLink encryption and input status, QQ input status, real environment-tool file return, and a card update before model completion. Real-account acceptance remains separate.

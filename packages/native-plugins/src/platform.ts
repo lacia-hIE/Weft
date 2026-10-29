@@ -18,7 +18,7 @@ interface FacetApi {
         value: unknown;
         metadata: unknown;
     }>;
-    tool(name: string, args: unknown, callId: string, operationId: string): Promise<ToolExecutionResult>;
+    tool(name: string, args: unknown, callId: string, operationId: string, callerSessionId?: string): Promise<ToolExecutionResult>;
     cancelTool(operationId: string): Promise<void>;
     fetch(request: Request): Promise<Response>;
     tick(): Promise<void>;
@@ -154,9 +154,9 @@ export class NativePluginPlatform {
         const allocation=this.allocations.get(runId);if(!allocation)throw new Error('Plugin is not active');
         return metadataSchema.parse(await this.bounded(allocation,()=>allocation.facet.metadata())).tools;
     }
-    async tool(runId:string,name:string,args:unknown,callId:string,operationId:string):Promise<ToolExecutionResult> {
+    async tool(runId:string,name:string,args:unknown,callId:string,operationId:string,callerSessionId?:string):Promise<ToolExecutionResult> {
         const allocation=this.allocations.get(runId);if(!allocation)throw new Error('Plugin is not active');
-        return this.bounded(allocation,()=>allocation.facet.tool(name,args,callId,operationId));
+        return this.bounded(allocation,()=>allocation.facet.tool(name,args,callId,operationId,callerSessionId));
     }
     async cancelTool(runId:string,operationId:string):Promise<void> {await this.allocations.get(runId)?.facet.cancelTool(operationId);}
     async deliverWebhook(runId:string,delivery:unknown):Promise<void> {

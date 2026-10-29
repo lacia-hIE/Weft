@@ -666,7 +666,7 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
     this.nativePackageAuthorize(scope,receipt,'tools');
     if(this.nativeSessionRoot(scope,id.parse(sessionId))!==sessionId)throw new Error('Tool caller is outside this environment');
     const request=z.object({name:z.string().min(1).max(100),args:z.unknown(),callId:z.string().min(1).max(200),operationId:z.uuid()}).strict().parse(raw);
-    const value=await this.backgroundPackages(scope).tool(receipt.name,receipt.digest,receipt.activationId,request.name,request.args,request.callId,sessionId+':'+request.operationId);
+    const value=await this.backgroundPackages(scope).tool(receipt.name,receipt.digest,receipt.activationId,request.name,request.args,request.callId,sessionId+':'+request.operationId,sessionId);
     this.nativePackageAuthorize(scope,receipt,'tools');return value;
   }
   async nativePackageToolCancel(scope:ControlScope,receipt:{name:string;digest:string;activationId:string},sessionId:string,operationId:string):Promise<void> {
@@ -793,6 +793,16 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
       }, cancel: () => reader.cancel(),
     }, {highWaterMark: 0});
     return new Response(body, {status: response.status, headers: response.headers});
+  }
+  /** Binary upload authority is scoped to an approved activation and a root Session. */
+  async nativePackageAttachment(scope: ControlScope, receipt: {name: string; digest: string; activationId: string}, sessionId: string, options: unknown, data: Uint8Array): Promise<unknown> {
+    this.nativePackageAuthorize(scope, receipt, 'sessions');
+    id.parse(sessionId);
+    if (this.nativeSessionRoot(scope, sessionId) !== sessionId) throw new Error('Session is outside this environment');
+    const address = {...scope, sessionId};
+    const value = await this.env.SESSIONS.getByName(sessionAddress(address)).nativePluginAttachment(address, options, data);
+    this.nativePackageAuthorize(scope, receipt, 'sessions');
+    return value;
   }
   async nativePackageSession(scope: ControlScope, receipt: {name: string; digest: string; activationId: string}, method: string, raw: unknown): Promise<unknown> {
     this.nativePackageAuthorize(scope, receipt, 'sessions');

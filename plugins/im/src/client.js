@@ -103,7 +103,7 @@ function ImSettings({forms, core, directories, presets, t}) {
   };
   return h('section', {className: 'weft-im dim-page', 'aria-label': t('title')},
     h('header', {className: 'dim-title'},
-      h('div', {className: 'dim-brand'}, h('div', {className: 'dim-brandHeading'}, h('strong', {className: 'dim-brandName'}, 'DSH-IM'), h('span', {className: 'dim-brandVersion'}, 'v0.6.0')), h('p', null, t('tagline'))),
+      h('div', {className: 'dim-brand'}, h('div', {className: 'dim-brandHeading'}, h('strong', {className: 'dim-brandName'}, 'DSH-IM'), h('span', {className: 'dim-brandVersion'}, 'v0.7.0')), h('p', null, t('tagline'))),
       h('div', {className: 'im-title-actions'},
         h('a', {href: 'https://github.com/xmanrui/dsh-im', target: '_blank', rel: 'noopener noreferrer', className: 'im-help'}, t('help')),
         h(Action, {'aria-label': t('generalSettings'), 'aria-pressed': selected === 'general', onClick: () => setSelected(selected === 'general' ? 'weixin' : 'general')}, h(Icon, {kind: 'settings'})))),

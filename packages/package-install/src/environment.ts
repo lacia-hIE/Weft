@@ -77,8 +77,8 @@ export class EnvironmentPackages {
     return active;
   }
   async tools(name:string,digest:string,activationId:string) {return this.platform.toolMetadata((await this.activation(name,digest,activationId)).runId);}
-  async tool(name:string,digest:string,activationId:string,tool:string,args:unknown,callId:string,operationId:string) {
-    return this.platform.tool((await this.activation(name,digest,activationId)).runId,tool,args,callId,operationId);
+  async tool(name:string,digest:string,activationId:string,tool:string,args:unknown,callId:string,operationId:string,callerSessionId?:string) {
+    return this.platform.tool((await this.activation(name,digest,activationId)).runId,tool,args,callId,operationId,callerSessionId);
   }
   async cancelTool(name:string,digest:string,activationId:string,operationId:string):Promise<void> {
     const active=this.active.get(name);

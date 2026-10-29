@@ -49,7 +49,7 @@ test('IM sends schedule results and opted-in Web turns to the bound chat through
       const target = new URL(request.url);
       if (target.hostname === 'turn-model.test') return model(request, mf);
       if (target.hostname === 'bots.qq.com') return Response.json({access_token: 'qq-token', expires_in: '7200'});
-      if (target.hostname === 'api.sgroup.qq.com') {sent.push({path: target.pathname, content: (await request.json() as {content: string}).content}); return Response.json({id: 'sent'});}
+      if (target.hostname === 'api.sgroup.qq.com') {sent.push({path: target.pathname, content: (await request.json() as {content?: string}).content ?? ''}); return Response.json({id: 'sent'});}
       return new Response('not found', {status: 404});
     },
   });

@@ -1,3 +1,4 @@
+import {AsyncLocalStorage} from 'node:async_hooks';
 import * as cryptoModule from 'node:crypto';
 import * as bufferModule from 'node:buffer';
 import * as valuesModule from '@deepseek-ai/dsh-util-values';
@@ -36,6 +37,7 @@ interface KernelEnv {
     HOST?: {
         callFs(method: string, args: unknown[]): Promise<unknown>;
         callSession(method: string, request: unknown): Promise<unknown>;
+        uploadSessionAttachment(sessionId: string, options: unknown, data: Uint8Array): Promise<unknown>;
         resolveCredential(ref: string): Promise<unknown>;
         followSession(request: unknown): Promise<Response>;
         dispatchWebhook(delivery:unknown):Promise<void>;
@@ -46,16 +48,17 @@ interface KernelEnv {
         connectionCall(connectionId: string, operation: string, argument?: unknown): Promise<unknown>;
     };
 }
-function wire<T>(value: T): T {
+function wire<T>(value: T, maxBytes = 1048576): T {
     const detached = snapshotJsonValue(value);
     if (detached === undefined)
         throw new Error('Dynamic plugin RPC results must be lossless JSON');
-    if (new TextEncoder().encode(JSON.stringify(detached)).byteLength > 1048576)
-        throw new Error('Dynamic plugin RPC result exceeds 1 MiB');
+    if (new TextEncoder().encode(JSON.stringify(detached)).byteLength > maxBytes)
+        throw new Error('Dynamic plugin RPC exceeds its byte limit');
     return detached as T;
 }
 /** One real Cordis tree in a separately isolated Durable Object facet. */
 export class PluginFacet extends DurableObject<KernelEnv> {
+    private readonly toolCaller = new AsyncLocalStorage<string>();
     private root: Context | undefined;
     private plugin: Plugin | undefined;
     private fiber: Fiber | undefined;
@@ -88,7 +91,10 @@ export class PluginFacet extends DurableObject<KernelEnv> {
             if (this.env.ALLOWED?.some(name => name === 'storage' || name === 'storageDomain')) await mountDurableStorage(root, this.ctx.storage);
             if (this.env.ALLOWED?.includes('sessionController')) {
               const host = this.env.HOST!;
-              root.provide('sessionController', {...Object.fromEntries(sessionMethods.map(method => [method, async (request: unknown, signal?: AbortSignal) => {signal?.throwIfAborted(); const value = await host.callSession(method, wire(request)); signal?.throwIfAborted(); return value;}])),
+              root.provide('sessionController', {
+                callerSessionId: () => this.toolCaller.getStore(),
+                uploadAttachment: (sessionId: string, options: unknown, data: Uint8Array) => host.uploadSessionAttachment(sessionId, wire(options), data),
+                ...Object.fromEntries(sessionMethods.map(method => [method, async (request: unknown, signal?: AbortSignal) => {signal?.throwIfAborted(); const value = await host.callSession(method, wire(request, method === 'prompt' ? 30 * 1024 * 1024 : 1048576)); signal?.throwIfAborted(); return value;}])),
                 follow: (request: unknown, signal?: AbortSignal) => (async function* () {yield* pluginSessionStream(await host.followSession(wire(request)), signal);})(),
               });
             }
@@ -194,7 +200,7 @@ export class PluginFacet extends DurableObject<KernelEnv> {
             throw new Error('Host method is not registered: ' + method);
         return wire({ value: await handler(args), metadata: await this.metadata() });
     }
-    async tool(name: string, args: unknown, callId: string, operationId: string) {
+    async tool(name: string, args: unknown, callId: string, operationId: string, callerSessionId?: string) {
         await this.start();
         const tool = this.root!.tools.get(name);
         if (!tool)
@@ -206,7 +212,8 @@ export class PluginFacet extends DurableObject<KernelEnv> {
         if (this.cancelled.delete(operationId))
             controller.abort(new Error('Dynamic tool was cancelled'));
         try {
-            return wire(await this.root!.tools.execute({ callId: ToolCallId(callId), name, arguments: args, signal: controller.signal }));
+            const execute = () => this.root!.tools.execute({ callId: ToolCallId(callId), name, arguments: args, signal: controller.signal });
+            return wire(await (callerSessionId ? this.toolCaller.run(callerSessionId, execute) : execute()));
         }
         finally {
             this.operations.delete(operationId);

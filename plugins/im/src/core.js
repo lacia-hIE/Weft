@@ -1,9 +1,11 @@
 import Schema from '@deepseek-ai/schemastery';
+import {defineTool} from '@deepseek-ai/dsh-tools';
+import {MAX_ATTACHMENT_BYTES, MAX_MESSAGE_BYTES, MAX_ATTACHMENTS, fileName, imageType} from './media.js';
 import {background, chunks, requestId, sleep} from './shared.js';
 import {captureContextEnhancementSource, enhanceContextContent, withSentAt} from './reference/context-enhancement.mjs';
 
 const record = {parse: value => value};
-const DOMAIN = {name: 'im_core', version: 1, tables: {conversations: {valueSchema: record}, seen: {valueSchema: record}}};
+const DOMAIN = {name: 'im_core', version: 1, tables: {conversations: {valueSchema: record}, seen: {valueSchema: record}, deliveries: {valueSchema: record}}};
 const SEEN_LIMIT = 2000;
 /** A follow stream without frames is reopened, so a missed boundary cannot pin a stream forever. */
 const FOLLOW_IDLE_MS = 600_000;
@@ -36,12 +38,15 @@ class ImBridge {
     this.config = config ?? {};
     this.channels = new Map();
     this.followers = new Map();
+    this.activities = new Map();
+    this.inbound = new Map();
     this.closed = false;
     ctx.effect(() => () => {this.closed = true;}, 'dsh-im bridge lifetime');
     this.ready = ctx.storageDomain.open(DOMAIN).then(domain => {
       ctx.effect(() => () => domain.close(), 'dsh-im storage');
       this.conversations = domain.table('conversations');
       this.seen = domain.table('seen');
+      this.deliveries = domain.table('deliveries');
       ctx.effect(() => ctx.weftSessionEvents.onTurnEnded(event => this.turnEnded(event)), 'dsh-im turn notifications');
       // Replies interrupted by a restart are delivered from their durable cursor.
       for (const [key, row] of this.conversations.entries()) if (row.pending?.length || (row.notified ?? -1) > row.delivered) this.follow(key);
@@ -68,6 +73,76 @@ class ImBridge {
     for (const part of chunks(text, channel.maxChars ?? 2000)) await channel.send(target, part);
   }
 
+  /** Only the authenticated calling Session can address its bound chat. */
+  async sendFile(args, exec) {
+    await this.ready;
+    const sessionId = this.ctx.sessionController.callerSessionId();
+    const entry = [...this.conversations.entries()].find(([, row]) => row.sessionId === sessionId);
+    if (!entry) throw new Error('当前会话没有绑定 IM 聊天。');
+    const [, row] = entry, channel = this.channels.get(row.channel);
+    if (!channel?.sendFile) throw new Error('当前渠道不支持文件回传。');
+    const deliveryId = `${sessionId}:${exec.callId}`;
+    const previous = this.deliveries.get(deliveryId);
+    if (previous?.status === 'sent') return {status: 'sent', name: previous.name};
+    if (previous) throw new Error('此前投递结果不确定，请先在聊天中确认，避免重复发送。');
+    if (!args.path.startsWith('/')) throw new Error('请使用文件的绝对路径。');
+    const target = await this.ctx.fs.resolve(args.path);
+    const info = await this.ctx.fs.stat(target, exec.signal);
+    if (!info || info.type !== 'file' || info.size > MAX_ATTACHMENT_BYTES) throw new Error('仅支持不超过 10 MiB 的文件。');
+    const data = await this.ctx.fs.readBytes(target, exec.signal, MAX_ATTACHMENT_BYTES);
+    const name = fileName(args.name || args.path);
+    const image = args.asImage === true && !!imageType(data);
+    if (args.asImage && !image) throw new Error('该文件不是支持的图片格式。');
+    exec.signal.throwIfAborted();
+    // Reserve before the first provider call. An uncertain send is never repeated automatically.
+    await this.deliveries.put(deliveryId, {status: 'sending', name, at: Date.now()});
+    await channel.sendFile(row.target, {data, name, image, deliveryId: await requestId(deliveryId)});
+    await this.deliveries.put(deliveryId, {status: 'sent', name, at: Date.now()});
+    return {status: 'sent', name};
+  }
+
+  async startActivity(key) {
+    if (this.activities.has(key)) return;
+    const task = background(this.ctx, 'dsh-im activity ' + key, async signal => {
+      try {
+        while (!signal.aborted) {
+          const row = this.conversations.get(key), channel = this.channels.get(row?.channel);
+          if (!row?.pending?.length || !channel?.typing) return;
+          try {await channel.typing(row.target, true);} catch { /* Input status must not block the answer. */ }
+          await sleep(channel.typingInterval ?? 8000, signal);
+        }
+      } finally {
+        const row = this.conversations.get(key);
+        try {if (row) await this.channels.get(row.channel)?.typing?.(row.target, false);} catch { /* The provider expires stale indicators. */ }
+      }
+    });
+    this.activities.set(key, task);
+    void task.pending.finally(() => {if (this.activities.get(key) === task) this.activities.delete(key);});
+  }
+
+  async stopActivity(key) {
+    const task = this.activities.get(key); task?.abort(); await task?.pending;
+  }
+
+  async updateCard(key, text, final = false) {
+    let row = this.conversations.get(key);
+    const channel = this.channels.get(row?.channel);
+    if (!channel?.startReply) return false;
+    try {
+      if (!row.card && !row.cardFailed) {
+        const card = await channel.startReply(row.target, await requestId(row.sessionId + ':' + row.pending.join(',')));
+        row = await this.conversations.update(key, current => ({...current, card}));
+      }
+      if (!row.card || row.cardFailed) return false;
+      await channel.updateReply(row.card, text, final);
+      await this.conversations.update(key, current => ({...current, card: row.card}));
+      return true;
+    } catch {
+      await this.conversations.update(key, current => ({...current, cardFailed: true}));
+      return false;
+    }
+  }
+
   async catalog() {return this.ctx.sessionController.modelCatalog({});}
 
   /** Forget one bot's routes before removing its credentials. */
@@ -76,6 +151,7 @@ class ImBridge {
     for (const [key, row] of this.conversations.entries()) if (row.channel === channel) {
       this.followers.get(key)?.abort();
       this.followers.delete(key);
+      await this.stopActivity(key);
       await this.conversations.delete(key);
       await this.ctx.weftSessionEvents.unwatch(row.sessionId).catch(() => {});
     }
@@ -88,6 +164,13 @@ class ImBridge {
    * @returns {Promise<'accepted' | 'duplicate' | 'denied' | 'command' | 'failed'>}
    */
   async receive(message) {
+    const key = `${message.channel}:${message.conversation}`;
+    const work = (this.inbound.get(key) ?? Promise.resolve()).catch(() => {}).then(() => this.accept(message));
+    this.inbound.set(key, work);
+    try {return await work;} finally {if (this.inbound.get(key) === work) this.inbound.delete(key);}
+  }
+
+  async accept(message) {
     await this.ready;
     const channel = this.channels.get(message.channel);
     if (!channel) throw new Error(`IM channel ${message.channel} is not active`);
@@ -113,6 +196,7 @@ class ImBridge {
     if (command === 'help') {await this.send(message.channel, message.target, HELP); return 'command';}
     if (command === 'stop') {
       if (row) await this.ctx.sessionController.cancel({sessionId: row.sessionId});
+      await this.stopActivity(key);
       await this.send(message.channel, message.target, row ? '已停止当前回复。' : '当前没有进行中的会话。');
       return 'command';
     }
@@ -133,6 +217,8 @@ class ImBridge {
       }
       this.followers.get(key)?.abort();
       this.followers.delete(key);
+      await this.stopActivity(key);
+      if (row?.card) await this.updateCard(key, '已开始新会话。', true);
       const previous = row?.sessionId;
       row = {sessionId: created.sessionId, delivered: -1, pending: [], target: message.target, channel: message.channel, group: !!message.group, titlePrefix: this.config.titlePrefix !== false, syncFrom: 0};
       await this.conversations.put(key, row);
@@ -155,7 +241,29 @@ class ImBridge {
       conversationTitle: message.title, chatId: message.chatId ?? message.conversation, threadId: message.threadId,
     }), message.sentAt));
     const mode = command === 'steer' || channel.busyMessageMode === 'steer' && channel.access?.(message, true)?.allowed !== false ? 'steer' : 'queue';
-    await this.ctx.sessionController.prompt({sessionId: row.sessionId, requestId: id, mode, content: [{type: 'text', text: enhanceContextContent(content, captured)}]});
+    try {
+      const attachments = message.attachments ?? [], parts = [];
+      if (attachments.length > MAX_ATTACHMENTS) throw new Error('每条消息最多 10 个附件。');
+      let total = 0;
+      for (const attachment of attachments) {
+        const data = await attachment.load();
+        total += data.byteLength;
+        if (data.byteLength > MAX_ATTACHMENT_BYTES || total > MAX_MESSAGE_BYTES) throw new Error('单个附件最多 10 MiB，每条消息合计最多 20 MiB。');
+        const uploaded = await this.ctx.sessionController.uploadAttachment(row.sessionId, {name: fileName(attachment.name), image: !!attachment.image, mediaType: imageType(data) ?? ''}, data);
+        parts.push({type: 'file', receiptId: uploaded.file.receiptId});
+        if (uploaded.image) parts.push(uploaded.image);
+        if (uploaded.imageError) parts.push({type: 'text', text: uploaded.imageError});
+      }
+      const prompt = enhanceContextContent(content || (parts.length ? '请查看附件。' : ''), captured);
+      this.startActivity(key);
+      await this.ctx.sessionController.prompt({sessionId: row.sessionId, requestId: id, mode, content: [{type: 'text', text: prompt}, ...parts]});
+    } catch (error) {
+      await this.conversations.update(key, current => ({...current, pending: current.pending.filter(value => value !== id)}));
+      if (!this.conversations.get(key).pending.length) await this.stopActivity(key);
+      await this.seen.delete(seenKey);
+      await this.send(message.channel, message.target, `消息接入失败：${error instanceof Error ? error.message : String(error)}`);
+      return 'failed';
+    }
     this.follow(key);
     return 'accepted';
   }
@@ -203,10 +311,19 @@ class ImBridge {
         const touch = () => {clearTimeout(timer); timer = setTimeout(() => idle.abort(new Error('Session follow was idle')), FOLLOW_IDLE_MS);};
         try {
           touch();
-          let reply = '';
+          let reply = '', draft = '', attemptId, lastCardUpdate = 0;
+          this.startActivity(key);
           const consumed = new Set(), foreign = [];
-          for await (const frame of this.ctx.sessionController.follow({address: {kind: 'session', sessionId: row.sessionId}}, AbortSignal.any([signal, idle.signal]))) {
+          for await (const frame of this.ctx.sessionController.follow({address: {kind: 'session', sessionId: row.sessionId}, assistantStream: true}, AbortSignal.any([signal, idle.signal]))) {
             touch();
+            if (frame?.type === 'assistant-stream' && consumed.size) {
+              const live = frame.frame;
+              if (live.type === 'start') {draft = ''; attemptId = live.attemptId;}
+              else if (live.type === 'chunk' && live.attemptId === attemptId && live.chunk?.type === 'text-delta') {
+                draft += live.chunk.text;
+                if (Date.now() - lastCardUpdate >= 800) {await this.updateCard(key, draft); lastCardUpdate = Date.now();}
+              } else if (live.type === 'end' && live.outcome?.kind === 'abandoned') {draft = ''; await this.updateCard(key, '正在重新生成…');}
+            }
             const events = frame?.type === 'snapshot' ? (frame.records ?? []).map(entry => entry.event) : frame?.type === 'event' ? [frame.event] : [];
             for (const event of events) {
               const current = this.conversations.get(key);
@@ -217,25 +334,35 @@ class ImBridge {
                 // Native message ids differ from RPC ids. Keep requests pending
                 // through turn/end so a restart during generation resumes delivery.
                 const id = event.data?.source?.rpcId ?? event.data?.id;
-                if (current.pending.includes(id)) consumed.add(id); else foreign.push(event.data);
+                if (current.pending.includes(id)) {consumed.add(id); if (frame.type !== 'snapshot') await this.updateCard(key, '正在思考…');} else foreign.push(event.data);
               } else if (event.type === 'assistant/message') {
                 const text = textOf(event.data?.message);
-                if (text) reply = text;
+                if (text) {reply = text; if (consumed.size && frame.type !== 'snapshot') await this.updateCard(key, text);}
               } else if (event.type === 'turn/end') {
                 const reason = event.data?.reason;
                 const text = reply || (reason && reason !== 'completed' && reason !== 'end_turn' ? `（本轮未完成：${reason}）` : '');
                 const mirror = consumed.size ? undefined : this.mirrored(current, foreign, event.seq);
-                if (text && consumed.size) await this.send(current.channel, current.target, text);
+                if (consumed.size) {
+                  const card = await this.updateCard(key, text || '（本轮没有文本回复）', true);
+                  if (text && !card) await this.send(current.channel, current.target, text);
+                }
                 else if (reply && mirror) {
                   const asked = mirror === 'web' ? foreign.map(data => textOf(data)).filter(Boolean).join('\n').slice(0, 500) : '';
                   // Mirrored turns are best effort: a refused send advances the cursor instead of repeating.
                   try {await this.send(current.channel, current.target, asked ? `（Web）${asked}\n\n${reply}` : reply);}
                   catch (error) {console.warn(`dsh-im mirror ${key}: ${error instanceof Error ? error.message : String(error)}`);}
                 }
-                const next = await this.conversations.update(key, value => ({...value, delivered: event.seq, pending: value.pending.filter(id => !consumed.has(id))}));
+                const next = await this.conversations.update(key, value => ({...value, delivered: event.seq, pending: value.pending.filter(id => !consumed.has(id)), card: undefined, cardFailed: undefined}));
                 reply = '';
+                if (!next.pending.length) await this.stopActivity(key);
                 if (!next.pending.length && !((next.notified ?? -1) > next.delivered)) return;
               }
+            }
+            if (frame?.type === 'snapshot' && consumed.size && frame.assistantStream?.activeAttempt) {
+              const active = frame.assistantStream.activeAttempt;
+              attemptId = active.attemptId;
+              draft = active.stream.filter(chunk => chunk?.type === 'text-delta').map(chunk => chunk.text).join('');
+              if (draft) {await this.updateCard(key, draft); lastCardUpdate = Date.now();}
             }
           }
         } catch (error) {
@@ -259,11 +386,17 @@ class ImBridge {
 // The bundle's own service: sibling entries inject it, the Host does not provide it.
 export const name = 'dsh-im-core';
 export const provide = 'im';
-export const inject = ['sessionController', 'storageDomain', 'weftSessionEvents'];
+export const inject = ['sessionController', 'storageDomain', 'weftSessionEvents', 'fs', 'tools'];
 export const Config = Schema.object({
   agentPreset: Schema.string().description('Agent preset for new conversations; the environment default when empty.'),
   titlePrefix: Schema.boolean().default(true).description('Label automatic titles of new Sessions with their channel.'),
 });
 export function apply(ctx, config) {
-  ctx.provide('im', new ImBridge(ctx, config));
+  const bridge = new ImBridge(ctx, config);
+  ctx.provide('im', bridge);
+  ctx.tools.register(defineTool({name: 'im_send_file', description: 'Send a real workspace file to the IM chat bound to this Session. Use asImage for a supported raster image. Use an absolute path. Maximum 10 MiB. Do not retry uncertain deliveries.',
+    parameters: {path: {type: 'string', required: true}, name: {type: 'string'}, asImage: {type: 'boolean'}},
+    output: {schema: {type: 'json'}, render: (_args, value) => [{type: 'text', text: JSON.stringify(value)}]},
+    execute: (args, exec) => bridge.sendFile(args, exec),
+  }));
 }
