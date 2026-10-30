@@ -89,7 +89,7 @@ export class MailTransport {
     await this.client(spec, async () => {});
     await this.smtp(spec, async () => {});
   }
-  async reply(spec: MailSpec, raw: unknown): Promise<{messageId: string}> {
+  async reply(spec: MailSpec, raw: unknown, reserve?: () => void): Promise<{messageId: string}> {
     const input = mailReply.parse(raw);
     // The recipient and thread headers are taken from the original IMAP message, never from a model or Reply-To.
     const original = await this.client(spec, client => this.read(client, spec, input.target));
@@ -105,6 +105,7 @@ export class MailTransport {
     await this.smtp(spec, async command => {
       await command(`MAIL FROM:<${spec.address}>`, 250); await command(`RCPT TO:<${original.from}>`, 250, 251);
       await command('DATA', 354);
+      reserve?.();
       await command(mime.toString('utf8').replace(/\r?\n/g, '\r\n').replace(/^\./gm, '..').replace(/\r\n$/, '') + '\r\n.', 250);
     });
     return {messageId};

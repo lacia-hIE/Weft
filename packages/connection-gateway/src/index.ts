@@ -89,6 +89,7 @@ const payload = (data: GatewayFrame, state: Tracked) => 'text' in data ? render(
 export abstract class ConnectionGateway<Env = unknown> extends DurableObject<Env> {
   protected abstract environment(scope: GatewayScope): GatewayEnvironment;
   protected abstract capacity(): number;
+  protected mailTransport(): Pick<MailTransport, 'poll' | 'check' | 'reply' | 'attachment'> {return mailboxTransport();}
   private readonly live = new Map<string, Live>();
 
   constructor(ctx: DurableObjectState, env: Env) {
@@ -161,7 +162,7 @@ export abstract class ConnectionGateway<Env = unknown> extends DurableObject<Env
   async mailCall(key: string, operation: 'mailCheck' | 'mailReply' | 'mailAttachment', argument?: unknown): Promise<unknown> {
     const row = this.row(key), spec = row && JSON.parse(row.spec) as ConnectionSpec | undefined;
     if (spec?.kind !== 'mail') throw new Error('Mailbox connection is not open');
-    const transport = mailboxTransport();
+    const transport = this.mailTransport();
     try {
       if (operation === 'mailCheck') {await transport.check(spec); return {state: 'ready'};}
       if (operation === 'mailAttachment') return await transport.attachment(spec, argument);
@@ -172,9 +173,12 @@ export abstract class ConnectionGateway<Env = unknown> extends DurableObject<Env
       const old = this.ctx.storage.sql.exec<{result: string | null}>('SELECT result FROM mail_deliveries WHERE key=? AND id=?', key, id).toArray()[0];
       if (old?.result) return JSON.parse(old.result);
       if (old) throw new Error('Mail delivery is uncertain; confirm in the mailbox before retrying');
-      // Reserve before SMTP DATA. An ambiguous disconnect must never send a second copy.
-      this.ctx.storage.sql.exec('INSERT INTO mail_deliveries (key, id) VALUES (?, ?)', key, id);
-      const result = await transport.reply(spec, input);
+      const result = await transport.reply(spec, input, () => {
+        if (this.row(key)?.version !== row?.version) throw new Error('Mailbox connection changed');
+        // Reserve immediately before the body leaves. Connection/authentication failures remain retryable.
+        // The unique key also arbitrates concurrent retries while SMTP is connecting.
+        this.ctx.storage.sql.exec('INSERT INTO mail_deliveries (key, id) VALUES (?, ?)', key, id);
+      });
       this.ctx.storage.sql.exec('UPDATE mail_deliveries SET result=? WHERE key=? AND id=?', JSON.stringify(result), key, id);
       return result;
     } catch {throw new Error('Mailbox operation failed; check credentials, TLS and server access');}
@@ -226,7 +230,7 @@ export abstract class ConnectionGateway<Env = unknown> extends DurableObject<Env
     const abort = live.poll = new AbortController(), row = this.row(key);
     if (!row) {live.poll = undefined; return;}
     try {
-      const result = await mailboxTransport().poll(JSON.parse(row.spec) as MailSpec, row.cursor);
+      const result = await this.mailTransport().poll(JSON.parse(row.spec) as MailSpec, row.cursor);
       if (abort.signal.aborted || !this.row(key)) return;
       if (result.messages.length) {
         this.enqueue(key, {type: 'response', body: result});
