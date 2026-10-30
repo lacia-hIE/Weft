@@ -211,7 +211,7 @@ function Channel({channel, editor, active, directories, presets, t}) {
   const bind = async event => {
     event.preventDefault();
     if (channel === 'email') {
-      if (!value.address?.trim() || !value.imapHost?.trim() || !value.smtpHost?.trim() || ['imap', 'smtp'].some(prefix => !value[prefix + 'Password'] && !editor.hasSecret(prefix + 'Password'))) {form.setError(t('missing')); return;}
+      if (!value.address?.trim() || !value.imapHost?.trim() || !value.smtpHost?.trim() || ['imap', 'smtp'].some(prefix => !value[prefix + 'Password'] && !editor.hasSecret(prefix + 'Password'))) {form.setError(t('emailMissing')); return;}
       if (await form.commit({enabled: true, accountConfigured: true})) {setStatus(undefined); setAccess(undefined); setView('list');}
       return;
     }

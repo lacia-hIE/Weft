@@ -73,12 +73,14 @@ export async function apply(ctx, config) {
     async response(body) {
       for (const mail of body.messages ?? []) {
         if (mail.account !== account || !mail.from || !mail.messageId) continue;
+        // Unlike chat platforms, rejecting unknown email with a reply can cause backscatter.
+        if (!access.access({sender: mail.from}, false).allowed) continue;
         const references = [...(mail.references ?? []), mail.inReplyTo].filter(Boolean);
         const conversation = references.map(id => threads.get(key(mail.from, id))?.conversation).find(Boolean) || mail.messageId;
         await remember(mail.from, mail.messageId, conversation);
         const target = {account, sender: mail.from, conversation, location: mail.target};
         await ctx.im.receive({channel: 'email', conversation: JSON.stringify([account, mail.from, conversation]), sender: mail.from, senderName: mail.name,
-          conversationTitle: mail.subject, threadId: conversation, sentAt: mail.date, messageId: JSON.stringify([account, mail.target.validity, mail.target.uid]),
+          title: mail.subject, threadId: conversation, sentAt: mail.date, messageId: JSON.stringify([account, mail.target.validity, mail.target.uid]),
           text: mail.text || mail.subject, target,
           attachments: (mail.attachments ?? []).map(item => ({name: fileName(item.name), image: String(item.type).startsWith('image/'), load: async () => {
             if (item.size > 10 * 1024 * 1024) throw new Error('邮件附件超过 10 MiB。');

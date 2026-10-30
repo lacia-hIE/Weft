@@ -108,7 +108,7 @@ test('email plugin binds sender-scoped threads, guards management routes and loa
   await handlers.response({messages: [{...mail, messageId: '<next@example.com>', target: {uid: 2, validity: '42'}, references: ['<out@example.com>']}]});
   assert.equal(received[1].conversation, received[0].conversation);
   await handlers.response({messages: [{...mail, from: 'other@example.com', messageId: '<other@example.com>', target: {uid: 3, validity: '42'}, references: ['<out@example.com>']}]});
-  assert.notEqual(received[2].conversation, received[0].conversation, 'a different sender cannot join someone else’s Session');
+  assert.equal(received.length, 2, 'unknown senders are silently ignored without triggering a denial email');
   await assert.rejects(channel.send({...received[0].target, account: 'another mailbox'}, 'wrong account'));
   let code = 0; await routes.get('/email/status')({method: 'GET', headers: {}}, {setHeader() {}, writeHead(status: number) {code = status;}, end() {}}); assert.equal(code, 403);
 });

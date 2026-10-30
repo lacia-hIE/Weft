@@ -1,5 +1,6 @@
 export const zh = {
   email: '邮箱', emailEmptyTitle: '连接你的邮箱', emailTransport: 'IMAP 收信 · SMTP 回信',
+  emailMissing: '请填写邮箱地址、IMAP / SMTP 服务器和密码或授权码。',
   emailGuide: '支持已开启 IMAP/SMTP 的通用邮箱。使用服务商提供的服务器地址、端口和授权码；用户名留空使用邮箱地址。保存并启用即允许自动处理新邮件并回信，仅接收之后的新邮件。默认白名单为空，请在「更多设置 → 访问设置」添加允许的发件人。OAuth2 模式填写访问令牌，到期需手动更新。',
   emailAccessHint: '填写允许的发件人邮箱地址，默认拒绝所有发送者。邮箱 From 不能证明真实身份，请同时使用服务商的反垃圾和身份验证策略。命令权限独立控制。',
   emailSender: '发件人邮箱', address: '邮箱地址', mailbox: '收信文件夹', emailSecurity: '加密方式', emailAuth: '认证方式', emailPasswordAuth: '密码 / 授权码',
@@ -69,6 +70,7 @@ export const zh = {
 };
 export const en = {
   email: 'Email', emailEmptyTitle: 'Connect your mailbox', emailTransport: 'IMAP inbox · SMTP replies',
+  emailMissing: 'Enter the email address, IMAP/SMTP servers and passwords or app passwords.',
   emailGuide: 'Use a mailbox with IMAP and SMTP enabled. Enter its servers, ports and password or app password. Blank usernames use the email address. Saving enables automatic replies to future mail only. Add allowed senders under More settings → Access settings. OAuth2 takes an access token; renew it manually when it expires.',
   emailAccessHint: 'Enter allowed sender email addresses. An empty allowlist denies everyone. From headers are not proof of identity; also use your provider’s anti-spam and authentication controls. Command permissions are separate.',
   emailSender: 'Sender email', address: 'Email address', mailbox: 'Inbox folder', emailSecurity: 'Encryption', emailAuth: 'Authentication', emailPasswordAuth: 'Password / app password',

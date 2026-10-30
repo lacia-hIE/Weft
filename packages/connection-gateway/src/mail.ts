@@ -20,7 +20,6 @@ export const mailTarget = z.object({uid: z.number().int().positive(), validity: 
 export const mailReply = z.object({target: mailTarget, text: z.string().max(1_000_000),
   attachment: z.object({name: line, base64: z.string().max(13_981_016).regex(/^[A-Za-z0-9+/]*={0,2}$/)}).strict().optional()}).strict();
 const MAX_SOURCE = 24 * 1024 * 1024, MAX_FILE = 10 * 1024 * 1024;
-export const mailKey = (spec: MailSpec) => mailIdentity(spec);
 type Cursor = {validity: string; uid: number};
 
 /** Only Host code opens TCP sockets; plugins never receive raw socket authority. */
