@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {createHmac} from 'node:crypto';
+import {readFileSync} from 'node:fs';
 import {test} from 'node:test';
 import {setTimeout as delay} from 'node:timers/promises';
 import {Response} from 'miniflare';
@@ -12,7 +13,8 @@ import type {SessionListValue} from '@deepseek-ai/dsh-api-session-controller/typ
 import type {Installation} from '../packages/package-install/src/contracts.ts';
 
 test('the published official GitHub adapter verifies signatures and dispatches to a separate native Worker rule with full Session bootstrap',{timeout:240000},async()=>{
-  const adapter=packageFixture({name:'@weft-fixture/github-ingress',client:false,dependencies:{'@deepseek-ai/dsh-webhook-github':'0.2.1-rc.3'},patch:[{insert:[{id:'github',name:'@deepseek-ai/dsh-webhook-github',config:{source:'fixture',path:'/github',secretEnv:'GITHUB_SECRET',maxBodyBytes:4096}}]}]});
+  const version=(JSON.parse(readFileSync('.generated/package-platform-versions.json','utf8')) as Record<string,string>)['@deepseek-ai/dsh-webhook']!;
+  const adapter=packageFixture({name:'@weft-fixture/github-ingress',client:false,dependencies:{'@deepseek-ai/dsh-webhook-github':version},patch:[{insert:[{id:'github',name:'@deepseek-ai/dsh-webhook-github',config:{source:'fixture',path:'/github',secretEnv:'GITHUB_SECRET',maxBodyBytes:4096}}]}]});
   const rule=packageFixture({name:'@weft-fixture/github-rules',client:false,files:{'host.js':`
     import {WebhookRuleId} from '@deepseek-ai/dsh-webhook';
     export const inject=['webhookRuntime','fs'];
