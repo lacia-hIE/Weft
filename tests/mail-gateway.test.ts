@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {setTimeout as delay} from 'node:timers/promises';
-import {Miniflare} from 'miniflare';
+import {Miniflare, convertV4MiniflareOptions} from 'miniflare';
+import {resolve} from 'node:path';
 import type {MailGatewayFixture} from './fixtures/mail-gateway-worker.ts';
 
 test('durable mail cursors survive transport rotation and SMTP retries cannot duplicate an uncertain delivery', async () => {
-  const runtime = new Miniflare({modules: true, scriptPath: 'dist/mail-gateway-worker.js', compatibilityDate: '2026-07-30', compatibilityFlags: ['nodejs_compat'],
-    durableObjects: {MAIL: {className: 'MailGatewayFixture', useSQLite: true}}});
+  const runtime = new Miniflare(convertV4MiniflareOptions({modules: true, scriptPath: resolve('dist/mail-gateway-worker.js'), compatibilityDate: '2026-07-30', compatibilityFlags: ['nodejs_compat'],
+    durableObjects: {MAIL: {className: 'MailGatewayFixture', useSQLite: true}}}));
   try {
     const namespace = await runtime.getDurableObjectNamespace('MAIL'), gateway = namespace.get(namespace.idFromName('mail')) as unknown as MailGatewayFixture;
     const input = {key: 'tenant/environment/package/email', scope: {tenantId: 'tenant', environmentId: 'environment'}, receipt: {name: 'mail', digest: 'digest', activationId: 'activation'}, connectionId: 'email', version: 'credentials-1',
@@ -16,7 +17,7 @@ test('durable mail cursors survive transport rotation and SMTP retries cannot du
       throw new Error('Mailbox gateway did not settle');
     };
     await gateway.open(input); await until(value => value.rows[0]?.cursor === '1');
-    await gateway.alarm(); await until(value => value.rows[0]?.cursor === '2');
+    await gateway.pollAgain(); await until(value => value.rows[0]?.cursor === '2');
     assert.equal((await gateway.fixture()).received.length, 1, 'an acknowledged batch advances the durable cursor');
     await gateway.open({...input, version: 'credentials-2'});
     await until(value => value.rows[0]?.cursor === '3');

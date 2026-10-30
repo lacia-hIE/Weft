@@ -1,8 +1,8 @@
-import {DurableObject} from 'cloudflare:workers';
 import {ConnectionGateway, type GatewayScope} from '../../packages/connection-gateway/src/index.ts';
 
 /** The real durable gateway, with deterministic provider I/O instead of external mail credentials. */
 export class MailGatewayFixture extends ConnectionGateway {
+  async pollAgain() {await this.alarm();}
   protected capacity() {return 10;}
   protected environment(_scope: GatewayScope) {
     return {nativeConnectionLease: async (_scope: unknown, _receipt: unknown, ids: string[]) => ids,
