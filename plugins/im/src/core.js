@@ -226,10 +226,10 @@ class ImBridge {
           const model = catalog.groups.find(group => group.id === selection.provider)?.models.find(model => model.id === selection.model);
           if (!model || selection.reasoningEffort !== undefined && !model.reasoning?.efforts.some(effort => effort.id === selection.reasoningEffort)) throw new Error('Configured bot model is unavailable');
         }
-        created = await this.ctx.sessionController.create({cwd: channel.workspace || '/workspace', ...(preset ? {agentPreset: preset} : {})});
+        created = await this.ctx.sessionController.create({cwd: channel.workspace || '/workspace', ...(preset ? {agentPreset: preset} : {}), ...(channel.permissionPreset ? {permissionPreset: channel.permissionPreset} : {})});
         if (channel.modelSelection) await this.ctx.sessionController.selectModel({sessionId: created.sessionId, ...channel.modelSelection});
       } catch {
-        await this.send(message.channel, message.target, '无法创建新会话，请管理员检查工作区、Agent Preset、模型与思考强度设置。已有会话保持可用。');
+        await this.send(message.channel, message.target, '无法创建新会话，请管理员检查工作区、Agent Preset、权限模式、模型与思考强度设置。已有会话保持可用。');
         return 'failed';
       }
       this.followers.get(key)?.abort();

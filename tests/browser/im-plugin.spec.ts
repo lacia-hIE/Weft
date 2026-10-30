@@ -110,9 +110,16 @@ test('IM setup follows the channel rail, binding, QR and bot card flow with dura
   expect(availableModels.length).toBeGreaterThan(0);
   await modelSelector.selectOption(availableModels[0]!);
   await feishu.getByRole('combobox', {name: 'Message handling', exact: true}).selectOption('steer');
+  const permissions = feishu.getByRole('combobox', {name: 'Tool execution permission', exact: true});
+  await expect(permissions).toHaveValue('');
+  await expect(permissions.locator('option')).toHaveText(['Follow default', 'Read only', 'Workspace write', 'Full access']);
+  await permissions.selectOption('read-only');
   await feishu.getByRole('button', {name: 'Save configuration', exact: true}).click();
   await expect(feishu.getByText('Configuration saved', {exact: true})).toBeVisible();
   expect((await settings('feishu')).value.busyMessageMode).toBe('steer');
+  expect((await settings('feishu')).value.permissionPreset).toBe('read-only');
+  expect((await settings('qq')).value.permissionPreset).toBe('');
+  expect((await settings('weixin')).value.permissionPreset).toBe('');
   expect((await settings('feishu')).value.modelSelection).toEqual({provider: JSON.parse(availableModels[0]!)[0], model: JSON.parse(availableModels[0]!)[1]});
   await page.screenshot({path: testInfo.outputPath('im-shared-settings.png')});
   await feishu.getByRole('button', {name: 'Back to bot list', exact: true}).click();
@@ -181,6 +188,9 @@ test('IM setup follows the channel rail, binding, QR and bot card flow with dura
   await navigation.getByRole('tab', {name: 'Feishu', exact: true}).click();
   await expect(feishu.getByRole('article', {name: 'Team bot', exact: true})).toBeVisible();
   await expect(feishu.getByText('/workspace/team', {exact: true})).toBeVisible();
+  await feishu.getByRole('button', {name: 'More settings', exact: true}).click();
+  await expect(feishu.getByRole('combobox', {name: 'Tool execution permission', exact: true})).toHaveValue('read-only');
+  await feishu.getByRole('button', {name: 'Back to bot list', exact: true}).click();
   await navigation.getByRole('tab', {name: 'QQ', exact: true}).click();
   await qq.getByRole('button', {name: 'Remove bot', exact: true}).click();
   await qq.getByRole('button', {name: 'Confirm removal', exact: true}).click();

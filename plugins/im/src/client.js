@@ -103,7 +103,7 @@ function ImSettings({forms, core, directories, presets, t}) {
   };
   return h('section', {className: 'weft-im dim-page', 'aria-label': t('title')},
     h('header', {className: 'dim-title'},
-      h('div', {className: 'dim-brand'}, h('div', {className: 'dim-brandHeading'}, h('strong', {className: 'dim-brandName'}, 'DSH-IM'), h('span', {className: 'dim-brandVersion'}, 'v0.7.2')), h('p', null, t('tagline'))),
+      h('div', {className: 'dim-brand'}, h('div', {className: 'dim-brandHeading'}, h('strong', {className: 'dim-brandName'}, 'DSH-IM'), h('span', {className: 'dim-brandVersion'}, 'v0.7.3')), h('p', null, t('tagline'))),
       h('div', {className: 'im-title-actions'},
         h('a', {href: 'https://github.com/xmanrui/dsh-im', target: '_blank', rel: 'noopener noreferrer', className: 'im-help'}, t('help')),
         h(Action, {'aria-label': t('generalSettings'), 'aria-pressed': selected === 'general', onClick: () => setSelected(selected === 'general' ? 'weixin' : 'general')}, h(Icon, {kind: 'settings'})))),
@@ -245,6 +245,9 @@ function Channel({channel, editor, active, directories, presets, t}) {
         settingsTab === 'general' ? [field('displayName'),
           directories.available() ? h(WorkspaceField, {key: 'workspace', value: value.workspace || '/workspace', directories, disabled, onChange: path => form.edit('workspace', path), t}) : field('workspace'),
           presets.available() ? h(PresetSelect, {key: 'agentPreset', label: t('agentPreset'), value: value.agentPreset, presets, disabled, onChange: id => form.edit('agentPreset', id), t}) : field('agentPreset'),
+          h('label', {key: 'permissions', className: 'dim-credentialField'}, t('permissionPreset'), h('select', {disabled, value: value.permissionPreset || '', onChange: event => form.edit('permissionPreset', event.target.value)},
+            h('option', {value: ''}, t('followDefault')), h('option', {value: 'read-only'}, t('permissionReadOnly')), h('option', {value: 'workspace-write'}, t('permissionWorkspaceWrite')), h('option', {value: 'danger-full-access'}, t('permissionFullAccess')))),
+          h('p', {key: 'permissions-hint', className: 'im-description'}, t('permissionPresetHint')),
           h(ModelSettings, {key: 'model', selection: value.modelSelection, catalog, disabled, loadingDisabled: disabled || form.dirty, load: () => void perform('catalog'), onChange: selection => form.edit('modelSelection', selection), t}),
           h('label', {key: 'busy-mode', className: 'dim-credentialField'}, t('busyMessageMode'), h('select', {disabled, value: value.busyMessageMode || 'queue', onChange: event => form.edit('busyMessageMode', event.target.value)}, h('option', {value: 'queue'}, t('queue')), h('option', {value: 'steer'}, t('steer')))),
           h('p', {key: 'busy-hint', className: 'im-description'}, t('busyModeHint')),

@@ -110,6 +110,33 @@ test('IM attachments pass access checks before downloading, use scoped receipts,
   } finally {await fx.dispose();}
 });
 
+test('channel workspace permissions apply only to newly created Sessions and preserve a binding on rejection', async () => {
+  const fx = await fixture(), created: any[] = [];
+  let serial = 0;
+  fx.ctx.sessionController.create = async (request: any) => {
+    created.push(request);
+    if (request.permissionPreset === 'unsupported') throw new Error('Unsupported permission');
+    return {sessionId: `permission-session-${++serial}`};
+  };
+  try {
+    assert.equal(await fx.receive({text: 'Default permission'}), 'accepted');
+    assert.equal('permissionPreset' in created[0], false, 'Old configurations keep the native default');
+    fx.channel.permissionPreset = 'read-only';
+    assert.equal(await fx.receive({text: 'Continue existing chat'}), 'accepted');
+    assert.equal(created.length, 1, 'Saving a setting does not replace an existing Session');
+    assert.equal(await fx.receive({text: '/new'}), 'command');
+    assert.equal(created.at(-1).permissionPreset, 'read-only');
+    fx.channel.permissionPreset = 'danger-full-access';
+    assert.equal(await fx.receive({text: '/new'}), 'command');
+    assert.equal(created.at(-1).permissionPreset, 'danger-full-access');
+    const before = fx.tables.get('conversations')!.get('test:chat').sessionId;
+    fx.channel.permissionPreset = 'unsupported';
+    assert.equal(await fx.receive({text: '/new'}), 'failed');
+    assert.equal(fx.tables.get('conversations')!.get('test:chat').sessionId, before);
+    assert.match(fx.messages.at(-1)!, /权限模式/);
+  } finally {await fx.dispose();}
+});
+
 test('file return tool only sends to its authenticated Session binding and reserves uncertain sends', async () => {
   const fx = await fixture(); let sends = 0;
   const exec = {callId: 'tool-1', signal: new AbortController().signal};

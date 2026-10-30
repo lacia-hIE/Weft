@@ -1,3 +1,4 @@
+import {initialSessionPermissionSchema} from '../../native-plugins/src/session-contracts.ts';
 import { DurableObject } from "cloudflare:workers";
 import {LocalHostRelay,LOCAL_PROTOCOL,newKey,hashKey} from '../../local-host/src/relay.ts';
 import {
@@ -816,7 +817,10 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
       return (await this.nativeSessionList(scope)).json();
     }
     if (method === 'create') {
-      const {request} = sessionRemote.methods['session/create'].input({strict: true}).create().parse({request: raw});
+      // The plugin Host adds one creation-only option; the remaining request
+      // still passes the original strict Session Controller contract.
+      const {permissionPreset, ...nativeRequest} = z.object({permissionPreset: initialSessionPermissionSchema.optional()}).passthrough().parse(raw);
+      const {request} = sessionRemote.methods['session/create'].input({strict: true}).create().parse({request: nativeRequest});
       const workspace = await this.nativeResolveWorkspace(scope, request.workspaceId, request.cwd);
       let sessionId = request.sessionId ?? crypto.randomUUID();
       const existingOwner = this.nativeSessionRoot(scope, sessionId);
@@ -824,9 +828,9 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
       let address = {...scope, sessionId};
       let target = this.env.SESSIONS.getByName(sessionAddress(address));
       this.nativePackageAuthorize(scope, receipt, 'sessions');
-      if (!await target.nativeCreate(address, request.agentPreset === undefined ? undefined : {id: request.agentPreset}, 'default', workspace.path)) {
+      if (!await target.nativeCreate(address, request.agentPreset === undefined ? undefined : {id: request.agentPreset}, 'default', workspace.path, undefined, permissionPreset)) {
         sessionId = crypto.randomUUID(); address = {...scope, sessionId}; target = this.env.SESSIONS.getByName(sessionAddress(address));
-        if (!await target.nativeCreate(address, request.agentPreset === undefined ? undefined : {id: request.agentPreset}, 'default', workspace.path)) throw new Error('Session identity already exists');
+        if (!await target.nativeCreate(address, request.agentPreset === undefined ? undefined : {id: request.agentPreset}, 'default', workspace.path, undefined, permissionPreset)) throw new Error('Session identity already exists');
       }
       await this.nativeAttachWorkspace(scope, workspace.workspaceId, sessionId);
       return {sessionId};

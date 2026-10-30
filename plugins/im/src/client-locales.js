@@ -1,4 +1,6 @@
 export const zh = {
+  permissionPreset: '工作区权限', permissionReadOnly: '仅可查看', permissionWorkspaceWrite: '工作区内修改', permissionFullAccess: '完全权限',
+  permissionPresetHint: '跟随默认使用宿主新会话的权限设置。仅可查看禁止写入；工作区内修改允许工作区内写入，扩大权限需审批；完全权限无需审批。仅新建会话生效，已有会话发送 /new 应用。用户访问与聊天命令权限在「访问设置」中配置。',
   replyStreaming: '最近回复：流式卡片', replyMarkdown: '最近回复：Markdown 卡片', replyText: '最近回复：纯文本',
   cardFallbackHint: '卡片接口失败，已尝试降级发送。请检查“创建与更新卡片”权限（cardkit:card:write）并发布应用版本。',
   cardStage_create: '创建卡片', cardStage_update: '更新卡片', cardStage_finish: '结束流式卡片', cardStage_markdown: '发送 Markdown 卡片',
@@ -60,6 +62,8 @@ export const zh = {
   setupHelp: '接入说明', permissions: '插件需要浏览器模块、外部网络、Webhook 路由、持久存储、会话管理和环境后台权限。', singleBotHint: '此版本每个渠道接入一个机器人。三个渠道均支持扫码；飞书和 QQ 也支持凭据与 HTTP 回调接入。',
 };
 export const en = {
+  permissionPreset: 'Tool execution permission', permissionReadOnly: 'Read only', permissionWorkspaceWrite: 'Workspace write', permissionFullAccess: 'Full access',
+  permissionPresetHint: 'Follow default uses the Host permission for new Sessions. Read only blocks writes; Workspace write allows workspace changes and asks before escalation; Full access needs no approval. Applies to new Sessions; send /new to apply to an existing chat. User access and chat commands are configured under Access settings.',
   replyStreaming: 'Latest reply: streaming card', replyMarkdown: 'Latest reply: Markdown card', replyText: 'Latest reply: plain text',
   cardFallbackHint: 'A card API failed and fallback delivery was attempted. Check Create and update cards (cardkit:card:write) permission and publish the app version.',
   cardStage_create: 'Create card', cardStage_update: 'Update card', cardStage_finish: 'Finish streaming card', cardStage_markdown: 'Send Markdown card',

@@ -58,6 +58,13 @@ test('the deployment-bundled IM plugin bridges Feishu, QQ and WeChat conversatio
           await new Promise<void>(resolve => {releaseBusy = resolve;});
         }
         const modelBody = await request.clone().text();
+        if (modelBody.includes('IM_PERMISSION_WRITE') && !modelBody.includes('im-permission-write')) {
+          const event = (type: string, value: object) => `event: ${type}\ndata: ${JSON.stringify({type, ...value})}\n\n`;
+          return new Response(event('message_start', {message: {usage: {input_tokens: 10, output_tokens: 0}}})
+            + event('content_block_start', {index: 0, content_block: {type: 'tool_use', id: 'im-permission-write', name: 'bash', input: {}}})
+            + event('content_block_delta', {index: 0, delta: {type: 'input_json_delta', partial_json: JSON.stringify({command: 'printf blocked > /workspace/im-permission-denied.txt', description: 'Attempt a write from a read-only IM channel'})}})
+            + event('content_block_stop', {index: 0}) + event('message_delta', {delta: {stop_reason: 'tool_use'}, usage: {output_tokens: 3}}) + event('message_stop', {}), {headers: {'content-type': 'text/event-stream'}});
+        }
         if (modelBody.includes('IM_RETURN_FILE') && !modelBody.includes('im-send-result')) {
           const parsed = JSON.parse(modelBody) as {messages: {role: string; content: any}[]};
           const last = parsed.messages.at(-1);
@@ -226,10 +233,10 @@ test('the deployment-bundled IM plugin bridges Feishu, QQ and WeChat conversatio
     assert.equal(parked.lastError, undefined);
     assert.equal((await hook('/feishu', {method: 'POST', body: '{}'})).status, 404, 'Routes stay closed until granted');
     assert.equal((await approve({...row.permissions, network: true, routes: true})).status, 200);
-    await configure('im-feishu', {enabled: true, managementKey: 'feishu-management', appId: 'cli_fixture', appSecret: 'feishu-secret', verificationToken: 'feishu-verify', encryptKey: 'feishu-encrypt', allowedSenders: ['ou_allowed']});
-    await configure('im-qq', {enabled: true, managementKey: 'qq-management', appId: '1020', appSecret: qqSecret, allowedSenders: ['qq-user']});
+    await configure('im-feishu', {enabled: true, permissionPreset: 'read-only', managementKey: 'feishu-management', appId: 'cli_fixture', appSecret: 'feishu-secret', verificationToken: 'feishu-verify', encryptKey: 'feishu-encrypt', allowedSenders: ['ou_allowed']});
+    await configure('im-qq', {enabled: true, permissionPreset: 'workspace-write', managementKey: 'qq-management', appId: '1020', appSecret: qqSecret, allowedSenders: ['qq-user']});
     await api.call('directoryPicker/createDirectory', {path: '/workspace', name: 'weixin-fixture'});
-    await configure('im-weixin', {enabled: true, loginKey: 'login-key-fixture', workspace: '/workspace/weixin-fixture'});
+    await configure('im-weixin', {enabled: true, permissionPreset: 'danger-full-access', loginKey: 'login-key-fixture', workspace: '/workspace/weixin-fixture'});
     for (const [channel, key, botId] of [['feishu', 'feishu-management', 'cli_fixture'], ['qq', 'qq-management', '1020']] as const) {
       assert.equal((await hook(`/${channel}/status`)).status, 403);
       const checked = await hook(`/${channel}/status`, {headers: {authorization: `Bearer ${key}`}});
@@ -257,10 +264,15 @@ test('the deployment-bundled IM plugin bridges Feishu, QQ and WeChat conversatio
       return hook('/feishu', {method: 'POST', headers: {'content-type': 'application/json', 'x-lark-request-timestamp': timestamp, 'x-lark-request-nonce': nonce, 'x-lark-signature': signature}, body});
     };
     assert.equal((await feishu('om_forged', 'ou_allowed', true)).status, 401, 'Unsigned Feishu events are refused');
-    assert.equal((await feishu('om_1', 'ou_allowed')).status, 200);
+    assert.equal((await feishu('om_1', 'ou_allowed', false, 'IM_PERMISSION_WRITE')).status, 200);
     const feishuReply = await waitFor(() => sent.find(row => row.host === 'open.feishu.cn' && row.path === '/open-apis/im/v1/messages/om_1/reply'), 'Feishu reply');
     assert.equal(feishuReply.body.msg_type, 'interactive', 'Missing CardKit permission still delivers a Markdown card');
     assert.deepEqual(JSON.parse(feishuReply.body.content as string).body.elements, [{tag: 'markdown', content: 'IM_REPLY'}]);
+    const readonlySession = (await api.call<SessionListValue>('session/list', {_request: {}})).items[0]!;
+    const readonlyPage = await currentPage(readonlySession.sessionId);
+    assert.match(JSON.stringify(readonlyPage.records.filter(record => record.event.type === 'tool/result')), /blocked by the read-only sandbox/);
+    const permissionIndex = readonlyPage.records.findIndex(record => record.event.type === 'permission/preset' && (record.event.data as {preset: string}).preset === 'read-only');
+    assert.ok(permissionIndex >= 0 && permissionIndex < readonlyPage.records.findIndex(record => record.event.type === 'user/message'), 'The native permission is persisted before the first user prompt');
     const cardStatus = await (await hook('/feishu/status', {headers: {authorization: 'Bearer feishu-management'}})).json() as {reply: {mode: string; failure: {stage: string; code: number}}};
     assert.equal(cardStatus.reply.mode, 'markdown');
     assert.equal(cardStatus.reply.failure.stage, 'create');
@@ -290,6 +302,7 @@ test('the deployment-bundled IM plugin bridges Feishu, QQ and WeChat conversatio
     assert.equal(qqReply.path, '/v2/users/qq-user/messages');
     assert.deepEqual(qqReply.body, {content: 'IM_REPLY', msg_type: 0, msg_id: 'qq-msg-1', msg_seq: 2});
     assert.equal(qqReply.authorization, 'QQBot qq-token');
+    const qqSession = (await api.call<SessionListValue>('session/list', {_request: {}})).items.find(item => item.sessionId !== readonlySession.sessionId)!;
     assert.deepEqual(sent.find(row => row.host === 'api.sgroup.qq.com' && row.body.msg_type === 6)?.body.input_notify, {input_type: 1, input_second: 60});
 
     // WeChat: the settings page starts QR login through a header capability; status never returns a token.
@@ -352,6 +365,8 @@ test('the deployment-bundled IM plugin bridges Feishu, QQ and WeChat conversatio
     const sessions = await api.call<SessionListValue>('session/list', {_request: {}});
     assert.equal(sessions.items.length, 3, JSON.stringify(sessions.items));
     for (const session of sessions.items) {
+      const projection = await api.call<{values: {permissions: {currentValue: string}}}>('session/projections', {request: {sessionId: session.sessionId}});
+      assert.equal(projection.values.permissions.currentValue, session.sessionId === readonlySession.sessionId ? 'read-only' : session.sessionId === qqSession.sessionId ? 'workspace-write' : 'danger-full-access', 'Each channel applies its own native permission preset');
       const page = await currentPage(session.sessionId);
       const files = page.records.flatMap(record => record.event.type === 'user/message' ? (record.event.data as unknown as SessionEventMap['user/message']).content.filter(part => part.type === 'file') : []);
       assert.ok(files.length, 'Each IM channel admits files into native Session history');
@@ -436,11 +451,18 @@ test('the deployment-bundled IM plugin bridges Feishu, QQ and WeChat conversatio
     assert.match(mentionHistory, /THIS_BOT_ONLY/);
     assert.doesNotMatch(mentionHistory, /HUMAN_ONLY|OTHER_BOT_ONLY|ALL_ONLY|UNKNOWN_BOT_IDENTITY/);
     await configure('im-core', {titlePrefix: false});
+    await configure('im-feishu', {permissionPreset: 'danger-full-access', managementKey: 'permission-regression'});
+    await waitFor(async () => (await hook('/feishu/status', {headers: {authorization: 'Bearer permission-regression'}})).status === 200 ? true : undefined, 'updated channel permission activation');
+    const oldPermissions = await api.call<{values: {permissions: {currentValue: string}}}>('session/projections', {request: {sessionId: readonlySession.sessionId}});
+    assert.equal(oldPermissions.values.permissions.currentValue, 'read-only', 'Saving a channel setting never widens existing Sessions');
     await feishu('om_new_unlabeled', 'ou_allowed', false, '/new');
     const unlabeled = await waitFor(async () => {
       const list = await api.call<SessionListValue>('session/list', {_request: {}});
       return list.items.find(item => item.blank);
     }, 'new Session with channel titles disabled');
+    const newPermissions = await api.call<{values: {permissions: {currentValue: string}}}>('session/projections', {request: {sessionId: unlabeled.sessionId}});
+    assert.equal(newPermissions.values.permissions.currentValue, 'danger-full-access', '/new applies the configured permission before any prompt');
+    assert.equal((await api.call<{defaultPreset: string}>('permissionPresets/catalog', {})).defaultPreset, 'workspace-write', 'Channel permissions never change the Host default');
     await feishu('om_unlabeled_prompt', 'ou_allowed');
     await waitFor(async () => {
       const list = await api.call<SessionListValue>('session/list', {_request: {}});

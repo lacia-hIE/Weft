@@ -20,6 +20,7 @@ export const botSettings = () => ({
   displayName: Schema.string().default('').description('Local bot alias.'),
   workspace: Schema.string().default('/workspace').description('Workspace for new conversations.'),
   agentPreset: Schema.string().default('').description('Agent preset for new conversations; empty follows the shared IM default.'),
+  permissionPreset: Schema.union(['', 'read-only', 'workspace-write', 'danger-full-access']).default('').description('Tool execution permission for new Sessions; empty follows the Host default. Existing Sessions keep their permission until /new.'),
   busyMessageMode: Schema.union(['queue', 'steer']).default('queue').description('Queue new text or add it to the current task.'),
   sessionSync: Schema.union(['scheduled', 'all', 'off']).default('scheduled').description('Send turns the chat did not start: schedule results, or also Web turns in private chats.'),
   modelSelection: Schema.union([Schema.const(null), Schema.object({provider: Schema.string().min(1), model: Schema.string().min(1), reasoningEffort: Schema.string()})]).default(null).description('Model and optional reasoning effort for new Sessions; null follows the Host default.'),
@@ -31,7 +32,7 @@ export const botSettings = () => ({
 /** Channel-independent behavior; the QR owner keeps administrative command access. */
 export function channelSettings(config, owner, botId) {
   return {
-    workspace: config.workspace, agentPreset: config.agentPreset,
+    workspace: config.workspace, agentPreset: config.agentPreset, permissionPreset: config.permissionPreset,
     busyMessageMode: config.busyMessageMode, sessionSync: config.sessionSync, contextEnhancement: config.contextEnhancement, modelSelection: config.modelSelection,
     botId,
     access(message, isCommand = false) {

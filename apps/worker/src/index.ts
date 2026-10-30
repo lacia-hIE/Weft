@@ -1,3 +1,4 @@
+import {initialSessionPermissionSchema} from '../../../packages/native-plugins/src/session-contracts.ts';
 import { DurableObject, WorkerEntrypoint } from 'cloudflare:workers';
 import { createSessionReader } from '../../../packages/harness-runtime/src/session-reader.ts';
 import { sessionRuntime } from './runtime-options.ts';
@@ -575,11 +576,15 @@ export class SessionDO extends DurableObject<Env> {
   }
 
   /** Native Web creation opens a real persisted Session before its first prompt. */
-  async nativeCreate(input: SessionScope, binding?: AgentBinding, workspaceId?: string, cwd?: string, webhookRaw?:unknown): Promise<boolean> {
+  async nativeCreate(input: SessionScope, binding?: AgentBinding, workspaceId?: string, cwd?: string, webhookRaw?:unknown, initialPermission?: string): Promise<boolean> {
     const scope = this.assertScope(input);const webhook=webhookRaw===undefined?undefined:readWebhookBootstrap(webhookRaw);
+    const permissionPreset = initialPermission === undefined ? undefined : initialSessionPermissionSchema.parse(initialPermission);
+    if (webhook && permissionPreset !== undefined) throw new Error('Webhook permissions are owned by the verified webhook request');
     const known = this.ctx.storage.sql.exec<{workspace_id: string; agent_document: string; presentation: number}>('SELECT workspace_id,agent_document,presentation FROM weft_session_config WHERE id=1').toArray()[0];
     const existing = readSessionSnapshot(this.ctx.storage, SessionId(scope.sessionId));
-    if(webhook && (known || existing))return false;
+    // An explicit initial permission always belongs to a fresh Session. Never
+    // change an existing Session's permission while trying to reuse its ID.
+    if((webhook || permissionPreset !== undefined) && (known || existing))return false;
     if (known && existing) {
       if (known.presentation !== 1 || existing.events.some(event => event.type === 'turn/start') || (workspaceId && workspaceId !== known.workspace_id) || (cwd && workspacePath(cwd) !== (existing.header.cwd ?? '/workspace'))) return false;
       const profile = JSON.parse(known.agent_document) as AgentRevision;
@@ -603,6 +608,7 @@ export class SessionDO extends DurableObject<Env> {
       const directory = workspacePath(cwd ?? '/workspace');
       const runtime = await sessionRuntime(this.env, this.ctx.storage, scope, profile, attachedWorkspace, profile.spec.persona, true, reader, {}, directory, false);
       let configure:Parameters<typeof initializeHarnessSession>[1];
+      if (permissionPreset !== undefined) configure = (ctx, agent) => {ctx.permissionPresets.set(agent.session, permissionPreset);};
       if(webhook) {
         const seed=readWebhookSeed({...webhook,selection:webhook.request.model?{provider:webhook.request.model.provider,model:webhook.request.model.model}:runtime.options.defaultModel?.()??runtime.options.model});
         this.ctx.storage.sql.exec('INSERT INTO weft_webhook_bootstrap VALUES (1,?)',JSON.stringify(seed));
@@ -619,7 +625,7 @@ export class SessionDO extends DurableObject<Env> {
       ]);
       return true;
     });
-    return result === 'race' ? this.nativeCreate(scope, binding, workspaceId, cwd, webhookRaw) : result;
+    return result === 'race' ? this.nativeCreate(scope, binding, workspaceId, cwd, webhookRaw, initialPermission) : result;
   }
 
   nativeWebhookOwned(input:SessionScope,actionId:string):boolean {this.assertScope(input);return this.webhookSeed()?.actionId===z.uuid().parse(actionId);}
