@@ -170,7 +170,7 @@ writeFileSync('dist/web-metafile.json', JSON.stringify(web.metafile, null, 2) + 
 // CJS mail dependencies only require bundled modules or Node builtins. workerd supplies the latter.
 const workerRequire = {js: 'import {createRequire as __weftBuiltinRequire} from "node:module"; const require = __weftBuiltinRequire("file:///weft-worker.js");'};
 const result = await build({
-  entryPoints: {worker: 'apps/worker/src/index.ts', 'assets-worker': 'apps/assets/src/index.ts'},
+  entryPoints: {worker: 'apps/worker/src/index.ts'},
   outdir: 'dist',
   banner: workerRequire,
   bundle: true,
@@ -185,6 +185,8 @@ const result = await build({
   sourcemap: true,
   metafile: true,
 });
+// The private assets Worker has no Node compatibility; keep its bundle independent.
+await build({entryPoints: {'assets-worker': 'apps/assets/src/index.ts'}, outdir: 'dist', bundle: true, format: 'esm', platform: 'browser', target: 'es2024', sourcemap: true, minifySyntax: true});
 // Validation-only bundle: scripted adapters and short deadlines cannot be enabled in production.
 await build({entryPoints: {'test-worker': 'apps/worker/src/index.ts', 'mail-gateway-worker': 'tests/fixtures/mail-gateway-worker.ts', 'images-worker': 'tests/fixtures/images-worker.ts', 'javascript-worker': 'tests/fixtures/javascript-worker.ts', 'documents-worker': 'tests/fixtures/documents-worker.ts', 'native-query-worker': 'tests/fixtures/native-query-worker.ts', 'contracts-worker': 'tests/fixtures/contracts-worker.ts', 'environment-storage-worker': 'tests/fixtures/environment-storage-worker.ts', 'dynamic-worker': 'tests/fixtures/dynamic-worker.ts', 'composition-worker': 'tests/fixtures/composition-worker.ts', 'preset-worker': 'tests/fixtures/preset-worker.ts'}, outdir: 'dist', banner: workerRequire, bundle: true, format: 'esm', platform: 'browser', target: 'es2024', external: ['cloudflare:workers', 'cloudflare:sockets', 'node:*'], alias: Object.fromEntries(builtinModules.filter(name => !name.startsWith('node:')).map(name => [name, 'node:' + name])), tsconfig: '.generated/upstream.source.tsconfig.json', plugins: [staticAttribution, providerFetch, nativeCordisPlatform, nativeCompositionPlatform, nativeEnvironmentPlatform, nativeAttachmentsPlatform, nativeQueryPlatform, nativeWebPlatform, nativeMcpPlatform, nativeShellPlatform, nativeMarketPlatform, nativeHarnessHomePlatform, nativeWorkflowPlatform([staticAttribution]), nativeChangesPlatform, officialModules], define: {WEFT_VALIDATION_BUILD: 'true'}});
 if (Object.entries(result.metafile.outputs['dist/worker.js'].inputs).some(([path, input]) => input.bytesInOutput > 0 && path.endsWith('/scripted-adapter.ts'))) throw new Error('Validation model adapter leaked into production');

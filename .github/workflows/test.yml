@@ -111,6 +111,8 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npx tsc --noEmit
+      - name: Mail protocol and durable gateway smoke checks
+        run: npx tsx --test --test-concurrency=1 --test-timeout=300000 tests/im-email.test.ts tests/mail-gateway.test.ts
       - name: Pack test inputs
         run: tar -czf build.tgz dist apps/plugin-builder/patch.mjs $(find .generated -maxdepth 1 -type f)
       - uses: actions/upload-artifact@v4
