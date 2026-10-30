@@ -52,8 +52,7 @@ export async function apply(ctx, config) {
         if (path === 'disconnect') {await ctx.weftConnections.close('email'); await ctx.im.clear('email'); json(response, 200, {state: 'idle'}); return;}
         if (!config.enabled) {json(response, 200, {state: 'disabled'}); return;}
         await connection.ready; await connection.checkMail();
-        const status = await connection.status();
-        json(response, 200, {state: 'ready', botId: spec.address, checkedAt: Date.now(), ...(status?.tracked.error ? {error: 'mail_connection_failed'} : {})});
+        json(response, 200, {state: 'ready', botId: spec.address, checkedAt: Date.now()});
       } catch {json(response, 502, {error: 'mail_connection_failed'});}
     }}), `email ${path}`);
   }

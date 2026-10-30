@@ -54,7 +54,7 @@ function mailboxFixture(security: 'tls' | 'starttls' = 'tls') {
   const spec = mailSpec.parse({kind: 'mail', address: 'bot@example.com', imap: {host: 'imap.example.com', port: 993, user: 'bot@example.com', password: 'secret', security},
     smtp: {host: 'smtp.example.com', port: 465, user: 'bot@example.com', password: 'secret', security}});
   const add = (uid: number, extra = '', body = 'hello') => {uidNext = uid + 1; messages.set(uid, `From: Alice <alice@example.com>\r\nTo: bot@example.com\r\nSubject: =?UTF-8?B?5L2g5aW9?=\r\nMessage-ID: <in-${uid}@example.com>\r\n${extra}MIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n${body}\r\n`);};
-  return {transport: new MailTransport(connect), spec, add, sent, recipients, traffic, resetValidity() {validity = '99';}};
+  return {transport: new MailTransport(connect), spec, add, messages, sent, recipients, traffic, resetValidity() {validity = '99';}};
 }
 
 for (const security of ['tls', 'starttls'] as const) test(`mail uses ${security}, skips history, decodes MIME and replies to the original sender in one thread`, async () => {
@@ -75,12 +75,17 @@ for (const security of ['tls', 'starttls'] as const) test(`mail uses ${security}
   assert.equal(reply.attachments[0]!.content.toString(), 'exact original bytes'); assert.equal(reply.attachments[0]!.filename, '结果.txt');
   assert.equal(reply.headers.get('auto-submitted'), 'auto-replied'); assert.equal(reply.cc, undefined);
   assert.deepEqual((await f.transport.poll(f.spec, batch.cursor)).messages, [], 'UID cursor prevents duplicates');
+  f.add(11);
+  f.messages.set(11, 'From: alice@example.com\r\nTo: bot@example.com\r\nMessage-ID: <attachment@example.com>\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary="file"\r\n\r\n--file\r\nContent-Type: text/plain\r\n\r\nSee attached\r\n--file\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename="source.bin"\r\nContent-Transfer-Encoding: base64\r\n\r\nAAECA/7/\r\n--file--\r\n');
+  const attached = (await f.transport.poll(f.spec, batch.cursor)).messages[0] as any;
+  assert.equal(attached.attachments[0].name, 'source.bin');
+  assert.equal((await f.transport.attachment(f.spec, {target: attached.target, index: 0})).base64, 'AAECA/7/');
   f.resetValidity(); assert.deepEqual((await f.transport.poll(f.spec, batch.cursor)).messages, [], 'UIDVALIDITY reset starts fresh');
 });
 
 test('automatic and mailing-list mail cannot trigger reply loops; endpoints must be public and encrypted', async () => {
   const f = mailboxFixture(), initial = await f.transport.poll(f.spec, '');
-  f.add(10, 'Auto-Submitted: auto-replied\r\n'); f.add(11, 'List-ID: list.example.com\r\n'); f.add(12, 'Precedence: bulk\r\n');
+  f.add(10, 'Auto-Submitted: auto-replied\r\n'); f.add(11, 'List-ID: list.example.com\r\n'); f.add(12, 'Precedence: bulk\r\n'); f.add(13, 'Return-Path: <>\r\n');
   assert.deepEqual((await f.transport.poll(f.spec, initial.cursor)).messages, []);
   await assert.rejects(f.transport.reply(f.spec, {target: {uid: 10, validity: '42'}, text: 'loop'}));
   for (const host of ['localhost', '127.0.0.1', 'mail.internal', '[::1]', 'imap.example.com:443']) assert.equal(mailSpec.safeParse({...f.spec, imap: {...f.spec.imap, host}}).success, false);

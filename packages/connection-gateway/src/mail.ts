@@ -30,10 +30,12 @@ export class MailTransport {
     const client = new ImapFlow({host: endpoint.host, port: endpoint.port, secure: endpoint.security === 'tls',
       ...(endpoint.security === 'starttls' ? {doSTARTTLS: true} : {}), auth: endpoint.auth === 'oauth2' ? {user: endpoint.user, accessToken: endpoint.password} : {user: endpoint.user, pass: endpoint.password},
       transport: createSocketsTransport(this.connect), logger: false, disableAutoIdle: true, disableCompression: true,
+      maxLineLength: 262_144, maxLiteralSize: MAX_SOURCE + 1, maxResponseSize: MAX_SOURCE + 1_048_576, maxResponseTokens: 20_000,
       connectionTimeout: 15_000, greetingTimeout: 15_000, socketTimeout: 30_000});
     client.on('error', () => {});
+    const deadline = setTimeout(() => client.close(), 60_000);
     try {await client.connect(); await client.mailboxOpen(spec.mailbox, {readOnly: true}); return await work(client);}
-    finally {client.close();}
+    finally {clearTimeout(deadline); client.close();}
   }
   /** The first cursor starts at UIDNEXT, so enabling a mailbox never replays old mail. */
   async poll(spec: MailSpec, rawCursor: string): Promise<{cursor: string; messages: unknown[]}> {
@@ -64,8 +66,8 @@ export class MailTransport {
     const parsed = await simpleParser(message.source, {skipHtmlToText: false, skipTextToHtml: true, skipImageLinks: true});
     // RFC 3834: suppress automatic replies, bounces, bulk/list mail and our own output.
     const auto = String(parsed.headers.get('auto-submitted') ?? 'no').toLowerCase();
-    if (auto !== 'no' || /^(bulk|list|junk)$/i.test(String(parsed.headers.get('precedence') ?? '')) || parsed.headers.has('list-id')
-      || parsed.headers.has('x-weft-im') || parsed.headers.get('return-path') === '<>') return null;
+    if (auto !== 'no' || /^(bulk|list|junk)$/i.test(String(parsed.headers.get('precedence') ?? '')) || parsed.headers.has('list')
+      || parsed.headers.has('x-weft-im') || parsed.headerLines.some(header => header.key === 'return-path' && /^return-path:\s*<>\s*$/i.test(header.line))) return null;
     const messageId = parsed.messageId;
     if (!messageId || /[\r\n\0]/.test(messageId)) return null;
     const from = sender[0].address.toLowerCase();
