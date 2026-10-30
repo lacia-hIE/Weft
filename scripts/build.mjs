@@ -1,3 +1,4 @@
+import {builtinModules} from 'node:module';
 import {nativeWebhookPlatform} from './native-webhook-platform.mjs';
 import { build } from 'esbuild';
 import { mkdirSync, readFileSync, writeFileSync, readdirSync, rmSync, cpSync, existsSync } from 'node:fs';
@@ -173,7 +174,7 @@ const result = await build({
   format: 'esm',
   platform: 'browser',
   target: 'es2024',
-  external: ['cloudflare:workers', 'node:*'],
+  external: ['cloudflare:workers', 'cloudflare:sockets', 'node:*'], alias: Object.fromEntries(builtinModules.filter(name => !name.startsWith('node:')).map(name => [name, 'node:' + name])),
   tsconfig: '.generated/upstream.source.tsconfig.json',
   plugins: [staticAttribution, providerFetch, nativeCordisPlatform, nativeCompositionPlatform, nativeEnvironmentPlatform, nativeAttachmentsPlatform, nativeQueryPlatform, nativeWebPlatform, nativeMcpPlatform, nativeShellPlatform, nativeMarketPlatform, nativeHarnessHomePlatform, nativeWorkflowPlatform([staticAttribution]), nativeChangesPlatform, officialModules],
   define: {WEFT_VALIDATION_BUILD: 'false'},
@@ -182,7 +183,7 @@ const result = await build({
   metafile: true,
 });
 // Validation-only bundle: scripted adapters and short deadlines cannot be enabled in production.
-await build({entryPoints: {'test-worker': 'apps/worker/src/index.ts', 'images-worker': 'tests/fixtures/images-worker.ts', 'javascript-worker': 'tests/fixtures/javascript-worker.ts', 'documents-worker': 'tests/fixtures/documents-worker.ts', 'native-query-worker': 'tests/fixtures/native-query-worker.ts', 'contracts-worker': 'tests/fixtures/contracts-worker.ts', 'environment-storage-worker': 'tests/fixtures/environment-storage-worker.ts', 'dynamic-worker': 'tests/fixtures/dynamic-worker.ts', 'composition-worker': 'tests/fixtures/composition-worker.ts', 'preset-worker': 'tests/fixtures/preset-worker.ts'}, outdir: 'dist', bundle: true, format: 'esm', platform: 'browser', target: 'es2024', external: ['cloudflare:workers', 'node:*'], tsconfig: '.generated/upstream.source.tsconfig.json', plugins: [staticAttribution, providerFetch, nativeCordisPlatform, nativeCompositionPlatform, nativeEnvironmentPlatform, nativeAttachmentsPlatform, nativeQueryPlatform, nativeWebPlatform, nativeMcpPlatform, nativeShellPlatform, nativeMarketPlatform, nativeHarnessHomePlatform, nativeWorkflowPlatform([staticAttribution]), nativeChangesPlatform, officialModules], define: {WEFT_VALIDATION_BUILD: 'true'}});
+await build({entryPoints: {'test-worker': 'apps/worker/src/index.ts', 'images-worker': 'tests/fixtures/images-worker.ts', 'javascript-worker': 'tests/fixtures/javascript-worker.ts', 'documents-worker': 'tests/fixtures/documents-worker.ts', 'native-query-worker': 'tests/fixtures/native-query-worker.ts', 'contracts-worker': 'tests/fixtures/contracts-worker.ts', 'environment-storage-worker': 'tests/fixtures/environment-storage-worker.ts', 'dynamic-worker': 'tests/fixtures/dynamic-worker.ts', 'composition-worker': 'tests/fixtures/composition-worker.ts', 'preset-worker': 'tests/fixtures/preset-worker.ts'}, outdir: 'dist', bundle: true, format: 'esm', platform: 'browser', target: 'es2024', external: ['cloudflare:workers', 'cloudflare:sockets', 'node:*'], alias: Object.fromEntries(builtinModules.filter(name => !name.startsWith('node:')).map(name => [name, 'node:' + name])), tsconfig: '.generated/upstream.source.tsconfig.json', plugins: [staticAttribution, providerFetch, nativeCordisPlatform, nativeCompositionPlatform, nativeEnvironmentPlatform, nativeAttachmentsPlatform, nativeQueryPlatform, nativeWebPlatform, nativeMcpPlatform, nativeShellPlatform, nativeMarketPlatform, nativeHarnessHomePlatform, nativeWorkflowPlatform([staticAttribution]), nativeChangesPlatform, officialModules], define: {WEFT_VALIDATION_BUILD: 'true'}});
 if (Object.entries(result.metafile.outputs['dist/worker.js'].inputs).some(([path, input]) => input.bytesInOutput > 0 && path.endsWith('/scripted-adapter.ts'))) throw new Error('Validation model adapter leaked into production');
 const forbiddenWorkspaceDependencies = ['just-bash', 'guarded-fetch', 'sprintf-js'];
 const shippedInputs = Object.entries(result.metafile.outputs['dist/worker.js'].inputs)

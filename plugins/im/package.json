@@ -1,7 +1,7 @@
 {
   "name": "@weft/dsh-im",
-  "version": "0.7.3",
-  "description": "Connect Feishu, WeChat and QQ conversations to DeepSeek Harness Sessions.",
+  "version": "0.8.0",
+  "description": "Connect Feishu, WeChat, QQ and IMAP/SMTP email to DeepSeek Harness Sessions.",
   "license": "MIT",
   "type": "module",
   "exports": {
@@ -10,6 +10,7 @@
     "./feishu": "./src/feishu.js",
     "./weixin": "./src/weixin.js",
     "./qq": "./src/qq.js",
+    "./email": "./src/email.js",
     "./package.json": "./package.json"
   },
   "files": ["src", "cordis.patch.yml", "README.md", "PARITY.md", "THIRD_PARTY_NOTICES.md"],

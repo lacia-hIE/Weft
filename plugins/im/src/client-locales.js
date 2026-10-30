@@ -1,4 +1,10 @@
 export const zh = {
+  email: '邮箱', emailEmptyTitle: '连接你的邮箱', emailTransport: 'IMAP 收信 · SMTP 回信',
+  emailGuide: '支持已开启 IMAP/SMTP 的通用邮箱。使用服务商提供的服务器地址、端口和授权码；用户名留空使用邮箱地址。保存并启用即允许自动处理新邮件并回信，仅接收之后的新邮件。默认白名单为空，请在「更多设置 → 访问设置」添加允许的发件人。OAuth2 模式填写访问令牌，到期需手动更新。',
+  emailAccessHint: '填写允许的发件人邮箱地址，默认拒绝所有发送者。邮箱 From 不能证明真实身份，请同时使用服务商的反垃圾和身份验证策略。命令权限独立控制。',
+  emailSender: '发件人邮箱', address: '邮箱地址', mailbox: '收信文件夹', emailSecurity: '加密方式', emailAuth: '认证方式', emailPasswordAuth: '密码 / 授权码',
+  imapHost: 'IMAP 服务器', imapPort: 'IMAP 端口', imapUser: 'IMAP 用户名', imapPassword: 'IMAP 密码 / 授权码 / 令牌',
+  smtpHost: 'SMTP 服务器', smtpPort: 'SMTP 端口', smtpUser: 'SMTP 用户名', smtpPassword: 'SMTP 密码 / 授权码 / 令牌',
   permissionPreset: '工作区权限', permissionReadOnly: '仅可查看', permissionWorkspaceWrite: '工作区内修改', permissionFullAccess: '完全权限',
   permissionPresetHint: '跟随默认使用宿主新会话的权限设置。仅可查看禁止写入；工作区内修改允许工作区内写入，扩大权限需审批；完全权限无需审批。仅新建会话生效，已有会话发送 /new 应用。用户访问与聊天命令权限在「访问设置」中配置。',
   replyStreaming: '最近回复：流式卡片', replyMarkdown: '最近回复：Markdown 卡片', replyText: '最近回复：纯文本',
@@ -62,6 +68,12 @@ export const zh = {
   setupHelp: '接入说明', permissions: '插件需要浏览器模块、外部网络、Webhook 路由、持久存储、会话管理和环境后台权限。', singleBotHint: '此版本每个渠道接入一个机器人。三个渠道均支持扫码；飞书和 QQ 也支持凭据与 HTTP 回调接入。',
 };
 export const en = {
+  email: 'Email', emailEmptyTitle: 'Connect your mailbox', emailTransport: 'IMAP inbox · SMTP replies',
+  emailGuide: 'Use a mailbox with IMAP and SMTP enabled. Enter its servers, ports and password or app password. Blank usernames use the email address. Saving enables automatic replies to future mail only. Add allowed senders under More settings → Access settings. OAuth2 takes an access token; renew it manually when it expires.',
+  emailAccessHint: 'Enter allowed sender email addresses. An empty allowlist denies everyone. From headers are not proof of identity; also use your provider’s anti-spam and authentication controls. Command permissions are separate.',
+  emailSender: 'Sender email', address: 'Email address', mailbox: 'Inbox folder', emailSecurity: 'Encryption', emailAuth: 'Authentication', emailPasswordAuth: 'Password / app password',
+  imapHost: 'IMAP server', imapPort: 'IMAP port', imapUser: 'IMAP username', imapPassword: 'IMAP password / app password / token',
+  smtpHost: 'SMTP server', smtpPort: 'SMTP port', smtpUser: 'SMTP username', smtpPassword: 'SMTP password / app password / token',
   permissionPreset: 'Tool execution permission', permissionReadOnly: 'Read only', permissionWorkspaceWrite: 'Workspace write', permissionFullAccess: 'Full access',
   permissionPresetHint: 'Follow default uses the Host permission for new Sessions. Read only blocks writes; Workspace write allows workspace changes and asks before escalation; Full access needs no approval. Applies to new Sessions; send /new to apply to an existing chat. User access and chat commands are configured under Access settings.',
   replyStreaming: 'Latest reply: streaming card', replyMarkdown: 'Latest reply: Markdown card', replyText: 'Latest reply: plain text',

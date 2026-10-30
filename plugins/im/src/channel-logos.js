@@ -2,6 +2,10 @@
 import React from 'react';
 const h = React.createElement;
 const dimensions = size => size === undefined ? {} : {width: size, height: size};
+export function EmailLogoGlyph({size} = {}) {
+  return h('svg', {...dimensions(size), viewBox: '0 0 24 24', focusable: 'false', 'aria-hidden': true, 'data-im-channel-logo': 'email'},
+    h('path', {d: 'M3 5h18v14H3zM3 5l9 8 9-8', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinejoin: 'round'}));
+}
 export function WeixinLogoGlyph({ size } = {}) {
   return h('svg', {
     ...dimensions(size),

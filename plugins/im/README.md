@@ -4,13 +4,14 @@ This is an incomplete Worker adaptation of dsh-im. See the [three-channel parity
 
 功能对齐尚未完成，完整差距及验收要求见[三渠道功能清单](./PARITY.md)。当前新增「通用 → 排队／插话」「访问 → 私聊／群聊权限与命令权限」「上下文增强 → 来源字段与提示词」；飞书还可设置收到群消息后的响应方式。旧白名单保持兼容，首次修改新权限页时迁移；扫码绑定者保留权限。开放模式必须显式选择，不会在升级时自动扩大已有账号权限。
 
-Connects Feishu, WeChat and QQ conversations to DeepSeek Harness Sessions. It is a standard Cordis bundle (`dsh.bundle.patch`) with four entries:
+Connects Feishu, WeChat, QQ and email conversations to DeepSeek Harness Sessions. It is a standard Cordis bundle (`dsh.bundle.patch`) with five entries:
 
 | Entry | Role |
 |---|---|
 | `im-core` (`@weft/dsh-im/core`) | The `im` service: one Session per conversation, deduplicated prompts, `/new` `/stop` `/help`, and delivery of each finished turn from a durable cursor |
 | `im-feishu` | Feishu / Lark QR app creation and outbound WebSocket; manual event subscription at `/feishu` |
 | `im-weixin` | WeChat iLink: QR login at `/weixin/login?key=…`, long-polled messages, replies with the user's context token |
+| `im-email` | Generic IMAP inbox and SMTP threaded replies, with TLS/STARTTLS and attachments |
 | `im-qq` | QQ QR bot creation and outbound WebSocket; manual HTTP callback at `/qq` (Ed25519) |
 
 Channels inject `im`; other plugins can do the same to add a channel. Every channel is disabled until configured. By default only listed senders and the QR binding owner may talk to the bot. The access page can explicitly enable open access separately for private and group chats, and control command permission per user. A refused sender is told their id so an administrator can add it.
@@ -73,3 +74,15 @@ Validation runs in the `Test` GitHub Actions workflow on the `ci` branch. The un
 
 
 0.7.1 修正飞书群聊的 @ 判断：默认仅在 `mentions[].id.open_id` 命中当前机器人自身 ID 时触发；@ 其他人、其他机器人、@all 或同名成员不会触发。自身 ID 通过当前应用的机器人信息接口获取并缓存，账号重绑或插件重载后重新获取；无法确认身份时不处理群聊 @ 消息。明确选择「所有收到的群消息」时仍按开放响应模式工作。
+
+## 通用邮箱渠道（0.8.0）
+
+在设置的「邮箱」渠道选择「手动接入」，填写邮箱地址、IMAP / SMTP 服务器、端口和密码或授权码。用户名留空时使用邮箱地址。支持 SSL/TLS（通常 IMAP 993、SMTP 465）及强制 STARTTLS（通常 IMAP 143、SMTP 587）；不允许明文认证、关闭证书检查或 SMTP 25。无需部署额外网关或公网回调。QQ 邮箱、163 和自建域名邮箱等需要先在服务商处开启 IMAP / SMTP；只提供专有 API、没有 IMAP / SMTP 的 Agent 邮箱不能直接接入。
+
+保存并启用即允许自动接收新邮件和回信。首次连接只记录收件箱的当前位置，历史邮件不会触发任务；之后约每分钟检查一次，每批最多 10 封。暂停后恢复会从当前收件箱重新开始。UIDVALIDITY 改变会建立新游标。读取不会标记已读，也不会删除或移动邮件。
+
+默认不允许任何发件人；在「更多设置 → 访问设置」添加允许的发件人邮箱。工作区目录、Agent Preset、工作区权限、模型、命令权限和会话回推复用其它渠道的设置。邮件 From 并非身份认证，请同时配置服务商的反垃圾和身份验证策略。支持输入 OAuth2 access token；当前不执行 OAuth 登录或自动刷新，到期后需更新令牌。
+
+同一发送者的 References / In-Reply-To 关联同一会话，不同发送者隔离。Harness 完成后发送一封纯文本邮件（保留原始 Markdown），不是逐段发信；保留邮件主题、References 和 In-Reply-To，只回原始 From，不使用 Reply-To、不抄送其它收件人。正文可直接使用 `/new`、`/stop` 等命令。自动回复、退信、邮件列表和自身输出会被过滤；投递结果不确定时保留记录并停止自动重发，需管理员检查邮箱。
+
+邮件原始大小限制 24 MiB，正文最多 100,000 字符；附件每个 10 MiB、每封最多 10 个、总计 20 MiB，沿用 IM 附件导出及 `im_send_file` 回传。超过 24 MiB 的整封邮件跳过；超限附件按共享桥的错误提示处理。当前每个环境配置一个邮箱。

@@ -732,8 +732,9 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
     }
     throw new Error('Every connection gateway shard is full');
   }
-  async nativeConnectionCall(scope: ControlScope, receipt: {name: string; digest: string; activationId: string}, connectionId: string, operation: 'status' | 'send' | 'update' | 'reconnect' | 'close', argument?: unknown): Promise<unknown> {
+  async nativeConnectionCall(scope: ControlScope, receipt: {name: string; digest: string; activationId: string}, connectionId: string, operation: 'status' | 'send' | 'update' | 'reconnect' | 'close' | 'mailCheck' | 'mailReply' | 'mailAttachment', argument?: unknown): Promise<unknown> {
     this.nativePackageAuthorize(scope, receipt, 'connections');
+    if (operation.startsWith('mail')) this.nativePackageAuthorize(scope, receipt, 'network');
     const shard = this.gatewayShard(receipt.name, connectionId);
     if (shard === undefined) {if (operation === 'status' || operation === 'close') return null; throw new Error('Connection is not open');}
     const gateway = this.gateway(shard), key = this.gatewayKey(scope, receipt.name, connectionId);
@@ -742,6 +743,7 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
       case 'send': return gateway.send(key, argument as never);
       case 'update': return gateway.update(key, argument);
       case 'reconnect': return gateway.reconnect(key);
+      case 'mailCheck': case 'mailReply': case 'mailAttachment': return gateway.mailCall(key, operation, argument);
       case 'close': await gateway.close(key); this.ctx.storage.sql.exec('DELETE FROM weft_gateway_connections WHERE package=? AND connection_id=?', receipt.name, connectionId); return null;
     }
   }

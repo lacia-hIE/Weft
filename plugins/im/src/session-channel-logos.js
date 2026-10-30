@@ -1,8 +1,8 @@
 // Adapted from xmanrui/dsh-im (MIT), b9baa78. See ../THIRD_PARTY_NOTICES.md.
 import {parseSessionChannelTitle} from './session-labels.js';
-import {WeixinLogoGlyph, FeishuLogoGlyph, QqLogoGlyph} from './channel-logos.js';
+import {WeixinLogoGlyph, FeishuLogoGlyph, QqLogoGlyph, EmailLogoGlyph} from './channel-logos.js';
 
-const GLYPHS = {weixin: [WeixinLogoGlyph, '#07c160'], feishu: [FeishuLogoGlyph, '#3370ff'], qq: [QqLogoGlyph, '#12b7f5']};
+const GLYPHS = {weixin: [WeixinLogoGlyph, '#07c160'], feishu: [FeishuLogoGlyph, '#3370ff'], qq: [QqLogoGlyph, '#12b7f5'], email: [EmailLogoGlyph, '#7c6ee6']};
 const CHANNEL_ATTR = 'data-weft-im-session-channel';
 const TITLE_ATTR = 'data-weft-im-session-text';
 const MARKED = `[${CHANNEL_ATTR}]`;

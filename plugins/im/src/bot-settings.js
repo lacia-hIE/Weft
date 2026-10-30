@@ -2,7 +2,7 @@ import React from 'react';
 import {CONTEXT_ENHANCEMENT_FIELDS, normalizeContextEnhancementConfig} from './reference/context-enhancement.mjs';
 
 const h = React.createElement;
-const scenes = channel => channel === 'weixin' ? ['direct'] : ['direct', 'group'];
+const scenes = channel => ['weixin', 'email'].includes(channel) ? ['direct'] : ['direct', 'group'];
 
 export function ModelSettings({selection, catalog, load, disabled, loadingDisabled, onChange, t}) {
   const key = selection ? JSON.stringify([selection.provider, selection.model]) : '';
@@ -37,7 +37,7 @@ export function AccessSettings({channel, value, edit, disabled, t}) {
   const policy = editableAccessPolicy(value);
   const update = (scene, scope) => edit('accessPolicy', {...policy, [scene]: scope});
   return h(React.Fragment, null,
-    h('p', {className: 'im-description'}, t('accessOwnerHint')),
+    h('p', {className: 'im-description'}, t(channel === 'email' ? 'emailAccessHint' : 'accessOwnerHint')),
     ...scenes(channel).map(scene => {
       const scope = policy[scene], open = scope.mode === 'open';
       const branch = open ? 'open' : 'allowlist', key = open ? 'commandPermissionOverrides' : 'users';
@@ -51,7 +51,7 @@ export function AccessSettings({channel, value, edit, disabled, t}) {
           onChange: event => update(scene, {...scope, open: {...scope.open, defaultCanExecuteCommands: event.target.checked}})}), t('defaultCommandPermission')) : null,
         h('p', {className: 'im-description'}, t(open ? 'commandOverridesHint' : 'allowlistHint')),
         ...users.map((user, index) => h('div', {key: index, className: 'im-policy-user'},
-          h('label', {className: 'dim-credentialField'}, t('userId'), h('input', {type: 'text', value: user.id, autoComplete: 'off', maxLength: 256,
+          h('label', {className: 'dim-credentialField'}, t(channel === 'email' ? 'emailSender' : 'userId'), h('input', {type: 'text', value: user.id, autoComplete: 'off', maxLength: 256,
             onChange: event => changeUsers(users.map((entry, n) => n === index ? {...entry, id: event.target.value} : entry))})),
           h('label', {className: 'im-checkbox'}, h('input', {type: 'checkbox', checked: user.canExecuteCommands,
             onChange: event => changeUsers(users.map((entry, n) => n === index ? {...entry, canExecuteCommands: event.target.checked} : entry))}), t('canExecuteCommands')),

@@ -8,3 +8,5 @@
       name: '@weft/dsh-im/weixin'
     - id: im-qq
       name: '@weft/dsh-im/qq'
+    - id: im-email
+      name: '@weft/dsh-im/email'

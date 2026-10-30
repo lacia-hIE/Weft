@@ -122,3 +122,10 @@ ConnectionGatewayDO ──(按连接顺序、批量)──▶ EnvironmentDO.nati
 
 - 单分片的连接数和吞吐上限，需要压测确定。
 - 各渠道对确认时限的要求（例如飞书事件 ack 的超时）能否容忍唤醒环境的延迟；如果不能，再评估由网关代发通用确认帧。
+
+
+### Generic mailbox connections
+
+`weftConnections.mail(id, handlers)` declares an encrypted IMAP/SMTP mailbox. The Host owns the TCP transports (ImapFlow over `cloudflare:sockets`, bounded SMTP submission and MIME encoding); a package never obtains a raw TCP socket. The existing network and persistent connection grants, receipt leases and tenant/environment routing apply. Mailboxes poll from Durable Object alarms about once a minute, persist UIDVALIDITY/UID cursors and only advance after buffered events are acknowledged. First connection and a UIDVALIDITY reset baseline at UIDNEXT rather than replaying historical mail.
+
+`checkMail`, `replyMail` and `mailAttachment` are scoped to that connection. SMTP recipients and thread headers are reconstructed from the original IMAP message. Replies reserve a durable SHA-256 delivery identity before SMTP so an uncertain DATA acknowledgement cannot cause automatic duplicate sends. New credentials replace the transport without resetting a same-account cursor; a different mailbox discards old buffered events and starts a new cursor. No messages are marked read or removed.

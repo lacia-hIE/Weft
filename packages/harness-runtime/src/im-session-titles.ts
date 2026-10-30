@@ -2,8 +2,8 @@
 import type {Context} from '@deepseek-ai/cordis';
 import type {Session} from '@deepseek-ai/dsh-session';
 
-const labels: Record<string, readonly string[]> = {weixin: ['微信', 'WeChat'], feishu: ['飞书', 'Feishu'], qq: ['QQ']};
-const provenance = /^(weixin|feishu|qq)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
+const labels: Record<string, readonly string[]> = {weixin: ['微信', 'WeChat'], feishu: ['飞书', 'Feishu'], qq: ['QQ'], email: ['邮箱', 'Email']};
+const provenance = /^(weixin|feishu|qq|email)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
 
 /** Preserve native title sources/citations and automatic revisions. Never call rename. */
 export function installImSessionTitles(ctx: Context): void {

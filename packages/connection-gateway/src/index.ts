@@ -1,6 +1,8 @@
 import {DurableObject} from 'cloudflare:workers';
 import {z} from 'zod';
 import {destination} from '../../native-plugins/src/network.ts';
+import {connect} from 'cloudflare:sockets';
+import {MailTransport, mailSpec, mailIdentity, mailReply, type MailSpec} from './mail.ts';
 
 /**
  * Shared holder of plugins' outbound sockets and long polls, so the owning
@@ -45,7 +47,7 @@ const pollSpec = z.object({
   failWhen: z.array(z.object({path, notIn: z.array(value).max(16)}).strict()).max(4).default([]),
   timeoutMs: z.number().int().min(1000).max(120_000).default(45_000),
 }).strict();
-export const connectionSpec = z.discriminatedUnion('kind', [socketSpec, pollSpec]);
+export const connectionSpec = z.union([socketSpec, pollSpec, mailSpec]);
 export type ConnectionSpec = z.infer<typeof connectionSpec>;
 export const connectionPatch = z.object({heartbeat: heartbeat.optional(), idleMs: idleMs.optional(), state: z.record(name, value).optional()}).strict();
 
@@ -95,6 +97,7 @@ export abstract class ConnectionGateway<Env = unknown> extends DurableObject<Env
       version TEXT NOT NULL, spec TEXT NOT NULL, state TEXT NOT NULL, cursor TEXT NOT NULL, status TEXT NOT NULL, attempts INTEGER NOT NULL) STRICT`);
     sql.exec('CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT NOT NULL, event TEXT NOT NULL, bytes INTEGER NOT NULL, not_before INTEGER NOT NULL) STRICT');
     sql.exec('CREATE INDEX IF NOT EXISTS events_key ON events (key, id)');
+    sql.exec('CREATE TABLE IF NOT EXISTS mail_deliveries (key TEXT NOT NULL, id TEXT NOT NULL, result TEXT, PRIMARY KEY(key, id)) STRICT');
     // A deploy or eviction drops every socket; the alarm restores them from storage.
     void ctx.blockConcurrencyWhile(async () => {if (this.count() && await ctx.storage.getAlarm() === null) await ctx.storage.setAlarm(Date.now() + 1000);});
   }
@@ -102,16 +105,20 @@ export abstract class ConnectionGateway<Env = unknown> extends DurableObject<Env
   /** Register or replace one connection. A new connection is refused when this shard is full. */
   async open(input: {key: string; scope: GatewayScope; receipt: GatewayReceipt; connectionId: string; version: string; spec: unknown}): Promise<{ok: true} | {full: true}> {
     const spec = connectionSpec.parse(input.spec);
-    destination(spec.kind === 'socket' ? spec.url : spec.request.url);
+    if (spec.kind !== 'mail') destination(spec.kind === 'socket' ? spec.url : spec.request.url);
     const existing = this.row(input.key);
     if (!existing && this.count() >= this.capacity()) return {full: true};
     this.stop(input.key);
+    const oldSpec = existing && JSON.parse(existing.spec) as ConnectionSpec | undefined;
+    const accountChanged = spec.kind === 'mail' && (oldSpec?.kind !== 'mail' || mailIdentity(oldSpec) !== mailIdentity(spec));
+    if (accountChanged) this.ctx.storage.sql.exec('DELETE FROM events WHERE key=?', input.key);
     // A fresh specification answers any reconnect question still waiting in the buffer.
     this.ctx.storage.sql.exec("DELETE FROM events WHERE key=? AND json_extract(event, '$.type')='closed'", input.key);
     this.ctx.storage.sql.exec(`INSERT INTO connections (key, scope, receipt, connection_id, version, spec, state, cursor, status, attempts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'connecting', ?)
       ON CONFLICT(key) DO UPDATE SET scope=excluded.scope, receipt=excluded.receipt, version=excluded.version, spec=excluded.spec, cursor=excluded.cursor, status='connecting'`,
     input.key, JSON.stringify(input.scope), JSON.stringify(input.receipt), input.connectionId, input.version.slice(0, 256), JSON.stringify(spec),
-    existing?.state ?? '{}', existing?.cursor || (spec.kind === 'poll' ? spec.cursor.initial ?? '' : ''), existing?.attempts ?? 0);
+    accountChanged ? '{}' : existing?.state ?? '{}', accountChanged ? '' : existing?.cursor || (spec.kind === 'poll' ? spec.cursor.initial ?? '' : ''), existing?.attempts ?? 0);
+    if (accountChanged) this.ctx.storage.sql.exec("UPDATE connections SET state='{}' WHERE key=?", input.key);
     await this.ensureAlarm();
     this.start(input.key);
     return {ok: true};
@@ -144,8 +151,31 @@ export abstract class ConnectionGateway<Env = unknown> extends DurableObject<Env
     this.stop(key);
     this.ctx.storage.sql.exec('DELETE FROM events WHERE key=?', key);
     this.ctx.storage.sql.exec('DELETE FROM connections WHERE key=?', key);
+    this.ctx.storage.sql.exec('DELETE FROM mail_deliveries WHERE key=?', key);
     for (const resolve of this.live.get(key)?.drained.splice(0) ?? []) resolve();
     this.live.delete(key);
+  }
+
+  /** IMAP/SMTP operations are limited to the mailbox held by this admitted connection. */
+  async mailCall(key: string, operation: 'mailCheck' | 'mailReply' | 'mailAttachment', argument?: unknown): Promise<unknown> {
+    const row = this.row(key), spec = row && JSON.parse(row.spec) as ConnectionSpec | undefined;
+    if (spec?.kind !== 'mail') throw new Error('Mailbox connection is not open');
+    const transport = new MailTransport(connect);
+    try {
+      if (operation === 'mailCheck') {await transport.check(spec); return {state: 'ready'};}
+      if (operation === 'mailAttachment') return await transport.attachment(spec, argument);
+      const input = mailReply.parse(argument);
+      const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(mailIdentity(spec) + JSON.stringify(input)));
+      const id = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+      const old = this.ctx.storage.sql.exec<{result: string | null}>('SELECT result FROM mail_deliveries WHERE key=? AND id=?', key, id).toArray()[0];
+      if (old?.result) return JSON.parse(old.result);
+      if (old) throw new Error('Mail delivery is uncertain; confirm in the mailbox before retrying');
+      // Reserve before SMTP DATA. An ambiguous disconnect must never send a second copy.
+      this.ctx.storage.sql.exec('INSERT INTO mail_deliveries (key, id) VALUES (?, ?)', key, id);
+      const result = await transport.reply(spec, input);
+      this.ctx.storage.sql.exec('UPDATE mail_deliveries SET result=? WHERE key=? AND id=?', JSON.stringify(result), key, id);
+      return result;
+    } catch {throw new Error('Mailbox operation failed; check credentials, TLS and server access');}
   }
 
   override async alarm(): Promise<void> {
@@ -187,7 +217,26 @@ export abstract class ConnectionGateway<Env = unknown> extends DurableObject<Env
     const row = this.row(key);
     if (!row) return;
     if ((JSON.parse(row.spec) as ConnectionSpec).kind === 'socket') void this.openSocket(key);
-    else {this.setStatus(key, 'open'); void this.poll(key);}
+    else {this.setStatus(key, 'open'); if ((JSON.parse(row.spec) as ConnectionSpec).kind === 'mail') void this.pollMail(key); else void this.poll(key);}
+  }
+  private async pollMail(key: string): Promise<void> {
+    const live = this.liveOf(key); if (live.poll) return;
+    const abort = live.poll = new AbortController(), row = this.row(key);
+    if (!row) {live.poll = undefined; return;}
+    try {
+      const result = await new MailTransport(connect).poll(JSON.parse(row.spec) as MailSpec, row.cursor);
+      if (abort.signal.aborted || !this.row(key)) return;
+      if (result.messages.length) {
+        this.enqueue(key, {type: 'response', body: result});
+        await new Promise<void>(resolve => {live.drained.push(resolve); abort.signal.addEventListener('abort', () => resolve(), {once: true});});
+      }
+      if (!abort.signal.aborted && this.row(key)) {
+        const state = {...JSON.parse(this.row(key)!.state) as Tracked, checkedAt: Date.now(), error: null};
+        this.ctx.storage.sql.exec('UPDATE connections SET cursor=?, state=? WHERE key=?', result.cursor, JSON.stringify(state), key);
+      }
+    } catch {
+      if (!abort.signal.aborted && this.row(key)) this.ctx.storage.sql.exec('UPDATE connections SET state=? WHERE key=?', JSON.stringify({...JSON.parse(this.row(key)!.state), error: 'mail_connection_failed', checkedAt: Date.now()}), key);
+    } finally {if (live.poll === abort) live.poll = undefined;}
   }
   /** Close the live transport without telling the plugin; used before replacing or removing a connection. */
   private stop(key: string): void {

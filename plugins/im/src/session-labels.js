@@ -1,5 +1,5 @@
 // Adapted from xmanrui/dsh-im (MIT), b9baa78. See ../THIRD_PARTY_NOTICES.md.
-const labels = {weixin: ['微信', 'WeChat'], feishu: ['飞书', 'Feishu'], qq: ['QQ']};
+const labels = {weixin: ['微信', 'WeChat'], feishu: ['飞书', 'Feishu'], qq: ['QQ'], email: ['邮箱', 'Email']};
 
 /** Exact prefixes only: message snippets and ordinary title substrings are not channel metadata. */
 export function parseSessionChannelTitle(title) {

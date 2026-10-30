@@ -1,7 +1,7 @@
 import React from 'react';
 import {qrSvg} from './qr.js';
 import {zh, en} from './client-locales.js';
-import {WeixinLogoGlyph, FeishuLogoGlyph, QqLogoGlyph} from './channel-logos.js';
+import {WeixinLogoGlyph, FeishuLogoGlyph, QqLogoGlyph, EmailLogoGlyph} from './channel-logos.js';
 import {installSessionChannelLogos} from './session-channel-logos.js';
 import {AccessSettings, ContextSettings, ModelSettings} from './bot-settings.js';
 import {validateAccessPolicy} from './reference/access-policy.mjs';
@@ -12,10 +12,10 @@ import './client.css';
 
 const h = React.createElement;
 const NS = 'weft.im', PACKAGE = '@weft/dsh-im';
-const channels = ['weixin', 'feishu', 'qq'];
-const logos = {weixin: WeixinLogoGlyph, feishu: FeishuLogoGlyph, qq: QqLogoGlyph};
+const channels = ['weixin', 'feishu', 'qq', 'email'];
+const logos = {weixin: WeixinLogoGlyph, feishu: FeishuLogoGlyph, qq: QqLogoGlyph, email: EmailLogoGlyph};
 const namespace = channel => `installed/${PACKAGE}/im-${channel}`;
-const secretFields = ['appSecret', 'verificationToken', 'encryptKey'];
+const secretFields = ['appSecret', 'verificationToken', 'encryptKey', 'imapPassword', 'smtpPassword'];
 const keyField = channel => channel === 'weixin' ? 'loginKey' : 'managementKey';
 
 /** The deployment mount identifies the tenant and the selected environment. */
@@ -103,7 +103,7 @@ function ImSettings({forms, core, directories, presets, t}) {
   };
   return h('section', {className: 'weft-im dim-page', 'aria-label': t('title')},
     h('header', {className: 'dim-title'},
-      h('div', {className: 'dim-brand'}, h('div', {className: 'dim-brandHeading'}, h('strong', {className: 'dim-brandName'}, 'DSH-IM'), h('span', {className: 'dim-brandVersion'}, 'v0.7.3')), h('p', null, t('tagline'))),
+      h('div', {className: 'dim-brand'}, h('div', {className: 'dim-brandHeading'}, h('strong', {className: 'dim-brandName'}, 'DSH-IM'), h('span', {className: 'dim-brandVersion'}, 'v0.8.0')), h('p', null, t('tagline'))),
       h('div', {className: 'im-title-actions'},
         h('a', {href: 'https://github.com/xmanrui/dsh-im', target: '_blank', rel: 'noopener noreferrer', className: 'im-help'}, t('help')),
         h(Action, {'aria-label': t('generalSettings'), 'aria-pressed': selected === 'general', onClick: () => setSelected(selected === 'general' ? 'weixin' : 'general')}, h(Icon, {kind: 'settings'})))),
@@ -149,7 +149,7 @@ function Channel({channel, editor, active, directories, presets, t}) {
   const id = React.useId();
   const {snapshot, value, draft} = form;
   const base = hookBase();
-  const configured = snapshot.value?.accountConfigured ?? (channel === 'weixin' ? !!snapshot.value?.enabled : !!snapshot.value?.appId);
+  const configured = snapshot.value?.accountConfigured ?? (channel === 'weixin' ? !!snapshot.value?.enabled : !!(snapshot.value?.appId || snapshot.value?.address));
   const enabled = !!snapshot.value?.enabled;
   const busy = working || form.busy, disabled = busy || !snapshot.writable || snapshot.status !== 'ready';
   const state = !enabled ? 'disabled' : status?.state ?? 'unchecked';
@@ -192,7 +192,7 @@ function Channel({channel, editor, active, directories, presets, t}) {
       if (operation === 'catalog') {setCatalog(next); setAccess(key); return;}
       if (operation === 'remove') {
         setAccess(undefined); setStatus(undefined);
-        if (await form.commit({enabled: false, accountConfigured: false, displayName: '', [keyField(channel)]: '', ...(channel === 'weixin' ? {} : {appId: '', appSecret: '', ...(channel === 'feishu' ? {verificationToken: '', encryptKey: ''} : {})})}, false)) {setRemoving(false); reset();}
+        if (await form.commit({enabled: false, accountConfigured: false, displayName: '', [keyField(channel)]: '', ...(channel === 'weixin' ? {} : channel === 'email' ? {address: '', imapPassword: '', smtpPassword: ''} : {appId: '', appSecret: '', ...(channel === 'feishu' ? {verificationToken: '', encryptKey: ''} : {})})}, false)) {setRemoving(false); reset();}
         return;
       }
       setAccess(key); setStatus(next); setCheckedAt(Date.now()); setGeneration(value => value + 1);
@@ -210,14 +210,19 @@ function Channel({channel, editor, active, directories, presets, t}) {
   }, [active, access, working, form.busy, enabled, snapshot.status, snapshot.writable, snapshot.value.connectionMode]);
   const bind = async event => {
     event.preventDefault();
+    if (channel === 'email') {
+      if (!value.address?.trim() || !value.imapHost?.trim() || !value.smtpHost?.trim() || ['imap', 'smtp'].some(prefix => !value[prefix + 'Password'] && !editor.hasSecret(prefix + 'Password'))) {form.setError(t('missing')); return;}
+      if (await form.commit({enabled: true, accountConfigured: true})) {setStatus(undefined); setAccess(undefined); setView('list');}
+      return;
+    }
     if (!value.appId?.trim() || !value.appSecret && !(configured && editor.hasSecret('appSecret')) || channel === 'feishu' && !value.verificationToken && !(configured && editor.hasSecret('verificationToken'))) {form.setError(t('missing')); return;}
     if (await form.commit({enabled: true, accountConfigured: true, connectionMode: 'manual'})) {setStatus(undefined); setAccess(undefined); setView('list');}
   };
   const saveSettings = async event => {event.preventDefault(); if (await form.commit()) setStatus(undefined);};
   const field = (name, secret = false) => h(Field, {key: name, label: t(name), disabled, secret, value: secret ? draft[name] ?? '' : value[name] ?? '', placeholder: secret ? t('secretHint') : '', onChange: text => form.edit(name, text)});
-  const scan = h(Action, {kind: 'primary', disabled: disabled || form.dirty, onClick: () => void perform('scan')}, h(Icon, {kind: 'qr'}), t(configured ? 'rescan' : 'scan'));
+  const scan = channel === 'email' ? null : h(Action, {kind: 'primary', disabled: disabled || form.dirty, onClick: () => void perform('scan')}, h(Icon, {kind: 'qr'}), t(configured ? 'rescan' : 'scan'));
   const manual = h(Action, {disabled, 'aria-pressed': view === 'manual', onClick: async () => {if (view === 'manual') reset(); else {if (view === 'scan') await perform('cancel'); setView('manual');}}}, h(Icon, {kind: 'key'}), t(view === 'manual' ? 'hideCredentials' : 'manual'));
-  const transportLabel = channel === 'weixin' ? 'weixinTransport' : snapshot.value.connectionMode === 'qr' ? 'websocketTransport' : 'callbackTransport';
+  const transportLabel = channel === 'email' ? 'emailTransport' : channel === 'weixin' ? 'weixinTransport' : snapshot.value.connectionMode === 'qr' ? 'websocketTransport' : 'callbackTransport';
   const tabs = ['general', 'access', 'context', ...(channel === 'feishu' ? ['groupSettings'] : [])];
   if (snapshot.status !== 'ready') return h(Notice, null, t('unavailable'));
   return h('div', {className: 'dim-channelPage'},
@@ -227,8 +232,8 @@ function Channel({channel, editor, active, directories, presets, t}) {
       h('h3', {className: 'dim-credentialTitle'}, `${t('manualTitle')} · ${t(channel)}`), h('p', {className: 'im-description'}, t(`${channel}Guide`)),
       h('form', {className: 'dim-credentialForm', onSubmit: bind},
         channel === 'feishu' ? h('label', {className: 'dim-credentialField im-full'}, t('domain'), h('select', {disabled, value: value.domain || 'feishu', onChange: event => form.edit('domain', event.target.value)}, h('option', {value: 'feishu'}, 'Feishu'), h('option', {value: 'lark'}, 'Lark'))) : null,
-        field('appId'), field('appSecret', true), channel === 'feishu' ? [field('verificationToken', true), field('encryptKey', true)] : null,
-        h('div', {className: 'im-full'}, h(Callback, {url: `${base}/${channel}`, copied, setCopied, t, onError: form.setError})),
+        channel === 'email' ? h(EmailCredentials, {value, field, edit: form.edit, disabled, t}) : [field('appId'), field('appSecret', true)], channel === 'feishu' ? [field('verificationToken', true), field('encryptKey', true)] : null,
+        channel !== 'email' ? h('div', {className: 'im-full'}, h(Callback, {url: `${base}/${channel}`, copied, setCopied, t, onError: form.setError})) : null,
         h('div', {className: 'dim-credentialActions im-actions'}, h('button', {type: 'submit', className: 'im-button', 'data-kind': 'primary', disabled}, t(busy ? 'saving' : 'bind')), h(Action, {disabled, onClick: reset}, t('cancel'))))) : null,
     view === 'scan' ? h(QrPanel, {status, busy, channel, t, onRefresh: () => void perform('scan'), onClose: () => channel === 'weixin' ? setView('list') : void perform('cancel')}) : null,
     view === 'settings' ? h('section', {className: 'im-settings', 'aria-label': t('moreSettings')},
@@ -255,20 +260,20 @@ function Channel({channel, editor, active, directories, presets, t}) {
             h('option', {value: 'scheduled'}, t('sessionSyncScheduled')), h('option', {value: 'all'}, t('sessionSyncAll')), h('option', {value: 'off'}, t('sessionSyncOff')))),
           h('p', {key: 'session-sync-hint', className: 'im-description'}, t('sessionSyncHint')),
           h('p', {key: 'new', className: 'im-description'}, t('newSessionsHint')),
-          h('label', {key: 'chars', className: 'dim-credentialField'}, t('maxChars'), h('input', {type: 'number', min: 200, max: channel === 'feishu' ? 10000 : channel === 'qq' ? 5000 : 4000, disabled, value: value.maxChars, onChange: event => form.edit('maxChars', Number(event.target.value))})),
-          channel !== 'weixin' && snapshot.value.connectionMode !== 'qr' ? h('div', {key: 'callback'}, h(Callback, {url: `${base}/${channel}`, copied, setCopied, t, onError: form.setError})) : null] : settingsTab === 'access' ? h(AccessSettings, {channel, value, edit: form.edit, disabled, t})
+          channel !== 'email' ? h('label', {key: 'chars', className: 'dim-credentialField'}, t('maxChars'), h('input', {type: 'number', min: 200, max: channel === 'feishu' ? 10000 : channel === 'qq' ? 5000 : 4000, disabled, value: value.maxChars, onChange: event => form.edit('maxChars', Number(event.target.value))})) : null,
+          channel !== 'weixin' && channel !== 'email' && snapshot.value.connectionMode !== 'qr' ? h('div', {key: 'callback'}, h(Callback, {url: `${base}/${channel}`, copied, setCopied, t, onError: form.setError})) : null] : settingsTab === 'access' ? h(AccessSettings, {channel, value, edit: form.edit, disabled, t})
           : settingsTab === 'context' ? h(ContextSettings, {channel, value, edit: form.edit, disabled, t}) : [
             h('label', {key: 'group-mode', className: 'dim-credentialField'}, t('groupResponseMode'), h('select', {disabled, value: value.groupResponseMode || 'mention', onChange: event => form.edit('groupResponseMode', event.target.value)}, h('option', {value: 'mention'}, t('mentionOnly')), h('option', {value: 'all'}, t('allGroupMessages')))),
             h('p', {key: 'group-hint', className: 'im-description'}, t('groupPermissionHint'))],
         h('div', {className: 'im-actions'}, h('button', {type: 'submit', className: 'im-button', 'data-kind': 'primary', disabled: disabled || !form.dirty}, t(busy ? 'saving' : 'save')), h(Action, {disabled: disabled || !form.dirty, onClick: form.discard}, t('discard'))))) : null,
     view === 'list' && !configured ? h('section', {className: 'dim-surfaceCard dim-surfaceBody dim-emptyView'},
       h('div', {className: 'dim-emptyCopy'}, h('div', {className: 'dim-stateLabel'}, h('span', {className: 'dim-stateDot'}), t('notConnected')),
-        h('h3', null, t(channel === 'weixin' ? 'emptyScanTitle' : `${channel}EmptyTitle`)), h('p', null, t(channel === 'weixin' ? 'weixinGuide' : `${channel}QrGuide`)),
+        h('h3', null, t(channel === 'weixin' ? 'emptyScanTitle' : `${channel}EmptyTitle`)), h('p', null, t(channel === 'weixin' ? 'weixinGuide' : channel === 'email' ? 'emailGuide' : `${channel}QrGuide`)),
         h('div', {className: 'dim-viewActions'}, scan, channel !== 'weixin' ? manual : null, channel !== 'weixin' && enabled && snapshot.value.connectionMode === 'qr' ? h(Action, {disabled, onClick: () => void perform('check')}, t('check')) : null)), h('div', {className: 'dim-emptyBrand'}, h(Logo, {channel, large: true}))) : null,
     view === 'list' && configured ? h('section', {className: 'dim-listSection', 'aria-label': t('bots')},
       h('div', {className: 'dim-listHeading'}, h('h3', null, t('bots')), h('span', {className: 'im-transport', title: t(transportLabel)}, t(transportLabel))),
       h('article', {className: 'dim-botCard', 'aria-label': value.displayName || t(channel)}, h('div', {className: 'dim-botCardBody'},
-        h('div', {className: 'dim-botCardTop'}, h('div', {className: 'dim-botIdentity'}, h(Logo, {channel}), h('div', {className: 'dim-botName'}, h('h3', null, value.displayName || t(channel)), h('p', null, status?.botId || snapshot.value?.appId || t('weixinAccount')))),
+        h('div', {className: 'dim-botCardTop'}, h('div', {className: 'dim-botIdentity'}, h(Logo, {channel}), h('div', {className: 'dim-botName'}, h('h3', null, value.displayName || t(channel)), h('p', null, status?.botId || snapshot.value?.appId || snapshot.value?.address || t('weixinAccount')))),
           h('div', {className: 'dim-botHealthGroup'}, h('div', {className: 'dim-botHealth', role: 'status'}, h('span', {className: 'dim-healthDot', 'data-tone': connected || state === 'ready' ? 'success' : state === 'expired' ? 'error' : 'warning'}), t(state)),
             h('div', {className: 'dim-lastChecked'}, t('lastChecked'), checkedAt ? new Date(checkedAt).toLocaleTimeString() : '—'))),
         channel === 'feishu' && status?.reply ? h('div', {className: 'im-description', role: 'status'},
@@ -287,6 +292,18 @@ function Channel({channel, editor, active, directories, presets, t}) {
     h(Notice, {error: true}, form.error || (status?.error ? ['qrExpiredError', 'qrFailed', 'qrDenied'].includes(status.error) ? t(status.error) : status.error : undefined)), h(Notice, null, form.message));
 }
 
+function EmailCredentials({value, field, edit, disabled, t}) {
+  return h(React.Fragment, null, field('address'), field('mailbox'), ...['imap', 'smtp'].map(prefix => h('fieldset', {key: prefix, className: 'im-full dim-credentialForm'},
+    h('legend', null, prefix.toUpperCase()), field(prefix + 'Host'),
+    h('label', {className: 'dim-credentialField'}, t(prefix + 'Port'), h('input', {type: 'number', min: 1, max: 65535, disabled, value: value[prefix + 'Port'] ?? (prefix === 'imap' ? 993 : 465), onChange: event => edit(prefix + 'Port', Number(event.target.value))})),
+    h('label', {className: 'dim-credentialField'}, t('emailSecurity'), h('select', {disabled, value: value[prefix + 'Security'] || 'tls', onChange: event => edit(prefix + 'Security', event.target.value)},
+      h('option', {value: 'tls'}, 'SSL/TLS'), h('option', {value: 'starttls'}, 'STARTTLS'))),
+    field(prefix + 'User'),
+    h('label', {className: 'dim-credentialField'}, t('emailAuth'), h('select', {disabled, value: value[prefix + 'Auth'] || 'password', onChange: event => edit(prefix + 'Auth', event.target.value)},
+      h('option', {value: 'password'}, t('emailPasswordAuth')), h('option', {value: 'oauth2'}, 'OAuth2 access token'))),
+    field(prefix + 'Password', true))));
+}
+
 function Callback({url, copied, setCopied, t, onError}) {
   return h('div', {className: 'im-callback'}, h(Field, {label: t('callback'), value: url, readOnly: true}),
     h(Action, {onClick: async () => {try {await navigator.clipboard.writeText(url); setCopied(true);} catch {onError(t('copyFailed'));}}}, t(copied ? 'copied' : 'copy')));
@@ -301,7 +318,7 @@ function QrPanel({status, busy, channel, t, onRefresh, onClose}) {
       h('div', {className: 'dim-qrColumn'}, h('div', {className: 'dim-qrFrame'}, svg ? h('div', {className: 'im-qr-svg', role: 'img', 'aria-label': t(key('qrImage')), dangerouslySetInnerHTML: {__html: svg}}) : h(Icon, {kind: 'qr', size: 58}),
         expired ? h('div', {className: 'dim-qrExpired', role: 'status'}, t(status?.state === 'cancelled' ? 'qrDenied' : status?.state === 'error' ? 'qrFailed' : 'qrExpired')) : null)),
       h('div', {className: 'dim-qrCopy'}, h('div', {className: 'dim-stateLabel'}, h('span', {className: 'dim-stateDot', 'data-tone': expired ? 'warning' : undefined}), t(expired ? ['cancelled', 'error'].includes(status?.state) ? status.state : 'expired' : status?.state === 'connecting' ? 'connecting' : 'waiting')),
-        h('h3', null, t(key('scanTitle'))), h('p', null, t(channel === 'weixin' ? 'weixinGuide' : `${channel}QrGuide`)), h('ol', {className: 'dim-steps'}, ['scanStep1', 'scanStep2', 'scanStep3'].map(step => h('li', {key: step}, t(key(step))))),
+        h('h3', null, t(key('scanTitle'))), h('p', null, t(channel === 'weixin' ? 'weixinGuide' : channel === 'email' ? 'emailGuide' : `${channel}QrGuide`)), h('ol', {className: 'dim-steps'}, ['scanStep1', 'scanStep2', 'scanStep3'].map(step => h('li', {key: step}, t(key(step))))),
         h('div', {className: 'dim-viewActions'}, h(Action, {kind: 'primary', disabled: busy, onClick: onRefresh}, t('refreshQr')), h(Action, {disabled: busy, onClick: onClose}, t(channel === 'weixin' ? 'back' : 'cancel'))))),
     h(Notice, {error: true}, error));
 }

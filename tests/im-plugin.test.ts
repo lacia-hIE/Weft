@@ -195,7 +195,7 @@ test('the deployment-bundled IM plugin bridges Feishu, QQ and WeChat conversatio
     assert.equal(offered.installed, false);
     assert.equal(offered.availability, 'missing');
     assert.deepEqual(offered.installTarget, {spec: `${plugin.name}@${plugin.version}`, version: plugin.version});
-    assert.deepEqual(offered.rows.map(row => row.rowId), ['im-core', 'im-feishu', 'im-weixin', 'im-qq']);
+    assert.deepEqual(offered.rows.map(row => row.rowId), ['im-core', 'im-feishu', 'im-weixin', 'im-qq', 'im-email']);
     const customRegistry = 'https://custom-registry.test/';
     for (const spec of [plugin.name, offered.installTarget!.spec]) {
       const inspection = await api.call<{status: string; name: string; version: string; registry: string | null}>('pluginManager/inspect', {spec, options: {registry: customRegistry}});
@@ -219,7 +219,7 @@ test('the deployment-bundled IM plugin bridges Feishu, QQ and WeChat conversatio
     assert.equal((await api.call<BundleInfo[]>('pluginManager/listBundles', {})).filter(bundle => bundle.name === plugin.name).length, 1, 'An installed bundled plugin is listed once');
     const row = (await (await runtime.dispatchFetch(url('alpha', base + '/native/package-installations'))).json() as {installations: Installation[]}).installations[0]!;
     assert.equal(row.hostScope, 'environment');
-    assert.deepEqual(row.configs?.map(entry => entry.id).sort(), ['im-core', 'im-feishu', 'im-qq', 'im-weixin']);
+    assert.deepEqual(row.configs?.map(entry => entry.id).sort(), ['im-core', 'im-email', 'im-feishu', 'im-qq', 'im-weixin']);
     assert.equal(row.permissions.sessions && row.permissions.storage && row.permissions.routes, true, 'The bundle-provided im service is not a Host service');
     assert.equal(row.permissions.client, true, 'The bundle includes the IM settings page');
     const approve = (permissions: Installation['permissions']) => runtime.dispatchFetch(url('alpha', base + '/native/package-installations'), {method: 'POST', headers: {'content-type': 'application/json'},

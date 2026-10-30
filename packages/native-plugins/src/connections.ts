@@ -20,6 +20,9 @@ export interface Connection {
   reconnect(): Promise<void>;
   close(): Promise<void>;
   status(): Promise<{state: string; version: string; tracked: Tracked} | null>;
+  checkMail(): Promise<unknown>;
+  replyMail(input: unknown): Promise<{messageId: string}>;
+  mailAttachment(input: unknown): Promise<{base64: string}>;
 }
 interface Handlers {
   /** Identifies the account behind the connection; a different version replaces the gateway's connection. */
@@ -43,16 +46,17 @@ function frameOf(data: string | Uint8Array | ArrayBuffer): Frame {
 const bytesOf = (text: string) => Uint8Array.from(atob(text), char => char.charCodeAt(0));
 
 export class WorkerConnections {
-  private readonly registered = new Map<string, {kind: 'socket' | 'poll'; handlers: Handlers; connection: Connection}>();
+  private readonly registered = new Map<string, {kind: 'socket' | 'poll' | 'mail'; handlers: Handlers; connection: Connection}>();
   constructor(private readonly host: Host) {}
   readonly service = {
     socket: (id: string, handlers: Handlers) => this.register(id, 'socket', handlers),
     poll: (id: string, handlers: Handlers) => this.register(id, 'poll', handlers),
+    mail: (id: string, handlers: Handlers) => this.register(id, 'mail', handlers),
     /** Close a connection this activation does not register, e.g. a disabled channel's. */
     close: async (id: string) => {this.registered.delete(id); await this.host.connectionCall(id, 'close');},
   };
 
-  private register(id: string, kind: 'socket' | 'poll', handlers: Handlers): Connection {
+  private register(id: string, kind: 'socket' | 'poll' | 'mail', handlers: Handlers): Connection {
     if (!/^[\w.-]{1,64}$/.test(id)) throw new TypeError('Connection ids are 1-64 word characters, dots or dashes');
     if (typeof handlers?.open !== 'function') throw new TypeError('A connection needs an open(state) function');
     const call = (operation: string, argument?: unknown) => this.host.connectionCall(id, operation, argument);
@@ -63,6 +67,9 @@ export class WorkerConnections {
       reconnect: async () => {await call('reconnect');},
       close: async () => {if (this.registered.get(id)?.connection === connection) this.registered.delete(id); await call('close');},
       status: async () => await call('status') as Awaited<ReturnType<Connection['status']>>,
+      checkMail: () => call('mailCheck'),
+      replyMail: async input => await call('mailReply', input) as {messageId: string},
+      mailAttachment: async input => await call('mailAttachment', input) as {base64: string},
     };
     this.registered.set(id, {kind, handlers, connection});
     // Re-registration after a wake keeps the running connection unless its account changed.
