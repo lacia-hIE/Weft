@@ -12,10 +12,12 @@ const previous='86a402200d95fecef4529d969836f1fe13c6cb0d';
 test('only the pinned runtime and explicitly reviewed source transition are admitted',()=>{
   assert.ok(supportsAgentRuntime(upstream.commit));assert.ok(supportsAgentRuntime(previous));
   assert.ok(supportsAgentRuntime('687f282e8625c6b8d11ff58211a90524be2e4317'));
+  assert.ok(supportsAgentRuntime('1f81c047fc48fa190a683e469daa699857e9afe8'));
+  assert.ok(supportsAgentRuntime('504a01a9578abc2c6f1fb896b1dc322c9fe24f66'));
   assert.equal(supportsAgentRuntime('an-earlier-upstream'),false);assert.equal(supportsAgentRuntime('future-unreviewed-runtime'),false);
 });
 
-for(const previous of ['86a402200d95fecef4529d969836f1fe13c6cb0d','687f282e8625c6b8d11ff58211a90524be2e4317'])test(`retained ${previous.slice(0,7)} Session and custom preset continue under rc.3 across restart without rewriting history`,{timeout:120_000},async()=>{
+for(const previous of ['86a402200d95fecef4529d969836f1fe13c6cb0d','687f282e8625c6b8d11ff58211a90524be2e4317','1f81c047fc48fa190a683e469daa699857e9afe8','504a01a9578abc2c6f1fb896b1dc322c9fe24f66'])test(`retained ${previous.slice(0,7)} Session and custom preset continue under rc.5 across restart without rewriting history`,{timeout:120_000},async()=>{
   const directory=await mkdtemp(join(tmpdir(),'weft-upstream-'));
   const options={browser:true,scriptPath:'dist/environment-storage-worker.js'};
   let runtime=createRuntime(directory,options);const api=nativeClient(()=>runtime);

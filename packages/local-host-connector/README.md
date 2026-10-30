@@ -1,6 +1,6 @@
 # Weft local Host connector
 
-A native DSH Host plugin for **DSH 0.2.1-rc.2, 0.2.1-rc.3 and 0.2.1-rc.4**, installed through the original
+A native DSH Host plugin for **DSH 0.2.1-rc.2, 0.2.1-rc.3, 0.2.1-rc.4 and 0.2.1-rc.5**, installed through the original
 `dsh.bundle.patch` mechanism. Run `dsh web` with its loopback listener. The
 connector opens an outbound TLS WebSocket to your Weft deployment; no inbound
 port or local certificate is needed with the default HTTP loopback listener.
@@ -11,15 +11,15 @@ quit or restarting for an update, the Weft environment shows offline and reconne
 Connector 0.2.x supports both releases and adds native connection settings and
 fragmented transport. Existing pairing files can be kept. As of 2026-10-25 the
 newest published release is rc.3 (`next`); npm `latest` still resolves to rc.2.
-Install the newest explicitly with `npm install -g @deepseek-ai/dsh@0.2.1-rc.4`.
+Install the newest explicitly with `npm install -g @deepseek-ai/dsh@0.2.1-rc.5`.
 Untested releases remain rejected by both the native installer and the relay.
 
 1. In Weft, choose **连接本地 DSH**, generate a connection and copy its pairing code.
 2. Install `@laciaproject/dsh-local-host` from the native DSH Plugins page.
    Select **Enable now** when installation completes.
    The downloadable tarball remains available for offline installation by absolute path.
-   CLI: `dsh plugin --profile web add @laciaproject/dsh-local-host@0.2.6`, or for Desktop (fully quit, opened once
-   before) `dsh plugin --profile desktop add @laciaproject/dsh-local-host@0.2.6`.
+   CLI: `dsh plugin --profile web add @laciaproject/dsh-local-host@0.2.7`, or for Desktop (fully quit, opened once
+   before) `dsh plugin --profile desktop add @laciaproject/dsh-local-host@0.2.7`.
 3. Open **Plugins → Weft local connection** (`@laciaproject/dsh-local-host`) on the local DSH page, paste the code
    and select **Save and connect**. The plugin saves settings on this computer;
    no JSON download, manual file editing or restart is needed. Settings survive
@@ -31,7 +31,7 @@ Untested releases remain rejected by both the native installer and the relay.
 4. Return to Weft. The environment becomes available when DSH connects.
 
 Older DSH versions, including `0.1.7-rc.2`, must be upgraded first:
-`npm install -g @deepseek-ai/dsh@0.2.1-rc.4`, then restart `dsh web`.
+`npm install -g @deepseek-ai/dsh@0.2.1-rc.5`, then restart `dsh web`.
 The connector reports an upgrade instruction when the Host cannot publish its release identity.
 
 If an earlier tarball installed `@weft/dsh-local-host`, remove that bundle before
@@ -64,7 +64,7 @@ Protocol 3 carries native messages up to 8 MiB and HTTP bodies in 32 KiB chunks,
 with up to 16 unacknowledged chunks per stream and a 16 MiB aggregate Mux buffer
 budget per device direction. Text responses (scripts, styles, JSON) are gzip
 compressed on the device carrier and restored by the relay. Slow or overflowing
-streams close individually; interrupted messages are discarded. Connector 0.2.6
+streams close individually; interrupted messages are discarded. Connector 0.2.6 and 0.2.7
 and the Weft relay must both speak protocol 3; older connectors are rejected as
 incompatible and must be upgraded.
 

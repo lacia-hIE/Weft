@@ -1,17 +1,12 @@
 # Harness 兼容性与维护
 
-当前目标为 **DSH `0.2.1-rc.3`**，提交 `1f81c047fc48fa190a683e469daa699857e9afe8`。这是固定的适配基线，不随 npm `latest` 或上游分支自动更新。
+当前目标为 **DSH `0.2.1-rc.5`**，提交 `b830ec950faba0a46dda564be3e2d854afed94f1`。这是固定的适配基线，不随 npm `latest` 或上游分支自动更新；云端内核、原版前端和 Remote ABI 一起升级。
 
-本地 Host 连接插件独立支持 `0.2.1-rc.2`、`0.2.1-rc.3` 与最新发布的 `0.2.1-rc.4`。rc.3 → rc.4（`504a01a9578abc2c6f1fb896b1dc322c9fe24f66`）
-只改动对话会话骨架、DeepSeek 账号提供方和 MCP 客户端连接（ACP 诊断不再写入 stdout），连接插件依赖的 WebServer、
-浏览器认证、Client Modules 与 Remote 协议未变。桌面 App 的 Host 以 `desktop` profile 运行同一发布版，CI 以 rc.4 验证该启动方式。
-rc.3 为提交 `1f81c047fc48fa190a683e469daa699857e9afe8`；rc.2 → rc.3 的
-WebServer、Client Modules、Connection、Session 存储格式和 Host Remote 协议实现
-未变；Client Session 接口仅调整注释。rc.3 的原版客户端包含插件入口菜单与
-空白会话草稿复用修复，整体由本机 Host 提供，不混入云端的 Boot Graph。
-连接插件的 `package.json` 中 `engines.dsh` 是安装器、Host、中继及 UI 共同使用的
-版本清单；CI 对每个支持版本启动 npm 发布的原版，验证真实文件、Git、PTY 与
-刷新恢复。此清单不放宽云端保留 revision 的来源检查，也不声明兼容未知后续版本。
+本地 Host 连接插件 0.2.7 支持 `0.2.1-rc.2`、`0.2.1-rc.3`、`0.2.1-rc.4` 与 `0.2.1-rc.5`。连接协议仍为 3，旧版 0.2.6 使用同一协议；rc.5 需要更新连接插件的精确版本清单。CI 对四个版本分别启动 npm 发布的原版 Web Host，并以 rc.4、rc.5 的 `desktop` profile 验证桌面 Host 启动方式、原生文件、Git、PTY 与刷新恢复。`engines.dsh` 仍是安装器、Host、中继及 UI 共用的精确清单，不接受未经审查的后续版本。
+
+rc.3（`1f81c047fc48fa190a683e469daa699857e9afe8`）→ rc.4（`504a01a9578abc2c6f1fb896b1dc322c9fe24f66`）→ rc.5 的源码审查覆盖完整 Git diff，包含 GitHub Compare API 的 300 文件截断之后的文件。所有包清单除版本号外没有变化，未增加依赖。Session V4、核心 Agent、权限、预设、WebServer、浏览器认证、Client Modules 与 Host Remote 协议实现未变。
+
+变化包括会话视图标签、DeepSeek 账号目录日志改走 stderr、MCP 服务未声明资源能力时直接返回空列表，以及 rc.5 的思考文本显示：`conversation.chat.reasoning.body` 同时提供原始 `rawText` 与显示用 `text`，原版显示层过滤开头的 `<signature>…</signature>` 元数据；思考原文仍留在原生历史。Weft 不覆写该 Slot，直接构建原版实现。浏览器回归覆盖签名隐藏、Markdown 正文显示、刷新恢复和原始历史保留。第三方思考正文扩展应使用 `text` 渲染，需原始模型输出时使用 `rawText`，参见[上游发布与升级说明](https://github.com/deepseek-ai/deepseek-harness/releases/tag/dsh-v0.2.1-rc.5)。
 
 upstream.lock.json 固定 commit。服务端插件、模型协议、浏览器内核、UI 控件与样式从同一份源码构建。prepare-upstream.mjs 保留用户现有 checkout，必要时使用独立固定副本；所有公共及内部导入均指向同一副本。管理的副本若版本不匹配或有 tracked 修改则停止。升级需显式审查兼容契约。
 
@@ -42,11 +37,11 @@ vendor 使用独立声明；上游 repeat-tool-reminder 的 broad-union 类型�
 
 Cordis 兼容不自动提供浏览器、Node 主机、进程或真实 Shell 能力。扩展任意生态包时先判定宿主需求，建立适配与验收后加入目录。
 
-## alpha.4 / rc.2 → rc.3 的兼容范围
+## alpha.4 / rc.2–rc.4 → rc.5 的兼容范围
 
-`packages/harness-runtime/src/revision.ts` 明确列出已审查的来源：`86a402200d95fecef4529d969836f1fe13c6cb0d`（本项目此前的 `0.2.1-alpha.4`）和 `687f282e8625c6b8d11ff58211a90524be2e4317`（`0.2.1-rc.2`）。对比中 Session V4 存储格式、核心 Agent 生命周期和预设文档契约没有源代码变化；Tools 的变化涉及 PTC 提示词与 SDK 呈现，仍使用原版 `run_code` 和现有 function-body 执行方式。
+`packages/harness-runtime/src/revision.ts` 明确列出已审查的来源：`86a402200d95fecef4529d969836f1fe13c6cb0d`（本项目此前的 `0.2.1-alpha.4`）、`687f282e8625c6b8d11ff58211a90524be2e4317`（`0.2.1-rc.2`）、`1f81c047fc48fa190a683e469daa699857e9afe8`（`0.2.1-rc.3`）和 `504a01a9578abc2c6f1fb896b1dc322c9fe24f66`（`0.2.1-rc.4`）。对比中 Session V4 存储格式、核心 Agent 生命周期和预设文档契约没有源代码变化；Tools 的变化涉及 PTC 提示词与 SDK 呈现，仍使用原版 `run_code` 和现有 function-body 执行方式。
 
-因此旧会话、旧自定义预设可以保留来源记录，在 rc.3 运行时继续执行，无需重写历史、清除配置或重置工作区。原版预设仍按已有的种子归属规则更新，用户修改过的预设保持原样。回归覆盖两种旧来源的历史前缀、升级后继续对话、对象重启、旧自定义预设创建会话和未知版本拒绝。这项许可不代表任意版本的本地 Host 或 Client 协议可以混用。
+因此旧会话、旧自定义预设可以保留来源记录，在 rc.5 运行时继续执行，无需重写历史、清除配置或重置工作区。原版预设仍按已有的种子归属规则更新，用户修改过的预设保持原样。回归覆盖四种旧来源的历史前缀、升级后继续对话、对象重启、旧自定义预设创建会话和未知版本拒绝。这项许可不代表任意版本的本地 Host 或 Client 协议可以混用。
 
 rc.3 的插件「更多」菜单与草稿复用使用原版实现。API Key 模型目录也使用原版 `/models` 跟随逻辑；workerd 仅把该请求的 `redirect: error` 替换为 `manual`，原版非 2xx 分支继续拒绝重定向，避免转发密钥。CI 验证模型目录请求、重定向拒绝、插件入口与未发送草稿恢复。
 

@@ -32,11 +32,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        dsh: ['0.2.1-rc.2', '0.2.1-rc.3', '0.2.1-rc.4']
+        dsh: ['0.2.1-rc.2', '0.2.1-rc.3', '0.2.1-rc.4', '0.2.1-rc.5']
         profile: [web]
         # Desktop's Host child boots the same release with its own profile; Electron itself is not needed.
         include:
           - dsh: '0.2.1-rc.4'
+            profile: desktop
+          - dsh: '0.2.1-rc.5'
             profile: desktop
     env:
       WEFT_LOCAL_DSH_TEST: '1'

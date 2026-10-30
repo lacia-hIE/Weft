@@ -4,7 +4,7 @@ import localHostPackage from '../../packages/local-host-connector/package.json' 
 test('local environment uses native controls for pairing and safe removal',async({page,request,context})=>{
   await context.grantPermissions(['clipboard-read','clipboard-write']);
   await page.goto('/');await page.getByRole('button',{name:'连接本地 DSH',exact:true}).click();
-  await expect(page.getByRole('dialog')).toContainText('0.2.1-rc.2、0.2.1-rc.3、0.2.1-rc.4');
+  await expect(page.getByRole('dialog')).toContainText('0.2.1-rc.2、0.2.1-rc.3、0.2.1-rc.4、0.2.1-rc.5');
   await page.getByLabel('环境名称',{exact:true}).fill('My local computer');
   await page.getByRole('button',{name:'生成配对码',exact:true}).click();
   await expect(page.getByRole('button',{name:'下载连接配置',exact:true})).toHaveCount(0);

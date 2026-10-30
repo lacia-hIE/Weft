@@ -10,7 +10,7 @@ Weft brings the original DeepSeek Harness agent loop, Web UI and Cordis plugin s
 
 Deploy to your own Cloudflare account, bring your model API keys, and control access through Cloudflare Access. Each user can maintain multiple environments with their own configuration, credentials, plugins and workspaces.
 
-Weft is an independent adaptation of [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness). It currently targets **DSH `0.2.1-rc.3`**, pinned by commit in [`upstream.lock.json`](upstream.lock.json). The frontend, Remote ABI, plugins and runtime are built from the same upstream source. See [compatibility](docs/architecture/upstream-compatibility.md) for upgrade boundaries.
+Weft is an independent adaptation of [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness). It currently targets **DSH `0.2.1-rc.5`**, pinned by commit in [`upstream.lock.json`](upstream.lock.json). The frontend, Remote ABI, plugins and runtime are built from the same upstream source. See [compatibility](docs/architecture/upstream-compatibility.md) for upgrade boundaries.
 
 ## What you can do
 
@@ -27,7 +27,7 @@ Weft is an independent adaptation of [DeepSeek Harness](https://github.com/deeps
 | Native Cordis bundles | Install npm packages declaring `dsh.bundle.patch`, or review and load agent-written plugins |
 | Local DSH connection | Use your local Host's workbench, files, plugins and terminals through an outbound connection |
 
-Environment copies exclude conversation history, managed credentials and running processes. Local Host connections support DSH `0.2.1-rc.2`, `0.2.1-rc.3` and `0.2.1-rc.4`, from `dsh web` or DeepSeek Harness Desktop.
+Environment copies exclude conversation history, managed credentials and running processes. Local Host connections support DSH `0.2.1-rc.2`, `0.2.1-rc.3`, `0.2.1-rc.4` and `0.2.1-rc.5`, from `dsh web` or DeepSeek Harness Desktop.
 
 ## Quick start
 

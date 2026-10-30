@@ -1,6 +1,45 @@
 import {test,expect} from '@playwright/test';
 import {compose} from './compose.ts';
 
+test('rc.5 reasoning renders display text while preserving raw signature metadata in native history', async ({page, request}) => {
+  const {tenantId} = await (await request.get('/v1/me')).json();
+  const id = 'rc5-reasoning-' + crypto.randomUUID().slice(0, 8), base = `/v1/tenants/${tenantId}/environments/${id}/native/api/`;
+  expect((await request.post(`/v1/tenants/${tenantId}/environments`, {data: {id, name: id}})).status()).toBe(201);
+  const rpc = async (method: string, args: unknown) => {
+    const answer = await (await request.post(base + method, {data: {type: 'client-request', rpcId: crypto.randomUUID(), method, payload: {args}}})).json();
+    expect(answer.result.ok, JSON.stringify(answer)).toBe(true);
+    return answer.result.value;
+  };
+  await page.goto('/agents/' + id);
+  await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
+  await compose(page, 'WEFT_REASONING_SIGNATURE_FIXTURE');
+  await page.getByRole('button', {name: 'Send message', exact: true}).click();
+  await expect(page.getByText('Tenant: ' + tenantId, {exact: true})).toBeVisible({timeout: 30_000});
+  const check = async () => {
+    const reasoning = page.locator('[data-variant="think"]').first();
+    await expect(reasoning).toBeAttached();
+    // Use the original Chat's two disclosure layers: Turn process and group.
+    const turn = await reasoning.evaluate(element => element.closest<HTMLElement>('[data-chat-turn]')?.dataset.chatTurn);
+    const process = page.locator(`[data-turn-process="${turn}"]`);
+    if (await process.count() && await process.getAttribute('aria-expanded') === 'false') await process.click();
+    const group = reasoning.locator('xpath=ancestor::*[@data-chat-group-key][1]').locator('[data-process-activity]').first();
+    if (await group.isVisible() && await group.getAttribute('aria-expanded') === 'false') await group.click();
+    await expect(reasoning).toBeVisible();
+    if (await reasoning.getAttribute('data-expanded') !== 'true') await reasoning.getByRole('button').click();
+    await expect(reasoning).toContainText('Visible reasoning paragraph');
+    await expect(reasoning.locator('strong')).toHaveText('Second reasoning paragraph');
+    await expect(page.locator('body')).not.toContainText('weft-signature-metadata');
+  };
+  await check();
+  const sessionId = (await rpc('session/list', {_request: {}})).items[0].sessionId;
+  const projection = await rpc('session/projections', {request: {sessionId}});
+  const history = await rpc('session/page', {request: {address: {kind: 'session', sessionId}, throughSeq: projection.asOfSeq}});
+  expect(JSON.stringify(history)).toContain('<signature>weft-signature-metadata</signature>');
+  await page.reload();
+  await expect(page.getByText('Tenant: ' + tenantId, {exact: true})).toBeVisible();
+  await check();
+});
+
 test('rc.3 native More menu creates an unsent plugin draft and New Session restores a draft after switching sessions',async({page,request})=>{
   const {tenantId}=await(await request.get('/v1/me')).json();
   const id='rc3-draft-'+crypto.randomUUID().slice(0,8),base=`/v1/tenants/${tenantId}/environments/${id}/native/api/`;

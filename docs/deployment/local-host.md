@@ -1,6 +1,6 @@
 # 使用本地 DSH 环境
 
-本地模式支持 **DSH 0.2.1-rc.2、0.2.1-rc.3、0.2.1-rc.4**。本机运行原版 `dsh web` 或
+本地模式支持 **DSH 0.2.1-rc.2、0.2.1-rc.3、0.2.1-rc.4、0.2.1-rc.5**。本机运行原版 `dsh web` 或
 DeepSeek Harness 桌面 App，安装 `@laciaproject/dsh-local-host` Host 组合包；Weft 提供环境目录、设备配对与出站连接中继。
 会话、预设、模型凭据、工作区、Git、终端和插件均由本地 Host 管理。
 
@@ -10,7 +10,7 @@ Client Modules 两者一致，因此无需单独的桌面版本。关闭窗口�
 Weft 中的环境显示离线，Host 重新启动后自动重连。仅依赖 Electron 私有 IPC 的能力（账号登录窗口、更新提示、原生拖放）
 不经过 Weft 中转。
 
-截至 2026-10-28，最新发布版为 `0.2.1-rc.4`。要使用 rc.4，执行 `npm install -g @deepseek-ai/dsh@0.2.1-rc.4`；
+截至 2026-10-30，本次适配目标为 `0.2.1-rc.5`。执行 `npm install -g @deepseek-ai/dsh@0.2.1-rc.5`；
 桌面 App 按自身渠道更新。
 已安装旧连接插件的用户可下载并升级到 **0.2.1**，再升级本地 DSH；
 已有配对配置及本地数据可以保留。插件安装器、Host 和中继使用同一份明确的
@@ -38,7 +38,7 @@ application，仅匹配同一域名的 **`/v1/local-hosts/*`**，使用 Bypass �
 Cloudflare 是 TLS 终点，中继会处理传输内容；本版不提供端到端加密。每个
 租户最多 64 条网页连接、每个中继实例最多 64 个在途 HTTP 请求，正文分块
 32 KiB，文件不会整体读入内存。
-0.2.6 使用传输协议 3，中继与插件必须同为协议 3，旧版插件会被判为版本不兼容。
+0.2.6 及 0.2.7 使用传输协议 3，中继与插件必须同为协议 3，旧版插件会被判为版本不兼容。
 HTTP 正文与原版 Mux 消息都按 32 KiB 分块，每条流最多 16 块未确认（滑动窗口），
 中继在浏览器取走一块后才确认，往返延迟不再按块累加。脚本、样式、JSON 等文本响应
 在设备连接上以 gzip 传输，由中继还原后交给浏览器。
@@ -58,12 +58,12 @@ HTTP 正文与原版 Mux 消息都按 32 KiB 分块，每条流最多 16 块未�
 
 ## 用户安装
 
-1. 本机先运行 DSH `0.2.1-rc.2`、`0.2.1-rc.3` 或 `0.2.1-rc.4` 的 `dsh web`，或打开同版本的 DeepSeek Harness 桌面 App。
-   `0.1.7-rc.2` 等旧版需要先升级：`npm install -g @deepseek-ai/dsh@0.2.1-rc.4`，然后重新启动 DSH。
+1. 本机先运行 DSH `0.2.1-rc.2`、`0.2.1-rc.3`、`0.2.1-rc.4` 或 `0.2.1-rc.5` 的 `dsh web`，或打开同版本的 DeepSeek Harness 桌面 App。
+   `0.1.7-rc.2` 等旧版需要先升级：`npm install -g @deepseek-ai/dsh@0.2.1-rc.5`，然后重新启动 DSH。
    在 Weft 首页选择「连接本地 DSH」，输入名称并点击「生成配对码」和「复制配对码」。
 2. 在本地原版 DSH 或桌面 App 的「插件」页添加 npm 包 `@laciaproject/dsh-local-host`，
-   或执行 `dsh plugin --profile web add @laciaproject/dsh-local-host@0.2.6`。桌面 App 也可在完全退出后执行
-   `dsh plugin --profile desktop add @laciaproject/dsh-local-host@0.2.6`（需先打开过一次桌面 App 以初始化 profile）。也可下载
+   或执行 `dsh plugin --profile web add @laciaproject/dsh-local-host@0.2.7`。桌面 App 也可在完全退出后执行
+   `dsh plugin --profile desktop add @laciaproject/dsh-local-host@0.2.7`（需先打开过一次桌面 App 以初始化 profile）。也可下载
    页面提供的 `.tgz`，以其绝对路径安装。它原生声明 `dsh.bundle.patch`。
    安装完成后点击「立即启用」。已装过旧名 `@weft/dsh-local-host` 的用户，应先移除旧包再安装新包；配对文件保留。
 3. 在本机「插件」列表打开「Weft 本地连接」（`@laciaproject/dsh-local-host`）的详情页，直接填写「配对码」并点击「保存并连接」，无需重启。
