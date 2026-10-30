@@ -37,10 +37,10 @@ export async function apply(ctx, config) {
     const excess = [...threads.keys()].slice(0, Math.max(0, [...threads.keys()].length - 4000));
     for (const id of excess) await threads.delete(id);
   };
-  const reply = async (target, text, attachment) => {
+  const reply = async (target, text, attachment, deliveryId) => {
     if (!connection || target.account !== account) throw new Error('邮箱账号已改变，请从当前邮箱发送新邮件。');
     await connection.ready;
-    const result = await connection.replyMail({target: target.location, text, ...(attachment ? {attachment} : {})});
+    const result = await connection.replyMail({target: target.location, text, ...(attachment ? {attachment} : {}), ...(deliveryId ? {deliveryId} : {})});
     await remember(target.sender, result.messageId, target.conversation);
   };
   for (const [path, method] of [['status', 'GET'], ['disconnect', 'POST']]) {
@@ -64,9 +64,9 @@ export async function apply(ctx, config) {
     ...(config.accessPolicy ? {accessPolicy: JSON.parse(JSON.stringify(config.accessPolicy), (key, value) => key === 'id' && typeof value === 'string' ? value.trim().toLowerCase() : value)} : {})};
   access.access = channelSettings(normalized, () => undefined, () => spec.address).access;
   ctx.effect(() => ctx.im.channel('email', {...access,
-    maxChars: 1_000_000,
-    send: (target, text) => reply(target, text),
-    sendFile: (target, file) => {file.signal?.throwIfAborted(); return reply(target, '', {name: fileName(file.name), base64: base64(file.data)});},
+    maxChars: Number.MAX_SAFE_INTEGER,
+    send: (target, text, options) => reply(target, text, undefined, options?.deliveryId),
+    sendFile: (target, file) => {file.signal?.throwIfAborted(); return reply(target, '', {name: fileName(file.name), base64: base64(file.data)}, file.deliveryId);},
   }), 'email channel');
   connection = ctx.weftConnections.mail('email', {
     version: hex(await sha256(JSON.stringify(spec))), open: () => spec,

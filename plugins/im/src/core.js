@@ -72,10 +72,11 @@ class ImBridge {
     return () => {if (this.channels.get(name) === channel) this.channels.delete(name);};
   }
 
-  async send(name, target, text) {
+  async send(name, target, text, deliveryId) {
     const channel = this.channels.get(name);
     if (!channel) throw new Error(`IM channel ${name} is not active`);
-    for (const part of chunks(text, channel.maxChars ?? 2000)) await channel.send(target, part);
+    let index = 0;
+    for (const part of chunks(text, channel.maxChars ?? 2000)) await channel.send(target, part, deliveryId ? {deliveryId: `${deliveryId}:${index++}`} : undefined);
   }
 
   /** Only the authenticated calling Session can address its bound chat. */
@@ -362,12 +363,12 @@ class ImBridge {
                 if (consumed.size) {
                   const card = await this.updateCard(key, text || '（本轮没有文本回复）', true);
                   if (signal.aborted || this.conversations.get(key)?.sessionId !== row.sessionId) return;
-                  if (text && !card) await this.send(current.channel, current.target, text);
+                  if (text && !card) await this.send(current.channel, current.target, text, `${row.sessionId}:${event.seq}`);
                 }
                 else if (reply && mirror) {
                   const asked = mirror === 'web' ? foreign.map(data => textOf(data)).filter(Boolean).join('\n').slice(0, 500) : '';
                   // Mirrored turns are best effort: a refused send advances the cursor instead of repeating.
-                  try {await this.send(current.channel, current.target, asked ? `（Web）${asked}\n\n${reply}` : reply);}
+                  try {await this.send(current.channel, current.target, asked ? `（Web）${asked}\n\n${reply}` : reply, `${row.sessionId}:${event.seq}`);}
                   catch (error) {console.warn(`dsh-im mirror ${key}: ${error instanceof Error ? error.message : String(error)}`);}
                 }
                 const next = await this.conversations.update(key, value => ({...value, delivered: event.seq, pending: value.pending.filter(id => !consumed.has(id)), card: undefined, cardFailed: undefined}));

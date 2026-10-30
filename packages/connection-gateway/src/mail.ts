@@ -17,7 +17,7 @@ export const mailSpec = z.object({kind: z.literal('mail'), address: line.email()
 export type MailSpec = z.infer<typeof mailSpec>;
 export const mailIdentity = (spec: MailSpec) => JSON.stringify([spec.address.toLowerCase(), spec.imap.host.toLowerCase(), spec.imap.user, spec.mailbox]);
 export const mailTarget = z.object({uid: z.number().int().positive(), validity: z.string().regex(/^\d{1,30}$/)}).strict();
-export const mailReply = z.object({target: mailTarget, text: z.string().max(1_000_000),
+export const mailReply = z.object({target: mailTarget, text: z.string().max(1_000_000), deliveryId: line.optional(),
   attachment: z.object({name: line, base64: z.string().max(13_981_016).regex(/^[A-Za-z0-9+/]*={0,2}$/)}).strict().optional()}).strict();
 const MAX_SOURCE = 24 * 1024 * 1024, MAX_FILE = 10 * 1024 * 1024;
 type Cursor = {validity: string; uid: number};

@@ -3,6 +3,7 @@ import {z} from 'zod';
 import {destination} from '../../native-plugins/src/network.ts';
 import {connect} from 'cloudflare:sockets';
 import {MailTransport, mailSpec, mailIdentity, mailReply, type MailSpec} from './mail.ts';
+const mailboxTransport = () => new MailTransport((address, options) => connect(address, {secureTransport: options?.secureTransport ?? 'on', allowHalfOpen: options?.allowHalfOpen ?? false}));
 
 /**
  * Shared holder of plugins' outbound sockets and long polls, so the owning
@@ -160,12 +161,13 @@ export abstract class ConnectionGateway<Env = unknown> extends DurableObject<Env
   async mailCall(key: string, operation: 'mailCheck' | 'mailReply' | 'mailAttachment', argument?: unknown): Promise<unknown> {
     const row = this.row(key), spec = row && JSON.parse(row.spec) as ConnectionSpec | undefined;
     if (spec?.kind !== 'mail') throw new Error('Mailbox connection is not open');
-    const transport = new MailTransport(connect);
+    const transport = mailboxTransport();
     try {
       if (operation === 'mailCheck') {await transport.check(spec); return {state: 'ready'};}
       if (operation === 'mailAttachment') return await transport.attachment(spec, argument);
       const input = mailReply.parse(argument);
-      const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(mailIdentity(spec) + JSON.stringify(input)));
+      const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(mailIdentity(spec) + (input.deliveryId ?? JSON.stringify(input))));
+      if (this.row(key)?.version !== row?.version) throw new Error('Mailbox connection changed');
       const id = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
       const old = this.ctx.storage.sql.exec<{result: string | null}>('SELECT result FROM mail_deliveries WHERE key=? AND id=?', key, id).toArray()[0];
       if (old?.result) return JSON.parse(old.result);
@@ -224,7 +226,7 @@ export abstract class ConnectionGateway<Env = unknown> extends DurableObject<Env
     const abort = live.poll = new AbortController(), row = this.row(key);
     if (!row) {live.poll = undefined; return;}
     try {
-      const result = await new MailTransport(connect).poll(JSON.parse(row.spec) as MailSpec, row.cursor);
+      const result = await mailboxTransport().poll(JSON.parse(row.spec) as MailSpec, row.cursor);
       if (abort.signal.aborted || !this.row(key)) return;
       if (result.messages.length) {
         this.enqueue(key, {type: 'response', body: result});
