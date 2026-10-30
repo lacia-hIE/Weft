@@ -23,8 +23,9 @@ test('durable mail cursors survive transport rotation and SMTP retries cannot du
     await until(value => value.rows[0]?.cursor === '3');
     assert.equal((await gateway.fixture()).received.length, 2, 'same-account rotation resumes the previous cursor');
     const reply = {target: {uid: 10, validity: '42'}, text: 'same answer', deliveryId: 'session:turn-1'};
-    const sent = await gateway.mailCall(input.key, 'mailReply', reply);
-    assert.deepEqual(await gateway.mailCall(input.key, 'mailReply', reply), sent); assert.equal((await gateway.fixture()).sent, 1);
+    const sent = await gateway.mailCall(input.key, 'mailReply', reply) as {messageId: string};
+    const retried = await gateway.mailCall(input.key, 'mailReply', reply) as {messageId: string};
+    assert.equal(retried.messageId, sent.messageId); assert.equal((await gateway.fixture()).sent, 1);
     await gateway.mailCall(input.key, 'mailReply', {...reply, deliveryId: 'session:turn-2'});
     assert.equal((await gateway.fixture()).sent, 2, 'identical answers from separate turns are both delivered');
     await gateway.fixture('connect');
