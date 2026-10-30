@@ -25,6 +25,7 @@ test('durable mail cursors survive transport rotation and SMTP retries cannot du
     const reply = {target: {uid: 10, validity: '42'}, text: 'same answer', deliveryId: 'session:turn-1'};
     const sent = await gateway.mailCall(input.key, 'mailReply', reply) as {messageId: string};
     const retried = await gateway.mailCall(input.key, 'mailReply', reply) as {messageId: string};
+    assert.equal(sent.messageId, '<reply-0@example.com>');
     assert.equal(retried.messageId, sent.messageId); assert.equal((await gateway.fixture()).sent, 1);
     await gateway.mailCall(input.key, 'mailReply', {...reply, deliveryId: 'session:turn-2'});
     assert.equal((await gateway.fixture()).sent, 2, 'identical answers from separate turns are both delivered');
@@ -39,6 +40,6 @@ test('durable mail cursors survive transport rotation and SMTP retries cannot du
     await assert.rejects(gateway.mailCall(input.key, 'mailReply', {...reply, deliveryId: 'session:turn-4'}));
     assert.equal((await gateway.fixture()).sent, 4, 'an uncertain acknowledgement never resends the body');
     await gateway.close(input.key); assert.equal(await gateway.status(input.key), null);
-    await assert.rejects(gateway.mailCall(input.key, 'mailReply', reply), /not open/);
+    assert.match(await gateway.closedReplyError(input.key, reply), /not open/);
   } finally {await runtime.dispose();}
 });

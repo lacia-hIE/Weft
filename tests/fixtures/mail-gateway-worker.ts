@@ -3,6 +3,10 @@ import {ConnectionGateway, type GatewayScope} from '../../packages/connection-ga
 /** The real durable gateway, with deterministic provider I/O instead of external mail credentials. */
 export class MailGatewayFixture extends ConnectionGateway {
   async pollAgain() {await this.alarm();}
+  async closedReplyError(key: string, input: unknown) {
+    try {await this.mailCall(key, 'mailReply', input); return '';}
+    catch (error) {return error instanceof Error ? error.message : String(error);}
+  }
   protected capacity() {return 10;}
   protected environment(_scope: GatewayScope) {
     return {nativeConnectionLease: async (_scope: unknown, _receipt: unknown, ids: string[]) => ids,
