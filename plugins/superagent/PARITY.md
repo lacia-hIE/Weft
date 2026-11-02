@@ -10,6 +10,7 @@ Against [deepseek-ai/dsh-superagent-prototype](https://github.com/deepseek-ai/ds
 | Worker tools | Kept; scoped to the Sessions configured with them |
 | Prompts | Kept; `prepare` is an instruction to the worker, since an environment plugin runs no process |
 | Agent presets | Not ported: no custom presets exist for a plugin here, so Sessions use the default preset and instructions |
+| Tool limits on Sessions | Not ported: the main Session keeps the default preset's tools, including the shell, instead of the prototype's short list, and a worker keeps native tools after its Ticket ends. Only the `orchestrator_*` tools check the Session and its Ticket |
 | Blocked commands and account shims | Removed; they rely on a local OS account |
 | Background jobs and subagent slots | Not tracked: a worker's slot ends with its turn. Subagents see the same tools and instructions as their worker |
 | Notices without waking the main Session | Held and sent with its next message |
