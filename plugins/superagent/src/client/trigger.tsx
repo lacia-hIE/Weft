@@ -1,3 +1,4 @@
+/** @jsxRuntime automatic */
 /** Trigger status view listing Threads filtered by subscription and evaluation activity. */
 import { useState } from 'react'
 import { THREAD_FILTERS, type ThreadFilter } from '../app/api.ts'

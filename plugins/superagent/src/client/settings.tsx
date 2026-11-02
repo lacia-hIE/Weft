@@ -1,3 +1,4 @@
+/** @jsxRuntime automatic */
 /** Settings tab shell routing between stage settings (Sources, Eval, Execution), Prompts, and Deployment. */
 import type { StateView } from './api.ts'
 import { DeploymentPage, type DeploymentForm } from './deployment.tsx'

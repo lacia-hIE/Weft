@@ -1,3 +1,4 @@
+/** @jsxRuntime automatic */
 /** Context-aware shared UI widgets: page/section headers, timestamps, Markdown rendering, and confirmation actions. */
 import { Fragment, useState, type ReactNode } from 'react'
 import type { SetupProblem } from '../setup.ts'

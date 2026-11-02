@@ -1,3 +1,4 @@
+/** @jsxRuntime automatic */
 /**
  * Deployment settings view shared between the panel Settings tab and the DSH Plugin Manager config page.
  * Edits host-level plugin configuration limits through DSH `ConfigForm` when writable.

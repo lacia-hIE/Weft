@@ -1,3 +1,4 @@
+/** @jsxRuntime automatic */
 /** Overview page: pending Tickets requiring human action, active system problems, 24-hour flow counts, and Executor load. */
 import type { ReactNode } from 'react'
 import { usePoll, type Problem } from './api.ts'

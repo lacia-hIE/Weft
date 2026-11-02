@@ -1,3 +1,4 @@
+/** @jsxRuntime automatic */
 /**
  * Context-free UI primitives styled with `--dsw-alias-*` tokens.
  * Mirrors DSH ui-primitives markup and keyboard behavior without coupling to its internal package API.

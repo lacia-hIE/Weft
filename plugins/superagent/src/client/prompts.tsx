@@ -1,3 +1,4 @@
+/** @jsxRuntime automatic */
 /** Prompts settings group: section/skill editor, full composed prompt preview with diffing, and revision history. */
 import { Fragment, useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import type { ApiResponse } from '../app/api.ts'

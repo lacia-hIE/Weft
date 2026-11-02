@@ -1,3 +1,4 @@
+/** @jsxRuntime automatic */
 /** Source status view (health, filtered Triggers, dropped replies) and Source settings cards. */
 import { useEffect, useState } from 'react'
 import type { FieldSpec } from '../sources/kind.ts'

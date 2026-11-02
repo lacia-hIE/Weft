@@ -1,3 +1,4 @@
+/** @jsxRuntime automatic */
 /** Shared list rows for Tickets, Threads, and Decisions, plus Source fact chips and automated-message run folding. */
 import { useState } from 'react'
 import type { DecisionRow, ThreadFacts, ThreadRow, TicketRow } from './api.ts'

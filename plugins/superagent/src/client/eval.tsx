@@ -1,3 +1,4 @@
+/** @jsxRuntime automatic */
 /** Eval status view (Decision log) and Eval settings group (Policy rules, per-Source admission, and assessor settings). */
 import { useState } from 'react'
 import { ADMISSION_DEFAULTS, ADMISSION_OPTIONS, type Admission, type AdmissionCell } from '../admission.ts'

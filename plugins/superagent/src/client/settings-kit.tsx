@@ -1,3 +1,4 @@
+/** @jsxRuntime automatic */
 /** Shared settings context, block draft hook, form controls, Source schema field renderer, and configuration history. */
 import { cloneElement, createContext, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ReactElement,
   type ReactNode } from 'react'

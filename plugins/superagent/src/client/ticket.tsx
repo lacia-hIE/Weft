@@ -1,3 +1,4 @@
+/** @jsxRuntime automatic */
 /** Ticket detail page: stage and actions, Mandate details, undelivered/delivered Inputs, subscribed Threads, and Assignments. */
 import { useState, type ReactNode } from 'react'
 import { ApiError, usePoll, type TicketPageView } from './api.ts'

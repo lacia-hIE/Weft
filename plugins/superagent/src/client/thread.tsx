@@ -1,3 +1,4 @@
+/** @jsxRuntime automatic */
 /** Thread detail page: Trigger timeline with gap-free pagination, Decisions, subscribed Tickets, and correlated Threads. */
 import { useEffect, useState, type ReactNode } from 'react'
 import { ApiError, usePoll, type ThreadPageView, type TriggerRow } from './api.ts'

@@ -1,3 +1,4 @@
+/** @jsxRuntime automatic */
 /** Root panel shell: header with global search and glossary, top-level navigation tabs, and active route view. */
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import type { SearchView } from './api.ts'

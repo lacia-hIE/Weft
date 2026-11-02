@@ -1,3 +1,4 @@
+/** @jsxRuntime automatic */
 /** Execution status view (active Tickets and pause control) and Execution settings group (Executor capacity and workspace environment). */
 import { useRef, useState } from 'react'
 import { TICKET_FILTERS, type TicketFilter } from '../app/api.ts'

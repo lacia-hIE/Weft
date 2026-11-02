@@ -1,3 +1,4 @@
+/** @jsxRuntime automatic */
 /** Shared panel React contexts, state polling, restart detection, and action runner hook. */
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from './portal.ts'

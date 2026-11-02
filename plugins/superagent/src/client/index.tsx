@@ -1,3 +1,4 @@
+/** @jsxRuntime automatic */
 /** Browser plugin entry point registering the sidebar icon, main management panel, and Plugin Manager config view. */
 import { useCallback, useEffect, useRef } from 'react'
 import type { Context } from '@deepseek-ai/cordis'

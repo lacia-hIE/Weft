@@ -1,3 +1,4 @@
+/** @jsxRuntime automatic */
 /**
  * Optimistic settings draft state with sessionStorage persistence and three-way rebase against concurrent saves.
  */
