@@ -209,6 +209,8 @@ export class Runtime implements SourceHost {
       this.runtimeHealth.set({ ...health('paused', 'setupPending'), at: now() })
       return
     }
+    // The Source reads from when it was set up, which a first delivery must not move past what it announces.
+    if (this.store.get(KV.github.since) === undefined) this.store.set(KV.github.since, now())
     this.registerTools()
     this.disposers.push(this.ctx.weftSessionEvents.onTurnEnded(event => this.turnEnded(event.sessionId)))
     await this.sessions.ensure(MASTER_ID, this.store.settings().executor.directory, 'dsh-superagent orchestrator', 'orchestrator').catch(async (error: unknown) => {

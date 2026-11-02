@@ -14,7 +14,7 @@ import {entryNamespace} from '../packages/package-install/src/contracts.ts';
 
 const plugin = JSON.parse(readFileSync('plugins/superagent/package.json', 'utf8')) as {name: string; version: string};
 const key = 'superagent-management-key', secret = 'superagent-webhook-secret', repository = 'acme/widgets', agent = 'agent-bot';
-const issue = {number: 7, title: 'Fix the typo', body: `@${agent} please fix the typo in README`, user: {login: 'alice', type: 'User'}, created_at: new Date(Date.now() + 1000).toISOString(), updated_at: new Date(Date.now() + 1000).toISOString(), html_url: `https://github.com/${repository}/issues/7`};
+const issue = {number: 7, title: 'Fix the typo', body: `@${agent} please fix the typo in README`, user: {login: 'alice', type: 'User'}, created_at: '', updated_at: '', html_url: `https://github.com/${repository}/issues/7`};
 
 /** The main Session routes the card it was given; a worker reports ready. Everything else about the Agent and tools is real. */
 const model: V4FetchHandler = async request => {
@@ -104,13 +104,16 @@ test('a request on GitHub becomes a Ticket worked on in its own Session, without
     const policy = await panel('settings/policy', {method: 'PUT', headers: {'content-type': 'application/json'}, body: JSON.stringify({revision: current.blocks.policy.revision, value: {rules: [], sources: {github: {allowed: [{id: 'alice'}]}}}})});
     assert.equal(policy.status, 200, await policy.clone().text());
 
+    issue.created_at = issue.updated_at = new Date().toISOString();
     announced = true;
     assert.equal((await deliver()).status, 202, 'a signed delivery wakes the Source');
     const tickets = await waitFor(async () => {
       await deliver();
       const list = await (await panel('tickets')).json() as {items?: {id: string; title: string; stage?: string}[]};
       return list.items?.length ? list.items : undefined;
-    }, 'the Ticket');
+    }, 'the Ticket').catch(async (error: Error) => {
+      throw new Error(`${error.message}; sources: ${await (await panel('sources')).text()}; overview: ${await (await panel('overview')).text()}; triggers: ${await (await panel('threads?filter=all')).text()}`);
+    });
     assert.equal(tickets[0]!.title, 'Fix the typo');
 
     await waitFor(() => comments.some(comment => comment.includes('On it.')) ? true : undefined, 'the acknowledgement on the Issue');
