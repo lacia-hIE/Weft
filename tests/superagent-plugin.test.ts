@@ -14,7 +14,7 @@ import {entryNamespace} from '../packages/package-install/src/contracts.ts';
 
 const plugin = JSON.parse(readFileSync('plugins/superagent/package.json', 'utf8')) as {name: string; version: string};
 const key = 'superagent-management-key', secret = 'superagent-webhook-secret', repository = 'acme/widgets', agent = 'agent-bot';
-const issue = {number: 7, title: 'Fix the typo', body: `@${agent} please fix the typo in README`, user: {login: 'alice', type: 'User'}, created_at: '', updated_at: '', html_url: `https://github.com/${repository}/issues/7`};
+const issue = {id: 1007, state: 'open', number: 7, title: 'Fix the typo', body: `@${agent} please fix the typo in README`, user: {login: 'alice', type: 'User'}, created_at: '', updated_at: '', html_url: `https://github.com/${repository}/issues/7`};
 
 /** The main Session routes the card it was given; a worker reports ready. Everything else about the Agent and tools is real. */
 const model: V4FetchHandler = async request => {
