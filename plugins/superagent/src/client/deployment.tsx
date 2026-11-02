@@ -8,12 +8,13 @@ import type { ConfigForm } from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { ConfigPageForm } from '@deepseek-ai/dsh-client-ui-plugin-manager/client'
 import { LIMITS } from '../limits.ts'
 import type { SetupView } from './api.ts'
-import { Button, Input } from './controls.tsx'
+import { hookBase } from './access.ts'
+import { Button, Icon, Input } from './controls.tsx'
 import { SaveBar, useDraft } from './draft.tsx'
 import { PanelProvider, usePanel, usePanelData } from './provider.tsx'
 import { Field, Fields } from './settings-kit.tsx'
 import type { T } from './text.ts'
-import { CheckSetupButton, Hint, KeyValues, Section, SetupMessage } from './widgets.tsx'
+import { CheckSetupButton, ConfirmButton, Hint, KeyValues, Section, SetupMessage } from './widgets.tsx'
 
 export type DeploymentForm = (ConfigPageForm & { secretSet(field: string): boolean }) | undefined
 type Op = Parameters<ConfigPageForm['mutate']>[0][number]
@@ -24,7 +25,7 @@ const text = (value: unknown): string => typeof value === 'string' || typeof val
 const limitsOf = (values: object | undefined): Limits =>
   Object.fromEntries(MACHINE_LIMITS.map(key => [key, text((values as Record<string, unknown> | undefined)?.[key])])) as Limits
 
-const SECRETS = [{ field: 'githubToken', label: 'deploymentToken', hint: 'deploymentTokenHint' }, { field: 'webhookSecret', label: 'deploymentWebhook', hint: 'deploymentWebhookHint' }] as const
+const SECRETS = [{ field: 'githubToken', label: 'deploymentToken', hint: 'deploymentTokenHint' }] as const
 
 /** The agent's secrets: written here, and never read back; an empty field leaves what is saved. */
 function Secrets({ form, editable, revision }: { form: DeploymentForm; editable: boolean; revision: number | undefined }) {
@@ -53,6 +54,53 @@ function Secrets({ form, editable, revision }: { form: DeploymentForm; editable:
     <div className="dt-row-buttons">
       <Button variant="primary" size="sm" disabled={!editable || busy || !changed.length} onClick={() => { void save() }}>{t('deploymentSecretsSave')}</Button>
     </div>
+  </Section>
+}
+
+/** One value GitHub's webhook form asks for, with its copy button. */
+function CopyRow({ label, value }: { label: string; value: string }) {
+  const { t, notify } = usePanel()
+  const copy = () => { void navigator.clipboard.writeText(value).then(() => { notify(t('webhookCopied', { field: label })) }, () => { notify(t('webhookCopyFailed')) }) }
+  return <div className="dt-field">
+    <span className="dt-field-head">{label}</span>
+    <div className="dt-row-buttons">
+      <code className="dt-mono" style={{ overflowWrap: 'anywhere', flex: 1 }}>{value}</code>
+      <Button variant="outline" size="sm" icon={<Icon name="copy" size={14} />} aria-label={t('webhookCopy', { field: label })} onClick={copy}>{t('webhookCopyShort')}</Button>
+    </div>
+  </div>
+}
+/** A secret just generated, kept only in this page's memory: it is never read back, and saving it reloads the plugin and this view. */
+let generatedSecret = ''
+/** Everything GitHub's webhook form asks for. The agent's account cannot add a webhook itself, as that takes admin rights on the repository. */
+function WebhookSetup({ form, editable, revision, repository }: { form: DeploymentForm; editable: boolean; revision: number | undefined; repository: string | undefined }) {
+  const { t, notify, restart } = usePanel()
+  const [secret, setSecret] = useState(generatedSecret)
+  const [error, setError] = useState('')
+  const generate = async () => {
+    if (!form || revision === undefined) throw new Error(t('deploymentRefused'))
+    const value = Array.from(crypto.getRandomValues(new Uint8Array(32)), byte => byte.toString(16).padStart(2, '0')).join('')
+    if (!await form.mutate([{ op: 'set', path: ['webhookSecret'], value }], revision)) throw new Error(t('deploymentRefused'))
+    generatedSecret = value; setSecret(value); setError('')
+    // A browser may refuse the clipboard after the save; the value stays on the page with its own button.
+    await navigator.clipboard.writeText(value).then(() => { notify(t('webhookCopied', { field: t('webhookSecret') })) }, () => {})
+    restart()
+  }
+  const run = () => generate().catch((failure: unknown) => { setError(failure instanceof Error ? failure.message : String(failure)) })
+  const isSet = form?.secretSet('webhookSecret') === true
+  return <Section title={t('webhookTitle')} hint={t('webhookHint')}>
+    {repository ? <Hint><a href={`https://github.com/${repository}/settings/hooks/new`} target="_blank" rel="noreferrer">{t('webhookOpen', { repository })}</a></Hint>
+      : <Hint>{t('webhookNoRepository')}</Hint>}
+    <CopyRow label={t('webhookUrl')} value={`${hookBase()}/github`} />
+    <CopyRow label={t('webhookContentType')} value="application/json" />
+    {secret ? <CopyRow label={t('webhookSecret')} value={secret} /> : <div className="dt-field">
+      <span className="dt-field-head">{t('webhookSecret')}</span><span className="dt-hint">{isSet ? t('deploymentSecretSet') : t('deploymentSecretUnset')}</span>
+    </div>}
+    {error && <p className="dt-error" role="alert">{error}</p>}
+    <div className="dt-row-buttons">
+      {isSet || secret ? <ConfirmButton variant="outline" label={t('webhookRegenerate')} title={t('webhookRegenerate')} message={t('webhookRegenerateWarning')} onConfirm={run} />
+        : <Button variant="primary" size="sm" disabled={!editable} onClick={() => { void run() }}>{t('webhookGenerate')}</Button>}
+    </div>
+    <Hint>{t('webhookEvents')}</Hint>
   </Section>
 }
 
@@ -99,6 +147,7 @@ export function DeploymentPage({ setup, form, accounts: showAccounts }: { setup:
       </Section>}
       {readOnlyHint && <Hint>{readOnlyHint}</Hint>}
       <Secrets form={form} editable={!!editable} revision={editable ? snapshot.revision : undefined} />
+      <WebhookSetup form={form} editable={!!editable} revision={editable ? snapshot.revision : undefined} repository={accounts?.repository} />
       <Section title={t('deploymentLimits')} hint={t('deploymentLimitsHint')}>
         {limit('promptMaxChars', t('deploymentPromptMaxChars'))}
         {limit('admissionContextMaxPages', t('deploymentContextPages'))}
