@@ -846,6 +846,8 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
       // still passes the original strict Session Controller contract.
       const {permissionPreset, ...nativeRequest} = z.object({permissionPreset: initialSessionPermissionSchema.optional()}).passthrough().parse(raw);
       const {request} = sessionRemote.methods['session/create'].input({strict: true}).create().parse({request: nativeRequest});
+      // The native default exists only while the registry is empty, so a plugin's own directory must not come first.
+      await this.workspaces(scope).initializeDefault();
       const workspace = await this.nativeResolveWorkspace(scope, request.workspaceId, request.cwd);
       let sessionId = request.sessionId ?? crypto.randomUUID();
       const existingOwner = this.nativeSessionRoot(scope, sessionId);
