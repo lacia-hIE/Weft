@@ -8,7 +8,7 @@ import { SetupError } from './setup.ts'
 const reason = (error: unknown): string => error instanceof Error ? error.message : String(error)
 /** Native Settings form of the entry: secrets stay out of the panel's settings and of environment copies. */
 export const Config = s.object({
-  githubToken: s.string().role('secret').default('').description('Token of the agent\'s GitHub account, limited to the repository it works on.'),
+  githubToken: s.string().role('secret').default('').description('Classic token of the agent\'s dedicated GitHub account, with the repo and notifications scopes.'),
   webhookSecret: s.string().role('secret').default('').description('Secret of the repository webhook that wakes the Source. Without it the Source polls only.'),
   managementKey: s.string().role('secret').default('').description('Written by the management panel; authorizes its requests.'),
   reconcileSeconds: s.number().min(60).max(3600).step(1).default(300).description('Seconds between background passes when nothing wakes the environment.'),

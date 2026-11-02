@@ -24,5 +24,14 @@ test('the Superagent panel opens from the sidebar, gets its key through Settings
   await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
   await page.getByRole('button', {name: 'Superagent', exact: true}).click({timeout: 45_000});
   await expect(page.getByText('The GitHub Source names no repository.').first()).toBeVisible({timeout: 60_000});
+
+  // The credentials are written from the panel and never shown again.
+  await page.locator('#dt-tab-settings').click();
+  await page.getByRole('button', {name: 'Deployment', exact: true}).click();
+  await page.getByLabel('Agent GitHub token', {exact: true}).fill('browser-token');
+  await page.getByRole('button', {name: 'Save credentials', exact: true}).click();
+  await expect.poll(async () => (await rpc('settings/describe', {})).namespaces.find((item: {ns: string}) => item.ns.endsWith('/dsh-superagent'))
+    ?.secrets?.some((secret: {path: string[]; set: boolean}) => secret.path[0] === 'githubToken' && secret.set), {timeout: 30_000}).toBe(true);
+  await expect(page.getByLabel('Agent GitHub token', {exact: true})).toHaveValue('');
   expect(errors).toEqual([]);
 });

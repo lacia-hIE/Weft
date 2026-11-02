@@ -4,7 +4,7 @@ import { fill } from './infra/text.ts'
 export type SetupPlace = 'deployment' | 'github'
 export const SETUP_PROBLEMS = {
   repositoryUnset: ['github', 'The GitHub Source names no repository.'],
-  agentTokenUnset: ['deployment', 'The agent\'s GitHub token is not set.'],
+  agentTokenUnset: ['deployment', 'The agent\'s GitHub token is not set; fill it in under Settings → Deployment.'],
   agentTokenRejected: ['deployment', 'GitHub rejected the agent\'s token.'],
   agentTokenFailed: ['deployment', 'The agent\'s token could not be checked.'],
   repositoryUnreadable: ['github', '@{account} cannot read {repository}.'],

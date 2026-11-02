@@ -42,7 +42,9 @@ function Mounted({ ctx, t }: { ctx: ClientContext; t: T }) {
       throw error
     }
   }, [ctx, t])
-  const form = usePageForm(ctx.configForms.get<Record<string, unknown>>(ENTRY))
+  const form = usePageForm(ctx.configForms.get<Record<string, unknown>>(ENTRY), field =>
+    ctx.configForms.describe().getSnapshot().view?.namespaces.find(row => row.ns === ENTRY)?.secrets
+      ?.some(secret => secret.path.length === 1 && secret.path[0] === field && secret.set) === true)
   return <App t={t} openSession={openSession} deploymentForm={form} />
 }
 

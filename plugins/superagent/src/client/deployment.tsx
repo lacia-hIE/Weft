@@ -3,19 +3,19 @@
  * Deployment settings view shared between the panel Settings tab and the DSH Plugin Manager config page.
  * Edits host-level plugin configuration limits through DSH `ConfigForm` when writable.
  */
-import { useCallback, useMemo, useSyncExternalStore } from 'react'
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
 import type { ConfigForm } from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { ConfigPageForm } from '@deepseek-ai/dsh-client-ui-plugin-manager/client'
 import { LIMITS } from '../limits.ts'
 import type { SetupView } from './api.ts'
-import { Input } from './controls.tsx'
+import { Button, Input } from './controls.tsx'
 import { SaveBar, useDraft } from './draft.tsx'
 import { PanelProvider, usePanel, usePanelData } from './provider.tsx'
 import { Field, Fields } from './settings-kit.tsx'
 import type { T } from './text.ts'
 import { CheckSetupButton, Hint, KeyValues, Section, SetupMessage } from './widgets.tsx'
 
-export type DeploymentForm = ConfigPageForm | undefined
+export type DeploymentForm = (ConfigPageForm & { secretSet(field: string): boolean }) | undefined
 type Op = Parameters<ConfigPageForm['mutate']>[0][number]
 
 const MACHINE_LIMITS = ['promptMaxChars', 'admissionContextMaxPages', 'admissionContextTimeoutMs'] as const
@@ -24,10 +24,42 @@ const text = (value: unknown): string => typeof value === 'string' || typeof val
 const limitsOf = (values: object | undefined): Limits =>
   Object.fromEntries(MACHINE_LIMITS.map(key => [key, text((values as Record<string, unknown> | undefined)?.[key])])) as Limits
 
-export function usePageForm(form: ConfigForm<Record<string, unknown>> | undefined): DeploymentForm {
+const SECRETS = [{ field: 'githubToken', label: 'deploymentToken', hint: 'deploymentTokenHint' }, { field: 'webhookSecret', label: 'deploymentWebhook', hint: 'deploymentWebhookHint' }] as const
+
+/** The agent's secrets: written here, and never read back; an empty field leaves what is saved. */
+function Secrets({ form, editable, revision }: { form: DeploymentForm; editable: boolean; revision: number | undefined }) {
+  const { t, notify, restart } = usePanel()
+  const [values, setValues] = useState<Record<string, string>>({})
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const changed = SECRETS.filter(({ field }) => values[field]?.trim())
+  const save = async () => {
+    if (!form || revision === undefined) return
+    setBusy(true); setError('')
+    try {
+      const ops: Op[] = changed.map(({ field }) => ({ op: 'set', path: [field], value: values[field]!.trim() }))
+      if (!await form.mutate(ops, revision)) throw new Error(t('deploymentRefused'))
+      setValues({}); notify(t('saved')); restart()
+    } catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)) }
+    finally { setBusy(false) }
+  }
+  return <Section title={t('deploymentSecrets')} hint={t('deploymentSecretsHint')}>
+    {SECRETS.map(({ field, label, hint }) => <Field key={field} label={t(label)} hint={t(hint)}
+      note={form?.secretSet(field) ? t('deploymentSecretSet') : t('deploymentSecretUnset')}>
+      <Input type="password" autoComplete="new-password" spellCheck={false} disabled={!editable || busy} value={values[field] ?? ''}
+        onChange={event => { setValues({ ...values, [field]: event.target.value }) }} />
+    </Field>)}
+    {error && <p className="dt-error" role="alert">{error}</p>}
+    <div className="dt-row-buttons">
+      <Button variant="primary" size="sm" disabled={!editable || busy || !changed.length} onClick={() => { void save() }}>{t('deploymentSecretsSave')}</Button>
+    </div>
+  </Section>
+}
+
+export function usePageForm(form: ConfigForm<Record<string, unknown>> | undefined, secretSet: (field: string) => boolean): DeploymentForm {
   const subscribe = useCallback((listener: () => void) => form ? form.subscribe(listener) : () => {}, [form])
   const state = useSyncExternalStore(subscribe, () => form?.getSnapshot())
-  return useMemo(() => form && state ? { state, mutate: form.mutate.bind(form) } : undefined, [form, state])
+  return useMemo(() => form && state ? { state, mutate: form.mutate.bind(form), secretSet } : undefined, [form, state, secretSet])
 }
 
 /** Deployment configuration form; falls back to read-only display when DSH config forms are unavailable or read-only. */
@@ -66,6 +98,7 @@ export function DeploymentPage({ setup, form, accounts: showAccounts }: { setup:
         <Hint>{t('deploymentAccountsWhere')}</Hint>
       </Section>}
       {readOnlyHint && <Hint>{readOnlyHint}</Hint>}
+      <Secrets form={form} editable={!!editable} revision={editable ? snapshot.revision : undefined} />
       <Section title={t('deploymentLimits')} hint={t('deploymentLimitsHint')}>
         {limit('promptMaxChars', t('deploymentPromptMaxChars'))}
         {limit('admissionContextMaxPages', t('deploymentContextPages'))}
