@@ -18,7 +18,7 @@ function policyOf(sources: SourceRegistry, id: string, health: HealthMap) {
 }
 /**
  * Builds the settings view by block (`{ value, revision }`), per-Source configuration and restart-sensitive fields,
- * and execution environment details (`stateDir` provides the default ticket working directory root).
+ * and execution environment details.
  */
 export function settingsView(store: Store, sources: SourceRegistry, health: HealthMap, setup: SetupState) {
   const settings = store.settings()

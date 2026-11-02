@@ -4,6 +4,9 @@ Application versions use `vX.Y.Z`; local connector versions are independent. See
 
 ## Unreleased / 未发布
 
+- New built-in plugin `@weft/dsh-superagent`, adapted from the dsh-superagent research prototype: a proactive agent for one GitHub repository that works without a container. Environment plugins gain `weftSql` and `weftManagedSessions`, and may import the Host's `zod`, which changes the plugin builder image; publish the new image before deploying.
+- 新增内置插件 `@weft/dsh-superagent`，由 dsh-superagent 研究原型适配而来：面向单个 GitHub 仓库的主动 Agent，不要求容器。环境插件新增 `weftSql`、`weftManagedSessions` 服务，并可导入宿主的 `zod`，因此插件构建镜像有变化，部署前需发布新镜像。
+
 - Local connector `0.2.6` uses carrier protocol 3: HTTP bodies and native Mux messages keep 16 chunks in flight per stream, and text responses are gzip compressed between the device and the relay. Remote pages through a local Host load several times faster. The relay accepts protocol 3 only; upgrade the connector together with Weft.
 - 本地连接插件 `0.2.6` 使用传输协议 3：HTTP 正文与原版 Mux 消息每条流最多 16 块在途，文本响应在设备与中继之间以 gzip 传输，远程打开本地 Host 页面明显更快。中继只接受协议 3，插件需与 Weft 同步升级。
 

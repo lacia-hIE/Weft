@@ -95,13 +95,13 @@ test('a request on GitHub becomes a Ticket worked on in its own Session, without
     const state = await waitFor(async () => {const response = await panel('state'); return response.status === 200 ? await response.json() as {setup: {problem: {code: string} | null}} : undefined;}, 'state');
     assert.equal(state.setup.problem?.code, 'repositoryUnset');
 
-    const settings = await (await panel('settings')).json() as {sources: {id: string; revision: number}[]; policy: {revision: number}};
+    const settings = await (await panel('settings')).json() as {sources: {id: string; revision: number}[]};
     const github = settings.sources.find(source => source.id === 'github')!;
     const saved = await panel('settings/source:github', {method: 'PUT', headers: {'content-type': 'application/json'}, body: JSON.stringify({revision: github.revision, value: {enabled: true, config: {repository}}})});
     assert.equal(saved.status, 200, await saved.clone().text());
     await waitFor(async () => {const response = await panel('state'); const view = response.status === 200 ? await response.json() as {setup: {accounts: {agent: string} | null}} : undefined; return view?.setup.accounts?.agent === agent ? true : undefined;}, 'setup');
-    const current = await (await panel('settings')).json() as {policy: {revision: number}};
-    const policy = await panel('settings/policy', {method: 'PUT', headers: {'content-type': 'application/json'}, body: JSON.stringify({revision: current.policy.revision, value: {rules: [], sources: {github: {allowed: [{id: 'alice'}]}}}})});
+    const current = await (await panel('settings')).json() as {blocks: {policy: {revision: number}}};
+    const policy = await panel('settings/policy', {method: 'PUT', headers: {'content-type': 'application/json'}, body: JSON.stringify({revision: current.blocks.policy.revision, value: {rules: [], sources: {github: {allowed: [{id: 'alice'}]}}}})});
     assert.equal(policy.status, 200, await policy.clone().text());
 
     announced = true;
