@@ -4,7 +4,7 @@ import type {JsonValue} from '@deepseek-ai/dsh-util-values';
 import type {ToolExecutionResult} from '@deepseek-ai/dsh-tools';
 import {z} from 'zod';
 
-export const toolDescriptions = z.array(z.object({name:z.string().min(1).max(100),description:z.string(),parameters:z.record(z.string(),z.unknown()),outputSchema:z.record(z.string(),z.unknown()),hasPresentation:z.boolean(),timeoutMs:z.number().positive().optional()})).max(100);
+export const toolDescriptions = z.array(z.object({name:z.string().min(1).max(100),description:z.string(),parameters:z.record(z.string(),z.unknown()),outputSchema:z.record(z.string(),z.unknown()),hasPresentation:z.boolean(),timeoutMs:z.number().positive().optional(),scoped:z.boolean().optional()})).max(100);
 export type ToolDescription = z.infer<typeof toolDescriptions>[number];
 export interface ToolTransport {
   execute(name:string,args:unknown,callId:string,operationId:string):Promise<ToolExecutionResult>;

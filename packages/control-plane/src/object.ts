@@ -80,6 +80,8 @@ export interface NativeSessionContext {
   mcpServers: import('../../native-mcp/src/index.ts').McpServer[];
 }
 import {openPermissionWorld} from '../../native-environment/src/permissions.ts';
+import {managedSessionConfig} from '../../native-plugins/src/managed-sessions.ts';
+import type {ManagedSession} from '../../package-install/src/runtime.ts';
 import { NativeWorkspaces } from './native-workspaces.ts';
 import type { WorkspaceDO } from '../../workspace/src/object.ts';
 import type { SessionDO } from '../../../apps/worker/src/index.ts';
@@ -551,7 +553,7 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
           const background = inject.some(name => (environmentHostServices as readonly string[]).includes(name));
           artifact.hostScope = background ? 'environment' : 'session';
           artifact.permissions = {...artifact.permissions, network: true,
-            storage: inject.some(name => name === 'storage' || name === 'storageDomain'), sessions: inject.includes('sessionController') || inject.includes('weftSessionEvents') || inject.includes('webhookRuntime'),
+            storage: inject.some(name => name === 'storage' || name === 'storageDomain' || name === 'weftSql'), sessions: inject.includes('sessionController') || inject.includes('weftSessionEvents') || inject.includes('weftManagedSessions') || inject.includes('webhookRuntime'),
             credentials: inject.includes('credentials'), routes: inject.includes('webServer'), tools:inject.includes('tools'), connections: inject.includes('weftConnections'), background};
           const configs = entrySchemasSchema.parse(await platform.configSchemas(runId));
           if (configs.length) artifact.configs = configs; else delete artifact.configs;
@@ -766,6 +768,27 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
     if (!watch) {this.ctx.storage.sql.exec('DELETE FROM weft_session_watches WHERE package=? AND session_id=?', receipt.name, sessionId); return;}
     if (this.nativeSessionRoot(scope, sessionId) !== sessionId) throw new Error('Session is outside this environment');
     this.ctx.storage.sql.exec('INSERT OR IGNORE INTO weft_session_watches (package, session_id) VALUES (?, ?)', receipt.name, sessionId);
+  }
+  /** One package's hold on a root Session; its next turn reads the configuration through `nativeManagedSession`. */
+  nativePackageManageSession(scope: ControlScope, receipt: {name: string; digest: string; activationId: string}, sessionId: string, raw: unknown): void {
+    this.nativePackageAuthorize(scope, receipt, 'sessions'); id.parse(sessionId);
+    if (raw === null) {this.ctx.storage.sql.exec('DELETE FROM weft_managed_sessions WHERE package=? AND session_id=?', receipt.name, sessionId); return;}
+    const config = managedSessionConfig(raw);
+    if (this.nativeSessionRoot(scope, sessionId) !== sessionId) throw new Error('Session is outside this environment');
+    const holder = this.ctx.storage.sql.exec<{package: string}>('SELECT package FROM weft_managed_sessions WHERE session_id=?', sessionId).toArray()[0]?.package;
+    if (holder && holder !== receipt.name) throw new Error('Session is managed by another package');
+    this.ctx.storage.sql.exec('INSERT INTO weft_managed_sessions (session_id, package, config) VALUES (?, ?, ?) ON CONFLICT(session_id) DO UPDATE SET config=excluded.config', sessionId, receipt.name, JSON.stringify(config));
+  }
+  /** The Session's managing package while that package may still manage Sessions. */
+  nativeManagedSession(scope: ControlScope, sessionId: string): ManagedSession | undefined {
+    this.scope(scope); id.parse(sessionId);
+    const row = this.ctx.storage.sql.exec<{package: string; config: string}>('SELECT package, config FROM weft_managed_sessions WHERE session_id=?', sessionId).toArray()[0];
+    if (!row) return undefined;
+    const installed = this.packages(scope).registry.get(row.package);
+    // Removal leaves the row behind; it lapses here instead of in every uninstall path.
+    if (!installed) {this.ctx.storage.sql.exec('DELETE FROM weft_managed_sessions WHERE session_id=?', sessionId); return undefined;}
+    if (!installed.enabled || !installed.approved || !installed.permissions.sessions) return undefined;
+    return {package: row.package, ...managedSessionConfig(JSON.parse(row.config))};
   }
   /** A root Session finished a turn. Best-effort: watchers recover a missed hint from their own cursor. */
   async nativeSessionTurnEnded(scope: ControlScope, sessionId: string, seq: number): Promise<void> {
@@ -1168,6 +1191,7 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
     });
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS native_child_owners (id TEXT PRIMARY KEY, parent_id TEXT NOT NULL, root_id TEXT NOT NULL)');
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_session_watches (package TEXT NOT NULL, session_id TEXT NOT NULL, PRIMARY KEY(package, session_id)) STRICT');
+    ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_managed_sessions (session_id TEXT PRIMARY KEY, package TEXT NOT NULL, config TEXT NOT NULL) STRICT');
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_gateway_connections (package TEXT NOT NULL, connection_id TEXT NOT NULL, shard INTEGER NOT NULL, PRIMARY KEY(package, connection_id)) STRICT');
     ctx.storage.sql.exec(
       "CREATE TABLE IF NOT EXISTS client_plugins (id TEXT PRIMARY KEY, revision TEXT NOT NULL, enabled INTEGER NOT NULL)",

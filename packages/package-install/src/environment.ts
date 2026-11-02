@@ -7,7 +7,7 @@ const identity = (row: Installation) => JSON.stringify([row.digest, row.activati
 export function installedServices(row: Installation): string[] {
   const p = row.permissions;
   return [...(p.files !== 'none' ? ['fs'] : []), ...(p.tools || row.hostScope==='environment' ? ['tools'] : []), ...(p.timer ? ['timer'] : []),
-    ...(p.storage ? ['storage', 'storageDomain'] : []), ...(p.sessions ? ['sessionController','weftSessionEvents','webhookRuntime'] : []), ...(p.credentials ? ['credentials'] : []), ...(p.connections ? ['weftConnections'] : []), ...(p.routes ? ['webServer'] : [])];
+    ...(p.storage ? ['storage', 'storageDomain', 'weftSql'] : []), ...(p.sessions ? ['sessionController','weftSessionEvents','weftManagedSessions','webhookRuntime'] : []), ...(p.credentials ? ['credentials'] : []), ...(p.connections ? ['weftConnections'] : []), ...(p.routes ? ['webServer'] : [])];
 }
 interface Active {row: Installation; runId: string; fiber?: Fiber}
 /** A single environment-owned activation, independent of open browser pages and Sessions. */

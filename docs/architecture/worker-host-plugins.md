@@ -4,7 +4,7 @@ Worker Host 使用标准 Cordis 导出和原版 `dsh.bundle.patch`。这一轮�
 
 ## 运行位置与权限
 
-安装阶段在隔离环境检查实际 `inject`。依赖 `storage`、`storageDomain`、`sessionController`、`weftSessionEvents`、`weftConnections`、`webhookRuntime`、`credentials` 或 `webServer` 的包归入环境宿主；其余包保留会话宿主。运行位置是检查得到的产物元数据，不是 npm 包另写的 Weft 声明。
+安装阶段在隔离环境检查实际 `inject`。依赖 `storage`、`storageDomain`、`weftSql`、`sessionController`、`weftSessionEvents`、`weftManagedSessions`、`weftConnections`、`webhookRuntime`、`credentials` 或 `webServer` 的包归入环境宿主；其余包保留会话宿主。运行位置是检查得到的产物元数据，不是 npm 包另写的 Weft 声明。
 
 沿用 Plugins 包详情的原版审核入口，审核精确代码摘要后授权：
 
@@ -29,6 +29,10 @@ Worker Host 使用标准 Cordis 导出和原版 `dsh.bundle.patch`。这一轮�
 Kernel 装配原版 Storage 和 StorageDomain，使用已有 DurableStorageBackend 写入 facet 的独立 SQLite。DomainSpec 的 schema 在插件所在 isolate 执行，保留原版同步内存读取、写入队列、校验与 `domain/changed` 行为；不把 schema 函数序列化成远程协议。
 
 EnvironmentDO 的数据库只登记安装和调度元数据，不保存插件代码；代码继续位于私有 R2。插件 facet 的数据属于该环境，不能读环境主库或其他包。普通宿主重建保留状态；明确停用会释放实例，重新启用保留 domain 数据。环境删除会删除已登记的插件 facet；卸载保留其私有状态以便重装。环境复制不复制插件运行状态或凭据，复制的安装仍须重新审核。
+
+## 事务状态
+
+`inject: ['weftSql']` 归入「插件持久状态」授权，提供插件自己 facet SQLite 的同步接口：`exec(query, ...bindings)` 返回行数组，`transaction(work)` 在 `work` 返回时提交、抛错时回滚，嵌套调用是保存点，回调必须同步。它用于需要跨表原子提交的状态；普通状态继续用原版 `storageDomain`。不能访问平台在同一数据库中保存的计时器和 KV 表，也不能访问环境主库或其他包。显式 `BEGIN` / `SAVEPOINT` 不受 DO SQLite 支持。
 
 ## 后台计时器
 
@@ -57,6 +61,16 @@ EnvironmentDO 的数据库只登记安装和调度元数据，不保存插件代
 ## 会话回合通知
 
 `inject: ['weftSessionEvents']` 是 Weft 专有服务，归入「管理本环境会话」授权：`watch(sessionId)` / `unwatch(sessionId)` 订阅本环境根会话的回合结束，`onTurnEnded(handler)` 在激活时登记处理函数并返回 disposer。订阅保存在 EnvironmentDO，回合结束时由 SessionDO 通知，只投递给已获批并启用的订阅包。通知只是提示，可能丢失或重复，插件以自己的持久游标为准。设计与成本见[会话回合通知](session-turn-notifications.md)。
+
+## 受管会话
+
+`inject: ['weftManagedSessions']` 是 Weft 专有服务，归入「管理本环境会话」授权，供需要长期托管若干根会话的编排类插件使用（环境插件不能直接持有 Agent，也不能注入 `systemPrompt`）：
+
+- `configure(sessionId, {instructions, tools})` 登记该会话的附加系统提示与可用的受限工具，幂等；配置保存在 EnvironmentDO，下一轮开始前生效。一个会话同时只能由一个包管理。
+- `release(sessionId)` 解除管理，下一轮起撤回指令和受限工具。
+- `scopeTools(names)` 在激活时声明受限工具，返回 disposer。受限工具只出现在配置里列出它的会话；未声明的工具行为不变，仍进入本环境所有会话。
+
+指令在该会话的宿主内注入，同一会话的子 Agent 也会看到；停用或撤销授权的包不再生效，卸载后登记自动失效。
 
 ## 外部长连接
 

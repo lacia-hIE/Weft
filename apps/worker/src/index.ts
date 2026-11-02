@@ -131,6 +131,7 @@ export class EnvironmentPluginCapabilities extends WorkerEntrypoint<Env, {scope:
   async callSession(method: string, request: unknown): Promise<unknown> {return this.owner().nativePackageSession(this.ctx.props.scope, this.ctx.props, method, request);}
   async followSession(request: unknown): Promise<Response> {return this.owner().nativePackageFollow(this.ctx.props.scope, this.ctx.props, request);}
   async watchSession(sessionId: string, watch: boolean): Promise<void> {return this.owner().nativePackageWatchSession(this.ctx.props.scope, this.ctx.props, sessionId, watch);}
+  async manageSession(sessionId: string, config: unknown): Promise<void> {return this.owner().nativePackageManageSession(this.ctx.props.scope, this.ctx.props, sessionId, config);}
   async connectionOpen(connectionId: string, version: string, spec: unknown): Promise<void> {return this.owner().nativeConnectionOpen(this.ctx.props.scope, this.ctx.props, connectionId, version, spec);}
   async connectionCall(connectionId: string, operation: 'status' | 'send' | 'update' | 'reconnect' | 'close' | 'mailCheck' | 'mailReply' | 'mailAttachment', argument?: unknown): Promise<unknown> {return this.owner().nativeConnectionCall(this.ctx.props.scope, this.ctx.props, connectionId, operation, argument);}
   async callFs(method: string, args: unknown[]): Promise<unknown> {return this.owner().nativePackageFs(this.ctx.props.scope, this.ctx.props, method, args);}
@@ -278,6 +279,7 @@ export class SessionDO extends DurableObject<Env> {
         });
         this.installedPackages = new InstalledPackageRuntime(ctx, this.ctx, this.env.LOADER, scope, {
           list: () => controlFor(this.env, owner).nativePackageRuntime(owner),
+          managed: () => controlFor(this.env, owner).nativeManagedSession(owner, scope.sessionId),
           environmentTools: row => controlFor(this.env,owner).nativePackageTools(owner,{name:row.name,digest:row.digest,activationId:row.activationId??row.digest}),
           environmentTransport: row => {
             const receipt={name:row.name,digest:row.digest,activationId:row.activationId??row.digest};

@@ -25,6 +25,8 @@ import {pluginSessionStream} from './stream.ts';
 import {WorkerWebhooks} from './webhooks.ts';
 import {WorkerSessionEvents} from './session-events.ts';
 import {WorkerConnections} from './connections.ts';
+import {WorkerManagedSessions} from './managed-sessions.ts';
+import {pluginSql} from './plugin-sql.ts';
 import type {VerifiedWebhookDelivery} from '@deepseek-ai/dsh-webhook';
 import {sessionMethods, workerHostServices} from './services.ts';
 import { snapshotJsonValue } from '@deepseek-ai/dsh-util-values';
@@ -44,6 +46,7 @@ interface KernelEnv {
         createWebhook(operationId:string,delivery:unknown,ruleId:string,request:unknown):Promise<void>;
         cancelWebhook(operationId:string):Promise<void>;
         watchSession(sessionId: string, watch: boolean): Promise<void>;
+        manageSession(sessionId: string, config: unknown): Promise<void>;
         connectionOpen(connectionId: string, version: string, spec: unknown): Promise<void>;
         connectionCall(connectionId: string, operation: string, argument?: unknown): Promise<unknown>;
     };
@@ -71,6 +74,7 @@ export class PluginFacet extends DurableObject<KernelEnv> {
     private webhooks: WorkerWebhooks | undefined;
     private sessionEvents: WorkerSessionEvents | undefined;
     private connections: WorkerConnections | undefined;
+    private managedSessions: WorkerManagedSessions | undefined;
     private durableTimers: DurablePluginTimers | undefined;
     private readonly handlers = new Map<string, (args: unknown) => Promise<unknown>>();
     private readonly operations = new Map<string, AbortController>();
@@ -86,6 +90,8 @@ export class PluginFacet extends DurableObject<KernelEnv> {
             if (this.env.BACKGROUND && this.env.ALLOWED?.includes('timer')) this.durableTimers = new DurablePluginTimers(this.ctx.storage, this.env.ACTIVATION ?? 'initial');
             if (this.env.ALLOWED?.includes('weftConnections')) {this.connections = new WorkerConnections(this.env.HOST!); root.provide('weftConnections', this.connections.service);}
             if (this.env.ALLOWED?.includes('weftSessionEvents')) {this.sessionEvents = new WorkerSessionEvents(this.env.HOST!); root.provide('weftSessionEvents', this.sessionEvents.service);}
+            if (this.env.ALLOWED?.includes('weftManagedSessions')) {this.managedSessions = new WorkerManagedSessions(this.env.HOST!); root.provide('weftManagedSessions', this.managedSessions.service);}
+            if (this.env.ALLOWED?.includes('weftSql')) root.provide('weftSql', pluginSql(this.ctx.storage));
             if (this.env.ALLOWED?.includes('webhookRuntime')) {this.webhooks=new WorkerWebhooks(this.env.HOST!,work=>this.ctx.waitUntil(work));await this.webhooks.mount(root);}
             if (this.env.ALLOWED?.includes('webServer')) {this.webServer = new WorkerWebServer();root.provide('webServer', this.webServer);}
             if (this.env.ALLOWED?.some(name => name === 'storage' || name === 'storageDomain')) await mountDurableStorage(root, this.ctx.storage);
@@ -166,13 +172,13 @@ export class PluginFacet extends DurableObject<KernelEnv> {
                     if (this.durableTimers && (key === 'interval' || key === 'timeout')) return (callback: () => unknown, delay: number) => target.effect(() => this.durableTimers!.register(callback, delay, key === 'interval'));
                     if (key === 'timer' && this.durableTimers && provided.has('timer')) return new Proxy(target.timer, {get: (timer, method) => method === 'interval' || method === 'timeout' ? (callback: () => unknown, delay: number) => target.effect(() => this.durableTimers!.register(callback, delay, method === 'interval')) : Reflect.get(timer, method)});
                     if (key==='webhookRuntime' && provided.has('webhookRuntime')) return this.webhooks?.service;
-                    if (typeof key === 'string' && ['tools', 'timer', 'fs', 'storage', 'storageDomain', 'sessionController', 'weftSessionEvents', 'weftConnections', 'webhookRuntime', 'credentials', 'webServer'].includes(key) && !provided.has(key))
+                    if (typeof key === 'string' && ['tools', 'timer', 'fs', 'storage', 'storageDomain', 'weftSql', 'sessionController', 'weftSessionEvents', 'weftManagedSessions', 'weftConnections', 'webhookRuntime', 'credentials', 'webServer'].includes(key) && !provided.has(key))
                         throw new Error(`Plugin permission denied: ${key}`);
                     if (key === 'get')
                         return (name: string) => provided.has(name) ? name==='webhookRuntime' ? this.webhooks?.service : name === 'timer' && this.durableTimers ? facade(target).timer : target.get(name) : undefined;
                     if (key === 'provide')
                         return (name: string, value: unknown) => {
-                            if (['systemPrompt', 'sessionController', 'weftSessionEvents', 'weftConnections', 'webhookRuntime', 'credentials', 'storage', 'storageDomain', 'webServer'].includes(name))
+                            if (['systemPrompt', 'sessionController', 'weftSessionEvents', 'weftManagedSessions', 'weftConnections', 'webhookRuntime', 'credentials', 'storage', 'storageDomain', 'weftSql', 'webServer'].includes(name))
                                 throw new Error('The Agent systemPrompt service is not bridged');
                             const dispose = target.provide(name, value);
                             provided.add(name);
@@ -189,7 +195,7 @@ export class PluginFacet extends DurableObject<KernelEnv> {
         return wire({
             ...await this.describe(), tools: this.root!.tools.schemas().map(schema => {
                 const definition = this.root!.tools.get(schema.name)!;
-                return { ...schema, outputSchema: definition.output.schema, hasPresentation: !!definition.output.presentationMeta, ...(definition.timeoutMs === undefined ? {} : { timeoutMs: definition.timeoutMs }) };
+                return { ...schema, outputSchema: definition.output.schema, hasPresentation: !!definition.output.presentationMeta, ...(definition.timeoutMs === undefined ? {} : { timeoutMs: definition.timeoutMs }), ...(this.managedSessions?.isScoped(schema.name) ? { scoped: true } : {}) };
             })
         });
     }
