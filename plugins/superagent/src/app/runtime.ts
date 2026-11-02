@@ -182,12 +182,13 @@ export class Runtime implements SourceHost {
     this.disposers.push(this.ctx.weftManagedSessions.scopeTools(names))
     for (const name of names) {
       const tool = describe.get(name)!
-      this.disposers.push(this.ctx.tools.register(defineTool({ name, description: tool.description, parameters: z.toJSONSchema(tool.schema, { unrepresentable: 'any' }) as never,
+      this.disposers.push(this.ctx.tools.register(defineTool({ name, description: tool.description, parameters: JSON.parse(JSON.stringify(z.toJSONSchema(tool.schema, { unrepresentable: 'any' }))) as never,
         output: { schema: { type: 'object', additionalProperties: true } as never, render: (_args: unknown, value: unknown) => [{ type: 'text' as const, text: JSON.stringify(value) }] },
         execute: async (args: unknown, execution: { signal: AbortSignal }) => {
           const value = await this.toolFor(name).execute(tool.schema.parse(args) as never, execution.signal)
           this.drive()
-          return value as never
+          // The sandbox takes JSON only; tools may leave optional fields undefined.
+          return JSON.parse(JSON.stringify(value ?? {})) as never
         } }) as never))
     }
   }
