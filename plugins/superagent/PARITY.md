@@ -10,7 +10,7 @@ Against [deepseek-ai/dsh-superagent-prototype](https://github.com/deepseek-ai/ds
 | Worker tools | Kept; scoped to the Sessions configured with them |
 | Prompts | Kept; `prepare` is an instruction to the worker, since an environment plugin runs no process |
 | Agent presets | Not ported: no custom presets exist for a plugin here, so Sessions use the default preset and instructions |
-| Tool limits on Sessions | Kept: the main Session and workers keep the prototype's lists, plus MCP tools and the switch to a container for workers; subagents keep a worker's list; an ended Ticket's worker keeps none. A list takes effect at the next turn, so a worker that ends its own Ticket keeps it for the rest of that turn |
+| Tool limits on Sessions | Kept: the main Session and workers keep the prototype's lists, plus MCP tools and the switch to a container for workers; subagents keep a worker's list; an ended Ticket's worker keeps none. A list takes effect at the next turn, so a worker that ends its own Ticket keeps it for the rest of that turn. `subagent` is an Agent's own tool and stays on every list, as in the prototype, also after a Ticket ended |
 | The main Session's wait guard, and moving a command to the background after five seconds | Not ported: a guard runs in the Session and this plugin in the environment, and a plugin adds no presets here. A long command delays a person's message until the worker's next step |
 | Blocked commands and account shims | Removed; they rely on a local OS account |
 | Background jobs and subagent slots | Not tracked: a worker's slot ends with its turn. Subagents see their worker's instructions |

@@ -133,7 +133,8 @@ test('a request on GitHub becomes a Ticket worked on in its own Session, without
     assert.ok(worker.tools.includes('write'), 'a worker keeps what it works with');
     const main = requests.find(item => item.tools.includes('orchestrator_route'))!;
     assert.ok(!main.tools.includes('orchestrator_report'), 'the main Session is not offered a worker\'s tools');
-    const routing = new Set(['skill', 'bash', 'read', 'read_image', 'job_output', 'job_list', 'job_kill']);
+    // `subagent` is the Agent's own tool, which a restriction may not name, in the prototype too.
+    const routing = new Set(['skill', 'bash', 'read', 'read_image', 'job_output', 'job_list', 'job_kill', 'subagent']);
     assert.deepEqual(main.tools.filter(name => !routing.has(name) && !name.startsWith('orchestrator_')), [], 'the main Session keeps only what routing uses');
 
     // Without a pull request, a `ready` report read from the worker's log ends the Ticket as completed.
