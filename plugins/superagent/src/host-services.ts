@@ -8,9 +8,16 @@ export interface HostSessionController {
   rename(request: { sessionId: string; title: string }): Promise<unknown>
   prompt(request: { sessionId: string; requestId: string; mode: 'queue' | 'steer'; content: { type: 'text'; text: string }[] }): Promise<unknown>
   cancel(request: { sessionId: string }): Promise<unknown>
-  page(request: { address: { kind: 'session'; sessionId: string }; throughSeq?: number; beforeSeq?: number; maxMessages?: number }): Promise<{ records: readonly SessionRecord[]; hasMore: boolean }>
+  follow(request: { address: { kind: 'session'; sessionId: string }; maxMessages?: number }, signal?: AbortSignal): AsyncIterable<{ type: string; records?: readonly SessionRecord[] }>
   list(request: object): Promise<{ groups?: readonly { sessions?: readonly { sessionId: string; running: boolean }[] }[] } & Record<string, unknown>>
   modelCatalog(request?: object): Promise<{ groups: readonly { id: string; models: readonly unknown[] }[] } & Record<string, unknown>>
+}
+/** The newest events of a Session's log: the opening snapshot of a follow, which is closed at once and leaves the Agent running. */
+export async function sessionLog(controller: Pick<HostSessionController, 'follow'>, sessionId: string, maxMessages: number): Promise<SessionEvent[]> {
+  for await (const frame of controller.follow({ address: { kind: 'session', sessionId }, maxMessages })) {
+    if (frame.type === 'snapshot') return (frame.records ?? []).flatMap(record => record.event ? [record.event] : [])
+  }
+  return []
 }
 export interface HostManagedSessions {
   scopeTools(names: readonly string[]): () => void

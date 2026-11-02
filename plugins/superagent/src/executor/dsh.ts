@@ -3,7 +3,7 @@ import { key, latestAssignment, latestReport, liveTicket, runningAssignment, thr
 import type { AssessmentOutcome, Assignment, EngineForExecutor, Execution, Executor, Mandate, PolicyEffect, Ticket, TicketInput, Trigger }
   from '../core/index.ts'
 import { KV } from '../kv.ts'
-import type { HostFs, HostSessionController, SessionEvent } from '../host-services.ts'
+import { sessionLog, type HostFs, type HostSessionController, type SessionEvent } from '../host-services.ts'
 import type { Settings } from '../policy.ts'
 import type { Store } from '../app/store.ts'
 import { Later, type Effects } from '../app/effects.ts'
@@ -22,7 +22,7 @@ export const ticketOfSession = (sessionId: string): string | undefined => sessio
 const TRANSIENT_TRIES = 3, TRANSIENT_BACKOFF_MS = 15_000
 /** A turn that reported no end for this long is recorded as failed, so a lost Session cannot hold a worker slot forever. */
 const TURN_LIMIT_MS = 6 * 3600_000
-/** Newest messages read to find what a turn did; `page` aligns history to messages. */
+/** Newest messages read to find what a turn did; the log's window aligns to messages. */
 const TURN_PAGE_MESSAGES = 40
 /** True when an input comes from a person (a non-context human trigger or a direct text input such as a status request). */
 const fromPerson = (input?: TicketInput): boolean => input?.kind === 'trigger' ? !!input.human && !input.context : input?.kind === 'text'
@@ -42,7 +42,7 @@ export function transient(error: unknown): boolean {
 const ticketWorktreeName = (name: string, id: string): string => `${WorktreeNameSchema.parse(name)}-${id.slice(0, 12)}`
 /** Host dependencies used by `DshExecutor`. */
 export interface ExecutorHost {
-  readonly controller: Pick<HostSessionController, 'cancel' | 'page'>
+  readonly controller: Pick<HostSessionController, 'cancel' | 'follow'>
   readonly fs: Pick<HostFs, 'resolve' | 'writeText'>
   /** Where the Executor reports what happened to Assignments and Inputs. */
   readonly engine: Pick<EngineForExecutor, 'assignmentStarted' | 'inputsDelivered' | 'inputsRead' | 'turnEnded' | 'deliveryFailed' | 'report'
@@ -374,8 +374,7 @@ export class DshExecutor implements Executor {
     const ticket = ticketId === undefined ? undefined : this.host.store.tickets.get(ticketId)
     if (!ticket || !ticketId) return
     const cursor = this.host.store.get(KV.executor.cursor(ticketId)) ?? -1
-    const { records } = await this.host.controller.page({ address: { kind: 'session', sessionId }, maxMessages: TURN_PAGE_MESSAGES })
-    const events = records.flatMap(record => record.event && record.event.seq > cursor ? [record.event] : []).sort((a, b) => a.seq - b.seq)
+    const events = (await sessionLog(this.host.controller, sessionId, TURN_PAGE_MESSAGES)).filter(event => event.seq > cursor).sort((a, b) => a.seq - b.seq)
     if (!events.length) return
     this.readInputs(ticket, sessionId, events)
     const end = events.findLast(event => event.type === 'turn/end')

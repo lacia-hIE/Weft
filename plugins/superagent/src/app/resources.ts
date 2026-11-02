@@ -1,5 +1,5 @@
 /** Serves paginated context resources to orchestrator_read so large bodies stay out of model prompts until requested. */
-import type { HostSessionController } from '../host-services.ts'
+import { sessionLog, type HostSessionController } from '../host-services.ts'
 import { UserError, key, latestReport, reached, runningAssignment, threadKey, type Ticket, type Trigger } from '../core/index.ts'
 import { batchOf, inputMessage, triggerMessage, workerSessionId } from '../executor/dsh.ts'
 import { readGithub } from '../sources/github-read.ts'
@@ -60,7 +60,7 @@ export interface ResourceHost {
   readonly prompts: Pick<Prompts, 'current' | 'version' | 'history' | 'skills' | 'defaultChanged'>
   readonly commands: Commands
   readonly masterId: string
-  readonly controller: Pick<HostSessionController, 'page' | 'modelCatalog'>
+  readonly controller: Pick<HostSessionController, 'follow' | 'modelCatalog'>
   promptVersion(sessionId: string): PromptVersion
   /** Whether a Session may read `revision` (the revision it currently runs under or any revision it ran under previously). */
   mayRead(sessionId: string, revision: number): boolean
@@ -109,7 +109,7 @@ const THREAD_DECISIONS = 5
 const triggerLine = (trigger: Trigger) => ({ trigger_id: trigger.id, actor: trigger.actor.id, human: trigger.human, at: trigger.at,
   preview: preview(trigger.text), chars: trigger.text.length, read: `trigger/${trigger.id}` })
 async function transcript(host: ResourceHost, ticketId: string) {
-  return (await host.controller.page({ address: { kind: 'session', sessionId: workerSessionId(ticketId) }, maxMessages: 200 })).records.flatMap(record => record.event ? [record.event] : []) as unknown as SessionEvent[]
+  return await sessionLog(host.controller, workerSessionId(ticketId), 200) as unknown as SessionEvent[]
 }
 
 const ROUTES: readonly Route[] = [

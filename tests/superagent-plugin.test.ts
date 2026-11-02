@@ -16,6 +16,8 @@ const plugin = JSON.parse(readFileSync('plugins/superagent/package.json', 'utf8'
 const key = 'superagent-management-key', secret = 'superagent-webhook-secret', repository = 'acme/widgets', agent = 'agent-bot';
 const issue = {id: 1007, state: 'open', number: 7, title: 'Fix the typo', body: `@${agent} please fix the typo in README`, user: {login: 'alice', type: 'User'}, created_at: '', updated_at: '', html_url: `https://github.com/${repository}/issues/7`};
 
+const quiet = {...issue, id: 1008, number: 8, title: 'QUIET_WORK', html_url: `https://github.com/${repository}/issues/8`};
+
 /** The main Session routes the card it was given; a worker reports ready. Everything else about the Agent and tools is real. */
 const model: V4FetchHandler = async request => {
   const event = (type: string, value: object) => `event: ${type}\ndata: ${JSON.stringify({type, ...value})}\n\n`;
@@ -23,10 +25,12 @@ const model: V4FetchHandler = async request => {
   const text = JSON.stringify(body.messages);
   const offered = new Set((body.tools ?? []).map(tool => tool.name));
   const called = (name: string) => text.includes(`"name":"${name}"`);
-  const candidate = /trigger_id\\+":\\+"([0-9a-f]{32})/.exec(text)?.[1];
-  const call = offered.has('orchestrator_route') && candidate && !called('orchestrator_route')
-    ? {name: 'orchestrator_route', input: {decisions: [{kind: 'accept', trigger_id: candidate, title: 'Fix the typo', worktree_name: 'fix-typo', acknowledgement: 'On it.'}]}}
-    : offered.has('orchestrator_report') && !called('orchestrator_report') ? {name: 'orchestrator_report', input: {state: 'ready', summary: 'Fixed the typo.'}} : undefined;
+  // A candidate arrives as the newest message, which a tool's result never is.
+  const last = JSON.stringify(body.messages.at(-1));
+  const candidate = last.includes('tool_result') ? undefined : /trigger_id\\+":\\+"([0-9a-f]{32})/.exec(last)?.[1];
+  const call = offered.has('orchestrator_route') && candidate
+    ? {name: 'orchestrator_route', input: {decisions: [{kind: 'accept', trigger_id: candidate, title: last.includes('QUIET_WORK') ? 'QUIET_WORK' : 'Fix the typo', worktree_name: 'fix-typo', acknowledgement: 'On it.'}]}}
+    : offered.has('orchestrator_report') && !called('orchestrator_report') && !text.includes('QUIET_WORK') ? {name: 'orchestrator_report', input: {state: 'ready', summary: 'Fixed the typo.'}} : undefined;
   return new Response(
     event('message_start', {message: {usage: {input_tokens: 10, output_tokens: 0}}}) +
     event('content_block_start', {index: 0, content_block: call ? {type: 'tool_use', id: crypto.randomUUID(), name: call.name, input: {}} : {type: 'text', text: ''}}) +
@@ -38,14 +42,16 @@ const model: V4FetchHandler = async request => {
 
 test('a request on GitHub becomes a Ticket worked on in its own Session, without leaking its tools to other Sessions', {timeout: 300000}, async () => {
   const requests: {system: string; tools: string[]}[] = [], comments: string[] = [];
-  let announced = false;
+  let announced: number[] = [];
   const github = async (target: URL, init: Request): Promise<Response> => {
     const path = target.pathname, base = `/repos/${repository}`;
     if (init.headers.get('authorization') !== 'Bearer agent-token') return Response.json({message: 'Bad credentials'}, {status: 401});
     if (path === '/user') return Response.json({login: agent, id: 42});
     if (path === base) return Response.json({full_name: repository, default_branch: 'main', permissions: {push: true}});
-    if (path === `${base}/notifications`) return new Response(JSON.stringify(announced ? [{repository: {full_name: repository}, subject: {url: `https://api.github.com${base}/issues/7`}}] : []), {headers: {'content-type': 'application/json', 'x-poll-interval': '60'}});
+    if (path === `${base}/notifications`) return new Response(JSON.stringify(announced.map(number => ({repository: {full_name: repository}, subject: {url: `https://api.github.com${base}/issues/${number}`}}))), {headers: {'content-type': 'application/json', 'x-poll-interval': '60'}});
     if (path === `${base}/issues/7`) return Response.json(issue);
+    if (path === `${base}/issues/8`) return Response.json(quiet);
+    if (path === `${base}/issues/8/comments`) return init.method === 'POST' ? Response.json({id: 99, user: {login: agent, type: 'User'}, created_at: new Date().toISOString()}, {status: 201}) : Response.json([]);
     if (path === `${base}/issues/7/comments` && init.method === 'POST') {comments.push(String((await init.json() as {body: string}).body)); return Response.json({id: comments.length, html_url: `${issue.html_url}#c${comments.length}`, body: comments.at(-1), user: {login: agent, type: 'User'}, created_at: new Date().toISOString()}, {status: 201});}
     if (path === `${base}/issues/7/comments`) return Response.json([]);
     return Response.json({message: 'Not Found'}, {status: 404});
@@ -105,12 +111,14 @@ test('a request on GitHub becomes a Ticket worked on in its own Session, without
     assert.equal(policy.status, 200, await policy.clone().text());
 
     issue.created_at = issue.updated_at = new Date().toISOString();
-    announced = true;
+    announced = [7];
     assert.equal((await deliver()).status, 202, 'a signed delivery wakes the Source');
     const tickets = await waitFor(async () => {
       await deliver();
-      const list = await (await panel('tickets')).json() as {items?: {id: string; title: string; stage?: string}[]};
-      return list.items?.length ? list.items : undefined;
+      // A worker that reports at once may end its Ticket before this looks.
+      const lists = await Promise.all(['open', 'ended'].map(async state => await (await panel(`tickets?state=${state}`)).json() as {items?: {id: string; title: string}[]}));
+      const items = lists.flatMap(list => list.items ?? []);
+      return items.length ? items : undefined;
     }, 'the Ticket').catch(async (error: Error) => {
       throw new Error(`${error.message}; sources: ${await (await panel('sources')).text()}; overview: ${await (await panel('overview')).text()}; triggers: ${await (await panel('threads?filter=all')).text()}`);
     });
@@ -128,6 +136,18 @@ test('a request on GitHub becomes a Ticket worked on in its own Session, without
       const list = await (await panel('tickets?state=ended')).json() as {items?: {id: string}[]};
       return list.items?.some(item => item.id === tickets[0]!.id) ? true : undefined;
     }, 'the Ticket\'s end');
+
+    // A worker whose turn ends without a report is found from its Session's log, and waits for its next Trigger.
+    quiet.created_at = quiet.updated_at = new Date().toISOString();
+    announced = [8];
+    const idle = await waitFor(async () => {
+      await deliver();
+      const list = await (await panel('tickets?state=idle')).json() as {items?: {id: string; title: string}[]};
+      return list.items?.find(item => item.title === 'QUIET_WORK');
+    }, 'the worker that ended its turn without a report');
+    const detail = await (await panel(`tickets/${idle.id}`)).json() as {inputs?: unknown; assignments?: {report?: {state: string; summary: string}}[]};
+    assert.equal(detail.assignments?.at(-1)?.report?.state, 'waiting');
+    assert.equal(detail.assignments?.at(-1)?.report?.summary, 'Done.');
 
     await api.call('session/create', {request: {sessionId: 'personal'}});
     const follow = await api.follow('personal');
