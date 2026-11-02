@@ -145,6 +145,8 @@ Creative mode can also produce Host and Client Cordis plugins. Host code runs be
 
 Third-party bundles can also use an environment-owned Worker Host for persistent domain state, background callbacks, approved HTTPS requests, scoped Session Controller operations and plugin-authenticated Webhook routes. Review these permissions in the existing package details. See [Worker Host services and limits](docs/architecture/worker-host-plugins.md); this does not provide a complete Node host.
 
+The built-in [`@weft/dsh-superagent`](plugins/superagent/README.md) plugin adapts the dsh-superagent research prototype to the Worker Host: it watches one GitHub repository, turns authorized requests into tickets under a Policy, works on each in its own Session and answers in the original conversation. It does not require a container.
+
 ## Limits compared with local DSH
 
 - Synchronized workspace files have a **256 MiB per-file limit**. Large Git packs can exceed it; see [Git workspace guidance](docs/architecture/workspace-git.md).
