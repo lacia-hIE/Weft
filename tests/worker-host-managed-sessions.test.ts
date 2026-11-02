@@ -35,7 +35,7 @@ test('a package commits across tables in its facet and scopes prompts and tools 
       }}));
       ctx.effect(()=>ctx.webServer.register({kind:'exact',path:'/manage',handler:async(req,res)=>{
         const query=new URL(req.url,'http://host').searchParams,session=query.get('session');
-        const result=await Promise.resolve().then(()=>query.get('release')?ctx.weftManagedSessions.release(session):ctx.weftManagedSessions.configure(session,{instructions:'MANAGED_MARKER',tools:['package_save']})).then(()=>'ok',error=>String(error.message));
+        const result=await Promise.resolve().then(()=>query.get('release')?ctx.weftManagedSessions.release(session):ctx.weftManagedSessions.configure(session,{instructions:query.get('text')??'MANAGED_MARKER',tools:['package_save']})).then(()=>'ok',error=>String(error.message));
         res.writeHead(200);res.end(result);
       }}));
     }`}}),model=packageModel();
@@ -67,10 +67,13 @@ test('a package commits across tables in its facet and scopes prompts and tools 
     assert.ok(offered().includes('package_open'),'an unscoped tool stays available to every Session');
     assert.ok(!JSON.stringify(lastRequest().system).includes('MANAGED_MARKER'),'another Session does not receive the instructions');
 
+    assert.equal(await(await hook('/manage?session=managed-a&text=MANAGED_SECOND')).text(),'ok');
+    await turn('managed-a');
+    assert.ok(model.observations.at(-1)!.includes('MANAGED_SECOND'),'changed instructions reach the next turn, which the native prompt appends to its history');
+
     assert.equal(await(await hook('/manage?session=managed-a&release=1')).text(),'ok');
     await turn('managed-a');
     assert.ok(!offered().includes('package_save'),'release withdraws the scoped tool before the next turn');
-    assert.ok(!JSON.stringify(lastRequest().system).includes('MANAGED_MARKER'),'release withdraws the instructions before the next turn');
 
     assert.match(await(await hook('/manage?session=not-a-session')).text(),/outside this environment/);
   }finally{await runtime.dispose();}

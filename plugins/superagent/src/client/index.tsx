@@ -41,7 +41,7 @@ function Mounted({ ctx, t }: { ctx: ClientContext; t: T }) {
       throw error
     }
   }, [ctx, t])
-  const form = usePageForm(ctx.get('configForms')?.get<Record<string, unknown>>(ENTRY))
+  const form = usePageForm(ctx.configForms.get<Record<string, unknown>>(ENTRY))
   return <App t={t} openSession={openSession} deploymentForm={form} />
 }
 
@@ -51,7 +51,7 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-superagent: dictionaries')
   const t = ctx.locale.bind(NS)
   ctx.effect(() => installAccess({ commit: async key => {
-    const form = ctx.get('configForms')!.get<Record<string, unknown>>(ENTRY)
+    const form = ctx.configForms.get<Record<string, unknown>>(ENTRY)
     const { revision } = form.getSnapshot() as { revision?: number }
     return form.mutate([{ op: 'set', path: [KEY_FIELD], value: key }], revision ?? 0)
   } }), 'dsh-superagent: access')

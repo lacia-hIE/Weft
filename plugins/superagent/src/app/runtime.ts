@@ -87,12 +87,13 @@ export class Runtime implements SourceHost {
   private readonly toolHost: MainToolsHost & ExecutorToolsHost
   private readonly githubContext: SourceContext
   private driving?: Promise<void> | undefined
+  private readonly disposers: (() => void)[] = []
   /** Non-zero while a main-Session tool is executing an Engine command, suppressing self-triggered domain event notices. */
   private quiet = 0
   constructor(private readonly ctx: HostContext, private readonly config: DeploymentConfig, restart: () => void) {
     const runtime = this
     this.machine = machineOf(config)
-    const report = (error: unknown) => { ctx.logger.warn('dsh-superagent: %s', String(error)) }
+    const report = (error: unknown) => { console.warn('dsh-superagent:', String(error)) }
     const store = this.store = new Store(ctx.weftSql, report)
     const setup = this.setup = new Setup({ machine: this.machine, token: () => config.githubToken, lifetime: this.lifetime, restart })
     const deployed = () => setup.configured() ? environmentOf({ deployment: setup.deployment, sources: this.sources, settings: store.settings() }) : undefined
@@ -141,7 +142,7 @@ export class Runtime implements SourceHost {
       configured: () => setup.configured(), closing: () => this.stopped.signal.aborted })
     this.sourceDeps = { store, engine, outbox, commands, sources, get ready() { return runtime.ready }, get deployment() { return setup.deployment },
       configured: () => setup.configured(), get setupProblem() { return setup.problem }, receive: trigger => passes.receive(trigger) }
-    this.toolHost = { logger: ctx.logger as never, engine, store, prompts, sessions, settings: this.settings, assessor, resources,
+    this.toolHost = { logger: console, engine, store, prompts, sessions, settings: this.settings, assessor, resources,
       get github() { return runtime.context({ kind: 'github', health: ['github'] }) },
       requestPass: () => { passes.request() }, sendReplies: () => outbox.sent(),
       quietly: run => { this.quiet++; try { return run() } finally { this.quiet-- } } }
@@ -178,16 +179,16 @@ export class Runtime implements SourceHost {
     this.toolNames = { orchestrator: roles.orchestrator.map(tool => tool.name), worker: roles.worker.map(tool => tool.name) }
     const names = [...new Set([...this.toolNames.orchestrator, ...this.toolNames.worker])]
     const describe = new Map<string, Tool>([...roles.worker, ...roles.orchestrator].map(tool => [tool.name, tool]))
-    this.ctx.effect(() => this.ctx.weftManagedSessions.scopeTools(names), 'superagent: tool scope')
+    this.disposers.push(this.ctx.weftManagedSessions.scopeTools(names))
     for (const name of names) {
       const tool = describe.get(name)!
-      this.ctx.effect(() => this.ctx.tools.register(defineTool({ name, description: tool.description, parameters: z.toJSONSchema(tool.schema, { unrepresentable: 'any' }) as never,
+      this.disposers.push(this.ctx.tools.register(defineTool({ name, description: tool.description, parameters: z.toJSONSchema(tool.schema, { unrepresentable: 'any' }) as never,
         output: { schema: { type: 'object', additionalProperties: true } as never, render: (_args: unknown, value: unknown) => [{ type: 'text' as const, text: JSON.stringify(value) }] },
         execute: async (args: unknown, execution: { signal: AbortSignal }) => {
           const value = await this.toolFor(name).execute(tool.schema.parse(args) as never, execution.signal)
           this.drive()
           return value as never
-        } }) as never), `superagent: ${name}`)
+        } }) as never))
     }
   }
   /** The tool named `name` as the calling Session may run it: a worker for its own ticket, the main Session for the whole. */
@@ -202,13 +203,13 @@ export class Runtime implements SourceHost {
   }
   private async initialize(): Promise<void> {
     // Register management HTTP routes before setup completes so operators can fix setup problems in the panel.
-    this.ctx.effect(() => registerHttp(this.ctx, this.httpHost()), 'superagent: routes')
+    this.disposers.push(registerHttp(this.ctx, this.httpHost()))
     if (!await this.setup.run(this.store.settings())) {
       this.runtimeHealth.set({ ...health('paused', 'setupPending'), at: now() })
       return
     }
     this.registerTools()
-    this.ctx.effect(() => this.ctx.weftSessionEvents.onTurnEnded(event => this.turnEnded(event.sessionId)), 'superagent: turn ends')
+    this.disposers.push(this.ctx.weftSessionEvents.onTurnEnded(event => this.turnEnded(event.sessionId)))
     await this.sessions.ensure(MASTER_ID, this.store.settings().executor.directory, 'dsh-superagent orchestrator', 'orchestrator').catch(async (error: unknown) => {
       // The root directory is created on first use, as a Session opens only in a directory that exists.
       await this.ctx.fs.writeText(await this.ctx.fs.resolve(`${this.store.settings().executor.directory}/.superagent`), 'dsh-superagent\n')
@@ -267,6 +268,7 @@ export class Runtime implements SourceHost {
   /** Stops reads; the Sessions themselves live on, and the next activation picks up from the Store. */
   async stop(): Promise<void> {
     this.stopped.abort()
+    for (const dispose of this.disposers.splice(0).reverse()) dispose()
     await this.passes.stop()
     await this.effects.drain()
   }
