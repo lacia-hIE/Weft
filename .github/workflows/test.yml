@@ -261,7 +261,7 @@ jobs:
         if: matrix.shard == 1
         env:
           WEFT_BROWSER_IM: '1'
-        run: npx playwright test tests/browser/im-plugin.spec.ts
+        run: npx playwright test tests/browser/im-plugin.spec.ts tests/browser/superagent-plugin.spec.ts
       - name: Keep browser screenshots and failure traces
         if: always()
         uses: actions/upload-artifact@v4
