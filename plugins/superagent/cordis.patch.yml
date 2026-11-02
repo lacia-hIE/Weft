@@ -1,0 +1,4 @@
+# One entry: the orchestrator with its GitHub Source. It stays idle until the plugin's settings name a token and the panel a repository.
+- insert:
+    - id: dsh-superagent
+      name: '@weft/dsh-superagent'

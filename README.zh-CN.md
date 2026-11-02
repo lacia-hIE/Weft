@@ -199,6 +199,8 @@ Cloudflare 提供官方 [Deploy to Cloudflare](https://developers.cloudflare.com
 
 第三方包还可使用环境级 Worker Host，获得原版 domain 持久状态、后台回调、获准的 HTTPS 请求、本环境会话操作和插件自行验签的 Webhook 入口。权限沿用包详情审核，具体接口与限制见[Worker Host 服务](docs/architecture/worker-host-plugins.md)。
 
+内置插件 [`@weft/dsh-superagent`](plugins/superagent/README.md) 把 dsh-superagent 研究原型适配到 Worker Host：监听一个 GitHub 仓库，按策略把授权的请求变成工单，在独立 Session 中执行并回到原对话交付，不要求容器。
+
 ## 与本地 DSH 的差异
 
 Weft 保留原版交互与插件声明，但运行能力取决于 Cloudflare 宿主和已实现的服务桥接。

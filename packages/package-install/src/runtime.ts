@@ -20,17 +20,25 @@ export class InstalledPackageRuntime {
   private readonly platform: NativePluginPlatform;
   private tail: Promise<unknown> = Promise.resolve();
   private managed: ManagedSession | undefined;
+  private instructions: {text: string; dispose: () => void} | undefined;
   constructor(private readonly ctx: Context, private readonly state: DurableObjectState, loader: WorkerLoader | undefined, scope: object,
     private readonly source: {list(): Promise<Installation[]>; artifact(name: string, digest: string): Promise<Artifact>; capability(pluginId: string, runId: string): Fetcher; environmentTools?(row:Installation):Promise<unknown>; environmentTransport?(row:Installation):ToolTransport; managed?():Promise<ManagedSession|undefined>; failed?(name: string, digest: string, activationId?: string): Promise<boolean>}) {
     this.platform = new NativePluginPlatform(state, loader, scope, source.capability);
     this.platform.onFault((runId) => {const entry = [...this.active.values()].find(row => row.runId === runId); if (entry) state.waitUntil(this.stop(entry.installation.name));});
-    ctx.effect(() => ctx.systemPrompt.section({name: 'weft:managed-session', order: 9000, interpolate: false, text: () => this.managed?.instructions ?? ''}), 'weft.managed-session');
+    ctx.effect(() => () => {this.instructions?.dispose();}, 'weft.managed-session');
     ctx.effect(() => () => Promise.all([...this.active.keys()].map(name => this.stop(name))).then(() => {}), 'weft.installed-packages');
+  }
+  /** Registering a section is what tells the Session's prompt to reassemble. */
+  private applyInstructions(text: string): void {
+    if (text === (this.instructions?.text ?? '')) return;
+    this.instructions?.dispose();
+    this.instructions = text ? {text, dispose: this.ctx.systemPrompt.section({name: 'weft:managed-session', order: 9000, interpolate: false, text})} : undefined;
   }
   reconcile(): Promise<void> {
     const operation = this.tail.catch(() => {}).then(async () => {
       const selected = (await this.source.list()).filter(row => row.enabled && row.approved && (row.hostScope !== 'environment' || row.permissions.tools));
       this.managed = selected.some(row => row.hostScope === 'environment') ? await this.source.managed?.() : undefined;
+      this.applyInstructions(this.managed?.instructions ?? '');
       for (const name of this.failed.keys()) if (!selected.some(row => row.name === name && authority(row) === this.failed.get(name))) this.failed.delete(name);
       for (const [name, row] of this.active) if (!selected.some(next => next.name === name && authority(next) === authority(row.installation))) await this.stopNow(name);
       for (const installation of selected) {
