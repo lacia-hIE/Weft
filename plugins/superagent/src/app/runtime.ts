@@ -264,7 +264,7 @@ export class Runtime implements SourceHost {
     const runtime = this
     const { store, sources, prompts, sessions, settings, engine, executor, machine, masterId, ready, sourceLinks, setup, passes } = this
     return { store, sources, prompts, sessions, settings, engine, executor, get health() { return runtime.health }, machine, masterId, ready, sourceLinks,
-      managementKey: () => this.config.managementKey, webhookSecret: () => this.config.webhookSecret, wake: () => this.tick(true), settled: () => this.drive(),
+      secrets: () => ({ githubToken: !!this.config.githubToken, webhookSecret: !!this.config.webhookSecret }), managementKey: () => this.config.managementKey, webhookSecret: () => this.config.webhookSecret, wake: () => this.tick(true), settled: () => this.drive(),
       get deployment() { return setup.deployment }, get setupProblem() { return setup.problem },
       configured: () => setup.configured(), links: () => runtime.links(), ticketEnvironment: ticket => runtime.ticketEnvironment(ticket),
       checkSetup: () => { setup.check() }, requestPass: () => { passes.request() }, models: () => this.ctx.sessionController.modelCatalog({}) as never }

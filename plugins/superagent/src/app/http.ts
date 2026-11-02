@@ -45,6 +45,8 @@ export interface HttpHost {
   readonly deployment: Deployment
   readonly setupProblem?: SetupProblem | undefined
   configured(): boolean
+  /** Whether each write-only credential holds a value; the panel never reads the values. */
+  secrets(): { githubToken: boolean; webhookSecret: boolean }
   /** The key the panel sends; empty until the panel wrote one. */
   managementKey(): string
   webhookSecret(): string
@@ -121,7 +123,7 @@ function machineView({ promptMaxChars, admissionContextMaxPages, admissionContex
 function setupView(runtime: HttpHost) {
   const resolved = runtime.configured() ? runtime.deployment : undefined
   return {
-    machine: machineView(runtime.machine), problem: runtime.setupProblem ?? null,
+    machine: machineView(runtime.machine), secrets: runtime.secrets(), problem: runtime.setupProblem ?? null,
     accounts: resolved ? { repository: resolved.repository, agent: resolved.github.login } : null,
   }
 }

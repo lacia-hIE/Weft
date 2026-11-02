@@ -16,7 +16,7 @@ import { Field, Fields } from './settings-kit.tsx'
 import type { T } from './text.ts'
 import { CheckSetupButton, ConfirmButton, Hint, KeyValues, Section, SetupMessage } from './widgets.tsx'
 
-export type DeploymentForm = (ConfigPageForm & { secretSet(field: string): boolean }) | undefined
+export type DeploymentForm = ConfigPageForm | undefined
 type Op = Parameters<ConfigPageForm['mutate']>[0][number]
 
 const MACHINE_LIMITS = ['promptMaxChars', 'admissionContextMaxPages', 'admissionContextTimeoutMs'] as const
@@ -28,7 +28,7 @@ const limitsOf = (values: object | undefined): Limits =>
 const SECRETS = [{ field: 'githubToken', label: 'deploymentToken', hint: 'deploymentTokenHint' }] as const
 
 /** The agent's secrets: written here, and never read back; an empty field leaves what is saved. */
-function Secrets({ form, editable, revision }: { form: DeploymentForm; editable: boolean; revision: number | undefined }) {
+function Secrets({ form, editable, revision, saved }: { form: DeploymentForm; editable: boolean; revision: number | undefined; saved: SetupView['secrets'] }) {
   const { t, notify, restart } = usePanel()
   const [values, setValues] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
@@ -46,7 +46,7 @@ function Secrets({ form, editable, revision }: { form: DeploymentForm; editable:
   }
   return <Section title={t('deploymentSecrets')} hint={t('deploymentSecretsHint')}>
     {SECRETS.map(({ field, label, hint }) => <Field key={field} label={t(label)} hint={t(hint)}
-      note={form?.secretSet(field) ? t('deploymentSecretSet') : t('deploymentSecretUnset')}>
+      note={saved[field] ? t('deploymentSecretSet') : t('deploymentSecretUnset')}>
       <Input type="password" autoComplete="new-password" spellCheck={false} disabled={!editable || busy} value={values[field] ?? ''}
         onChange={event => { setValues({ ...values, [field]: event.target.value }) }} />
     </Field>)}
@@ -72,7 +72,7 @@ function CopyRow({ label, value }: { label: string; value: string }) {
 /** A secret just generated, kept only in this page's memory: it is never read back, and saving it reloads the plugin and this view. */
 let generatedSecret = ''
 /** Everything GitHub's webhook form asks for. The agent's account cannot add a webhook itself, as that takes admin rights on the repository. */
-function WebhookSetup({ form, editable, revision, repository }: { form: DeploymentForm; editable: boolean; revision: number | undefined; repository: string | undefined }) {
+function WebhookSetup({ form, editable, revision, repository, isSet }: { form: DeploymentForm; editable: boolean; revision: number | undefined; repository: string | undefined; isSet: boolean }) {
   const { t, notify, restart } = usePanel()
   const [secret, setSecret] = useState(generatedSecret)
   const [error, setError] = useState('')
@@ -86,7 +86,6 @@ function WebhookSetup({ form, editable, revision, repository }: { form: Deployme
     restart()
   }
   const run = () => generate().catch((failure: unknown) => { setError(failure instanceof Error ? failure.message : String(failure)) })
-  const isSet = form?.secretSet('webhookSecret') === true
   return <Section title={t('webhookTitle')} hint={t('webhookHint')}>
     {repository ? <Hint><a href={`https://github.com/${repository}/settings/hooks/new`} target="_blank" rel="noreferrer">{t('webhookOpen', { repository })}</a></Hint>
       : <Hint>{t('webhookNoRepository')}</Hint>}
@@ -104,10 +103,10 @@ function WebhookSetup({ form, editable, revision, repository }: { form: Deployme
   </Section>
 }
 
-export function usePageForm(form: ConfigForm<Record<string, unknown>> | undefined, secretSet: (field: string) => boolean): DeploymentForm {
+export function usePageForm(form: ConfigForm<Record<string, unknown>> | undefined): DeploymentForm {
   const subscribe = useCallback((listener: () => void) => form ? form.subscribe(listener) : () => {}, [form])
   const state = useSyncExternalStore(subscribe, () => form?.getSnapshot())
-  return useMemo(() => form && state ? { state, mutate: form.mutate.bind(form), secretSet } : undefined, [form, state, secretSet])
+  return useMemo(() => form && state ? { state, mutate: form.mutate.bind(form) } : undefined, [form, state])
 }
 
 /** Deployment configuration form; falls back to read-only display when DSH config forms are unavailable or read-only. */
@@ -146,8 +145,8 @@ export function DeploymentPage({ setup, form, accounts: showAccounts }: { setup:
         <Hint>{t('deploymentAccountsWhere')}</Hint>
       </Section>}
       {readOnlyHint && <Hint>{readOnlyHint}</Hint>}
-      <Secrets form={form} editable={!!editable} revision={editable ? snapshot.revision : undefined} />
-      <WebhookSetup form={form} editable={!!editable} revision={editable ? snapshot.revision : undefined} repository={accounts?.repository} />
+      <Secrets form={form} editable={!!editable} revision={editable ? snapshot.revision : undefined} saved={setup.secrets} />
+      <WebhookSetup form={form} editable={!!editable} revision={editable ? snapshot.revision : undefined} repository={accounts?.repository} isSet={setup.secrets.webhookSecret} />
       <Section title={t('deploymentLimits')} hint={t('deploymentLimitsHint')}>
         {limit('promptMaxChars', t('deploymentPromptMaxChars'))}
         {limit('admissionContextMaxPages', t('deploymentContextPages'))}

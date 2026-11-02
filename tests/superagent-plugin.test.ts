@@ -98,7 +98,8 @@ test('a request on GitHub becomes a Ticket worked on in its own Session, without
     assert.equal((await waitFor(async () => {const response = await hook('/api/state'); return response.status === 401 ? response : undefined;}, 'routes')).status, 401, 'the panel routes need the key');
     assert.equal((await hook('/github', {method: 'POST', body: '{}'})).status, 401, 'an unsigned delivery is refused');
 
-    const state = await waitFor(async () => {const response = await panel('state'); return response.status === 200 ? await response.json() as {setup: {problem: {code: string} | null}} : undefined;}, 'state');
+    const state = await waitFor(async () => {const response = await panel('state'); return response.status === 200 ? await response.json() as {setup: {problem: {code: string} | null; secrets: unknown}} : undefined;}, 'state');
+    assert.deepEqual(state.setup.secrets, {githubToken: true, webhookSecret: true}, 'the panel learns what is set without reading it');
     assert.equal(state.setup.problem?.code, 'repositoryUnset');
 
     const settings = await (await panel('settings')).json() as {sources: {id: string; revision: number}[]};
