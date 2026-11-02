@@ -249,7 +249,8 @@ export class Runtime implements SourceHost {
   /** The background pass and a webhook: read GitHub, find lost turn ends, and run what is due. */
   async tick(force = false): Promise<void> {
     await this.ready
-    if (!this.configured()) return
+    // A check that failed for a passing reason, such as GitHub being unreachable, is tried again here.
+    if (!this.configured()) { if (await this.setup.run(this.store.settings())) this.setup.restart(); return }
     await pollDue(this.githubContext, this.lifetime, force)
     await this.executor.reconcile()
     await this.drive()

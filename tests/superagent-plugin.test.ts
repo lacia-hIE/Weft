@@ -120,6 +120,12 @@ test('a request on GitHub becomes a Ticket worked on in its own Session, without
     const main = requests.find(item => item.tools.includes('orchestrator_route'))!;
     assert.ok(!main.tools.includes('orchestrator_report'), 'the main Session is not offered a worker\'s tools');
 
+    // Without a pull request, a `ready` report read from the worker's log ends the Ticket as completed.
+    await waitFor(async () => {
+      const list = await (await panel('tickets?state=ended')).json() as {items?: {id: string}[]};
+      return list.items?.some(item => item.id === tickets[0]!.id) ? true : undefined;
+    }, 'the Ticket\'s end');
+
     await api.call('session/create', {request: {sessionId: 'personal'}});
     const follow = await api.follow('personal');
     try {
