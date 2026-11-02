@@ -1,7 +1,6 @@
 /** Application composition root and lifecycle manager for dsh-superagent. */
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import { z } from 'zod'
 import { Engine, key, type EngineForSettings, type ReceiveResult, type Ticket, type Trigger } from '../core/index.ts'
 import { machineOf, type Deployment, type DeploymentConfig, type Machine } from '../deployment.ts'
 import { DshExecutor, mandateInstructions, sourceTrigger, workerSessionId } from '../executor/dsh.ts'
@@ -34,6 +33,7 @@ import { sourceContextOf, type SourceContextDeps } from './source-context.ts'
 import { Store } from './store.ts'
 import { executorTools, type ExecutorToolsHost } from './tools/executor.ts'
 import { mainTools, type MainToolsHost } from './tools/main.ts'
+import { toolParameters } from './tools/parameters.ts'
 import type { Tool } from './tools/tool.ts'
 import { evalsHealth } from './views/overview.ts'
 import type { LinkTarget } from './views/records.ts'
@@ -182,7 +182,7 @@ export class Runtime implements SourceHost {
     this.disposers.push(this.ctx.weftManagedSessions.scopeTools(names))
     for (const name of names) {
       const tool = describe.get(name)!
-      this.disposers.push(this.ctx.tools.register(defineTool({ name, description: tool.description, parameters: JSON.parse(JSON.stringify(z.toJSONSchema(tool.schema, { unrepresentable: 'any' }))) as never,
+      this.disposers.push(this.ctx.tools.register(defineTool({ name, description: tool.description, parameters: toolParameters(tool.schema) as never,
         output: { schema: { type: 'object', additionalProperties: true } as never, render: (_args: unknown, value: unknown) => [{ type: 'text' as const, text: JSON.stringify(value) }] },
         execute: async (args: unknown, execution: { signal: AbortSignal }) => {
           const value = await this.toolFor(name).execute(tool.schema.parse(args) as never, execution.signal)
