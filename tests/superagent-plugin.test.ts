@@ -111,6 +111,15 @@ test('a request on GitHub becomes a Ticket worked on in its own Session, without
     const policy = await panel('settings/policy', {method: 'PUT', headers: {'content-type': 'application/json'}, body: JSON.stringify({revision: current.blocks.policy.revision, value: {rules: [], sources: {github: {allowed: [{id: 'alice'}]}}}})});
     assert.equal(policy.status, 200, await policy.clone().text());
 
+    const sourceState = async () => ((await (await panel('sources')).json()) as {id: string; state: string}[]).find(row => row.id === 'github')?.state;
+    await waitFor(async () => await sourceState() === 'ready' ? true : undefined, 'the Source\'s first read without a delivery');
+    // A new activation, as after hibernation, keeps what the Source last reported instead of reading as starting.
+    const live = (await api.call<SettingsDescribeValue>('settings/describe', {})).namespaces.find(candidate => candidate.ns === ns)!;
+    await api.call('settings/update', {ns, patch: {reconcileSeconds: 600}, expectedRevision: live.revision});
+    await delay(1000);
+    await waitFor(async () => {const response = await panel('sources'); return response.status === 200 ? true : undefined;}, 'the routes after a reload');
+    assert.equal(await sourceState(), 'ready', 'the reported health outlives the activation');
+
     issue.created_at = issue.updated_at = new Date().toISOString();
     announced = [7];
     assert.equal((await deliver()).status, 202, 'a signed delivery wakes the Source');

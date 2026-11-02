@@ -7,6 +7,7 @@ import type { SourceContext } from '../sources/host.ts'
 import type { SourceRegistry } from '../sources/registry.ts'
 import type { Outbox } from './outbox.ts'
 import type { Store } from './store.ts'
+import { KV } from '../kv.ts'
 
 export interface SourceContextDeps {
   readonly store: Pick<Store, 'atomic' | 'get' | 'set' | 'delete' | 'keys' | 'threads' | 'tickets' | 'triggers' | 'read'>
@@ -31,6 +32,11 @@ export interface SourceContextDeps {
 export function sourceContextOf(deps: SourceContextDeps, kind: { kind: string; health: readonly string[] }): SourceContext {
   const { store } = deps
   const health = deps.sources.healthEntries(kind.health)
+  // An environment hibernates between wakes, and a new activation should not read as starting until its next poll.
+  for (const entry of kind.health) {
+    const stored = store.get(KV.sources.health(entry))
+    if (stored && health.get(entry)?.get()?.state === 'starting') health.get(entry)!.set(stored)
+  }
   return {
     get deployment() { return deps.deployment },
     commands: deps.commands,
@@ -64,6 +70,7 @@ export function sourceContextOf(deps: SourceContextDeps, kind: { kind: string; h
     notify: message => { deps.outbox.send(message) },
     report: (entry, value) => {
       if (!kind.health.includes(entry)) throw new Error(`The ${kind.kind} Source has no health entry ${entry}`)
+      store.set(KV.sources.health(entry), value)
       health.get(entry)?.set(value)
     },
   }

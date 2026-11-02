@@ -150,6 +150,8 @@ export class Runtime implements SourceHost {
     this.sources.register(githubKind)
     this.githubContext = this.context(githubKind)
     this.ready = this.initialize()
+    // Reads GitHub if it is due, so a first read does not wait for the background pass.
+    void this.ready.then(() => this.tick()).catch(report)
   }
   get health(): Readonly<Record<string, Health>> { return this.board.all }
   /** Aborted when dsh-superagent stops, cancelling running reads. */
@@ -255,7 +257,11 @@ export class Runtime implements SourceHost {
   async tick(force = false): Promise<void> {
     await this.ready
     // A check that failed for a passing reason, such as GitHub being unreachable, is tried again here.
-    if (!this.configured()) { if (await this.setup.run(this.store.settings())) this.setup.restart(); return }
+    if (!this.configured()) {
+      if (await this.setup.run(this.store.settings())) this.setup.restart()
+      else this.githubContext.report('github', health('paused', 'setupPending'))
+      return
+    }
     await pollDue(this.githubContext, this.lifetime, force)
     await this.executor.reconcile()
     await this.drive()
