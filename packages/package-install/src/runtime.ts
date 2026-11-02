@@ -1,4 +1,6 @@
 import type {Context, Fiber, Plugin} from '@deepseek-ai/cordis';
+import type {Agent} from '@deepseek-ai/dsh-agent';
+import {scopeParentOf} from '@deepseek-ai/dsh-scope';
 import {registerRemoteTool, toolDescriptions, type ToolTransport} from '../../native-plugins/src/tool-bridge.ts';
 import type {ManagedSessionConfig} from '../../native-plugins/src/managed-sessions.ts';
 import {NativePluginPlatform} from '../../native-plugins/src/platform.ts';
@@ -21,12 +23,31 @@ export class InstalledPackageRuntime {
   private tail: Promise<unknown> = Promise.resolve();
   private managed: ManagedSession | undefined;
   private instructions: {text: string; dispose: () => void} | undefined;
+  private readonly limits = new Map<Agent, {signature: string; dispose: () => void}>();
   constructor(private readonly ctx: Context, private readonly state: DurableObjectState, loader: WorkerLoader | undefined, scope: object,
-    private readonly source: {list(): Promise<Installation[]>; artifact(name: string, digest: string): Promise<Artifact>; capability(pluginId: string, runId: string): Fetcher; environmentTools?(row:Installation):Promise<unknown>; environmentTransport?(row:Installation):ToolTransport; managed?():Promise<ManagedSession|undefined>; failed?(name: string, digest: string, activationId?: string): Promise<boolean>}) {
+    private readonly source: {list(): Promise<Installation[]>; artifact(name: string, digest: string): Promise<Artifact>; capability(pluginId: string, runId: string): Fetcher; environmentTools?(row:Installation):Promise<unknown>; environmentTransport?(row:Installation):ToolTransport; managed?():Promise<ManagedSession|undefined>; sessionId?:string; failed?(name: string, digest: string, activationId?: string): Promise<boolean>}) {
     this.platform = new NativePluginPlatform(state, loader, scope, source.capability);
     this.platform.onFault((runId) => {const entry = [...this.active.values()].find(row => row.runId === runId); if (entry) state.waitUntil(this.stop(entry.installation.name));});
     ctx.effect(() => () => {this.instructions?.dispose();}, 'weft.managed-session');
+    ctx.effect(() => ctx.on('agent/created', ({agent}) => {this.limit(agent); return undefined;}, {global: true}), 'weft.managed-session-tools');
+    ctx.effect(() => ctx.on('agent/disposed', ({agent}) => {this.limits.delete(agent);}, {global: true}), 'weft.managed-session-tools');
     ctx.effect(() => () => Promise.all([...this.active.keys()].map(name => this.stop(name))).then(() => {}), 'weft.installed-packages');
+  }
+  /**
+   * Keeps an Agent to what the managing package allows, read from the view above it, as a restriction may name only tools
+   * it inherits and refuses an unknown one. Its subagents keep the same list without the package's own tools.
+   */
+  private limit(agent: Agent): void {
+    const allow = this.managed?.allow;
+    const previous = this.limits.get(agent);
+    if (!allow) {previous?.dispose(); this.limits.delete(agent); return;}
+    const own = agent.id === this.source.sessionId ? this.managed!.tools : [];
+    const allowed = (name: string) => own.includes(name) || allow.some(pattern => pattern.endsWith('*') ? name.startsWith(pattern.slice(0, -1)) : name === pattern);
+    const names = agent.ctx.tools.schemas(scopeParentOf(agent)).map(tool => tool.name).filter(allowed);
+    const signature = JSON.stringify(names);
+    if (previous?.signature === signature) return;
+    previous?.dispose();
+    this.limits.set(agent, {signature, dispose: agent.ctx.tools.restrict({allow: names})});
   }
   /** Registering a section is what tells the Session's prompt to reassemble. */
   private applyInstructions(text: string): void {
@@ -75,6 +96,7 @@ export class InstalledPackageRuntime {
           if (this.source.failed) this.state.waitUntil(this.source.failed(installation.name, installation.digest, installation.activationId).catch(() => {}));
         }
       }
+      for (const agent of this.ctx.agents.list()) this.limit(agent);
     });
     this.tail = operation; return operation;
   }

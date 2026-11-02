@@ -1,12 +1,19 @@
 /** What a package asks of one root Session it manages. */
-export interface ManagedSessionConfig {readonly instructions: string; readonly tools: readonly string[]}
+export interface ManagedSessionConfig {
+  readonly instructions: string;
+  /** This package's scoped tools the Session is offered. */
+  readonly tools: readonly string[];
+  /** When present, the only other tools the Session and its subagents keep; a trailing `*` matches a prefix. */
+  readonly allow?: readonly string[];
+}
 export const MAX_MANAGED_INSTRUCTIONS = 256 * 1024;
 export function managedSessionConfig(raw: unknown): ManagedSessionConfig {
   const value = raw as Partial<ManagedSessionConfig> | null;
   if (!value || typeof value.instructions !== 'string' || value.instructions.length > MAX_MANAGED_INSTRUCTIONS || !Array.isArray(value.tools) || value.tools.length > 100
-    || value.tools.some(name => typeof name !== 'string' || !name || name.length > 100) || Object.keys(value).length !== 2)
+    || [value.tools, ...value.allow === undefined ? [] : [value.allow]].some(names => !Array.isArray(names) || names.length > 100 || names.some(name => typeof name !== 'string' || !name || name.length > 100))
+    || Object.keys(value).some(key => !['instructions', 'tools', 'allow'].includes(key)))
     throw new TypeError('Invalid managed Session configuration');
-  return {instructions: value.instructions, tools: [...value.tools]};
+  return {instructions: value.instructions, tools: [...value.tools], ...value.allow === undefined ? {} : {allow: [...value.allow]}};
 }
 
 interface Host {manageSession(sessionId: string, config: ManagedSessionConfig | null): Promise<void>}

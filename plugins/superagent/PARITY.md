@@ -10,9 +10,10 @@ Against [deepseek-ai/dsh-superagent-prototype](https://github.com/deepseek-ai/ds
 | Worker tools | Kept; scoped to the Sessions configured with them |
 | Prompts | Kept; `prepare` is an instruction to the worker, since an environment plugin runs no process |
 | Agent presets | Not ported: no custom presets exist for a plugin here, so Sessions use the default preset and instructions |
-| Tool limits on Sessions | Not ported: the main Session keeps the default preset's tools, including the shell, instead of the prototype's short list, and a worker keeps native tools after its Ticket ends. Only the `orchestrator_*` tools check the Session and its Ticket |
+| Tool limits on Sessions | Kept: the main Session and workers keep the prototype's lists, plus MCP tools and the switch to a container for workers; subagents keep a worker's list; an ended Ticket's worker keeps none. A list takes effect at the next turn, so a worker that ends its own Ticket keeps it for the rest of that turn |
+| The main Session's wait guard, and moving a command to the background after five seconds | Not ported: a guard runs in the Session and this plugin in the environment, and a plugin adds no presets here. A long command delays a person's message until the worker's next step |
 | Blocked commands and account shims | Removed; they rely on a local OS account |
-| Background jobs and subagent slots | Not tracked: a worker's slot ends with its turn. Subagents see the same tools and instructions as their worker |
+| Background jobs and subagent slots | Not tracked: a worker's slot ends with its turn. Subagents see their worker's instructions |
 | Notices without waking the main Session | Held and sent with its next message |
 | Model budget retries in health | Not ported |
 | Container credentials | Not provided: a worker that switches to the container has no `git push` credential from this plugin |

@@ -1,5 +1,5 @@
 /** Lifecycle, instructions, tools and message delivery of the orchestrator and worker Sessions, through the Host's session services. */
-import { key, type Ticket } from '../core/index.ts'
+import { key, liveTicket, type Ticket } from '../core/index.ts'
 import { KV } from '../kv.ts'
 import type { Effects } from './effects.ts'
 import type { PromptVersion, Prompts } from './prompts.ts'
@@ -24,6 +24,14 @@ export interface SessionsHost {
   tools(role: 'orchestrator' | 'worker'): string[]
 }
 export type Role = 'orchestrator' | 'worker'
+/**
+ * The tools an Executor Session works with: files, search, the shell and its jobs, the web, skills, its todo list and subagents,
+ * the Host's switch to a container and its MCP servers. It gets no other tool, whenever it was registered: none that asks or
+ * shows a person something, changes the environment, schedules work or starts goals outside the worker slots, or edits documents.
+ */
+const WORK_TOOLS = ['read', 'write', 'edit', 'read_image', 'glob', 'grep', 'bash', 'pwsh', 'job_output', 'job_list', 'job_kill', 'web_search',
+  'web_fetch', 'skill', 'todo_write', 'subagent', 'list_subagent_models', 'send_message', 'list_agents', 'interrupt_agent', 'workspace_runtime', 'mcp__*']
+const MAIN_TOOLS = ['skill', 'bash', 'read', 'read_image', 'job_output', 'job_list', 'job_kill']
 export const ticketOfSessionId = (sessionId: string): string | undefined => sessionId.startsWith('worker-') ? sessionId.slice('worker-'.length) : undefined
 
 /**
@@ -59,9 +67,12 @@ export class Sessions {
     const skills = prompts.skills(version.config).map(([name, content]) => `## skill: dsh-superagent-${name}\n${content}`).join('\n\n')
     const instructions = skills ? `${text}\n\n${skills}` : text
     const tools = this.host.tools(role)
-    const stamp = key(instructions, tools.join())
+    // A worker keeps no work tool once its ticket ended; a person's later message there needs a new authorized ticket.
+    const current = ticket && store.tickets.get(ticket.id)
+    const allow = role === 'orchestrator' ? MAIN_TOOLS : current && !liveTicket(current) ? [] : WORK_TOOLS
+    const stamp = key(instructions, tools.join(), allow.join())
     if (store.get(KV.sessions.configured(id)) === stamp) return
-    await managed.configure(id, { instructions, tools })
+    await managed.configure(id, { instructions, tools, allow })
     store.set(KV.sessions.configured(id), stamp)
     const revisions = store.get(KV.sessions.prompts(id)) ?? []
     if (revisions.at(-1) !== version.revision) store.set(KV.sessions.prompts(id), [...revisions.filter(revision => revision !== version.revision), version.revision])

@@ -66,7 +66,7 @@ EnvironmentDO 的数据库只登记安装和调度元数据，不保存插件代
 
 `inject: ['weftManagedSessions']` 是 Weft 专有服务，归入「管理本环境会话」授权，供需要长期托管若干根会话的编排类插件使用（环境插件不能直接持有 Agent，也不能注入 `systemPrompt`）：
 
-- `configure(sessionId, {instructions, tools})` 登记该会话的附加系统提示与可用的受限工具，幂等；配置保存在 EnvironmentDO，下一轮开始前生效。一个会话同时只能由一个包管理。
+- `configure(sessionId, {instructions, tools, allow?})` 登记该会话的附加系统提示、可用的受限工具，以及可选的工具白名单，幂等。给出 `allow` 时，该会话和它的子 Agent 只保留名单内的其他工具，名单项以 `*` 结尾时按前缀匹配，子 Agent 不继承 `tools`；配置保存在 EnvironmentDO，下一轮开始前生效。一个会话同时只能由一个包管理。
 - `release(sessionId)` 解除管理，下一轮起撤回受限工具和后续组装的指令。
 - `scopeTools(names)` 在激活时声明受限工具，返回 disposer。受限工具只出现在配置里列出它的会话；未声明的工具行为不变，仍进入本环境所有会话。
 

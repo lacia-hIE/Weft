@@ -21,7 +21,7 @@ export async function sessionLog(controller: Pick<HostSessionController, 'follow
 }
 export interface HostManagedSessions {
   scopeTools(names: readonly string[]): () => void
-  configure(sessionId: string, config: { instructions: string; tools: readonly string[] }): Promise<void>
+  configure(sessionId: string, config: { instructions: string; tools: readonly string[]; allow: readonly string[] }): Promise<void>
   release(sessionId: string): Promise<void>
 }
 export interface HostSessionEvents {

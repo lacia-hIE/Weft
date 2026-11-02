@@ -54,7 +54,7 @@ export interface ExecutorHost {
   readonly health: HealthEntry
   readonly lifetime: AbortSignal
   /** Session manager for worker sessions and for relaying worker reports to the main Session. */
-  readonly sessions: Pick<Sessions, 'ensure' | 'prompt' | 'promptedId' | 'relay' | 'holds'>
+  readonly sessions: Pick<Sessions, 'ensure' | 'configure' | 'prompt' | 'promptedId' | 'relay' | 'holds'>
   /** Whether processing is paused, which holds launches and input deliveries. */
   paused(): boolean
   sourceLink(trigger: Trigger, signal?: AbortSignal): Promise<{ source_url?: string; source_url_read?: string }>
@@ -195,6 +195,10 @@ export class DshExecutor implements Executor {
     host.effects.handle('launch', payload => this.launchQueued(payload), { limit: () => host.paused() ? 0 : this.slots.launches(), retry: [5000, 300_000] })
     // Failed input deliveries are recorded on the ticket itself rather than reported through the `delivery` effect health entry (`quiet: true`).
     host.effects.handle('delivery', payload => this.deliverQueued(payload.ticketId), { limit: () => host.paused() ? 0 : 4, quiet: true })
+    host.effects.handle('settle', async ({ ticketId }) => {
+      const ticket = host.store.tickets.get(ticketId)
+      if (ticket && host.store.get(KV.sessions.created(workerSessionId(ticketId)))) await host.sessions.configure(workerSessionId(ticketId), 'worker', ticket)
+    })
     host.effects.handle('continue', payload => this.continueQueued(payload), { limit: () => host.paused() ? 0 : 4, retry: [TRANSIENT_BACKOFF_MS, 300_000], quiet: true })
   }
   /** Populates a newly accepted ticket's `execution` attributes (worktree name, workspace directory, and assignment text). */

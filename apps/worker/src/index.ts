@@ -279,7 +279,7 @@ export class SessionDO extends DurableObject<Env> {
         });
         this.installedPackages = new InstalledPackageRuntime(ctx, this.ctx, this.env.LOADER, scope, {
           list: () => controlFor(this.env, owner).nativePackageRuntime(owner),
-          managed: () => controlFor(this.env, owner).nativeManagedSession(owner, scope.sessionId),
+          managed: () => controlFor(this.env, owner).nativeManagedSession(owner, scope.sessionId), sessionId: scope.sessionId,
           environmentTools: row => controlFor(this.env,owner).nativePackageTools(owner,{name:row.name,digest:row.digest,activationId:row.activationId??row.digest}),
           environmentTransport: row => {
             const receipt={name:row.name,digest:row.digest,activationId:row.activationId??row.digest};

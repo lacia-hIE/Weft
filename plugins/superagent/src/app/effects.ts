@@ -21,6 +21,8 @@ export interface EffectPayloads {
   notice: { value: Record<string, unknown>; summary: string }
   /** Go on with a worker turn that failed for a passing reason, once `at` passed; the key is the Assignment ID. */
   continue: { ticketId: string; assignmentId: string; attempt: number; at: number; text: string }
+  /** Apply a ticket's end to its worker's Session, which then keeps no work tool; the key is the Ticket ID. */
+  settle: { ticketId: string }
   /** Send a message for a Channel through its Source; the key is the message ID, whose receipt the Outbox keeps. */
   reply: Record<string, never>
 }

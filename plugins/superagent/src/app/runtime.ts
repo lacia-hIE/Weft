@@ -130,6 +130,7 @@ export class Runtime implements SourceHost {
       if (followup) sessions.relay(followup.id, followup.text)
       // Notify the ticket's conversations whenever it ends via a pull request.
       const ended = event.type === 'ticket.ended' ? store.tickets.get(event.data.ticketId) : undefined
+      if (ended) effects.enqueue('settle', ended.id, { ticketId: ended.id })
       if (ended && setup.configured()) {
         const request = store.triggers.get(ended.origin.triggerId)?.text ?? ''
         for (const message of pullEndNotices(ended, request, setup.deployment.repository)) outbox.send(message)

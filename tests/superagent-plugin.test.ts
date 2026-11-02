@@ -128,8 +128,13 @@ test('a request on GitHub becomes a Ticket worked on in its own Session, without
     const worker = await waitFor(() => requests.find(item => item.tools.includes('orchestrator_report')), 'the worker\'s model request');
     assert.ok(worker.system.includes('dsh-superagent prompt revision'), 'the worker runs under the composed instructions');
     assert.ok(!worker.tools.includes('orchestrator_route'), 'a worker is not offered the main Session\'s tools');
+    const work = new Set(['read', 'write', 'edit', 'read_image', 'glob', 'grep', 'bash', 'pwsh', 'job_output', 'job_list', 'job_kill', 'web_search', 'web_fetch', 'skill', 'todo_write', 'subagent', 'list_subagent_models', 'send_message', 'list_agents', 'interrupt_agent', 'workspace_runtime']);
+    assert.deepEqual(worker.tools.filter(name => !work.has(name) && !name.startsWith('orchestrator_')), [], 'a worker keeps only its work tools');
+    assert.ok(worker.tools.includes('write'), 'a worker keeps what it works with');
     const main = requests.find(item => item.tools.includes('orchestrator_route'))!;
     assert.ok(!main.tools.includes('orchestrator_report'), 'the main Session is not offered a worker\'s tools');
+    const routing = new Set(['skill', 'bash', 'read', 'read_image', 'job_output', 'job_list', 'job_kill']);
+    assert.deepEqual(main.tools.filter(name => !routing.has(name) && !name.startsWith('orchestrator_')), [], 'the main Session keeps only what routing uses');
 
     // Without a pull request, a `ready` report read from the worker's log ends the Ticket as completed.
     await waitFor(async () => {
@@ -149,6 +154,20 @@ test('a request on GitHub becomes a Ticket worked on in its own Session, without
     assert.equal(detail.assignments?.at(-1)?.report?.state, 'waiting');
     assert.equal(detail.assignments?.at(-1)?.report?.summary, 'Done.');
 
+    // A worker keeps no work tool once its ticket ended, also when a person writes in its Session.
+    const ended = `worker-${tickets[0]!.id}`;
+    await waitFor(async () => {
+      const before = requests.length;
+      const asked = await api.follow(ended);
+      try {
+        await asked.next();
+        await api.call('session/prompt', {request: {sessionId: ended, requestId: crypto.randomUUID(), mode: 'queue', content: [{type: 'text', text: 'one more thing'}]}});
+        for (;;) {const frame = await asked.next(); if (frame.type === 'event' && frame.event.type === 'turn/end') break;}
+      } finally {await asked.close();}
+      const seen = requests.slice(before).at(-1);
+      return seen && !seen.tools.includes('write') ? true : undefined;
+    }, 'withdrawing an ended Ticket\'s work tools');
+
     await api.call('session/create', {request: {sessionId: 'personal'}});
     const follow = await api.follow('personal');
     try {
@@ -158,6 +177,7 @@ test('a request on GitHub becomes a Ticket worked on in its own Session, without
     } finally {await follow.close();}
     const personal = requests.at(-1)!;
     assert.ok(!personal.tools.some(name => name.startsWith('orchestrator_')), 'a person\'s Session is offered none of the tools');
+    assert.ok(personal.tools.includes('write'), 'a person\'s Session keeps its own tools');
     assert.ok(!personal.system.includes('dsh-superagent prompt revision'), 'a person\'s Session gets none of the instructions');
   } finally {await runtime.dispose();}
 });

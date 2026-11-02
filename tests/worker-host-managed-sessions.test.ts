@@ -35,7 +35,7 @@ test('a package commits across tables in its facet and scopes prompts and tools 
       }}));
       ctx.effect(()=>ctx.webServer.register({kind:'exact',path:'/manage',handler:async(req,res)=>{
         const query=new URL(req.url,'http://host').searchParams,session=query.get('session');
-        const result=await Promise.resolve().then(()=>query.get('release')?ctx.weftManagedSessions.release(session):ctx.weftManagedSessions.configure(session,{instructions:query.get('text')??'MANAGED_MARKER',tools:['package_save']})).then(()=>'ok',error=>String(error.message));
+        const result=await Promise.resolve().then(()=>query.get('release')?ctx.weftManagedSessions.release(session):ctx.weftManagedSessions.configure(session,{instructions:query.get('text')??'MANAGED_MARKER',tools:['package_save'],...query.get('allow')?{allow:[query.get('allow')]}:{}})).then(()=>'ok',error=>String(error.message));
         res.writeHead(200);res.end(result);
       }}));
     }`}}),model=packageModel();
@@ -71,9 +71,20 @@ test('a package commits across tables in its facet and scopes prompts and tools 
     await turn('managed-a');
     assert.ok(model.observations.at(-1)!.includes('MANAGED_SECOND'),'changed instructions reach the next turn, which the native prompt appends to its history');
 
+    assert.ok(offered().includes('write'),'without a list the Session keeps its other tools');
+    assert.equal(await(await hook('/manage?session=managed-a&text=MANAGED_SECOND&allow=rea*')).text(),'ok');
+    await turn('managed-a');
+    assert.ok(offered().includes('read'),'a pattern on the list keeps the tools it matches');
+    assert.ok(offered().includes('package_save'),'the Session keeps the scoped tools it was configured with');
+    assert.ok(!offered().includes('write'),'a tool off the list is withdrawn before the next turn');
+    assert.ok(!offered().includes('package_open'),'the list covers other tools of the package too');
+    await turn('personal-b');
+    assert.ok(offered().includes('write'),'another Session keeps its tools');
+
     assert.equal(await(await hook('/manage?session=managed-a&release=1')).text(),'ok');
     await turn('managed-a');
     assert.ok(!offered().includes('package_save'),'release withdraws the scoped tool before the next turn');
+    assert.ok(offered().includes('write'),'release lifts the list before the next turn');
 
     assert.match(await(await hook('/manage?session=not-a-session')).text(),/outside this environment/);
   }finally{await runtime.dispose();}
