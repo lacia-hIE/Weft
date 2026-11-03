@@ -1,6 +1,6 @@
 # 原生 MCP
 
-环境在原版设置页的 `mcp-servers` 中配置远程 MCP 服务器。每台服务器在每个 Session 中成为一条原版 `@deepseek-ai/dsh-mcp-client` 条目（`mcp-server-<名称>`），工具以 `mcp__<名称>__<工具>` 出现；有服务器时原版 `dsh-mcp-resources` 同时提供 `list_mcp_resources`、`list_mcp_resource_templates` 和 `read_mcp_resource`。客户端、协议协商（2026-07-28 优先，回退旧版）、工具同步、取消、超时与重连都由原版包和官方 SDK 负责，Weft 只提供条目与配置。
+环境在设置页的「MCP 服务器」（命名空间 `mcp-servers`）中配置远程 MCP 服务器：可添加、启用或停用、删除服务器，编辑 URL 与时限；请求头的值只写不读，已设置的只显示「已设置」，可替换或删除；「填入 GitHub 预设」填好 GitHub 官方远程 MCP 的地址和请求头名称。每台服务器在每个 Session 中成为一条原版 `@deepseek-ai/dsh-mcp-client` 条目（`mcp-server-<名称>`），工具以 `mcp__<名称>__<工具>` 出现；有服务器时原版 `dsh-mcp-resources` 同时提供 `list_mcp_resources`、`list_mcp_resource_templates` 和 `read_mcp_resource`。客户端、协议协商（2026-07-28 优先，回退旧版）、工具同步、取消、超时与重连都由原版包和官方 SDK 负责，Weft 只提供条目与配置。
 
 | 字段 | 说明 |
 |---|---|

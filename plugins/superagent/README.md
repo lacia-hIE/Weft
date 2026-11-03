@@ -19,7 +19,7 @@ Besides GitHub, requests can come from Feishu, WeChat, QQ and email bots of `@we
 ## How it runs here
 
 - All orchestration lives in the environment's plugin facet, and its state in the facet's SQLite. The environment hibernates between webhooks, turn ends, tool calls and the background pass.
-- Executors use whatever the environment's settings allow: the Worker shell, with no git or test run, or a container the agent switches to where allowed. Without a container, give them a GitHub MCP server under **mcp-servers** to read and write the repository; its token, which may be fine-grained and limited to the repository, stays out of their reach. Passing CI is then their only check of a change.
+- Executors use whatever the environment's settings allow: the Worker shell, with no git or test run, or a container the agent switches to where allowed. Without a container, give them a GitHub MCP server under **Settings → MCP servers** (its GitHub preset fills in the hosted server) to read and write the repository; its token, which may be fine-grained and limited to the repository, stays out of their reach. Passing CI is then their only check of a change.
 - New Sessions run under `danger-full-access` by default, as an executor works unattended and an approval would stall it. Change it under Execution. Sessions in an environment share its files and container, so a worker can reach other projects there. Run the plugin in its own environment if that matters; the Policy's written rules and a narrow token are the limits that remain.
 
 See [PARITY.md](PARITY.md) for what differs from the prototype.
