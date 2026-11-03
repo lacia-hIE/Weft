@@ -48,6 +48,8 @@ const zh = {
   headerValue: '值',
   headerSet: '已设置',
   replace: '新值（留空保持不变）',
+  showValue: '显示值',
+  hideValue: '隐藏值',
   addHeader: '添加请求头',
   removeHeader: '删除请求头',
   save: '保存',
@@ -82,6 +84,8 @@ const en: typeof zh = {
   headerValue: 'Value',
   headerSet: 'Set',
   replace: 'New value (empty keeps it)',
+  showValue: 'Show value',
+  hideValue: 'Hide value',
   addHeader: 'Add header',
   removeHeader: 'Remove header',
   save: 'Save',
@@ -186,8 +190,8 @@ function ServerCard({t, scope, server, index, headers, disabled}: {t: Translate;
     h(Labeled, {label: t('timeout')}, h(Input, {type: 'number', min: 1000, max: 600000, value: timeout, disabled, onChange: event => setTimeoutMs(event.target.value)})),
     h('div', {style: {display: 'grid', gap: 8}}, h('span', {style: {fontWeight: 500, fontSize: 13}}, t('headers')), h('span', {style: muted}, t('headersHint')),
       headers.map(header => h('div', {key: header.key, style: row}, h('code', {style: {minWidth: 140}}, header.key), h('span', {style: muted}, header.set ? t('headerSet') : ''),
-        h(Input, {type: 'password', autoComplete: 'off', 'aria-label': `${header.key} ${t('replace')}`, placeholder: t('replace'), value: replaced[header.key] ?? '', disabled,
-          onChange: event => setReplaced(previous => ({...previous, [header.key]: event.target.value}))}),
+        h(SecretInput, {t, label: `${header.key} ${t('replace')}`, placeholder: t('replace'), value: replaced[header.key] ?? '', disabled,
+          onChange: value => setReplaced(previous => ({...previous, [header.key]: value}))}),
         h(Button, {variant: 'ghost', size: 'sm', disabled: disabled || busy, onClick: () => {void write([{op: 'unset', path: [...base, 'headers', header.key]}]);}}, t('removeHeader')))),
       h(HeaderRows, {t, rows: added, setRows: setAdded, disabled})),
     h('div', {style: row},
@@ -198,12 +202,26 @@ function ServerCard({t, scope, server, index, headers, disabled}: {t: Translate;
     h(Notice, {message}));
 }
 
+/** Eye and crossed eye, drawn with the current text colour. */
+function EyeIcon({crossed}: {crossed: boolean}): React.ReactNode {
+  return h('svg', {width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true},
+    h('path', {d: 'M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z'}), h('circle', {cx: 12, cy: 12, r: 3}), crossed ? h('path', {d: 'M3 3l18 18'}) : null);
+}
+/** A header value being typed: masked by default, shown while its eye button is pressed. Stored values are never read back. */
+function SecretInput({t, label, placeholder, value, disabled, onChange}: {t: Translate; label: string; placeholder: string; value: string; disabled: boolean; onChange: (next: string) => void}): React.ReactNode {
+  const [shown, setShown] = React.useState(false);
+  return h('span', {style: {display: 'inline-flex', alignItems: 'center', gap: 4}},
+    h(Input, {type: shown ? 'text' : 'password', autoComplete: 'off', spellCheck: false, 'aria-label': label, placeholder, value, disabled, onChange: event => onChange(event.target.value)}),
+    h(Button, {variant: 'ghost', size: 'sm', 'aria-label': t(shown ? 'hideValue' : 'showValue'), 'aria-pressed': shown, title: t(shown ? 'hideValue' : 'showValue'), disabled,
+      onClick: () => setShown(previous => !previous)}, h(EyeIcon, {crossed: shown})));
+}
+
 function HeaderRows({t, rows, setRows, disabled}: {t: Translate; rows: {key: string; value: string}[]; setRows: (next: {key: string; value: string}[]) => void; disabled: boolean}): React.ReactNode {
   const edit = (index: number, patch: Partial<{key: string; value: string}>) => setRows(rows.map((item, at) => at === index ? {...item, ...patch} : item));
   return h(React.Fragment, null,
     rows.map((item, index) => h('div', {key: index, style: row},
       h(Input, {'aria-label': t('headerName'), placeholder: t('headerName'), value: item.key, disabled, spellCheck: false, onChange: event => edit(index, {key: event.target.value})}),
-      h(Input, {type: 'password', autoComplete: 'off', 'aria-label': t('headerValue'), placeholder: t('headerValue'), value: item.value, disabled, onChange: event => edit(index, {value: event.target.value})}),
+      h(SecretInput, {t, label: t('headerValue'), placeholder: t('headerValue'), value: item.value, disabled, onChange: value => edit(index, {value})}),
       h(Button, {variant: 'ghost', size: 'sm', disabled, onClick: () => setRows(rows.filter((_item, at) => at !== index))}, t('removeHeader')))),
     h('div', {style: row}, h(Button, {variant: 'outline', size: 'sm', disabled, onClick: () => setRows([...rows, {key: '', value: ''}])}, t('addHeader'))));
 }

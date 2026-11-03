@@ -21,7 +21,14 @@ test('Settings adds, edits and removes a remote MCP server without reading heade
   const form = section.getByRole('region', {name: 'Add server', exact: true});
   await form.getByRole('button', {name: 'Fill in the GitHub preset', exact: true}).click();
   await expect(form.getByLabel('URL', {exact: true})).toHaveValue('https://api.githubcopilot.com/mcp/');
-  await form.getByLabel('Value', {exact: true}).first().fill('Bearer github_pat_fixture');
+  const token = form.getByLabel('Value', {exact: true}).first();
+  await expect(token).toHaveAttribute('type', 'password');
+  await form.getByRole('button', {name: 'Show value', exact: true}).first().click();
+  await expect(token).toHaveAttribute('type', 'text');
+  await expect(token).toHaveValue('Bearer ');
+  await token.fill('Bearer github_pat_fixture');
+  await form.getByRole('button', {name: 'Hide value', exact: true}).click();
+  await expect(token).toHaveAttribute('type', 'password');
   await form.getByRole('button', {name: 'Save', exact: true}).click();
 
   const card = section.getByRole('article', {name: 'github', exact: true});
