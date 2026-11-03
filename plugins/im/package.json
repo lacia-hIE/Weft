@@ -1,6 +1,6 @@
 {
   "name": "@weft/dsh-im",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "description": "Connect Feishu, WeChat, QQ and IMAP/SMTP email to DeepSeek Harness Sessions.",
   "license": "MIT",
   "type": "module",
