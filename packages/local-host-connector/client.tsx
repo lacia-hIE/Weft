@@ -34,6 +34,8 @@ function ExecutorSettings({t}:{t:Props['t']}):ReactNode {
   const [state,setState]=useState<ExecutorState>({state:'unpaired',accepting:false,root:'',maxWorkers:1,agentPreset:'',running:0});
   const [code,setCode]=useState(''),[root,setRoot]=useState(''),[preset,setPreset]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false);
   const [permission,setPermission]=useState('');
+  const [draft,setDraft]=useState<{accepting:boolean;maxWorkers:number}|null>(null);
+  const settings=draft??state;
   const id=useId(),remote=location.pathname.includes('/local/web/'),endpoint=new URL('api/weft-executor',document.baseURI).href;
   useEffect(()=>{
     if(remote)return;
@@ -46,7 +48,7 @@ function ExecutorSettings({t}:{t:Props['t']}):ReactNode {
   },[endpoint,remote,t]);
   const action=async(action:string,values:object={})=>{
     setBusy(true);setError('');
-    try{const response=await fetch(endpoint,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action,...values})});const result=await response.json() as ExecutorState&{error?:string};if(!response.ok)throw new Error(result.error??t('failed'));setState(result);if(action==='pair')setCode('');}
+    try{const response=await fetch(endpoint,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action,...values})});const result=await response.json() as ExecutorState&{error?:string};if(!response.ok)throw new Error(result.error??t('failed'));setState(result);if(action==='pair')setCode('');if(action==='configure'||action==='pair')setDraft(null);}
     catch(error){setError(String(error));}finally{setBusy(false);}
   };
   return <section data-weft-local-executor>
@@ -66,10 +68,10 @@ function ExecutorSettings({t}:{t:Props['t']}):ReactNode {
           </select>
           <Button type="submit" variant="primary" disabled={busy||!code.trim()||!root.trim()}>{t('executorPair')}</Button>
         </form>
-        {state.configured&&<form className="weft-connection-form" onSubmit={event=>{event.preventDefault();void action('configure',{accepting:state.accepting,maxWorkers:state.maxWorkers});}}>
+        {state.configured&&<form className="weft-connection-form" onSubmit={event=>{event.preventDefault();void action('configure',{accepting:settings.accepting,maxWorkers:settings.maxWorkers});}}>
           <p className="weft-connection-hint">{state.root}</p>
-          <label><input type="checkbox" checked={state.accepting} onChange={event=>setState({...state,accepting:event.target.checked})}/>{t('executorAccept')}</label>
-          <label htmlFor={id+'-max'}>{t('executorMax')}</label><Input id={id+'-max'} type="number" min={1} max={16} value={state.maxWorkers} onChange={event=>setState({...state,maxWorkers:Number(event.target.value)})}/>
+          <label><input type="checkbox" checked={settings.accepting} disabled={busy} onChange={event=>setDraft({accepting:event.target.checked,maxWorkers:settings.maxWorkers})}/>{t('executorAccept')}</label>
+          <label htmlFor={id+'-max'}>{t('executorMax')}</label><Input id={id+'-max'} type="number" min={1} max={16} value={settings.maxWorkers} disabled={busy} onChange={event=>setDraft({accepting:settings.accepting,maxWorkers:Number(event.target.value)})}/>
           <Button type="submit" variant="outline" disabled={busy}>{t('executorSave')}</Button>
           <div className="weft-connection-actions"><Button disabled={busy} onClick={()=>void action('reconnect')}>{t('reconnect')}</Button><Button disabled={busy} onClick={()=>void action('disconnect')}>{t('stop')}</Button></div>
           {!!state.jobs?.length&&<ul>{state.jobs.map(job=><li key={job.sessionId}><code>{job.ticketId}</code> · {job.state}<div>{job.cwd}</div></li>)}</ul>}
