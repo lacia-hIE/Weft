@@ -4,7 +4,8 @@ import { useRef, useState } from 'react'
 import { TICKET_FILTERS, type TicketFilter } from '../app/api.ts'
 import { LIMITS } from '../limits.ts'
 import { usePoll, type SettingsView, type SourceView, type StateView } from './api.ts'
-import { DisclosureRow, Icon, InfoTip, Input, Pill } from './controls.tsx'
+import { Button, DisclosureRow, Icon, InfoTip, Input, Pill } from './controls.tsx'
+import { hookBase } from './access.ts'
 import { SaveBar } from './draft.tsx'
 import { usePanel } from './provider.tsx'
 import { TicketLine } from './rows.tsx'
@@ -74,7 +75,17 @@ function EnvironmentVariables({ groups, sources,
   </DisclosureRow>
 }
 export function ExecutionSettings() {
-  const { t } = usePanel()
+  const { t, call, notify } = usePanel()
+  const devices = usePoll(() => call('GET executors'), [])
+  const [name, setName] = useState(''), [pairing, setPairing] = useState(''), [busy, setBusy] = useState(false)
+  const add = async () => {
+    setBusy(true)
+    try {
+      const result = await call('POST executors', { body: { name } })
+      setPairing(JSON.stringify({ protocol: result.protocol, endpoint: `${hookBase()}/executor/${result.id}`, pairingKey: result.pairingKey }))
+      setName(''); await devices.reload()
+    } catch (error) { notify(String(error)) } finally { setBusy(false) }
+  }
   const { blocks, environment, sources } = useSettings().settings
   // Keep raw user text (such as separators between blocked commands) in the draft and parse only on save.
   const executor = blocks.executor.value
@@ -95,6 +106,12 @@ export function ExecutionSettings() {
       <Fields disabled={draft.busy}>
         <div className="dt-form dt-block">
           <h2 className="dt-block-title">{t('term.executor')}<InfoTip text={t('executorIntro')} /></h2>
+          <Field label={t('executionComputer')} hint={t('executionComputerHint')}>
+            <select className="dt-input" value={value.executorId ?? ''} onChange={event => edit({ executorId: event.target.value || null })}>
+              <option value="">{t('cloudExecutor')}</option>
+              {devices.data?.map(device => <option key={device.id} value={device.id}>{device.name}{!device.online ? ` · ${t('computerOffline')}` : ''}</option>)}
+            </select>
+          </Field>
           <Section title={t('executorModel')} hint={t('executorModelHint')}><ModelField id="dt-worker-model" value={value.model}
             onChange={model => edit({ model })} /></Section>
           <Field label={t('maxWorkers')} hint={t('maxWorkersHint')}>
@@ -125,6 +142,23 @@ export function ExecutionSettings() {
       </Fields>
       <SaveBar {...draft} onDiscard={draft.discard} />
     </form>
+    <Section title={t('executionComputers')} hint={t('executionComputersHint')}>
+      <LoadState error={devices.error} loading={!devices.data} />
+      {devices.data?.map(device => <div className="dt-row" key={device.id}>
+        <div className="dt-row-main"><strong>{device.name}</strong><div className="dt-row-meta">{!device.paired ? t('computerUnpaired') : !device.online ? t('computerOffline') : device.accepting ? t('computerAccepting') : t('computerPaused')}</div></div>
+        <ConfirmButton label={t('revokeComputer')} title={t('revokeComputer')} message={t('revokeComputerConfirm')} onConfirm={async () => {
+          await call('POST executors/:id/revoke', { id: device.id }); await devices.reload()
+        }} />
+      </div>)}
+      <form className="dt-form" onSubmit={event => { event.preventDefault(); void add() }}>
+        <Field label={t('computerName')}><Input value={name} maxLength={80} onChange={event => setName(event.target.value)} required /></Field>
+        <Button variant="outline" type="submit" disabled={busy || !name.trim()}>{t('pairComputer')}</Button>
+      </form>
+      {pairing && <Field label={t('computerPairingCode')} hint={t('computerPairingHint')}>
+        <textarea className="dt-textarea dt-mono" readOnly value={pairing} rows={4} onFocus={event => event.target.select()} />
+        <Button variant="outline" onClick={() => { void navigator.clipboard.writeText(pairing).catch(error => notify(String(error))) }}>{t('copyComputerPairing')}</Button>
+      </Field>}
+    </Section>
     <ConfigHistory blocks={['executor', 'pause']} />
   </div>
 }

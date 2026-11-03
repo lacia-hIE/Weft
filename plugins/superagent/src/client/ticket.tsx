@@ -142,6 +142,11 @@ export function TicketPage({ id }: { id: string }) {
       <LabelValue label={t('ticketUpdatedLabel')} value={when(data.updatedAt, t('lang'))} />
     </div>
     {ended && <Hint>{ended}</Hint>}
+    {data.executionComputer && <Hint>{t('executionComputer')}{t('labelSeparator')}{data.executionComputer.name}
+      {!data.executionComputer.online && ` · ${t('computerOffline')}`}
+      {data.executionComputer.state === 'stopping' && ` · ${t('computerStopping')}`}
+      {data.executionComputer.sessionId && <details><summary>{t('computerLocalSession')}</summary><code>{data.executionComputer.sessionId}</code></details>}
+    </Hint>}
     {data.attention && <div className="dt-banner"><span className="dt-banner-label">{t('attentionPrefix')}</span><MarkdownLite
       text={data.attention.question} />
       {channel && <div className="dt-banner-actions">

@@ -58,6 +58,16 @@ test('published local DSH pairs in native settings, runs Files, Git and PTY and 
   expect((await request.get(settingsUrl)).status()).toBe(401);
   const snapshot=await(await context.request.get(settingsUrl)).json();
   expect(snapshot.state).toBe('connected');expect(JSON.stringify(snapshot)).not.toContain('pairingKey');expect(JSON.stringify(snapshot)).not.toContain('token');
+  const executorUrl=new URL('/api/weft-executor',localUrl).href;
+  expect((await request.get(executorUrl)).status()).toBe(401);
+  const executor=await(await context.request.get(executorUrl)).json();
+  expect(executor).toMatchObject({state:'unpaired',accepting:false,configured:false,running:0});
+  expect((await context.request.post(executorUrl,{headers:{origin:'https://untrusted.invalid'},data:{action:'configure',accepting:true,maxWorkers:1}})).status()).toBe(403);
+  await page.locator('[data-weft-local-executor] summary').click();
+  await expect(page.getByLabel('Executor pairing code',{exact:true})).toBeVisible();
+  await expect(page.getByLabel('Task root directory (absolute path)',{exact:true})).toBeVisible();
+  await page.screenshot({path:testInfo.outputPath('local-executor-settings.png')});
+  await page.locator('[data-weft-local-executor] summary').click();
   expect((await context.request.post(settingsUrl,{headers:{origin:'https://untrusted.invalid'},data:{action:'disconnect'}})).status()).toBe(403);
   await page.getByRole('button',{name:'Stop connection',exact:true}).click();await expect(connectionStatus).toHaveText('Connection stopped');
   await page.getByRole('button',{name:'Reconnect',exact:true}).click();await expect(connectionStatus).toHaveText('Connected',{timeout:30_000});

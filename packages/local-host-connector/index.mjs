@@ -1,9 +1,10 @@
 import {join} from 'node:path';
 import {homedir} from 'node:os';
 import {createController} from './controller.mjs';
+import {createExecutorController} from './executor.mjs';
 import {supportsDshVersion,SUPPORTED_DSH_VERSIONS} from './compatibility.mjs';
 export const name='weft-local-host';
-export const inject=['webServer','connection','clientModules'];
+export const inject=['webServer','connection','clientModules','sessionController','agents'];
 /** This is a normal native Host plugin. It never implements a second Agent. */
 export async function apply(ctx,config={}) {
   const version=ctx.clientModules.graph()?.release?.version;
@@ -21,6 +22,26 @@ export async function apply(ctx,config={}) {
   };
   const controller=createController({file,origin,authorize,version});
   ctx.effect(()=>()=>controller.close(),'weft-local-host-connection');
+  const executor=createExecutorController({ctx,file:config.executorFile??process.env.WEFT_EXECUTOR_CONFIG??join(homedir(),'.dsh','weft-executor.json')});
+  ctx.effect(()=>()=>executor.close(),'weft-local-executor');
+  ctx.effect(()=>ctx.webServer.register({kind:'exact',path:'/api/weft-executor',handler:async(req,res)=>{
+    const admission=ctx.connection.admit(req);
+    const reply=(status,value)=>{res.writeHead(status,{'content-type':'application/json','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(JSON.stringify(value));};
+    if('rejection' in admission){reply(admission.rejection,{error:'Unauthorized'});return;}
+    if(admission.peer.principal.kind!=='owner'){reply(403,{error:'Owner access required'});return;}
+    if(req.method==='GET'){reply(200,executor.snapshot());return;}
+    if(req.method!=='POST'){reply(405,{error:'Method not allowed'});return;}
+    try{
+      let body='';for await(const chunk of req){body+=chunk.toString();if(Buffer.byteLength(body)>12000)throw new Error('Request too large');}
+      const input=JSON.parse(body);
+      if(input.action==='pair')await executor.pair(input);
+      else if(input.action==='configure')await executor.configure(input);
+      else if(input.action==='reconnect')await executor.reconnect();
+      else if(input.action==='disconnect')await executor.disconnect();
+      else throw new Error('Unknown action');
+      reply(200,executor.snapshot());
+    }catch(error){reply(400,{error:error.message});}
+  }}),'weft-executor-settings');
   // Native admission keeps local authentication, Host and Origin checks intact.
   ctx.effect(()=>ctx.webServer.register({kind:'exact',path:'/api/weft-local-host',handler:async(req,res)=>{
     const admission=ctx.connection.admit(req);
@@ -40,4 +61,5 @@ export async function apply(ctx,config={}) {
     }catch{reply(400,{error:'Check the pairing code and try again'});}
   }}),'weft-local-host-settings');
   await controller.load();
+  await executor.load();
 }

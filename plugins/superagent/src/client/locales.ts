@@ -6,6 +6,24 @@ import { SETUP_PROBLEMS } from '../setup.ts'
 import { HEALTH_TEXT } from '../sources/host.ts'
 
 const TEXT = {
+  executionComputer: ['默认执行位置', 'Default execution location'],
+  executionComputerHint: ['只影响新工单；本地任务的模型和权限由本机 DSH 配置。', 'Applies to new Tickets only. Local DSH supplies its model and permissions.'],
+  cloudExecutor: ['云端', 'Cloud'],
+  executionComputers: ['执行电脑', 'Execution computers'],
+  executionComputersHint: ['在本机安装 DSH 和 Local Host 插件，配对后由本机开启接单。', 'Install DSH and the Local Host plugin on the computer, pair it, then enable task acceptance locally.'],
+  computerName: ['电脑名称', 'Computer name'],
+  pairComputer: ['生成配对码', 'Generate pairing code'],
+  computerPairingCode: ['执行器配对码', 'Executor pairing code'],
+  computerPairingHint: ['10 分钟有效，仅使用一次；粘贴到本机插件的执行器设置。', 'Valid for ten minutes, once only. Paste into the local plugin’s Executor settings.'],
+  copyComputerPairing: ['复制配对码', 'Copy pairing code'],
+  computerOffline: ['离线', 'Offline'],
+  computerStopping: ['等待本机确认停止', 'Awaiting local stop confirmation'],
+  computerLocalSession: ['本机执行 Session', 'Local execution Session'],
+  computerUnpaired: ['等待配对', 'Awaiting pairing'],
+  computerAccepting: ['可接单', 'Accepting tasks'],
+  computerPaused: ['已连接，暂停接单', 'Connected, task acceptance paused'],
+  revokeComputer: ['撤销授权', 'Revoke access'],
+  revokeComputerConfirm: ['撤销后电脑无法接单或回报；正在本机运行的进程不会立即停止，请先停止相关工单。', 'Revocation blocks dispatch and reports. Running local processes do not stop immediately; stop their Tickets first.'],
   // Shared
   title: ['Superagent', 'Superagent'],
   close: ['关闭', 'Close'],

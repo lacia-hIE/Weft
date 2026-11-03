@@ -1,5 +1,26 @@
 # 使用本地 DSH 环境
 
+## 同一云端环境下的本地执行器
+
+0.3.0 源码新增独立的 Superagent 接单模式：本机安装原版 DSH 和
+`@laciaproject/dsh-local-host`，在 Superagent 的「设置 → 执行」登记电脑并生成配对码，
+在本机插件「Superagent 执行器」中输入配对码、绝对任务根目录和可选 Agent 预设，
+然后单独勾选「允许接收任务」。模型服务和执行凭据在本机配置。
+
+云端保留来源、授权、Ticket 和原对话回复，本机运行执行 Session、Agent 循环与工具。
+无需新建本地 Weft 环境，也无需在本机运行完整 Superagent；下文的本地工作台连接是另一项独立功能。
+在云端选择默认执行电脑只影响新工单，已有工单不会自动换电脑。
+
+接单信息保存在本机 `~/.dsh/weft-executor.json`，可用 `WEFT_EXECUTOR_CONFIG` 或
+`executorFile` 配置独立路径。建议独立 DSH profile；目录与 profile 本身不隔离操作系统权限。
+配对码 10 分钟有效、只能交换一次，云端只保存密钥摘要。接单默认关闭，本机模型和权限预设
+不会被云端设置覆盖。现有 `/v1/plugin-hooks/*` 的 Access Bypass 即可供出站 HTTPS 使用。
+
+第一版每 15 秒获取派工，收到命令后缩短到 1 秒。任务断线不自动重派，恢复连接后同步持久回执。
+本机 DSH 重启打断的任务会报告失败，用户可重试以恢复原 Session 和文件；停止工单需要本机确认，
+撤销授权或断开连接不等于停止本机进程。第一版禁用执行 Agent 的子代理派生。
+0.2.7 已发布版本尚无接单模式；需使用通过 CI 后发布的 0.3.0 包。
+
 本地模式支持 **DSH 0.2.1-rc.2、0.2.1-rc.3、0.2.1-rc.4、0.2.1-rc.5**。本机运行原版 `dsh web` 或
 DeepSeek Harness 桌面 App，安装 `@laciaproject/dsh-local-host` Host 组合包；Weft 提供环境目录、设备配对与出站连接中继。
 会话、预设、模型凭据、工作区、Git、终端和插件均由本地 Host 管理。

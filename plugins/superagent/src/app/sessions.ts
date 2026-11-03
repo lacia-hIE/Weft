@@ -60,16 +60,19 @@ export class Sessions {
     await this.host.events.watch(id)
   }
   /** Applies the current prompt revision; a Session reads it before its next turn. */
-  async configure(id: string, role: Role, ticket?: Ticket): Promise<void> {
-    const { store, prompts, managed } = this.host
+  configuration(role: Role, ticket?: Ticket): { instructions: string; tools: string[]; allow: string[] } {
+    const { prompts, store } = this.host
     const version = prompts.current()
     const text = `[dsh-superagent prompt revision ${version.revision}]\n${prompts.compose(version.config, role, ticket ? this.host.environment(ticket) : undefined)}\n${ticket ? this.host.mandate(ticket) : ''}`
     const skills = prompts.skills(version.config).map(([name, content]) => `## skill: dsh-superagent-${name}\n${content}`).join('\n\n')
-    const instructions = skills ? `${text}\n\n${skills}` : text
-    const tools = this.host.tools(role)
-    // A worker keeps no work tool once its ticket ended; a person's later message there needs a new authorized ticket.
     const current = ticket && store.tickets.get(ticket.id)
-    const allow = role === 'orchestrator' ? MAIN_TOOLS : current && !liveTicket(current) ? [] : WORK_TOOLS
+    return { instructions: skills ? `${text}\n\n${skills}` : text, tools: this.host.tools(role),
+      allow: role === 'orchestrator' ? MAIN_TOOLS : current && !liveTicket(current) ? [] : WORK_TOOLS }
+  }
+  async configure(id: string, role: Role, ticket?: Ticket): Promise<void> {
+    const { store, prompts, managed } = this.host
+    const version = prompts.current()
+    const { instructions, tools, allow } = this.configuration(role, ticket)
     const stamp = key(instructions, tools.join(), allow.join())
     if (store.get(KV.sessions.configured(id)) === stamp) return
     await managed.configure(id, { instructions, tools, allow })

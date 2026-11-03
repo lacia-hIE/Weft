@@ -18,6 +18,9 @@ interface Paged { offset?: number; limit?: number }
 type Delivery = 'injected' | 'pending'
 
 export interface Api {
+  'GET executors': { response: ReturnType<import('../executor/remote.ts').RemoteExecutor['list']> }
+  'POST executors': { body: { name: string }; response: Awaited<ReturnType<import('../executor/remote.ts').RemoteExecutor['create']>> }
+  'POST executors/:id/revoke': { body?: object; response: { revoked: true } }
   'GET state': { response: StateView }
   'GET overview': { response: OverviewView }
   'GET search': { query: { q: string }; response: SearchView }

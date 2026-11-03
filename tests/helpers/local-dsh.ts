@@ -20,7 +20,7 @@ export async function startLocalDsh(runtime:Miniflare,certificate:string):Promis
   const file=join(root,'connection.json');
   const pairingCode=Buffer.from(JSON.stringify({endpoint:`https://127.0.0.1:4173/v1/local-hosts/${tenant}/native-local-ci`,pairingKey})).toString('base64url');
   const executable=resolve('.generated/local-dsh/node_modules/.bin/dsh');
-  const environment={...process.env,DSH_HOME:join(root,'home'),DSH_AGENTS_HOME:join(root,'agents'),WEFT_LOCAL_HOST_CONFIG:file,NODE_EXTRA_CA_CERTS:certificate};
+  const environment={...process.env,DSH_HOME:join(root,'home'),DSH_AGENTS_HOME:join(root,'agents'),WEFT_LOCAL_HOST_CONFIG:file,WEFT_EXECUTOR_CONFIG:join(root,'executor.json'),NODE_EXTRA_CA_CERTS:certificate};
   const bundlePath=resolve('dist/public/downloads',LOCAL_HOST_BUNDLE);
   // Retain useful diagnostics without uploading native launch credentials.
   let trace='';

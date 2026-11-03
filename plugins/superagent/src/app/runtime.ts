@@ -24,7 +24,7 @@ import { Effects } from './effects.ts'
 import { environmentOf, ticketEnvironment, type Variable } from './execution-environment.ts'
 import { registerHttp, type HttpHost } from './http.ts'
 import { candidateCard, repliedTo, sourceLink, type LinkHost } from './links.ts'
-import { eventNotice, followupNotice } from './notices.ts'
+import { eventNotice, followupNotice, resultRelay } from './notices.ts'
 import { Outbox } from './outbox.ts'
 import { Passes } from './passes.ts'
 import { Prompts } from './prompts.ts'
@@ -35,6 +35,8 @@ import { Setup } from './setup.ts'
 import { sourceContextOf, type SourceContextDeps } from './source-context.ts'
 import { Store } from './store.ts'
 import { executorTools, type ExecutorToolsHost } from './tools/executor.ts'
+import { HybridExecutor } from '../executor/hybrid.ts'
+import { RemoteExecutor } from '../executor/remote.ts'
 import { mainTools, type MainToolsHost } from './tools/main.ts'
 import { toolParameters } from './tools/parameters.ts'
 import type { Tool } from './tools/tool.ts'
@@ -77,7 +79,7 @@ export class Runtime implements SourceHost {
   readonly commands: Commands
   readonly sessions: Sessions
   readonly settings: Settings
-  readonly executor: DshExecutor
+  readonly executor: HybridExecutor
   readonly assessor: MasterAssessor
   readonly outbox: Outbox
   readonly engine: Engine
@@ -122,8 +124,12 @@ export class Runtime implements SourceHost {
       tools: role => this.toolNames[role] })
     const policyChanged: EngineForSettings['policyChanged'] = (from, to, changes) => { this.engine.policyChanged(from, to, changes) }
     this.settings = new Settings({ store, sources, engine: { policyChanged }, health: board, lifetime: this.lifetime, sessions, sourceHost: this, setup, requestPass: () => { this.passes.request() } })
-    this.executor = new DshExecutor({ controller: ctx.sessionController, fs: ctx.fs, get engine() { return runtime.engine }, store, effects, health: board.claim('worker'),
-      lifetime: this.lifetime, sessions, paused: () => this.paused(), sourceLink: link, repliedTo: trigger => repliedTo({ store, sources }, trigger) })
+    const remote = new RemoteExecutor({ store, get engine() { return runtime.engine },
+      configuration: ticket => sessions.configuration('worker', ticket), tools: ticket => executorTools(this.toolHost, ticket),
+      notify: (ticket, state, summary) => { const notice = resultRelay(ticket, state, summary); sessions.relay(notice.id, notice.text) },
+      changed: () => { this.drive() } })
+    this.executor = new HybridExecutor({ controller: ctx.sessionController, fs: ctx.fs, get engine() { return runtime.engine }, store, effects, health: board.claim('worker'),
+      lifetime: this.lifetime, sessions, paused: () => this.paused(), sourceLink: link, repliedTo: trigger => repliedTo({ store, sources }, trigger) }, remote)
     this.assessor = new MasterAssessor({ get engine() { return runtime.engine }, commands, get deployment() { return setup.deployment }, effects,
       settings: () => store.settings(), paused: () => this.paused(), threadContext: trigger => sources.threadContext(trigger),
       deliver: (id, text) => sessions.prompt(MASTER_ID, id, text, 'steer'), candidateCard: candidate => candidateCard(links, candidate) })
@@ -333,7 +339,7 @@ export class Runtime implements SourceHost {
   private httpHost(): HttpHost {
     const runtime = this
     const { store, sources, prompts, sessions, settings, engine, executor, machine, masterId, ready, sourceLinks, setup, passes } = this
-    return { store, sources, prompts, sessions, settings, engine, executor, get health() { return runtime.health }, machine, masterId, ready, sourceLinks,
+    return { store, sources, prompts, sessions, settings, engine, executor, remote: executor.remote, get health() { return runtime.health }, machine, masterId, ready, sourceLinks,
       secrets: () => ({ githubToken: !!this.config.githubToken, webhookSecret: !!this.config.webhookSecret }), managementKey: () => this.config.managementKey, webhookSecret: () => this.config.webhookSecret, wake: delivery => this.wake(delivery), settled: () => this.drive(),
       get deployment() { return setup.deployment }, get setupProblem() { return setup.problem },
       configured: () => setup.configured(), links: () => runtime.links(), ticketEnvironment: ticket => runtime.ticketEnvironment(ticket),

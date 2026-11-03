@@ -1,6 +1,6 @@
 {
   "name": "@laciaproject/dsh-local-host",
-  "version": "0.2.7",
+  "version": "0.3.0",
   "description": "Connect a local DSH Host to your Weft environment",
   "type": "module",
   "main": "index.mjs",
@@ -15,6 +15,7 @@
     "index.mjs",
     "transport.mjs",
     "controller.mjs",
+    "executor.mjs",
     "mux.mjs",
     "mux.d.mts",
     "client.js",

@@ -23,3 +23,29 @@ Besides GitHub, requests can come from Feishu, WeChat, QQ and email bots of `@we
 - New Sessions run under `danger-full-access` by default, as an executor works unattended and an approval would stall it. Change it under Execution. Sessions in an environment share its files and container, so a worker can reach other projects there. Run the plugin in its own environment if that matters; the Policy's written rules and a narrow token are the limits that remain.
 
 See [PARITY.md](PARITY.md) for what differs from the prototype.
+
+## Local execution computers
+
+Under **Settings → Execution**, register an execution computer and copy its one-time pairing code. On that computer,
+install DSH and `@laciaproject/dsh-local-host` 0.3.0, open **Superagent Executor** in the plugin's settings, paste the code,
+and choose an absolute task root and optionally a local Agent preset. Pairing starts with task acceptance paused;
+enable it explicitly on the computer. Configure its model provider locally. Use a dedicated DSH profile and agent
+credentials; a directory or profile does not isolate an OS account.
+
+Select that computer as the default execution location and save. Only new Tickets use the new location; existing
+Tickets retain their executor. Each runs a full native DSH Agent in a persistent Session and its own directory.
+Ticket, Policy, Sources and original-conversation delivery remain in this Weft environment. There is no second
+Superagent or separately registered local environment. Local Workers get only their Assignment's executor tools,
+including bounded source reads, acknowledgements, reports and handbacks; they never get the router tools or cloud
+model credentials. Local model and permission presets take precedence over cloud execution settings.
+
+The computer connects outbound over HTTPS to the plugin's existing `/v1/plugin-hooks/*` public routes; no inbound
+local port or additional Access Bypass is needed. The first carrier polls every 15 seconds, sooner after dispatch;
+there is no persistent Cloudflare request waiting on a model turn. Commands, receipts and reports survive reconnects.
+An offline computer keeps already accepted work; Weft never automatically moves it to another computer. Local DSH
+restart during work reports failure; Retry creates a new Assignment in the retained Session and directory. Stopping a
+Ticket remains pending until the computer confirms its turn and jobs stopped. Revoking a computer blocks cloud
+access but does not remotely kill disconnected processes. Native Agent subdelegation is disabled in this initial
+carrier; ordinary shell jobs use native DSH job delivery. Tests still follow the repository's CI policy.
+
+The 0.3.0 sources add this mode; the previously published 0.2.7 connector supports remote workbench access only.

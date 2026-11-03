@@ -1,5 +1,25 @@
 # Weft local Host connector
 
+## Superagent Executor mode (0.3.0)
+
+The same package can accept Assignments from a cloud Superagent while running the full Agent locally. This is
+independent of remote workbench access: pairing an executor neither creates a local Weft environment nor grants
+remote browser access. Generate the pairing code in **Superagent → Settings → Execution**, paste it into this
+plugin's **Superagent Executor** settings, choose an absolute root directory and an optional installed DSH Agent
+preset, then separately enable **Accept tasks**. Configure the model provider on this computer. Use an unattended
+preset if the work should run without local approvals. Directory selection establishes a default, not a sandbox;
+use a dedicated OS account or container for isolation.
+
+Executor identity, acceptance settings and native inbox receipts are stored privately (`0600`) in
+`~/.dsh/weft-executor.json`; override with `WEFT_EXECUTOR_CONFIG` or `executorFile` for separate local profiles.
+The worker polls the existing plugin HTTPS endpoint every 15 seconds (one second after commands), using a
+device-scoped token exchanged from a ten-minute, single-use pairing code. It opens no inbound execution endpoint.
+Stopping the connection leaves native Agent work running; stop the Ticket and wait for confirmation to cancel it.
+Local DSH restarts retain Session history and files; interrupted work is reported failed for an explicit Ticket retry.
+The initial carrier disables Agent subdelegation and does not migrate active Sessions between computers.
+
+The installation instructions below also describe the existing remote-workbench mode; its pairing is separate.
+
 A native DSH Host plugin for **DSH 0.2.1-rc.2, 0.2.1-rc.3, 0.2.1-rc.4 and 0.2.1-rc.5**, installed through the original
 `dsh.bundle.patch` mechanism. Run `dsh web` with its loopback listener. The
 connector opens an outbound TLS WebSocket to your Weft deployment; no inbound

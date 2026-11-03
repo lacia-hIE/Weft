@@ -88,6 +88,7 @@ export const EvalConfigSchema = z.object({
 export const PermissionSchema = z.enum(['read-only', 'workspace-write', 'danger-full-access'])
 /** Executor settings: worker model, concurrency, Ticket directory root, how a worker prepares its directory, and its permission preset. */
 export const ExecutorConfigSchema = z.object({
+  executorId: z.string().uuid().nullable().default(null),
   model: RoleModelSchema.nullable().default(null),
   maxWorkers: z.number().int().min(LIMITS.maxWorkers.min).max(LIMITS.maxWorkers.max).default(3),
   directory: z.string().trim().refine(path => path.startsWith('/workspace'), 'A path under /workspace').default('/workspace/superagent'),

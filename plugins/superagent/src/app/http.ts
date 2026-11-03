@@ -26,8 +26,10 @@ import { settingsView } from './views/settings.ts'
 import { sourcesStatus, type SetupState } from './views/sources.ts'
 import { decisionList, search, threadDetail, threadList } from './views/threads.ts'
 import { executorLoad, ticketDetail, ticketList } from './views/tickets.ts'
+import { ExecutorRequestError, type RemoteExecutor } from '../executor/remote.ts'
 
 export interface HttpHost {
+  readonly remote?: RemoteExecutor
   readonly store: Store
   /** Links resolved since startup, used by search. */
   readonly sourceLinks: Pick<TextCache, 'entries'>
@@ -107,6 +109,7 @@ export async function verifiedWebhook(secret: string, body: Uint8Array, signatur
 }
 /** Maps errors to HTTP status codes and structured payloads that the panel localizes in the interface language. */
 function failure(error: unknown): [number, Record<string, unknown>] {
+  if (error instanceof ExecutorRequestError) return [error.status, { error: error.message }]
   if (error instanceof z.ZodError) {
     const issues = error.issues.map(issue => ({ path: issue.path.join('.'), message: issue.message }))
     return [400, { error: `Invalid settings: ${issues.map(issue => issue.path).join(', ')}`, issues }]
@@ -125,6 +128,13 @@ function machineView({ promptMaxChars, admissionContextMaxPages, admissionContex
 function setupView(runtime: HttpHost) {
   const resolved = runtime.configured() ? runtime.deployment : undefined
   return {
+    'GET executors': () => runtime.remote?.list() ?? [],
+    'POST executors': async ({ body }) => {
+      const input = z.object({ name: z.string().trim().min(1).max(80) }).strict().parse(await body())
+      if (!runtime.remote) throw new RouteError(400, 'Remote execution is unavailable')
+      return runtime.remote.create(input.name)
+    },
+    'POST executors/:id/revoke': ({ params }) => { runtime.remote?.revoke(params.id); return { revoked: true } },
     machine: machineView(runtime.machine), secrets: runtime.secrets(), problem: runtime.setupProblem ?? null,
     accounts: resolved ? { repository: resolved.repository, agent: resolved.github.login } : null,
   }
@@ -144,7 +154,7 @@ export type StateView = ReturnType<typeof stateView>
 function ticketPage(runtime: HttpHost, id: string) {
   const detail = ticketDetail(views(runtime), id), ticket = runtime.store.tickets.get(id)
   if (!detail || !ticket) throw new RouteError(404, 'Ticket not found')
-  return { ...detail, environment: runtime.configured() ? runtime.ticketEnvironment(ticket) : [] }
+  return { ...detail, executionComputer: runtime.remote?.status(id), environment: runtime.configured() ? runtime.ticketEnvironment(ticket) : [] }
 }
 export type TicketPageView = ReturnType<typeof ticketPage>
 function promptsView(runtime: HttpHost, revision: number | undefined, offset: number) {
@@ -270,6 +280,21 @@ export function registerHttp(ctx: HostContext, runtime: HttpHost): () => void {
         const wake = new Promise(resolve => setTimeout(resolve, WEBHOOK_SETTLE_MS)).then(() => runtime.wake(deliveryOf(payload))).catch(() => { /* Reported in the Source's health; the next pass reads again. */ })
         await Promise.race([wake, new Promise(resolve => setTimeout(resolve, WEBHOOK_REPLY_MS))])
         json(res, 202, { accepted: true })
+      } catch (error) { json(res, ...failure(error)) }
+    } }),
+    ctx.webServer.register({ kind: 'prefix', path: '/executor/', handler: async (req: HttpRequest, res: HttpResponse) => {
+      try {
+        if (req.method !== 'POST' || header(req, 'origin')) { json(res, 403, { error: 'Device requests only' }); return }
+        const match = /^\/executor\/([a-f0-9-]{36})\/(pair|sync|tool)$/.exec(new URL(req.url ?? '/', 'http://localhost').pathname)
+        if (!match || !runtime.remote) { json(res, 404, { error: 'Unknown executor operation' }); return }
+        const [, id, operation] = match as [string, string, string]
+        const token = header(req, 'authorization').replace(/^Bearer /, '')
+        if (operation === 'pair') { json(res, 200, await runtime.remote.pair(id, token)); return }
+        await runtime.remote.authenticate(id, token)
+        await runtime.ready
+        if (!runtime.configured()) { json(res, 503, { error: 'Superagent setup is incomplete' }); return }
+        const body = await readBody(req, 512 * 1024)
+        json(res, 200, operation === 'sync' ? runtime.remote.sync(id, body) : await runtime.remote.call(id, body, AbortSignal.timeout(30_000)))
       } catch (error) { json(res, ...failure(error)) }
     } }),
     ctx.webServer.register({ kind: 'prefix', path: '/api', handler: async (req: HttpRequest, res: HttpResponse) => {
