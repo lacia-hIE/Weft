@@ -42,6 +42,8 @@ export function transient(error: unknown): boolean {
 const ticketWorktreeName = (name: string, id: string): string => `${WorktreeNameSchema.parse(name)}-${id.slice(0, 12)}`
 /** Host dependencies used by `DshExecutor`. */
 export interface ExecutorHost {
+  /** Slots held by another execution backend in this same deployment. */
+  additionalSlots?(): number
   readonly controller: Pick<HostSessionController, 'cancel' | 'follow'>
   readonly fs: Pick<HostFs, 'resolve' | 'writeText'>
   /** Where the Executor reports what happened to Assignments and Inputs. */
@@ -191,7 +193,7 @@ export class DshExecutor implements Executor {
   /** Registers the effect handlers; launches and deliveries are held (concurrency limit 0) while processing is paused. */
   constructor(private readonly host: ExecutorHost) {
     this.slots = new WorkerSlots(() => host.store.tickets.open().filter(ticket => this.running(ticket)).map(ticket => ticket.id),
-      () => host.store.settings().executor.maxWorkers)
+      () => host.store.settings().executor.maxWorkers - (host.additionalSlots?.() ?? 0))
     host.effects.handle('launch', payload => this.launchQueued(payload), { limit: () => host.paused() ? 0 : this.slots.launches(), retry: [5000, 300_000] })
     // Failed input deliveries are recorded on the ticket itself rather than reported through the `delivery` effect health entry (`quiet: true`).
     host.effects.handle('delivery', payload => this.deliverQueued(payload.ticketId), { limit: () => host.paused() ? 0 : 4, quiet: true })
@@ -307,6 +309,8 @@ export class DshExecutor implements Executor {
   }
   /** Number of open tickets whose worker holds a worker slot. */
   activeCount(): number { return this.host.store.tickets.open().filter(ticket => this.running(ticket)).length }
+  /** Includes cloud launches whose Session has not yet accepted its first prompt. */
+  slotCount(): number { return this.slots.used() }
   /** Whether a ticket's worker holds a worker slot: a message reached it and its turn has not been seen to end. */
   private running(ticket: Ticket): boolean {
     return !!runningAssignment(ticket) && this.host.store.get(KV.executor.busy(ticket.id)) !== undefined

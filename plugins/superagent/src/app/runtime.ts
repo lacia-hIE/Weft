@@ -124,11 +124,13 @@ export class Runtime implements SourceHost {
       tools: role => this.toolNames[role] })
     const policyChanged: EngineForSettings['policyChanged'] = (from, to, changes) => { this.engine.policyChanged(from, to, changes) }
     this.settings = new Settings({ store, sources, engine: { policyChanged }, health: board, lifetime: this.lifetime, sessions, sourceHost: this, setup, requestPass: () => { this.passes.request() } })
-    const remote = new RemoteExecutor({ store, get engine() { return runtime.engine },
+    const remote: RemoteExecutor = new RemoteExecutor({ store, get engine() { return runtime.engine },
       configuration: ticket => sessions.configuration('worker', ticket), tools: ticket => executorTools(this.toolHost, ticket),
+      usedSlots: () => this.executor.slotCount() + remote.activeCount(),
       notify: (ticket, state, summary) => { const notice = resultRelay(ticket, state, summary); sessions.relay(notice.id, notice.text) },
       changed: () => { this.drive() } })
     this.executor = new HybridExecutor({ controller: ctx.sessionController, fs: ctx.fs, get engine() { return runtime.engine }, store, effects, health: board.claim('worker'),
+      additionalSlots: () => remote.activeCount(),
       lifetime: this.lifetime, sessions, paused: () => this.paused(), sourceLink: link, repliedTo: trigger => repliedTo({ store, sources }, trigger) }, remote)
     this.assessor = new MasterAssessor({ get engine() { return runtime.engine }, commands, get deployment() { return setup.deployment }, effects,
       settings: () => store.settings(), paused: () => this.paused(), threadContext: trigger => sources.threadContext(trigger),

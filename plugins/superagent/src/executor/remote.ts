@@ -14,6 +14,7 @@ interface Job { ticketId: string; assignmentId: string; executorId: string; mess
   revision: number; state: 'queued' | 'dispatched' | 'running' | 'waiting' | 'failed' | 'stopping' | 'stopped'; sessionId?: string; error?: string }
 interface Receipt { fingerprint: string; result?: unknown; complete: boolean }
 const devices = family<Device>('remote-device:'), jobs = family<Job>('remote-job:')
+const stopped = family<{ executorId: string; sessionId: string }>('remote-stopped:')
 const receipts = family<Receipt, [string, string]>('remote-receipt:')
 const secret = () => Array.from(crypto.getRandomValues(new Uint8Array(32)), byte => byte.toString(16).padStart(2, '0')).join('')
 const hash = async (value: string) => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))), byte => byte.toString(16).padStart(2, '0')).join('')
@@ -30,6 +31,7 @@ export interface RemoteExecutorHost {
   configuration(ticket: Ticket): { instructions: string; allow: string[] }
   tools(ticket: Ticket): Tool[]
   changed(): void
+  usedSlots?(): number
   notify?(ticket: Ticket, state: 'waiting' | 'failed', summary: string): void
 }
 
@@ -46,9 +48,10 @@ export class RemoteExecutor implements Executor {
   }
   status(ticketId: string) {
     const job = this.host.store.get(jobs(ticketId))
-    if (!job) return undefined
-    const device = this.list().find(device => device.id === job.executorId)
-    return { name: device?.name ?? job.executorId, online: device?.online ?? false, state: job.state, sessionId: job.sessionId ?? '' }
+    const previous = this.host.store.get(stopped(ticketId)), executorId = job?.executorId ?? previous?.executorId
+    if (!executorId) return undefined
+    const device = this.list().find(device => device.id === executorId)
+    return { name: device?.name ?? executorId, online: device?.online ?? false, state: job?.state ?? 'stopped', sessionId: job?.sessionId ?? previous?.sessionId ?? '' }
   }
   async create(name: string) {
     if (this.list().length >= 32) throw new ExecutorRequestError(400, 'At most 32 execution computers may be registered')
@@ -147,11 +150,21 @@ export class RemoteExecutor implements Executor {
         }
         store.set(jobs(ticket.id), { ...store.get(jobs(ticket.id))!, revision: state.revision, state: state.state, sessionId: state.sessionId,
           accepted: [...new Set([...job.accepted, ...accepted])], ...state.error ? { error: state.error } : {} })
+        if (state.state === 'stopped') {
+          store.set(stopped(ticket.id), { executorId: id, sessionId: state.sessionId })
+          store.delete(jobs(ticket.id))
+        }
       }
     })
     const commands: unknown[] = []
-    for (const key of store.keys(jobs.prefix)) {
-      const job = store.get<Job>(key)!
+    const humanWake = (job: Job) => {
+      if (!job.accepted.length) return false
+      const ticket = store.tickets.get(job.ticketId)
+      return ticket?.inputs.some(input => ticket.undelivered.includes(input.id)
+        && (input.kind === 'text' || input.kind === 'trigger' && input.human && !input.context)) ?? false
+    }
+    const pending = store.keys(jobs.prefix).map(key => store.get<Job>(key)!).sort((left, right) => Number(humanWake(right)) - Number(humanWake(left)))
+    for (const job of pending) {
       if (job.executorId !== id) continue
       const ticket = store.tickets.get(job.ticketId)
       if (!ticket) continue
@@ -163,12 +176,13 @@ export class RemoteExecutor implements Executor {
       if (store.settings().paused || !input.accepting || waitsForPerson(ticket)) continue
       const messages = job.messages.filter(message => !job.accepted.includes(message.id))
       if (!messages.length) continue
+      const byPerson = humanWake(job)
       if (!['dispatched', 'running'].includes(job.state)) {
-        if (this.activeCount() >= store.settings().executor.maxWorkers) continue
+        if ((this.host.usedSlots?.() ?? this.activeCount()) >= store.settings().executor.maxWorkers + (byPerson ? 1 : 0)) continue
         store.set(jobs(job.ticketId), { ...job, state: 'dispatched' })
       }
       commands.push({ kind: 'run', ticketId: ticket.id, assignmentId: job.assignmentId, name: ticket.execution!.name,
-        directory: ticket.execution!.directory, title: ticket.title, ...this.host.configuration(ticket),
+        directory: ticket.execution!.directory, title: ticket.title, byPerson, ...this.host.configuration(ticket),
         tools: this.host.tools(ticket).map(tool => ({ name: tool.name, description: tool.description, parameters: toolParameters(tool.schema) })), messages })
       if (commands.length >= 4) break
     }

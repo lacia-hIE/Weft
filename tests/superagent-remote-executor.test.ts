@@ -85,3 +85,22 @@ test('pairing is single use, revocation persists, and global concurrency bounds 
     assert.equal(h.remote.list().length, 1)
   } finally {h.sql.close()}
 })
+
+test('a human follow-up wakes its existing Executor ahead of new work in one reserved extra slot', async () => {
+  const h = await harness()
+  try {
+    h.store.saveSettings({...h.store.settings(), executor: {...h.store.settings().executor, maxWorkers: 1}})
+    const first = h.accept('wake-one'), assignment = latestAssignment(first)!
+    const initial = h.sync(h.first.id).commands as {messages: {id: string}[]}[]
+    const follow = h.sync(h.first.id, [{ticketId: first.id, assignmentId: assignment.id, revision: 1, state: 'running', sessionId: 'native-one', accepted: initial[0]!.messages.map(message => message.id)}]).commands as {messages: {id: string}[]}[]
+    h.sync(h.first.id, [{ticketId: first.id, assignmentId: assignment.id, revision: 2, state: 'waiting', sessionId: 'native-one', accepted: follow.flatMap(command => command.messages.map(message => message.id))}])
+    h.accept('wake-two'); h.sync(h.first.id)
+    assert.equal(h.remote.activeCount(), 1)
+    h.engine.receive({id: key('follow-up'), source: 'chat', threads: [{source: 'chat', id: 'wake-one'}], actor: {source: 'chat', id: 'alice'}, human: true,
+      at: new Date().toISOString(), text: 'Please adjust the result.', meta: {}})
+    const commands = h.sync(h.first.id).commands as {ticketId: string; byPerson: boolean}[]
+    assert.equal(commands[0]?.ticketId, first.id)
+    assert.equal(commands[0]?.byPerson, true)
+    assert.equal(h.remote.activeCount(), 2)
+  } finally {h.sql.close()}
+})

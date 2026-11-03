@@ -20,7 +20,7 @@ function native() {
       agents.set(sessionId,agent);await emit('agent/created',{agent});return {sessionId}
     },
     rename:async()=>{},
-    prompt:async(input: any)=>{prompts.push(input);await emit('session/event',{id:input.sessionId},{type:'user/message',data:{source:{rpcId:input.requestId}}});await emit('session/event',{id:input.sessionId},{type:'turn/start'})},
+    prompt:async(input: any,signal:AbortSignal)=>{signal.throwIfAborted();prompts.push(input);await emit('session/event',{id:input.sessionId},{type:'user/message',data:{source:{rpcId:input.requestId}}});await emit('session/event',{id:input.sessionId},{type:'turn/start'})},
     cancel:async({sessionId}:{sessionId:string})=>{cancelled.push(sessionId)},
   }}
   return {ctx,prompts,cancelled,tools,emit}

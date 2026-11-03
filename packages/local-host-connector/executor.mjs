@@ -105,12 +105,13 @@ export function createExecutorController({ctx,file,request=fetch}){
       return;
     }
     if(command.kind!=='run'||!data.accepting)return;
+    const capacity=data.maxWorkers+(command.byPerson===true?1:0);
     if(typeof command.name!=='string'||!/^[a-z0-9][a-z0-9-]{0,120}$/.test(command.name)||typeof command.instructions!=='string'||command.instructions.length>256*1024
       ||!Array.isArray(command.tools)||command.tools.length>10||!Array.isArray(command.allow)||command.allow.some(name=>typeof name!=='string')
       ||!Array.isArray(command.messages)||command.messages.length>200)throw new Error('Invalid Assignment');
     if(job?.assignmentId!==command.assignmentId&&job&&job.state!=='stopped')await cancel(job);
     if(!job||job.assignmentId!==command.assignmentId){
-      if(activeJobs().length>=data.maxWorkers)return;
+      if(activeJobs().length>=capacity)return;
       const cwd=resolve(data.root,command.name);
       await mkdir(cwd,{recursive:true});
       const canonical=await realpath(cwd),inside=relative(data.root,canonical);
@@ -132,11 +133,11 @@ export function createExecutorController({ctx,file,request=fetch}){
     for(const message of command.messages){
       if(typeof message.id!=='string'||typeof message.text!=='string'||message.text.length>256*1024)throw new Error('Invalid task input');
       if(job.accepted.includes(message.id))continue;
-      if(job.state!=='running'&&activeJobs().length>=data.maxWorkers)return;
+      if(job.state!=='running'&&activeJobs().length>=capacity)return;
       if(!job.requested.includes(message.id))job.requested.push(message.id);
       await change(job,{state:'running',handoff:false});
       // The native inbox deduplicates requestId, including a crash before accepted is saved.
-      await ctx.sessionController.prompt({sessionId,requestId:message.id,mode:'steer',content:[{type:'text',text:message.text.split(command.directory).join(job.cwd)}]});
+      await ctx.sessionController.prompt({sessionId,requestId:message.id,mode:'steer',content:[{type:'text',text:message.text.split(command.directory).join(job.cwd)}]},AbortSignal.timeout(30_000));
       if(!job.accepted.includes(message.id))job.accepted.push(message.id);
       await change(job,{});
     }
@@ -156,7 +157,7 @@ export function createExecutorController({ctx,file,request=fetch}){
         const reply=await post('sync',{protocol:PROTOCOL,accepting:data.accepting,states},signal);
         if(reply.protocol!==PROTOCOL||!Array.isArray(reply.commands))throw new Error('Invalid Executor response');
         for(const ack of reply.acknowledged??[]){const job=Object.values(data.jobs).find(job=>job.ticketId===ack.ticketId&&job.assignmentId===ack.assignmentId);if(job)job.syncedRevision=ack.revision;}
-        await save();
+        if(reply.acknowledged?.length)await save();
         status='connected';
         for(const command of reply.commands){
           try{await accept(command);}
