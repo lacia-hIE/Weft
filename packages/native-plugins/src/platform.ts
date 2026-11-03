@@ -37,6 +37,12 @@ interface Allocation {
     releasing?: boolean;
     deadlineMs: number;
 }
+/**
+ * Per-invocation limits of a plugin's Dynamic Worker. A Session tool runs one bounded call per invocation. An
+ * environment package wakes in whatever invocation reaches it first and runs its own work there, such as a background
+ * pass with many outbound reads and Host calls, so it gets the Workers Paid default subrequest limit.
+ */
+const SESSION_LIMITS = { cpuMs: 100, subRequests: 64 }, ENVIRONMENT_LIMITS = { cpuMs: 100, subRequests: 10_000 };
 /** The trusted bridge runs no user source in the main Harness isolate. */
 export class NativePluginPlatform {
     private readonly allocations = new Map<string, Allocation>();
@@ -73,7 +79,7 @@ export class NativePluginPlatform {
             compatibilityDate: '2026-07-30', compatibilityFlags: ['nodejs_compat'], mainModule: 'kernel.js',
             modules: { 'kernel.js': kernelModule, 'weft:plugin-factory': { js: factory } },
             env: {...(capability ? {HOST: capability} : {}), ...(installed ? {ALLOWED: installed.services, BACKGROUND: installed.environment === true, ACTIVATION: installed.activationId ?? runId, ...(installed.config ? {CONFIG: installed.config} : {})} : {})}, globalOutbound: installed?.network && capability ? capability : null,
-            limits: { cpuMs: 100, subRequests: 64 },
+            limits: installed?.environment ? ENVIRONMENT_LIMITS : SESSION_LIMITS,
         }));
         const facet = this.state.facets.get(name, () => ({ class: worker.getDurableObjectClass('PluginFacet') })) as unknown as FacetApi;
         const allocation: Allocation = { name, runId, facet, disposers: [], deadlineMs: installed?.environment ? 60_000 : 15_000 };

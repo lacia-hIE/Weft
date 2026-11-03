@@ -24,6 +24,10 @@ Worker Host 使用标准 Cordis 导出和原版 `dsh.bundle.patch`。这一轮�
 
 环境包可以同时注册 Agent 工具，无须拆 npm 包。后台代码只在环境 facet 初始化一次；每个 Agent 在自己的原版 Tools 注册表挂载描述和调用代理，参数校验、结果投影与取消信号继续走原版执行链。每次执行校验精确版本及启用批次，调用以所属 Session 和独立 operationId 区分，不设置共享“当前 Agent”。工具授权关闭后不再向 Agent 暴露工具，后台服务仍可运行。工具清单在每轮开始前刷新；背景工具中的 `ctx.fs` 仍指向环境工作区，不自动切换成调用会话的 cwd。直接依赖 Agent 对象的插件仍须按 Agent 生命周期适配。创造模式的动态函数体插件继续使用原来的 fs/tools/timer 边界，不自动取得后台或网络权限。
 
+## 调用限额
+
+插件的 Dynamic Worker 每次调用限 100 ms CPU。会话宿主的工具插件每次调用最多 64 个子请求；环境宿主的包会在第一个到达的请求里完成激活并运行自己的后台工作（例如一整轮外部读取和宿主调用），每次调用最多 10,000 个子请求，与 Workers 付费计划的默认值相同。
+
 ## 存储与恢复
 
 Kernel 装配原版 Storage 和 StorageDomain，使用已有 DurableStorageBackend 写入 facet 的独立 SQLite。DomainSpec 的 schema 在插件所在 isolate 执行，保留原版同步内存读取、写入队列、校验与 `domain/changed` 行为；不把 schema 函数序列化成远程协议。
