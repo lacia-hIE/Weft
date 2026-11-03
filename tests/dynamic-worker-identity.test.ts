@@ -15,7 +15,7 @@ test('cached plugin code receives fresh facet receipts, revokes old capabilities
   const ids = async (owner = 'alpha') => (await call<{ids: string[]}>(owner, 'workerIds')).ids;
   // Keep a previous run's FS proxy in module state, as an untrusted plugin could do. It must never
   // acquire the new run's authority, even though both runs use the very same cached Worker code.
-  const source = `return {apply(ctx){const fs=ctx.get('fs');const old=globalThis.previousFs;globalThis.previousFs=fs;let count=0;harness.handle('read',async()=>{let revoked=false;if(old){try{await old.resolve('old')}catch{revoked=true}}return {current:await fs.resolve('current'),revoked,count:++count};})}}`;
+  const source = `return {apply(ctx){const fs=ctx.get('fs');const old=globalThis.previousFs;globalThis.previousFs=fs;let count=0;harness.handle('read',async()=>{let revoked=false;if(old){try{await old.resolve('old')}catch{revoked=true}}const current=await fs.resolve('current');return {current:{owner:current.owner,runId:current.runId},revoked,count:++count};})}}`;
   type Read = {current: {owner: string; runId: string}; revoked: boolean; count: number};
   try {
     const first = await call<{runId: string}>('alpha', 'start', {source});

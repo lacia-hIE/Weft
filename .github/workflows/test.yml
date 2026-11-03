@@ -111,6 +111,8 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npx tsc --noEmit
+      - name: Dynamic Worker capability smoke check
+        run: npx tsx --test tests/dynamic-worker-identity.test.ts
       - name: Mail protocol and durable gateway smoke checks
         run: npx tsx --test --test-concurrency=1 --test-timeout=300000 tests/im-email.test.ts tests/mail-gateway.test.ts
       - name: Pack test inputs
