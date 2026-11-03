@@ -103,6 +103,20 @@ test('a request on GitHub becomes a Ticket worked on in its own Session, without
     assert.deepEqual(state.setup.secrets, {githubToken: true, webhookSecret: true}, 'the panel learns what is set without reading it');
     assert.equal(state.setup.problem?.code, 'repositoryUnset');
 
+    // Remote Executors use a separate device credential, scoped to this plugin in this environment.
+    const deviceResponse = await panel('executors', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({name: 'Local CI'})});
+    assert.equal(deviceResponse.status, 200, await deviceResponse.clone().text());
+    const device = await deviceResponse.json() as {id: string; pairingKey: string};
+    const devicePath = `/executor/${device.id}`;
+    assert.equal((await hook(devicePath + '/sync', {method: 'POST', body: '{}'})).status, 401);
+    assert.equal((await hook(devicePath + '/pair', {method: 'POST', headers: {authorization: `Bearer ${device.pairingKey}`, origin: 'https://untrusted.invalid'}})).status, 403);
+    const pairedResponse = await hook(devicePath + '/pair', {method: 'POST', headers: {authorization: `Bearer ${device.pairingKey}`}});
+    assert.equal(pairedResponse.status, 200, await pairedResponse.clone().text());
+    const paired = await pairedResponse.json() as {token: string};
+    assert.equal((await hook(devicePath + '/pair', {method: 'POST', headers: {authorization: `Bearer ${device.pairingKey}`}})).status, 401);
+    assert.equal((await panel(`executors/${device.id}/revoke`, {method: 'POST'})).status, 200);
+    assert.equal((await hook(devicePath + '/sync', {method: 'POST', headers: {authorization: `Bearer ${paired.token}`}, body: '{}'})).status, 401);
+
     const settings = await (await panel('settings')).json() as {sources: {id: string; revision: number}[]};
     const github = settings.sources.find(source => source.id === 'github')!;
     const saved = await panel('settings/source:github', {method: 'PUT', headers: {'content-type': 'application/json'}, body: JSON.stringify({revision: github.revision, value: {enabled: true, config: {repository}}})});

@@ -33,22 +33,22 @@ export function createExecutorController({ctx,file,request=fetch}){
   }
   function attach(agent){
     const job=jobOf(agent);if(!job||configured.has(agent))return;configured.add(agent);
-    agent.ctx.systemPrompt.section({name:'weft-executor',order:600,interpolate:false,text:()=>jobOf(agent)?.instructions??''});
+    disposers.push(agent.ctx.systemPrompt.section({name:'weft-executor',order:600,interpolate:false,text:()=>jobOf(agent)?.instructions??''}));
     const names=[...agent.ctx.tools.view(agent).restrictableNames];
     // Agent subdelegation is disabled until its durable lifecycle is tracked by this carrier.
     const allow=names.filter(name=>!['subagent','send_message','list_agents','interrupt_agent','list_subagent_models'].includes(name)&&job.allow.some(pattern=>pattern.endsWith('*')?name.startsWith(pattern.slice(0,-1)):name===pattern));
-    agent.ctx.tools.restrict({allow});
-    agent.ctx.on('tools/execute',async(execution,next)=>{
+    disposers.push(agent.ctx.tools.restrict({allow}));
+    disposers.push(agent.ctx.on('tools/execute',async(execution,next)=>{
       const current=jobOf(agent);
-      if(!current||current.state==='stopped')throw new Error('Assignment ended');
+      if(!current||current.state==='stopped'||current.stopping)throw new Error('Assignment ended');
       if(execution.name!=='run_code'&&!TOOL_NAMES.has(execution.name)&&(!allow.includes(execution.name)
         && !current.allow.some(pattern=>pattern.endsWith('*')?execution.name.startsWith(pattern.slice(0,-1)):execution.name===pattern)
         || ['subagent','send_message','list_agents','interrupt_agent','list_subagent_models'].includes(execution.name)))throw new Error('Tool is unavailable to this Executor');
       return next();
-    });
+    }));
     for(const tool of job.tools){
       if(!TOOL_NAMES.has(tool.name))throw new Error('Unrecognized Executor tool');
-      agent.ctx.tools.register({...tool,output:{schema:{type:'object',additionalProperties:true},render:(_args,value)=>[{type:'text',text:JSON.stringify(value)}]},
+      disposers.push(agent.ctx.tools.register({...tool,output:{schema:{type:'object',additionalProperties:true},render:(_args,value)=>[{type:'text',text:JSON.stringify(value)}]},
         execute:async(args,execution)=>{
           const current=jobOf(agent);
           if(!current||current.state==='stopped')throw new Error('Assignment ended');
@@ -59,7 +59,7 @@ export function createExecutorController({ctx,file,request=fetch}){
             await change(current,{handoff:args.state!=='progress'||!!args.human_action});
           }
           return result;
-        }});
+        }}));
     }
   }
   disposers.push(ctx.on('agent/created',({agent})=>attach(agent)));
@@ -80,12 +80,19 @@ export function createExecutorController({ctx,file,request=fetch}){
     }
   }));
   async function cancel(job){
-    await ctx.sessionController.cancel({sessionId:job.sessionId});
+    job.stopping=true;await save();
+    const agent=ctx.agents.get(job.sessionId);
+    // SessionController.cancel intentionally retains queued messages. Assignment shutdown must drop that inbox.
+    if(agent?.cancel)agent.cancel({kind:'user'},{keepInbox:false});
+    else if(agent)await ctx.sessionController.cancel({sessionId:job.sessionId});
     for(const item of ctx.jobs?.list(job.sessionId)??[])if(item.owner===job.sessionId&&['running','stopping'].includes(item.status)){
       ctx.jobs.kill(item.id,job.sessionId,'Assignment ended');
       const settled=await ctx.jobs.wait(item.id,10_000,job.sessionId);
       if(['running','stopping'].includes(settled.status))throw new Error('Background process has not stopped; cancellation will be retried');
     }
+    const deadline=Date.now()+10_000,signal=AbortSignal.timeout(10_000);
+    while(agent?.status==='running'&&Date.now()<deadline)await sleep(25,signal);
+    if(agent?.status==='running')throw new Error('Agent has not stopped; cancellation will be retried');
     await change(job,{state:'stopped'});
   }
   async function accept(command){
@@ -204,6 +211,13 @@ export function createExecutorController({ctx,file,request=fetch}){
     }),
     reconnect:()=>serial(async()=>{await disconnect();start();}),
     disconnect:()=>serial(disconnect),
-    close:()=>serial(async()=>{closed=true;await disconnect();for(const dispose of disposers)dispose?.();await saving;}),
+    close:()=>serial(async()=>{
+      closed=true;await disconnect();
+      for(const job of Object.values(data.jobs))if(job.state!=='stopped'){
+        try{await cancel(job);}catch{/* Preserve failure, rather than claiming cancellation succeeded. */}
+        await change(job,{state:'failed',error:'Local Executor stopped. Retry the Ticket to resume its retained Session and files.'});
+      }
+      for(const dispose of disposers.reverse())if(typeof dispose==='function')dispose();await saving;
+    }),
   };
 }

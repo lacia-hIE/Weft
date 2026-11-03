@@ -16,7 +16,7 @@ function native() {
   const emit=async(event: string,...args: any[])=>{for(const callback of listeners.get(event)??[])await callback(...args)}
   const ctx={on,agents:{get:(id: string)=>agents.get(id)},jobs:{list:()=>[]},sessionController:{
     create:async({sessionId}: {sessionId: string})=>{
-      const agent={id:sessionId,ctx:{on:()=>()=>{},systemPrompt:{section:()=>{}},tools:{view:()=>({restrictableNames:new Set(['read','subagent'])}),restrict:({allow}:{allow:string[]})=>assert.deepEqual(allow,['read']),register:(tool: any)=>tools.set(tool.name,tool)}}}
+      const agent={id:sessionId,ctx:{on:()=>()=>{},systemPrompt:{section:()=>()=>{}},tools:{view:()=>({restrictableNames:new Set(['read','subagent'])}),restrict:({allow}:{allow:string[]})=>{assert.deepEqual(allow,['read']);return()=>{}},register:(tool: any)=>{tools.set(tool.name,tool);return()=>{tools.delete(tool.name)}}}}}
       agents.set(sessionId,agent);await emit('agent/created',{agent});return {sessionId}
     },
     rename:async()=>{},
@@ -64,7 +64,7 @@ test('local Executor opts in separately, retains native prompt identities, and c
     assert.equal(host.prompts.length,1,'a connector restart preserves the native inbox receipts')
     stop=true;await controller.reconnect()
     await waitFor(()=>controller.snapshot().jobs[0]?.state==='stopped')
-    assert.deepEqual(host.cancelled,[sessionId])
+    assert.deepEqual(host.cancelled,[sessionId,sessionId])
   } finally {await controller.close();await rm(directory,{recursive:true,force:true})}
 })
 
