@@ -33,7 +33,7 @@ export function createExecutorController({ctx,file,request=fetch}){
   }
   function attach(agent){
     const job=jobOf(agent);if(!job||configured.has(agent))return;configured.add(agent);
-    if(data.permissionPreset)agent.ctx.permissionPresets.set(agent.session,data.permissionPreset);
+    if(data.permissionPreset)ctx.permissionPresets.set(agent.session,data.permissionPreset);
     disposers.push(agent.ctx.systemPrompt.section({name:'weft-executor',order:600,interpolate:false,text:()=>jobOf(agent)?.instructions??''}));
     const names=[...agent.ctx.tools.view(agent).restrictableNames];
     // Agent subdelegation is disabled until its durable lifecycle is tracked by this carrier.

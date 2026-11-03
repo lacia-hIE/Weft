@@ -11,10 +11,10 @@ const endpoint=`https://weft.example/v1/plugin-hooks/tenant/default/%40weft%2Fds
 const pairingKey='c'.repeat(64),token='d'.repeat(64)
 const waitFor=async(check:()=>boolean)=>{for(let end=Date.now()+5000;Date.now()<end;await new Promise(resolve=>setTimeout(resolve,20)))if(check())return;throw new Error('Executor did not settle')}
 function native() {
-  const listeners=new Map<string, Set<(...args: any[])=>unknown>>(),agents=new Map<string, any>(),prompts: any[]=[],cancelled: string[]=[],tools=new Map<string, any>()
+  const listeners=new Map<string, Set<(...args: any[])=>unknown>>(),agents=new Map<string, any>(),prompts: any[]=[],cancelled: string[]=[],tools=new Map<string, any>(),permissions:string[]=[]
   const on=(event: string, callback:(...args: any[])=>unknown)=>{const set=listeners.get(event)??new Set();set.add(callback);listeners.set(event,set);return()=>set.delete(callback)}
   const emit=async(event: string,...args: any[])=>{for(const callback of listeners.get(event)??[])await callback(...args)}
-  const ctx={on,agents:{get:(id: string)=>agents.get(id)},jobs:{list:()=>[]},sessionController:{
+  const ctx={on,agents:{get:(id: string)=>agents.get(id)},permissionPresets:{set:(_session:unknown,preset:string)=>{permissions.push(preset)}},jobs:{list:()=>[]},sessionController:{
     create:async({sessionId}: {sessionId: string})=>{
       const agent={id:sessionId,ctx:{on:()=>()=>{},systemPrompt:{section:()=>()=>{}},tools:{view:()=>({restrictableNames:new Set(['read','subagent'])}),restrict:({allow}:{allow:string[]})=>{assert.deepEqual(allow,['read']);return()=>{}},register:(tool: any)=>{tools.set(tool.name,tool);return()=>{tools.delete(tool.name)}}}}}
       agents.set(sessionId,agent);await emit('agent/created',{agent});return {sessionId}
@@ -23,7 +23,7 @@ function native() {
     prompt:async(input: any,signal:AbortSignal)=>{signal.throwIfAborted();prompts.push(input);await emit('session/event',{id:input.sessionId},{type:'user/message',data:{source:{rpcId:input.requestId}}});await emit('session/event',{id:input.sessionId},{type:'turn/start'})},
     cancel:async({sessionId}:{sessionId:string})=>{cancelled.push(sessionId)},
   }}
-  return {ctx,prompts,cancelled,tools,emit}
+  return {ctx,prompts,cancelled,tools,permissions,emit}
 }
 
 test('local Executor opts in separately, retains native prompt identities, and confirms cancellation',async()=>{
@@ -44,12 +44,13 @@ test('local Executor opts in separately, retains native prompt identities, and c
   let controller=createExecutorController({ctx:host.ctx,file,request})
   try {
     await controller.load();assert.equal(controller.snapshot().configured,false)
-    await controller.pair({code:JSON.stringify({protocol,endpoint,pairingKey}),root})
+    await controller.pair({code:JSON.stringify({protocol,endpoint,pairingKey}),root,permissionPreset:'read-only'})
     await waitFor(()=>syncs>0)
     assert.equal(host.prompts.length,0,'pairing never opts the device into execution')
     assert.equal(controller.snapshot().accepting,false)
     await controller.configure({accepting:true,maxWorkers:1});await controller.reconnect()
     await waitFor(()=>host.prompts.length===1)
+    assert.deepEqual(host.permissions,['read-only'],'only the native plugin injects the locally selected permission service')
     assert.equal(host.prompts[0].requestId,'first-input')
     await controller.reconnect();await waitFor(()=>syncs>=3)
     assert.equal(host.prompts.length,1,'redelivered commands never repeat accepted prompts')
