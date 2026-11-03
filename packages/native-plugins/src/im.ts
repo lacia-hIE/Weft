@@ -20,9 +20,14 @@ function bot(value: unknown): string {
 export interface ImProvider {
   /** Package name of the consumer; only that package may receive the bot's events or run its operations. */
   consumer: string;
+  /** The bot's channel, such as `feishu`, and its display name, as the consumer lists them. */
+  kind: string;
+  name?: string;
   /** Operations the consumer may run, such as `send` or `read`; each takes and returns JSON. */
   operations: Record<string, (argument: unknown) => unknown>;
 }
+/** A bot as its consumer lists it. */
+export interface ImBot {bot: string; kind: string; name?: string}
 /** A package's handler for the events of bots assigned to it. */
 export interface ImConsumer {message(bot: string, event: unknown): unknown}
 /** Host-side routes; the Host adds the calling package's name, which a facet cannot choose. */
@@ -30,6 +35,7 @@ export interface ImHost {
   imDeliver(consumer: string, bot: string, event: unknown): Promise<'delivered' | 'unclaimed'>;
   imCall(bot: string, operation: string, argument: unknown): Promise<unknown>;
   imConsumers(): Promise<string[]>;
+  imBots(): Promise<ImBot[]>;
 }
 
 /**
@@ -48,6 +54,7 @@ export class WorkerIm {
     provide: (key: string, provider: ImProvider) => {
       const name = bot(key);
       if (typeof provider?.consumer !== 'string' || !provider.consumer) throw new TypeError('An IM bot names the package it is assigned to');
+      if (typeof provider.kind !== 'string' || !provider.kind) throw new TypeError('An IM bot names its channel');
       if (this.providers.has(name)) throw new Error(`IM bot ${name} is provided twice`);
       this.providers.set(name, provider);
       return () => {if (this.providers.get(name) === provider) this.providers.delete(name);};
@@ -75,6 +82,8 @@ export class WorkerIm {
     },
     /** @returns the names of active packages that consume IM events. */
     consumers: () => this.host.imConsumers(),
+    /** @returns the bots active packages provide to this package. */
+    bots: () => this.host.imBots(),
   };
   /** Host → consumer: hand one event of an assigned bot to the handler. */
   async receive(key: string, event: unknown): Promise<'delivered' | 'unclaimed'> {
@@ -89,6 +98,11 @@ export class WorkerIm {
     const run = Object.hasOwn(provider.operations, operation) ? provider.operations[operation] : undefined;
     if (typeof run !== 'function') throw new Error(`IM bot ${key} has no ${operation} operation`);
     return {handled: true, value: wire(await run(wire(argument)) ?? null)};
+  }
+  /** Host → holder: the bots this package provides to `caller`. */
+  assigned(caller: string): ImBot[] {
+    return [...this.providers].filter(([, provider]) => provider.consumer === caller)
+      .map(([bot, provider]) => ({bot, kind: provider.kind, ...typeof provider.name === 'string' && provider.name ? {name: provider.name.slice(0, 100)} : {}}));
   }
   consuming(): boolean {return this.consumer !== undefined;}
 }

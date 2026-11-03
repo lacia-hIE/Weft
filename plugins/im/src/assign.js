@@ -9,7 +9,7 @@
  */
 export function assignment(ctx, bot, config, operations = {}) {
   if (!config.consumer) return undefined;
-  ctx.effect(() => ctx.weftIm.provide(bot, {consumer: config.consumer, operations: {
+  ctx.effect(() => ctx.weftIm.provide(bot, {consumer: config.consumer, kind: bot.split('_')[0], ...(config.displayName ? {name: config.displayName} : {}), operations: {
     // The delivery id makes a retried send the same message where the platform supports it.
     send: async ({target, text, deliveryId}) => {await ctx.im.send(bot, target, String(text), deliveryId ? String(deliveryId) : undefined); return {status: 'sent'};},
     ...operations,

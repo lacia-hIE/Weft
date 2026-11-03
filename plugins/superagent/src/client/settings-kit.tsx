@@ -243,8 +243,14 @@ export function SourceField({ field, value, saved, fact, onChange, labels, refre
   labels: Record<string, string>
   refreshLabels?: () => Promise<string[]>
 }) {
-  const { t, navigate } = usePanel()
+  const { t, navigate, notify } = usePanel()
   const label = localized(t, field.label), hint = localized(t, field.hint)
+  const refresh = useAction(async () => {
+    try {
+      const added = await refreshLabels!()
+      notify(added.length ? t('labelsAdded', { names: added.join(t('listSeparator')) }) : t('labelsCurrent'))
+    } catch (failure) { notify(t('labelsFailed', { error: errorText(failure) })) }
+  })
   switch (field.type) {
     case 'switch': return <SwitchRow label={label} hint={hint} checked={value === true} onChange={onChange} />
     case 'select': return <Field label={label} hint={hint}>
@@ -264,6 +270,8 @@ export function SourceField({ field, value, saved, fact, onChange, labels, refre
         </select>
         : <Input value={String(value ?? '')} readOnly={field.readonly} pattern={field.pattern} spellCheck={false}
           onChange={event => onChange(event.target.value)} />}
+      {field.refresh && refreshLabels && <Button variant="ghost" size="sm" className={refresh.busy ? 'dt-btn-busy' : undefined} icon={<Icon name="refresh" />}
+        disabled={refresh.busy} aria-busy={refresh.busy} onClick={() => { void refresh.run() }}>{localized(t, field.refresh)}</Button>}
     </Field>
     case 'fact': return <div className="dt-field">
       <span className="dt-field-head">{label}{hint && <InfoTip text={hint} />}</span>

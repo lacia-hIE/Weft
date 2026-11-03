@@ -54,6 +54,7 @@ interface KernelEnv {
         imDeliver(consumer: string, bot: string, event: unknown): Promise<'delivered' | 'unclaimed'>;
         imCall(bot: string, operation: string, argument: unknown): Promise<unknown>;
         imConsumers(): Promise<string[]>;
+        imBots(): Promise<{bot: string; kind: string; name?: string}[]>;
     };
 }
 function wire<T>(value: T, maxBytes = 1048576): T {
@@ -249,6 +250,7 @@ export class PluginFacet extends DurableObject<KernelEnv> {
     async deliverIm(bot: string, event: unknown): Promise<'delivered' | 'unclaimed'> {await this.start(); return this.im ? this.im.receive(bot, event) : 'unclaimed';}
     async answerIm(caller: string, bot: string, operation: string, argument: unknown): Promise<{handled: false} | {handled: true; value: unknown}> {await this.start(); return this.im ? this.im.answer(caller, bot, operation, argument) : {handled: false};}
     async consumesIm(): Promise<boolean> {await this.start(); return this.im?.consuming() ?? false;}
+    async assignedIm(caller: string): Promise<{bot: string; kind: string; name?: string}[]> {await this.start(); return this.im?.assigned(caller) ?? [];}
     async tick(): Promise<void> { await this.start(); if(this.webhooks)await this.webhooks.run(async()=>{await this.durableTimers?.tick();});else await this.durableTimers?.tick(); }
     async nextAlarm(): Promise<number | undefined> { await this.start(); return this.durableTimers?.next(); }
     async stop(): Promise<void> {

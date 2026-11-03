@@ -2,7 +2,9 @@
 import { z } from 'zod'
 import { isoTime, key, type ChannelRef, type OutboundMessage, type ScopeResult, type Trigger } from '../core/index.ts'
 import type { HostIm } from '../host-services.ts'
-import type { AdmissionRowView, Localized, SourceKind } from './kind.ts'
+import { KV } from '../kv.ts'
+import { sourceContext, type SourceHost } from './host.ts'
+import type { AdmissionRowView, FieldSpec, Localized, SourceKind } from './kind.ts'
 
 /** One message of an assigned bot as dsh-im hands it over; `target` is opaque and goes back with each reply. */
 export const ImEventSchema = z.looseObject({
@@ -17,6 +19,23 @@ export const IM_CHANNELS = ['feishu', 'weixin', 'qq', 'email'] as const
 export type ImChannel = typeof IM_CHANNELS[number]
 /** Key of a dsh-im bot: the channel for its first bot, `<channel>_<hex>` for an added one. */
 export const BotKeySchema = z.string().regex(/^([a-z][a-z0-9_]{0,63})?$/)
+
+/**
+ * Stores the bots of `channel` that dsh-im assigns to dsh-superagent as the Source's labels, which the bot field offers.
+ * @returns the labels by bot key.
+ */
+export async function refreshBots(im: HostIm, host: SourceHost, kind: { kind: string; health: readonly string[] }): Promise<Record<string, string>> {
+  const labels = Object.fromEntries((await im.bots()).filter(item => item.kind === kind.kind).map(item => [item.bot, item.name ? `${item.name} · ${item.bot}` : item.bot]))
+  sourceContext(host, kind).state.set(KV.sources.labels(kind.kind), labels)
+  return labels
+}
+/** The bot field of an IM Source: a choice among the bots dsh-im assigns to dsh-superagent, or a key typed in. */
+export function botField(channel: ImChannel, title: string, titleEn: string): FieldSpec {
+  return { key: 'bot', type: 'text', pattern: '[a-z][a-z0-9_]*', label: { zh: '机器人', en: 'Bot' },
+    choose: { zh: '选择交给本插件的机器人', en: 'Choose a bot assigned to this plugin' }, refresh: { zh: '刷新机器人列表', en: 'Refresh bots' },
+    hint: { zh: `列出 dsh-im 中交给 @weft/dsh-superagent 的${title}机器人：在 dsh-im 的“更多设置 → 通用 → 交给插件”里选择本插件后，点刷新。列表为空时也可以直接填机器人的键：第一个${title}机器人是 ${channel}，新增的形如 ${channel}_0a1b2c。`,
+      en: `Lists the ${titleEn} bots of dsh-im assigned to @weft/dsh-superagent: choose this plugin under More settings → General → Assign to plugin in dsh-im, then refresh. With an empty list, type the bot's key: ${channel} for the first ${titleEn} bot, ${channel}_0a1b2c for an added one.` } }
+}
 
 /** The Thread of a message: a Feishu topic or root message, an email conversation, or the whole chat elsewhere. */
 export function imThread(event: ImEvent): string {
@@ -80,13 +99,12 @@ export function imKind(channel: Exclude<ImChannel, 'feishu'>, im: HostIm): Sourc
       en: `Receives the messages of the ${TITLES[channel].en} bot that dsh-im assigns to dsh-superagent, and replies through it.` },
     schema: GenericConfigSchema,
     fields: [
-      { key: 'bot', type: 'text', pattern: '[a-z][a-z0-9_]*', label: { zh: '机器人', en: 'Bot' },
-        hint: { zh: `dsh-im 里这个机器人的键：第一个${TITLES[channel].zh}机器人是 ${channel}，新增的形如 ${channel}_0a1b2c。在 dsh-im 的“更多设置”里把它交给 @weft/dsh-superagent。`,
-          en: `The bot's key in dsh-im: ${channel} for the first ${TITLES[channel].en} bot, ${channel}_0a1b2c for an added one. Assign it to @weft/dsh-superagent under More settings in dsh-im.` } },
+      botField(channel, TITLES[channel].zh, TITLES[channel].en),
       { key: 'directMessages', type: 'switch', label: { zh: '接收私聊', en: 'Direct messages' } },
       ...groups ? [{ key: 'groupMentions', type: 'switch' as const, label: { zh: '接收群里 @ 机器人的消息', en: 'Group messages that mention the bot' } }] : [],
     ],
     health: [channel],
+    refreshLabels: host => refreshBots(im, host, { kind: channel, health: [channel] }),
     scope: ({ meta }, config) => {
       const other = botScope(meta, config.bot)
       if (other) return other

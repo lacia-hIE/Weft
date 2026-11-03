@@ -637,6 +637,10 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
     this.nativePackageAuthorize(scope, receipt, 'sessions');
     return this.backgroundPackages(scope).imConsumers();
   }
+  async nativeImBots(scope: ControlScope, receipt: {name: string; digest: string; activationId: string}): Promise<{bot: string; kind: string; name?: string}[]> {
+    this.nativePackageAuthorize(scope, receipt, 'sessions');
+    return this.backgroundPackages(scope).imBots(receipt.name);
+  }
   async nativePackageCancelWebhook(scope:ControlScope,receipt:{name:string;digest:string;activationId:string},operationId:string):Promise<void> {
     this.scope(scope);const key=this.webhookOperation(receipt,operationId);const active=this.webhookOperations.get(key);
     if(active)active.abort();else {this.cancelledWebhooks.add(key);if(this.cancelledWebhooks.size>128)this.cancelledWebhooks.delete(this.cancelledWebhooks.values().next().value!);}

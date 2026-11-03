@@ -122,6 +122,13 @@ export class EnvironmentPackages {
     const consuming = await Promise.allSettled(candidates.map(active => this.platform.consumesIm(active.runId)));
     return candidates.filter((_active, index) => {const result = consuming[index]!; return result.status === 'fulfilled' && result.value;}).map(active => active.row.name);
   }
+  /** The IM bots active packages provide to `caller`; a package that cannot answer lists none. */
+  async imBots(caller: string): Promise<{bot: string; kind: string; name?: string}[]> {
+    await this.reconcile();
+    const candidates = [...this.active.values()].filter(active => active.row.name !== caller && active.row.permissions.sessions);
+    const listed = await Promise.allSettled(candidates.map(active => this.platform.assignedIm(active.runId, caller)));
+    return listed.flatMap(result => result.status === 'fulfilled' ? result.value : []);
+  }
   /** Hand gateway events to the package that owns the connection, in order. */
   async dispatchConnection(name: string, connectionId: string, events: unknown[]): Promise<'ok' | 'unknown'> {
     await this.reconcile();

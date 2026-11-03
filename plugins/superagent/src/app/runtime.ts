@@ -293,6 +293,7 @@ export class Runtime implements SourceHost {
       else this.githubContext.report('github', health('paused', 'setupPending'))
       return
     }
+    this.refreshImBots()
     await (this.polling ??= pollDue(this.githubContext, this.lifetime).finally(() => { this.polling = undefined }))
     await this.executor.reconcile()
     await this.drive()
@@ -314,8 +315,13 @@ export class Runtime implements SourceHost {
     context.report(channel, { state: 'ready', detail: `Last message at ${event.at} from bot ${bot}`, at: now() })
     await Promise.race([this.drive(), new Promise(resolve => setTimeout(resolve, IM_WAKE_MS))])
   }
+  /** Rereads the bots dsh-im assigns to dsh-superagent, which each enabled IM Source's bot field offers; the Host lists them without a network read. */
+  private refreshImBots(): void {
+    for (const channel of IM_CHANNELS) if (this.sources.instance(channel)?.enabled) void this.sources.kind(channel)?.refreshLabels?.(this).catch(() => { /* A package that is not running lists its bots at the next pass. */ })
+  }
   /** Each IM Source's health while no message has arrived since activation: off, without a bot, or waiting. */
   private reportIm(): void {
+    this.refreshImBots()
     for (const channel of IM_CHANNELS) {
       const instance = this.sources.instance<{ bot: string }>(channel)
       const context = this.context(this.imKinds[channel])

@@ -40,4 +40,6 @@ export interface HostIm {
   consume(handler: { message(bot: string, event: unknown): unknown }): () => void
   /** Runs an operation, such as `send` or `read`, of a bot assigned to this package. */
   call(bot: string, operation: string, argument?: unknown): Promise<unknown>
+  /** The bots active packages assign to this package, with their channel and display name. */
+  bots(): Promise<{ bot: string; kind: string; name?: string }[]>
 }

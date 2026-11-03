@@ -101,6 +101,13 @@ test('a Feishu bot that dsh-im assigns to dsh-superagent turns a direct message 
       return value?.consumers.includes(superagent.name) ? value.consumers : undefined;
     }, 'dsh-superagent consuming IM events');
     assert.deepEqual(consumers, [superagent.name], 'dsh-im itself does not consume IM events');
+    const offered = await waitFor(async () => {
+      if ((await panel('sources/feishu/labels', {method: 'POST'})).status !== 200) return undefined;
+      const view = await (await panel('settings')).json() as {sources: {id: string; labels?: Record<string, string>}[]};
+      const labels = view.sources.find(item => item.id === 'feishu')?.labels ?? {};
+      return 'feishu' in labels ? labels : undefined;
+    }, 'the assigned bot among the Feishu Source\'s bot choices');
+    assert.deepEqual(offered, {feishu: 'feishu'}, 'only bots assigned to dsh-superagent are offered');
     const event = JSON.stringify({schema: '2.0', header: {event_id: crypto.randomUUID(), event_type: 'im.message.receive_v1', token: 'feishu-verify', app_id: 'cli_fixture'},
       event: {sender: {sender_id: {open_id: 'ou_alice'}, sender_type: 'user'}, message: {message_id: 'om_request', chat_id: 'oc_alice', chat_type: 'p2p', message_type: 'text', create_time: String(Date.now()), content: JSON.stringify({text: 'Please fix the typo in README'})}}});
     // Delivery repeats until the Ticket exists; every delivery of one message is the same Trigger.

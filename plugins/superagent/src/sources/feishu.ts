@@ -2,7 +2,7 @@
 import { z } from 'zod'
 import type { Trigger } from '../core/index.ts'
 import type { HostIm } from '../host-services.ts'
-import { BotKeySchema, botScope, imTriggerId, sendIm } from './im.ts'
+import { botField, BotKeySchema, botScope, imTriggerId, refreshBots, sendIm } from './im.ts'
 import type { ContextMessage, ContextPart, Localized, SourceKind } from './kind.ts'
 
 const SOURCE = 'feishu'
@@ -40,8 +40,7 @@ export function feishuKind(im: HostIm): SourceKind<FeishuConfig> {
     description: { zh: '接收 dsh-im 交给 dsh-superagent 的飞书机器人在下列群和私聊中收到的消息，并在话题里回复。', en: 'Receives the messages of the Feishu bot that dsh-im assigns to dsh-superagent in these chats and direct messages, and replies in their topics.' },
     schema: FeishuConfigSchema,
     fields: [
-      { key: 'bot', type: 'text', pattern: '[a-z][a-z0-9_]*', label: { zh: '机器人', en: 'Bot' },
-        hint: { zh: 'dsh-im 里这个机器人的键：第一个飞书机器人是 feishu，新增的形如 feishu_0a1b2c。在 dsh-im 的“更多设置”里把它交给 @weft/dsh-superagent。', en: 'The bot\'s key in dsh-im: feishu for the first Feishu bot, feishu_0a1b2c for an added one. Assign it to @weft/dsh-superagent under More settings in dsh-im.' } },
+      botField(SOURCE, '飞书', 'Feishu'),
       { key: 'chats', type: 'rows', label: { zh: '接收的群', en: 'Chats' },
         hint: { zh: '“仅 @”只接收 @ 机器人的消息和已有工单的线程；“全部消息”也接收其余消息，评估可以按规则从中推断工作，需要机器人有读取全部群消息的权限。', en: '"@ only" receives messages that mention the bot and Threads that have Tickets; "All" also receives the rest, from which Eval may infer work under the rules; the bot needs permission to read all group messages.' },
         columns: [
@@ -54,6 +53,7 @@ export function feishuKind(im: HostIm): SourceKind<FeishuConfig> {
       { key: 'directMessages', type: 'switch', label: { zh: '接收私聊', en: 'Direct messages' } },
     ],
     health: [SOURCE],
+    refreshLabels: host => refreshBots(im, host, { kind: SOURCE, health: [SOURCE] }),
     scope({ meta }, config) {
       const other = botScope(meta, config.bot)
       if (other) return other

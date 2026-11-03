@@ -16,6 +16,7 @@ interface FacetApi {
     deliverIm(bot: string, event: unknown): Promise<'delivered' | 'unclaimed'>;
     answerIm(caller: string, bot: string, operation: string, argument: unknown): Promise<{handled: false} | {handled: true; value: unknown}>;
     consumesIm(): Promise<boolean>;
+    assignedIm(caller: string): Promise<{bot: string; kind: string; name?: string}[]>;
     start(): Promise<unknown>;
     invoke(method: string, args: unknown): Promise<{
         value: unknown;
@@ -181,6 +182,10 @@ export class NativePluginPlatform {
     async consumesIm(runId: string): Promise<boolean> {
         const allocation = this.allocations.get(runId); if (!allocation) throw new Error('Plugin is not active');
         return this.bounded(allocation, () => allocation.facet.consumesIm());
+    }
+    async assignedIm(runId: string, caller: string): Promise<{bot: string; kind: string; name?: string}[]> {
+        const allocation = this.allocations.get(runId); if (!allocation) throw new Error('Plugin is not active');
+        return this.bounded(allocation, () => allocation.facet.assignedIm(caller));
     }
     async deliverSessionEvent(runId: string, event: unknown): Promise<void> {
         const allocation = this.allocations.get(runId); if (!allocation) throw new Error('Plugin is not active');
