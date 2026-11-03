@@ -1,5 +1,4 @@
 /** Bounded thread message window loaded for admission assessments. */
-import type { Commands } from '../infra/commands.ts'
 import type { ContextMessage, TriggerContext } from './kind.ts'
 
 /** Selects the first five thread messages plus five messages on either side of `sourceId`, recording omitted gap counts. */
@@ -19,7 +18,7 @@ export function threadWindow(messages: ContextMessage[], sourceId: string) {
  * Reads up to `maxPages` of a trigger's thread and builds the bounded message window around the trigger; counts describe
  * only this loaded snapshot (never unread history), and `status` reports fallback modes such as `chat_neighbours`.
  */
-export async function admissionContext(context: TriggerContext, commands: Commands, maxPages: number) {
+export async function admissionContext(context: TriggerContext, maxPages: number, signal?: AbortSignal) {
   const messages: ContextMessage[] = []
   const seen = new Set<string>()
   const cursors = new Set<string>()
@@ -27,7 +26,7 @@ export async function admissionContext(context: TriggerContext, commands: Comman
   let status: string | undefined
   let more = true
   for (let page = 0; more && page < maxPages; page++) {
-    const result = await context.read(commands, 'thread', next)
+    const result = await context.read('thread', next, signal)
     for (const message of result.messages) if (!seen.has(message.id)) {
       seen.add(message.id); messages.push(message)
     }

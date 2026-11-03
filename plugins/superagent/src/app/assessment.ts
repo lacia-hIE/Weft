@@ -152,8 +152,7 @@ export class MasterAssessor implements Assessor {
         try {
           const timeout = AbortSignal.timeout(this.host.deployment.admissionContextTimeoutMs.get())
           const signal = AbortSignal.any([this.controller.signal, ...(caller ? [caller] : []), timeout])
-          const commands = this.host.commands.withSignal(signal)
-          const context = await admissionContext(thread, commands, this.host.deployment.admissionContextMaxPages.get())
+          const context = await admissionContext(thread, this.host.deployment.admissionContextMaxPages.get(), signal)
           if (!current()) return
           reads.context = context
           // Allow pagination to continue from the end of the initial window.
@@ -228,7 +227,7 @@ export class MasterAssessor implements Assessor {
       await this.seed(candidate.evalId, trigger, signal)
       const { cache } = this.reads(candidate.evalId, trigger)
       const { snapshots, images, messages, cursors } = cache
-      const commands = this.host.commands.withSignal(AbortSignal.any([this.controller.signal, signal]))
+      const scoped = AbortSignal.any([this.controller.signal, signal])
       if (read.resource === 'image') {
         if (read.offset !== 0) throw new Error('Images are not paginated; use offset 0')
         const image = images.get(read.image_id!)
@@ -236,7 +235,7 @@ export class MasterAssessor implements Assessor {
         const source = this.host.threadContext(trigger)
         if (!source) throw new Error(NO_CONTEXT)
         const key = read.image_id!.slice(read.image_id!.indexOf('/') + 1)
-        return source.image(agent, commands, image, key, '', signal)
+        return source.image(agent, image, key, '', scoped)
       }
       const cacheKey = JSON.stringify([read.resource, read.path, read.cursor, read.message_id])
       if (read.offset > 0) {
@@ -254,7 +253,7 @@ export class MasterAssessor implements Assessor {
       else if (read.resource === 'thread' || read.resource === 'root' || read.resource === 'parent') {
         if (!source) throw new Error(NO_CONTEXT)
         if (read.cursor !== undefined && !cursors.has(read.cursor)) throw new Error('Unknown thread cursor. First call {resource:"thread"}; then copy the returned next_read exactly.')
-        const result = await source.read(commands, read.resource, read.cursor)
+        const result = await source.read(read.resource, read.cursor, scoped)
         const references = result.messages.filter(message => !message.deleted).flatMap(message => {
           messages.set(message.id, message.text)
           return this.imageReferences(source, trigger, message.text, message.id, cache)
@@ -264,7 +263,7 @@ export class MasterAssessor implements Assessor {
         body = JSON.stringify({ images: references, next_read: next, ...result.body })
       }
       else {
-        body = await readRepositoryPath(commands, read.path!, read.resource === 'directory' ? 'directory' : 'file')
+        body = await readRepositoryPath(this.host.commands.withSignal(scoped), read.path!, read.resource === 'directory' ? 'directory' : 'file')
       }
       snapshots.set(cacheKey, body)
       return textPage(read.resource, body, read.offset, 4000)

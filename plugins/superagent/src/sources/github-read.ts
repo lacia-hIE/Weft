@@ -156,9 +156,10 @@ async function conversationPage(commands: Commands, number: number, page: number
  * Context reader for a GitHub Trigger: reads the review thread for an inline review comment (whose first comment is its
  * root and parent), or the Issue/PR conversation by page otherwise (whose first page is its root and parent).
  */
-export const githubThreadContext: ThreadContext<unknown> = {
+export const githubThreadContext = (client: Commands): ThreadContext<unknown> => ({
   messageId: trigger => trigger.url ?? '',
-  read: async (commands, trigger, part, cursor) => {
+  read: async (trigger, part, cursor, _config, signal) => {
+    const commands = client.withSignal(signal)
     // The default branch's CI has no conversation; its Trigger is its context.
     if (typeof trigger.meta.branch === 'string') {
       const message = { id: trigger.url ?? trigger.id, from: 'CI', at: trigger.at, text: trigger.text, bot: true as const }
@@ -174,4 +175,4 @@ export const githubThreadContext: ThreadContext<unknown> = {
     const body = await conversationPage(commands, number, Number(cursor ?? '1'))
     return { messages: body.messages, next: body.next_resource ?? undefined, body }
   },
-}
+})

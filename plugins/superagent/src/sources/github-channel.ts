@@ -1,9 +1,8 @@
 /** GitHub outbound channel: posts issue/PR comments and review thread replies under the agent account. */
 import { z } from 'zod'
 import type { OutboundMessage } from '../core/index.ts'
-import { CliError } from '../infra/commands.ts'
+import { CliError, type Commands } from '../infra/commands.ts'
 import { sameName } from '../infra/text.ts'
-import type { SourceContext } from './host.ts'
 import type { ChannelLink, ChannelLinks } from './kind.ts'
 import { githubAddress, githubPage } from './github-trigger.ts'
 
@@ -15,8 +14,7 @@ const gone = (error: unknown): boolean => error instanceof CliError
   && (error.code === 410 || (error.code === 403 && /locked/i.test(error.message)))
 const missing = (error: unknown): boolean => error instanceof CliError && (error.code === 404 || error.code === 410)
 /** Posts a comment or review-thread reply with an embedded HTML marker so retries do not create duplicate comments. */
-export async function sendGithub(host: Pick<SourceContext, 'commands'>, message: OutboundMessage): Promise<'sent' | 'gone'> {
-  const { commands } = host
+export async function sendGithub(commands: Commands, message: OutboundMessage): Promise<'sent' | 'gone'> {
   const { repository, github } = commands.deployment
   const number = Number(message.channel.address.number)
   if (!number) throw new Error('Missing GitHub reply target')

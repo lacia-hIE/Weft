@@ -1,6 +1,5 @@
 /** Registry of installed Source kinds, their configured instances, and the Engine's SourceScope implementation. */
 import type { ChannelRef, OutboundMessage, ScopeResult, SourceScope, Trigger } from '../core/index.ts'
-import type { Commands } from '../infra/commands.ts'
 import { HealthBoard, type HealthEntry } from '../infra/health.ts'
 import { AdmissionTableSchema, type Settings } from '../policy.ts'
 import type { ChannelLink, ChannelLinks, SourceInstance, SourceKind, TriggerContext, VariableSpec } from './kind.ts'
@@ -92,10 +91,10 @@ export class SourceRegistry implements SourceScope {
    * Sends a message idempotently through its Channel's kind; returns `'waiting'` while the kind is not installed, or
    * `'gone'` when the target (or a kind without channels) can never receive it.
    */
-  async send(message: OutboundMessage, commands: Commands): Promise<'sent' | 'gone' | 'waiting'> {
+  async send(message: OutboundMessage, signal?: AbortSignal): Promise<'sent' | 'gone' | 'waiting'> {
     const kind = this.kinds.get(message.channel.source)
     if (!kind) return 'waiting'
-    return kind.channel ? kind.channel.send({ commands }, message) : 'gone'
+    return kind.channel ? kind.channel.send(message, signal) : 'gone'
   }
   link(channel: ChannelRef, links: ChannelLinks): ChannelLink {
     const link = this.kinds.get(channel.source)?.channel?.link(channel.address, links)
@@ -113,11 +112,11 @@ export class SourceRegistry implements SourceScope {
     const { config } = this.resolve(kind, settings.sources[kind.kind])
     return {
       messageId: context.messageId(trigger),
-      read: (commands, part, cursor) => context.read(commands, trigger, part, cursor, config),
+      read: (part, cursor, signal) => context.read(trigger, part, cursor, config, signal),
       images: text => context.images?.(text) ?? [],
-      image: async (agent, commands, message, key, stateDir, signal) => {
+      image: async (agent, message, key, stateDir, signal) => {
         if (!context.image) throw new Error(`The ${kind.kind} Source has no images`)
-        return context.image(agent, commands, trigger, message, key, stateDir, signal)
+        return context.image(agent, trigger, message, key, stateDir, signal)
       },
     }
   }

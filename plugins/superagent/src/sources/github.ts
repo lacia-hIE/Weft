@@ -2,7 +2,7 @@
 import { key, type Thread } from '../core/index.ts'
 import { sameName } from '../infra/text.ts'
 import { GithubAccountsSchema } from '../deployment.ts'
-import { CliError, validItems, type Tally } from '../infra/commands.ts'
+import { CliError, validItems, type Commands, type Tally } from '../infra/commands.ts'
 import { ciCounts, ciFact, ciFailures, ciSummary, githubThreadContext, pullChecks } from './github-read.ts'
 import { branchCiTrigger, ciTrigger, commentTrigger, CommentSchema, githubAddress, issueTrigger, IssueSchema, pullTrigger, SOURCE }
   from './github-trigger.ts'
@@ -33,7 +33,8 @@ function scopeOf(meta: Record<string, unknown>): Scope | undefined {
   if (meta.kind === 'pull') return 'pulls'
   return meta.kind === 'conversation' || meta.kind === 'inline' || meta.kind === 'review' ? 'comments' : undefined
 }
-export const githubKind: SourceKind<GithubConfig> = {
+/** The GitHub Source kind, reading and replying through the deployment's GitHub client. */
+export const githubKind = (commands: Commands): SourceKind<GithubConfig> => ({
   kind: SOURCE,
   title: { zh: 'GitHub', en: 'GitHub' },
   description: { zh: '智能体的 GitHub 账号；接收仓库里发给它的通知、已订阅 Issue 与 PR 的讨论、CI 状态变化和 PR 合并关闭。', en: 'The agent\'s GitHub accounts; receives notifications to it in the repository, discussion on subscribed Issues and PRs, CI changes, and PR merge or close.' },
@@ -56,8 +57,8 @@ export const githubKind: SourceKind<GithubConfig> = {
     return { listened: true, observed: row !== undefined && config[OBSERVED[row]], ...row ? { row } : {} }
   },
   health: ['github'],
-  channel: { send: sendGithub, link: githubLink },
-  threadContext: githubThreadContext,
+  channel: { send: (message, signal) => sendGithub(commands.withSignal(signal), message), link: githubLink },
+  threadContext: githubThreadContext(commands),
   // `#12`, `12`, or the page of an Issue or PR, of any repository, names Thread 12.
   find: query => {
     const number = (/^#?(\d+)$/.exec(query.trim()) ?? /github\.com\/[^/]+\/[^/]+\/(?:pull|issues)\/(\d+)/.exec(query))?.[1]
@@ -101,7 +102,7 @@ export const githubKind: SourceKind<GithubConfig> = {
   facts: (deployment): Record<string, Localized | string> => deployment ? {
     cli: { zh: `当前账号 @${deployment.github.login}`, en: `Current account @${deployment.github.login}` },
   } : {},
-}
+})
 /** Returns an error health once `failures` consecutive polls fail, or undefined so a single network interruption stays quiet. */
 export function pollFailure(failures: number, threshold: number, error: unknown): Health | undefined {
   return failures >= threshold ? health('error', 'pollFailures', { count: String(failures), error: String(error) }) : undefined
