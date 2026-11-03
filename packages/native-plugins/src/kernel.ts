@@ -32,7 +32,8 @@ import type {VerifiedWebhookDelivery} from '@deepseek-ai/dsh-webhook';
 import {sessionMethods, workerHostServices} from './services.ts';
 import {WorkerIm} from './im.ts';
 import { snapshotJsonValue } from '@deepseek-ai/dsh-util-values';
-interface KernelEnv {
+/** Per-facet authority; never stored in the cached Dynamic Worker environment. */
+interface KernelProps {
     ALLOWED?: string[];
     BACKGROUND?: boolean;
     ACTIVATION?: string;
@@ -66,7 +67,7 @@ function wire<T>(value: T, maxBytes = 1048576): T {
     return detached as T;
 }
 /** One real Cordis tree in a separately isolated Durable Object facet. */
-export class PluginFacet extends DurableObject<KernelEnv> {
+export class PluginFacet extends DurableObject<Record<string, never>, KernelProps> {
     private readonly toolCaller = new AsyncLocalStorage<string>();
     private root: Context | undefined;
     private plugin: Plugin | undefined;
@@ -94,17 +95,17 @@ export class PluginFacet extends DurableObject<KernelEnv> {
             await root.plugin(SystemPrompt);
             await root.plugin(Tools);
             await root.plugin(Timer);
-            if (this.env.BACKGROUND && this.env.ALLOWED?.includes('timer')) this.durableTimers = new DurablePluginTimers(this.ctx.storage, this.env.ACTIVATION ?? 'initial');
-            if (this.env.ALLOWED?.includes('weftConnections')) {this.connections = new WorkerConnections(this.env.HOST!); root.provide('weftConnections', this.connections.service);}
-            if (this.env.ALLOWED?.includes('weftIm')) {this.im = new WorkerIm(this.env.HOST!); root.provide('weftIm', this.im.service);}
-            if (this.env.ALLOWED?.includes('weftSessionEvents')) {this.sessionEvents = new WorkerSessionEvents(this.env.HOST!); root.provide('weftSessionEvents', this.sessionEvents.service);}
-            if (this.env.ALLOWED?.includes('weftManagedSessions')) {this.managedSessions = new WorkerManagedSessions(this.env.HOST!); root.provide('weftManagedSessions', this.managedSessions.service);}
-            if (this.env.ALLOWED?.includes('weftSql')) root.provide('weftSql', pluginSql(this.ctx.storage));
-            if (this.env.ALLOWED?.includes('webhookRuntime')) {this.webhooks=new WorkerWebhooks(this.env.HOST!,work=>this.ctx.waitUntil(work));await this.webhooks.mount(root);}
-            if (this.env.ALLOWED?.includes('webServer')) {this.webServer = new WorkerWebServer();root.provide('webServer', this.webServer);}
-            if (this.env.ALLOWED?.some(name => name === 'storage' || name === 'storageDomain')) await mountDurableStorage(root, this.ctx.storage);
-            if (this.env.ALLOWED?.includes('sessionController')) {
-              const host = this.env.HOST!;
+            if (this.ctx.props.BACKGROUND && this.ctx.props.ALLOWED?.includes('timer')) this.durableTimers = new DurablePluginTimers(this.ctx.storage, this.ctx.props.ACTIVATION ?? 'initial');
+            if (this.ctx.props.ALLOWED?.includes('weftConnections')) {this.connections = new WorkerConnections(this.ctx.props.HOST!); root.provide('weftConnections', this.connections.service);}
+            if (this.ctx.props.ALLOWED?.includes('weftIm')) {this.im = new WorkerIm(this.ctx.props.HOST!); root.provide('weftIm', this.im.service);}
+            if (this.ctx.props.ALLOWED?.includes('weftSessionEvents')) {this.sessionEvents = new WorkerSessionEvents(this.ctx.props.HOST!); root.provide('weftSessionEvents', this.sessionEvents.service);}
+            if (this.ctx.props.ALLOWED?.includes('weftManagedSessions')) {this.managedSessions = new WorkerManagedSessions(this.ctx.props.HOST!); root.provide('weftManagedSessions', this.managedSessions.service);}
+            if (this.ctx.props.ALLOWED?.includes('weftSql')) root.provide('weftSql', pluginSql(this.ctx.storage));
+            if (this.ctx.props.ALLOWED?.includes('webhookRuntime')) {this.webhooks=new WorkerWebhooks(this.ctx.props.HOST!,work=>this.ctx.waitUntil(work));await this.webhooks.mount(root);}
+            if (this.ctx.props.ALLOWED?.includes('webServer')) {this.webServer = new WorkerWebServer();root.provide('webServer', this.webServer);}
+            if (this.ctx.props.ALLOWED?.some(name => name === 'storage' || name === 'storageDomain')) await mountDurableStorage(root, this.ctx.storage);
+            if (this.ctx.props.ALLOWED?.includes('sessionController')) {
+              const host = this.ctx.props.HOST!;
               root.provide('sessionController', {
                 callerSessionId: () => this.toolCaller.getStore(),
                 uploadAttachment: (sessionId: string, options: unknown, data: Uint8Array) => host.uploadSessionAttachment(sessionId, wire(options), data),
@@ -112,14 +113,14 @@ export class PluginFacet extends DurableObject<KernelEnv> {
                 follow: (request: unknown, signal?: AbortSignal) => (async function* () {yield* pluginSessionStream(await host.followSession(wire(request)), signal);})(),
               });
             }
-            if (this.env.ALLOWED?.includes('credentials')) root.provide('credentials', {resolve: (ref: string) => this.env.HOST!.resolveCredential(ref)});
-            if (this.env.HOST)
+            if (this.ctx.props.ALLOWED?.includes('credentials')) root.provide('credentials', {resolve: (ref: string) => this.ctx.props.HOST!.resolveCredential(ref)});
+            if (this.ctx.props.HOST)
                 root.provide('fs', Object.fromEntries(nativePluginFsMethods.map(method => [method, async (...args: unknown[]) => {
                         const signals = args.flatMap(arg => arg instanceof AbortSignal ? [arg] : arg && typeof arg === 'object' && 'signal' in arg && arg.signal instanceof AbortSignal ? [arg.signal] : []);
                         for (const signal of signals)
                             signal.throwIfAborted();
                         const plain = args.map(arg => arg instanceof AbortSignal ? undefined : arg && typeof arg === 'object' && 'signal' in arg ? Object.fromEntries(Object.entries(arg).filter(([key]) => key !== 'signal')) : arg);
-                        const result = await this.env.HOST!.callFs(method, plain);
+                        const result = await this.ctx.props.HOST!.callFs(method, plain);
                         for (const signal of signals)
                             signal.throwIfAborted();
                         return result;
@@ -129,8 +130,8 @@ export class PluginFacet extends DurableObject<KernelEnv> {
                 cordis, tools: {defineTool: sandboxDefineTool},
                 compose: (rows: Record<string, unknown>[], modules: Record<string, unknown>) => {
                     this.bundle = true; this.schemas = entrySchemas(rows, modules);
-                    const granted = new Set(this.env.ALLOWED ?? workerHostServices);
-                    return composeInstalledBundle(applyEntryConfig(rows, this.env.CONFIG ?? {}), modules, plugin => this.guard(plugin), new Set(workerHostServices.filter(name => !granted.has(name))));
+                    const granted = new Set(this.ctx.props.ALLOWED ?? workerHostServices);
+                    return composeInstalledBundle(applyEntryConfig(rows, this.ctx.props.CONFIG ?? {}), modules, plugin => this.guard(plugin), new Set(workerHostServices.filter(name => !granted.has(name))));
                 },
                 defineTool: sandboxDefineTool, registerTool: sandboxRegisterTool,
                 handle: (method: unknown, fn: unknown) => {
@@ -149,7 +150,7 @@ export class PluginFacet extends DurableObject<KernelEnv> {
     async describe() {
         await this.prepare();
         const plugin = this.plugin!;
-        const unsupported = Object.keys(Inject.resolve(plugin.inject)).filter(name => !(this.env.ALLOWED ?? ['tools', 'timer', 'fs']).includes(name));
+        const unsupported = Object.keys(Inject.resolve(plugin.inject)).filter(name => !(this.ctx.props.ALLOWED ?? ['tools', 'timer', 'fs']).includes(name));
         if (unsupported.length)
             throw new Error('Services are not bridged in workerd Host plugins: ' + unsupported.join(', '));
         return wire({ name: typeof plugin === 'object' && 'name' in plugin ? String(plugin.name) : 'dynamic-host', inject: { ...Inject.resolve(plugin.inject) }, handlers: [...this.handlers.keys()] });
@@ -174,7 +175,7 @@ export class PluginFacet extends DurableObject<KernelEnv> {
     /** Host services plus those the bundle's own entries provide, shared by every entry of this facet. */
     private provided: Set<string> | undefined;
     private guard(plugin: Plugin): Plugin {
-        const provided = this.provided ??= new Set<string>(this.env.ALLOWED ?? ['tools', 'timer', 'fs']);
+        const provided = this.provided ??= new Set<string>(this.ctx.props.ALLOWED ?? ['tools', 'timer', 'fs']);
             const facade = (ctx: Context) => new Proxy(ctx, {
                 get: (target, key) => {
                     if (this.durableTimers && (key === 'interval' || key === 'timeout')) return (callback: () => unknown, delay: number) => target.effect(() => this.durableTimers!.register(callback, delay, key === 'interval'));

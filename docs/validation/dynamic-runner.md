@@ -16,7 +16,7 @@ UI 插件仍在浏览器 Cordis 执行；原生 Host 已使用下方 facet 适�
 
 `packages/native-plugins` 使用真实上游 DynamicCordisRunnerService、注册表语义、guard 和 ToolRuntime。注册表持久化在 SessionDO，目录与审批/检查请求索引存 EnvironmentDO。源码作为静态 Worker 模块提供，使用 SessionDO 的 Durable Object facet 保存跨请求的原生 Cordis 实例；不在持有平台凭据的父 Worker 中运行用户代码。[Cloudflare facets](https://developers.cloudflare.com/dynamic-workers/usage/durable-object-facets/)
 
-支持工具、timer 和限定的异步文件能力。子 Worker env 只有不可变身份的 FS RPC；没有 Namespace、模型 Secret 或直接网络。文件调用再次检查 tenant/environment/session/plugin/run，停止后旧能力失效。父 Agent 执行原生策略，子工具使用真实执行契约与投影，不伪造 Agent。协作取消传递 AbortSignal；15 秒操作期限触发 facet abort、回收注册及原生错误反馈。
+支持工具、timer 和限定的异步文件能力。运行能力通过 facet `ctx.props` 传入；缓存 Worker 的 env 不保存运行期能力，没有 Namespace、模型 Secret 或直接网络。文件调用再次检查 tenant/environment/session/plugin/run，停止后旧能力失效。无网络插件重跑可复用代码 ID，新 facet 仍取得新能力；详见[身份与计费设计](../architecture/dynamic-worker-costs.md)。父 Agent 执行原生策略，子工具使用真实执行契约与投影，不伪造 Agent。协作取消传递 AbortSignal；15 秒操作期限触发 facet abort、回收注册及原生错误反馈。
 
 测试 `tests/native-plugins.test.ts` 覆盖实际模型协议传输触发定义/运行、精确版本审批、审批前重建、Host 文件写入、环境隔离、活动旧版本与待批准新版本并存、拒绝诊断重建、停止和移除。另一个 facet 用例验证跨请求计数、所有者隔离、原生工具输出与 presentation meta、取消后实例继续使用、初始化失败、框架内部访问拒绝、未桥接 systemPrompt 拒绝、无外网，以及通过 cloudflare:workers.env / node:process.env 无法读取父宿主 Secret。
 

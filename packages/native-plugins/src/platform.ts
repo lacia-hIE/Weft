@@ -3,6 +3,11 @@ import type { ToolExecutionResult } from '@deepseek-ai/dsh-tools';
 import { z } from 'zod';
 import {registerRemoteTool, toolDescriptions} from './tool-bridge.ts';
 import { kernelModule } from '../../../.generated/native-plugin-kernel.ts';
+import {createHash} from 'node:crypto';
+
+// The bundled kernel is large. Hash it once, rather than serializing and hashing it for every activation.
+const kernelRevision = createHash('sha256').update(kernelModule).digest('hex');
+const COMPATIBILITY_DATE = '2026-07-30', COMPATIBILITY_FLAGS = ['nodejs_compat'];
 const descriptionSchema = z.object({ name: z.string().max(200), inject: z.record(z.string().max(100), z.json()), handlers: z.array(z.string().min(1).max(100)).max(100) });
 const metadataSchema = descriptionSchema.extend({tools:toolDescriptions});
 type Metadata = z.infer<typeof metadataSchema>;
@@ -73,22 +78,25 @@ export class NativePluginPlatform {
             }
         const factory = installed?.module ?? `export default async function(harness){\n${source}\n}`;
         const capability = this.capability?.(pluginId, runId);
-        // Cloudflare bills each distinct Dynamic Worker id and code once a day, and reuses a loaded Worker with the env
-        // it was created with. A Session plugin's capability names its run, so each run needs its own Worker. An
-        // environment package's capability names its activation and an inspection has none, so their Worker stays the
-        // same across runs and changes only with its code, services, network, activation or configuration.
-        const perRun = capability !== undefined && !(installed?.environment === true && installed.activationId !== undefined);
+        // Runtime receipts belong to the facet's props, not the cached Worker's env. Only a network-enabled
+        // Worker's globalOutbound still captures a receipt, so that receipt must participate in its identity.
+        const outbound = installed?.network && capability ? capability : null;
+        const outboundReceipt = outbound ? (installed?.environment && installed.activationId !== undefined ? installed.activationId : runId) : null;
         const definition = installed ? {services: installed.services, environment: installed.environment === true, network: installed.network === true,
             activationId: installed.activationId ?? null, config: installed.config ?? null} : null;
-        const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify([this.scope, pluginId, perRun ? runId : null, kernelModule, factory, definition])));
-        const codeId = 'weft-native-host:' + Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+        const limits = installed?.environment ? ENVIRONMENT_LIMITS : SESSION_LIMITS;
+        // Include the actual supervisor ID: session names and caller-provided scopes need not be globally unique.
+        const codeId = 'weft-native-host:' + createHash('sha256').update(JSON.stringify([
+            this.state.id.toString(), this.scope, pluginId, outboundReceipt, kernelRevision, factory, definition,
+            COMPATIBILITY_DATE, COMPATIBILITY_FLAGS, limits,
+        ])).digest('hex');
         const worker = this.loader.get(codeId, () => ({
-            compatibilityDate: '2026-07-30', compatibilityFlags: ['nodejs_compat'], mainModule: 'kernel.js',
+            compatibilityDate: COMPATIBILITY_DATE, compatibilityFlags: COMPATIBILITY_FLAGS, mainModule: 'kernel.js',
             modules: { 'kernel.js': kernelModule, 'weft:plugin-factory': { js: factory } },
-            env: {...(capability ? {HOST: capability} : {}), ...(installed ? {ALLOWED: installed.services, BACKGROUND: installed.environment === true, ACTIVATION: installed.activationId ?? runId, ...(installed.config ? {CONFIG: installed.config} : {})} : {})}, globalOutbound: installed?.network && capability ? capability : null,
-            limits: installed?.environment ? ENVIRONMENT_LIMITS : SESSION_LIMITS,
+            globalOutbound: outbound, limits,
         }));
-        const facet = this.state.facets.get(name, () => ({ class: worker.getDurableObjectClass('PluginFacet') })) as unknown as FacetApi;
+        const props = {...(capability ? {HOST: capability} : {}), ...(installed ? {ALLOWED: installed.services, BACKGROUND: installed.environment === true, ACTIVATION: installed.activationId ?? runId, ...(installed.config ? {CONFIG: installed.config} : {})} : {})};
+        const facet = this.state.facets.get(name, () => ({ class: worker.getDurableObjectClass('PluginFacet', {props}) })) as unknown as FacetApi;
         const allocation: Allocation = { name, runId, facet, disposers: [], deadlineMs: installed?.environment ? 60_000 : 15_000 };
         this.allocations.set(runId, allocation);
         try {

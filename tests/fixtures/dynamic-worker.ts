@@ -23,17 +23,33 @@ export class NativePluginBench extends DurableObject<Env> {
   private fiber: Fiber | undefined;
   private handlers = new Map<string, (args: unknown) => Promise<unknown>>();
   private toolController: AbortController | undefined;
-  async action(action: string, input: {source?: string; method?: string; args?: unknown}) {
+  private runId: string | undefined;
+  private readonly workerIds: string[] = [];
+  readCapability(runId: string, method: string, args: unknown[]) {
+    if (runId !== this.runId) throw new Error('Plugin capability has been revoked');
+    return {owner: this.ctx.id.toString(), runId, method, args};
+  }
+  async action(action: string, input: {source?: string; method?: string; args?: unknown; installed?: Parameters<NativePluginPlatform['evaluate']>[6]}) {
     const host = await (this.host ??= openHarnessSession({sessionId: 'native-plugin', persona: 'test', model: {provider: 'validation', model: 'scripted'}, adapter: new ScriptedAdapter(), mountPersistence: async ctx => {await ctx.plugin(SqliteSessionPersistence, {storage: this.ctx.storage});}}));
-    const platform = this.platform ??= new NativePluginPlatform(this.ctx, this.env.LOADER, {owner: this.ctx.id.toString()});
+    const loader: WorkerLoader = {
+      get: (id, code) => {if (id) this.workerIds.push(id); return this.env.LOADER.get(id, code);},
+      load: code => this.env.LOADER.load(code),
+    };
+    // Deliberately identical caller scopes for every owner: the platform must also key by supervisor identity.
+    const platform = this.platform ??= new NativePluginPlatform(this.ctx, loader, {sessionId: 'native-plugin'}, (_pluginId, runId) => {
+      const exports = this.ctx.exports as unknown as {NativePluginHost(options: {props: {owner: string; runId: string}}): Fetcher};
+      return exports.NativePluginHost({props: {owner: this.ctx.id.toString(), runId}});
+    });
+    if (action === 'workerIds') return {ids: this.workerIds};
     if (action === 'start') {
-      const plugin = await platform.evaluate(host.ctx, 'counter', crypto.randomUUID(), input.source!, (method, fn) => {
+      const runId = this.runId = crypto.randomUUID();
+      const plugin = await platform.evaluate(host.ctx, 'counter', runId, input.source ?? '', (method, fn) => {
         const normalized = normalizeHandler(method, fn); this.handlers.set(normalized.method, normalized.handler);
         return () => {this.handlers.delete(normalized.method);};
-      });
+      }, input.installed);
       const group = host.ctx.plugin({name: 'native-plugin-bench', apply() {}});
       this.fiber = await startHostHalf(group, plugin, error => {throw error;});
-      return {tools: host.ctx.tools.schemas().map(tool => tool.name)};
+      return {tools: host.ctx.tools.schemas().map(tool => tool.name), runId};
     }
     if (action === 'invoke') return this.handlers.get(input.method!)!(input.args);
     if (action === 'tool') {
@@ -42,8 +58,13 @@ export class NativePluginBench extends DurableObject<Env> {
       finally {if (this.toolController === controller) this.toolController = undefined;}
     }
     if (action === 'cancel') this.toolController?.abort(new Error('Cancelled by the test user'));
-    if (action === 'stop') {await this.fiber?.dispose(); this.fiber = undefined;}
+    if (action === 'stop') {this.runId = undefined; await this.fiber?.dispose(); this.fiber = undefined;}
     return {tools: host.ctx.tools.schemas().map(tool => tool.name), handlers: [...this.handlers.keys()]};
+  }
+}
+export class NativePluginHost extends WorkerEntrypoint<Env, {owner: string; runId: string}> {
+  callFs(method: string, args: unknown[]): Promise<unknown> {
+    return this.env.NATIVE_PLUGINS.get(this.ctx.props.owner).readCapability(this.ctx.props.runId, method, args);
   }
 }
 export class ScopedHost extends WorkerEntrypoint<Env, { tenantId: string }> {

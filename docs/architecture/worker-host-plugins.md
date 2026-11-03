@@ -28,7 +28,11 @@ Worker Host 使用标准 Cordis 导出和原版 `dsh.bundle.patch`。这一轮�
 
 插件的 Dynamic Worker 每次调用限 100 ms CPU。会话宿主的工具插件每次调用最多 64 个子请求；环境宿主的包会在第一个到达的请求里完成激活并运行自己的后台工作（例如一整轮外部读取和宿主调用），每次调用最多 10,000 个子请求，与 Workers 付费计划的默认值相同。
 
-Cloudflare 按每天出现的不同 Dynamic Worker（ID 与代码）计费，并复用已加载 Worker 创建时的 env。会话宿主插件的能力凭据含本次运行，每次运行使用自己的 Worker；环境宿主的包和安装检查的 Worker ID 由模块、服务、网络、激活与配置决定，不含运行编号，环境休眠唤醒或重新协调不会产生新的 Dynamic Worker。
+Cloudflare 按每天出现的不同 Dynamic Worker（ID 与代码）计费；同一天反复调用相同 ID、相同代码只计一次创建，`.load()` 每次调用计一次创建。另计请求与启动、执行 CPU。详见 [Dynamic Workers 定价](https://developers.cloudflare.com/dynamic-workers/pricing/) 与本项目的[身份和计费设计](dynamic-worker-costs.md)。
+
+插件的能力凭据与运行编号放在 `getDurableObjectClass('PluginFacet', {props})`，Kernel 从 `ctx.props` 读取；缓存 Worker 的 `env` 不保存运行期能力。无网络插件的代码 ID 由真实宿主 DO ID、scope、插件名、Kernel、源码、服务、激活、配置、兼容设置和调用限额决定，不含会话运行编号。停止后再次运行相同代码仍复用同一 Worker ID，但新 facet 取得本次运行的新能力，旧能力继续被宿主拒绝。
+
+允许网络的插件仍通过 Worker 的 `globalOutbound` 绑定出口。会话出口的凭据含运行编号，因此这类 Worker ID 保留运行编号；环境出口绑定稳定激活，环境重建时复用 ID，启用批次改变时更换 ID。不能为了少计创建而将旧出口凭据复用到新运行。
 
 ## 存储与恢复
 
