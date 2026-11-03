@@ -91,6 +91,12 @@ Validation runs in the `Test` GitHub Actions workflow on the `ci` branch. The un
 
 A channel entry holds its first bot at the top level of its configuration and each added bot under `bots`, keyed by `<channel>_<six hex digits>` (for example `feishu_0a1b2c`). That key never changes: it names the bot's routes (`/<key>/status`, `/<key>/login`, and the manual callback `/<key>`), its storage, its gateway connection and its IM conversations. The first bot's key is the channel name, so configuration, conversations and callback URLs from earlier versions keep working without migration. Every bot has its own credentials, connection, alias, workspace, Agent Preset, model, permission, access and context settings, and two bots in the same chat keep separate Sessions. The channel's management key (WeChat: login key) is shared by its bots. Removing an added bot closes its connection, forgets its conversations and deletes its configuration; its native Sessions remain.
 
+## Assigning a bot to another plugin (0.9.0)
+
+Under **More settings → General → Assign to plugin**, a bot can be handed to another installed plugin that receives IM events, such as `@weft/dsh-superagent`. Its messages then no longer reach IM Sessions: dsh-im passes each one, including group messages that do not mention the bot, to that plugin through the Host's `weftIm` service, and the plugin answers through the bot with the `send` operation. A Feishu bot also offers `read` (one message, a chat page or a topic page). Only the plugin named in the setting can receive the bot's messages or use its operations. While that plugin is not running, a message delivered over a WebSocket or long poll is delivered again later; one received through an HTTP callback is lost. The page lists the plugins currently receiving IM events.
+
+在「更多设置 → 通用 → 交给插件」中可以把机器人交给另一个接收 IM 事件的插件（例如 `@weft/dsh-superagent`）。之后它收到的消息（包括群里没有 @ 它的消息）不再进入 IM 会话，而是经宿主的 `weftIm` 服务交给该插件，由插件通过这个机器人的 `send` 操作回复；飞书机器人还提供 `read`（读取单条消息、群消息页或话题页）。只有设置中指名的插件能收到消息、调用操作。该插件未运行时，经长连接或长轮询收到的消息会稍后重投，经 HTTP 回调收到的消息会丢失。
+
 ## 同渠道多个机器人（0.9.0）
 
 渠道配置的顶层是第一个机器人，新增的机器人保存在 `bots` 下，键为 `<渠道>_<6 位十六进制>`（例如 `feishu_0a1b2c`）。这个键不会改变，决定机器人的路由（`/<键>/status`、`/<键>/login`，手动接入的回调地址 `/<键>`）、存储、长连接和 IM 会话。第一个机器人的键就是渠道名，所以旧版本的配置、会话和回调地址无需迁移。每个机器人有独立的凭据、连接、别名、工作区、Agent Preset、模型、权限、访问控制和上下文增强；两个机器人在同一个群里也各自使用独立的会话。同一渠道的机器人共用该渠道的管理密钥（微信为登录密钥）。移除新增的机器人会关闭它的连接、清除它的会话绑定并删除它的配置，原生会话保留。在设置页的渠道中点击「添加机器人」，再扫码或手动接入。

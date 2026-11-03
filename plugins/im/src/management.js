@@ -18,6 +18,7 @@ const contextScene = () => Schema.object({
 export const botSettings = () => ({
   accountConfigured: Schema.boolean().description('Whether an account has been added through the settings page.'),
   displayName: Schema.string().default('').description('Local bot alias.'),
+  consumer: Schema.string().default('').description('Package the bot is assigned to, such as @weft/dsh-superagent; that package receives its messages and answers through it. Empty answers in IM Sessions.'),
   workspace: Schema.string().default('/workspace').description('Workspace for new conversations.'),
   agentPreset: Schema.string().default('').description('Agent preset for new conversations; empty follows the shared IM default.'),
   permissionPreset: Schema.union(['', 'read-only', 'workspace-write', 'danger-full-access']).default('').description('Tool execution permission for new Sessions; empty follows the Host default. Existing Sessions keep their permission until /new.'),
@@ -56,6 +57,17 @@ export function registerModelCatalog(ctx, bot, key) {
     try {json(response, 200, await ctx.im.catalog());}
     catch {json(response, 502, {error: 'model_catalog_failed'});}
   }}), `${bot} model catalog`);
+}
+
+/** Names of active packages that receive IM events, for the bot assignment choice. */
+export function registerConsumers(ctx, bot, key) {
+  ctx.effect(() => ctx.webServer.register({kind: 'exact', path: `/${bot}/consumers`, handler: async (request, response) => {
+    response.setHeader('cache-control', 'no-store');
+    if (!key || header(request, 'authorization') !== `Bearer ${key}`) {json(response, 403, {error: 'management key required'}); return;}
+    if (request.method !== 'GET') {json(response, 405, {error: 'GET required'}); return;}
+    try {json(response, 200, {consumers: await ctx.weftIm.consumers()});}
+    catch {json(response, 502, {error: 'consumers_unavailable'});}
+  }}), `${bot} consumers`);
 }
 
 export const managementKey = () => Schema.string().role('secret').default('').description('Capability for the settings page connection checks.');

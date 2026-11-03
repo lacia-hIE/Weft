@@ -182,7 +182,7 @@ function Bot({channel, bot, others, onDiscard, editor, active, access, setAccess
   const route = bot ?? channel;
   const [view, setView] = React.useState('list'), [settingsTab, setSettingsTab] = React.useState('general');
   const [status, setStatus] = React.useState(), [checkedAt, setCheckedAt] = React.useState();
-  const [catalog, setCatalog] = React.useState();
+  const [catalog, setCatalog] = React.useState(), [consumers, setConsumers] = React.useState();
   const [working, setWorking] = React.useState(false), [removing, setRemoving] = React.useState(false), [copied, setCopied] = React.useState(false);
   const task = React.useRef(), locked = React.useRef(false);
   const hydrated = React.useRef(false);
@@ -230,9 +230,10 @@ function Bot({channel, bot, others, onDiscard, editor, active, access, setAccess
       if (operation === 'scan' && channel !== 'weixin' && (current.connectionMode !== 'qr' || !enabled)) {
         if (!await form.commit({connectionMode: 'qr', enabled: true, accountConfigured: current.connectionMode === 'qr' && configured}, false)) return;
       }
-      const next = await channelRequest(base, channel, route, key, operation === 'catalog' ? 'catalog' : operation === 'scan' ? 'login?reset=1' : operation === 'cancel' ? 'cancel' : operation === 'remove' ? 'disconnect' : 'status', ['check', 'catalog'].includes(operation) ? 'GET' : 'POST', t, abort.signal);
+      const next = await channelRequest(base, channel, route, key, operation === 'catalog' || operation === 'consumers' ? operation : operation === 'scan' ? 'login?reset=1' : operation === 'cancel' ? 'cancel' : operation === 'remove' ? 'disconnect' : 'status', ['check', 'catalog', 'consumers'].includes(operation) ? 'GET' : 'POST', t, abort.signal);
       if (abort.signal.aborted) return;
       if (operation === 'catalog') {setCatalog(next); return;}
+      if (operation === 'consumers') {setConsumers(next.consumers ?? []); return;}
       if (operation === 'remove') {
         setStatus(undefined);
         // An added bot leaves the entry; the first bot keeps its slot, and the shared capability while other bots use it.
@@ -307,6 +308,10 @@ function Bot({channel, bot, others, onDiscard, editor, active, access, setAccess
           h('label', {key: 'session-sync', className: 'dim-credentialField'}, t('sessionSync'), h('select', {disabled, value: value.sessionSync || 'scheduled', onChange: event => form.edit('sessionSync', event.target.value)},
             h('option', {value: 'scheduled'}, t('sessionSyncScheduled')), h('option', {value: 'all'}, t('sessionSyncAll')), h('option', {value: 'off'}, t('sessionSyncOff')))),
           h('p', {key: 'session-sync-hint', className: 'im-description'}, t('sessionSyncHint')),
+          h('label', {key: 'consumer', className: 'dim-credentialField'}, t('consumer'), h('select', {disabled, value: value.consumer || '', onChange: event => form.edit('consumer', event.target.value)},
+            h('option', {value: ''}, t('consumerChat')), [...new Set([...(consumers ?? []), ...(value.consumer ? [value.consumer] : [])])].map(name => h('option', {key: name, value: name}, name)))),
+          h(Action, {key: 'consumers', disabled: disabled || form.dirty, onClick: () => void perform('consumers')}, t(consumers ? 'refreshConsumers' : 'loadConsumers')),
+          h('p', {key: 'consumer-hint', className: 'im-description'}, t(consumers && !consumers.length ? 'noConsumers' : 'consumerHint')),
           h('p', {key: 'new', className: 'im-description'}, t('newSessionsHint')),
           channel !== 'email' ? h('label', {key: 'chars', className: 'dim-credentialField'}, t('maxChars'), h('input', {type: 'number', min: 200, max: channel === 'feishu' ? 10000 : channel === 'qq' ? 5000 : 4000, disabled, value: value.maxChars, onChange: event => form.edit('maxChars', Number(event.target.value))})) : null,
           channel !== 'weixin' && channel !== 'email' && current.connectionMode !== 'qr' ? h('div', {key: 'callback'}, h(Callback, {url: `${base}/${route}`, copied, setCopied, t, onError: form.setError})) : null] : settingsTab === 'access' ? h(AccessSettings, {channel, value, edit: form.edit, disabled, t})
@@ -333,7 +338,8 @@ function Bot({channel, bot, others, onDiscard, editor, active, access, setAccess
             Number.isInteger(status.reply.failure.status) ? ` · HTTP ${status.reply.failure.status}` : '') : null) : null,
         h('div', {className: 'im-bot-options'},
           h('div', {className: 'dim-workspace'}, h('div', {className: 'dim-workspaceHeader'}, h('span', null, t('workspace'))), h('code', {className: 'dim-workspacePath'}, current.workspace || '/workspace')),
-          h('div', {className: 'dim-workspace'}, h('div', {className: 'dim-workspaceHeader'}, h('span', null, t('agentPreset'))), h('span', {className: 'dim-workspacePath'}, current.agentPreset || t('followDefault')))),
+          h('div', {className: 'dim-workspace'}, h('div', {className: 'dim-workspaceHeader'}, h('span', null, t('agentPreset'))), h('span', {className: 'dim-workspacePath'}, current.agentPreset || t('followDefault'))),
+          current.consumer ? h('div', {className: 'dim-workspace'}, h('div', {className: 'dim-workspaceHeader'}, h('span', null, t('consumer'))), h('code', {className: 'dim-workspacePath'}, current.consumer)) : null),
         h('div', {className: 'im-card-footer'}, h(Action, {className: 'dim-botSettingsButton', disabled, onClick: () => setView('settings')}, h(Icon, {kind: 'settings'}), t('moreSettings')),
           h('div', {className: 'im-actions'}, h(Action, {disabled, onClick: () => void perform('check')}, h(Icon, {kind: 'refresh'}), t(working ? 'checking' : 'check')),
             h(Action, {disabled, onClick: async () => {if (await form.commit({enabled: !enabled}, false)) setStatus(undefined);}}, t(enabled ? 'pause' : 'resume')),

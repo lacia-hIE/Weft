@@ -2,8 +2,9 @@ import Schema from '@deepseek-ai/schemastery';
 import {weixinAttachments, sendWeixinAttachment} from './media.js';
 import {background, header, json, sleep} from './shared.js';
 import {qrSvg} from './qr.js';
-import {botSettings, channelSettings, registerModelCatalog} from './management.js';
+import {botSettings, channelSettings, registerConsumers, registerModelCatalog} from './management.js';
 import {botEntry, botsOf} from './bots.js';
+import {assignment} from './assign.js';
 
 const BASE = 'https://ilinkai.weixin.qq.com/';
 const PROTOCOL = '2.4.6';
@@ -38,7 +39,7 @@ const escape = text => String(text).replace(/[&<>"']/g, char => `&#${char.charCo
  * background long poll of getupdates; replies carry each user's context token.
  */
 export const name = 'dsh-im-weixin';
-export const inject = ['im', 'webServer', 'storageDomain', 'weftConnections'];
+export const inject = ['im', 'webServer', 'storageDomain', 'weftConnections', 'weftIm'];
 const fields = () => ({
   ...botSettings(),
   enabled: Schema.boolean().default(false).description('Log in at /<bot key>/login and long-poll messages.'),
@@ -56,11 +57,12 @@ export async function apply(ctx, config) {
 /** One WeChat account; `bot` is its local key. */
 async function start(ctx, bot, config) {
   registerModelCatalog(ctx, bot, config.loginKey);
+  registerConsumers(ctx, bot, config.loginKey);
   const domain = await ctx.storageDomain.open({name: `im_${bot}`, version: 1, tables: {}, global: {schema: record, initial: {state: 'idle'}}});
   ctx.effect(() => () => domain.close(), `dsh-im ${bot} storage`);
   const state = () => domain.global.get();
   const save = patch => domain.global.set({...state(), ...patch});
-  let connection, login, starting;
+  let connection, login, starting, handOver;
   // QR status polling cannot survive a plugin restart; do not serve an orphaned code.
   if (state().state === 'login') await save({state: 'idle', qrcode: undefined, qrcodeUrl: undefined});
 
@@ -84,6 +86,11 @@ async function start(ctx, bot, config) {
           const sender = message?.from_user_id, id = message?.message_id ?? message?.client_id, text = textOf(message);
           const attachments = weixinAttachments(message);
           if (!sender || id === undefined || !text && !attachments.length) continue;
+          if (handOver) {
+            await handOver({kind: 'weixin', messageId: String(id), chatId: sender, direct: true, sender: {id: sender, bot: false}, mentioned: false,
+              text: text || '[附件]', at: new Date(Number(message.create_time_ms) || Date.now()).toISOString(), target: {to: sender, contextToken: message.context_token}});
+            continue;
+          }
           await ctx.im.receive({channel: bot, conversation: sender, sender, text, attachments, messageId: String(id), target: {to: sender, contextToken: message.context_token}});
         }
         if (typeof body.get_updates_buf === 'string' && body.get_updates_buf) await save({cursor: body.get_updates_buf});
@@ -160,6 +167,7 @@ async function start(ctx, bot, config) {
   if (!config.enabled || state().state !== 'online') await stopPolling();
   if (!config.enabled) return;
 
+  handOver = assignment(ctx, bot, config);
   const typingTickets = new Map();
   ctx.effect(() => ctx.im.channel(bot, {kind: 'weixin',
     ...channelSettings(config, () => state().owner, () => state().botId),

@@ -1,7 +1,8 @@
 import Schema from '@deepseek-ai/schemastery';
 import {readDownload, fileName} from './media.js';
-import {bytes, header, hex, json, readBody, sha256, tokenCache} from './shared.js';
-import {botSettings, channelSettings, managementKey, registerModelCatalog} from './management.js';
+import {bytes, header, hex, json, readBody, requestId, sha256, tokenCache} from './shared.js';
+import {assignment} from './assign.js';
+import {botSettings, channelSettings, managementKey, registerConsumers, registerModelCatalog} from './management.js';
 
 import {connectionMode, qrAccount} from './qr-account.js';
 import {botEntry, botsOf} from './bots.js';
@@ -25,12 +26,29 @@ async function signed(request, body, encryptKey) {
   return hex(await sha256(message)) === header(request, 'x-lark-signature');
 }
 
+/** Plain text of a Feishu message body, with mentions written as `@name`. */
+function messageText(type, raw, mentions) {
+  let content;
+  try {content = JSON.parse(raw ?? '');} catch {return String(raw ?? '');}
+  let text;
+  if (type === 'text') text = String(content.text ?? '');
+  else if (type === 'post') {
+    const post = content.content ? content : content.zh_cn ?? content.en_us ?? Object.values(content)[0];
+    const line = items => items.map(item => item.tag === 'text' || item.tag === 'a' ? item.text ?? '' : item.tag === 'at' ? `@${item.user_name ?? ''}` : item.tag === 'img' ? '[图片]' : '').join('');
+    text = [post?.title ?? '', ...(post?.content ?? []).map(line)].filter(Boolean).join('\n');
+  } else if (type === 'image') text = '[图片]';
+  else if (type === 'file') text = `[文件] ${content.file_name ?? ''}`.trim();
+  else text = `[${type}]`;
+  for (const mention of mentions ?? []) if (mention.key) text = text.replaceAll(mention.key, mention.name ? `@${mention.name}` : '');
+  return text;
+}
+
 /**
  * Feishu / Lark bots over event subscription: the platform posts events to this
  * plugin's route and replies use the open platform message API.
  */
 export const name = 'dsh-im-feishu';
-export const inject = ['im', 'webServer', 'storageDomain', 'weftConnections'];
+export const inject = ['im', 'webServer', 'storageDomain', 'weftConnections', 'weftIm'];
 const fields = () => ({
   ...botSettings(), connectionMode: connectionMode(),
   enabled: Schema.boolean().default(false).description('Receive events at /<bot key> and reply through the open platform.'),
@@ -52,6 +70,7 @@ export async function apply(ctx, config) {
 /** One Feishu bot; `bot` is its local key. */
 async function start(ctx, bot, config) {
   registerModelCatalog(ctx, bot, config.managementKey);
+  registerConsumers(ctx, bot, config.managementKey);
   const requestToken = async credentials => {
     if (!credentials?.appId || !credentials.appSecret) throw new Error('Feishu credentials are required');
     const base = HOSTS[credentials.domain] ?? HOSTS.feishu;
@@ -78,9 +97,26 @@ async function start(ctx, bot, config) {
     if (!response.ok || value.code !== 0 || typeof value.bot?.open_id !== 'string' || !value.bot.open_id) throw new Error('Feishu bot identity is unavailable');
     return value.bot.open_id;
   })().catch(error => {identity = undefined; throw error;});
+  /** The channel-independent record of a message for the package the bot is assigned to. */
+  const eventOf = async (message, sender) => {
+    const direct = message.chat_type === 'p2p';
+    let self;
+    if (!direct && message.mentions?.length) {
+      try {self = await botOpenId();}
+      catch {console.warn('dsh-im feishu: a mention is not marked because the bot identity could not be verified');}
+    }
+    return {kind: 'feishu', messageId: message.message_id, chatId: message.chat_id, direct,
+      sender: {id: sender?.sender_id?.open_id ?? '', bot: sender?.sender_type !== 'user'},
+      mentioned: !direct && !!self && message.mentions.some(mention => mention.id?.open_id === self),
+      text: messageText(message.message_type, message.content, message.mentions), at: new Date(Number(message.create_time) || Date.now()).toISOString(),
+      ...(message.root_id ? {rootId: message.root_id} : {}), ...(message.parent_id ? {parentId: message.parent_id} : {}), ...(message.thread_id ? {threadId: message.thread_id} : {}),
+      target: {chatId: message.chat_id, messageId: message.message_id}};
+  };
+  let handOver;
   const receive = async payload => {
     if (payload.header?.event_type !== 'im.message.receive_v1') return;
     const message = payload.event?.message, sender = payload.event?.sender;
+    if (message && handOver) {await handOver(await eventOf(message, sender)); return;}
     if (!message || sender?.sender_type === 'app' || !['text', 'image', 'file', 'post'].includes(message.message_type)) return;
     const group = message.chat_type !== 'p2p';
     if (group && config.groupResponseMode !== 'all') {
@@ -136,9 +172,23 @@ async function start(ctx, bot, config) {
   };
   const sendMessage = async (target, msg_type, content, uuid) => {
     const data = {msg_type, content: JSON.stringify(content), ...(uuid ? {uuid} : {})};
-    if (target.messageId) return api(`/open-apis/im/v1/messages/${encodeURIComponent(target.messageId)}/reply`, data);
+    if (target.messageId) return api(`/open-apis/im/v1/messages/${encodeURIComponent(target.messageId)}/reply`, {...data, ...(target.inThread ? {reply_in_thread: true} : {})});
     return api('/open-apis/im/v1/messages?receive_id_type=chat_id', {receive_id: target.chatId, ...data});
   };
+  const historyMessage = item => ({id: item.message_id, sender: {id: item.sender?.id ?? '', bot: item.sender?.sender_type !== 'user'},
+    at: new Date(Number(item.create_time) || 0).toISOString(), text: item.deleted ? '' : messageText(item.msg_type, item.body?.content, item.mentions),
+    ...(item.root_id ? {rootId: item.root_id} : {}), ...(item.parent_id ? {parentId: item.parent_id} : {}), ...(item.thread_id ? {threadId: item.thread_id} : {}), ...(item.deleted ? {deleted: true} : {})});
+  handOver = assignment(ctx, bot, config, {
+    /** One message (`part: 'message'`), or a page of a chat (newest first) or of a topic (oldest first). */
+    read: async ({part, messageId, chatId, threadId, pageToken, pageSize}) => {
+      if (part === 'message') return {messages: ((await api(`/open-apis/im/v1/messages/${encodeURIComponent(String(messageId))}`, undefined, 'GET')).data?.items ?? []).map(historyMessage)};
+      if (part !== 'chat' && part !== 'thread') throw new Error('Unknown Feishu read');
+      const query = new URLSearchParams({container_id_type: part, container_id: String(part === 'chat' ? chatId : threadId), sort_type: part === 'chat' ? 'ByCreateTimeDesc' : 'ByCreateTimeAsc',
+        page_size: String(Math.min(50, Math.max(1, Number(pageSize) || 20))), ...(pageToken ? {page_token: String(pageToken)} : {})});
+      const value = await api(`/open-apis/im/v1/messages?${query}`, undefined, 'GET');
+      return {messages: (value.data?.items ?? []).map(historyMessage), ...(value.data?.has_more && value.data.page_token ? {next: value.data.page_token} : {})};
+    },
+  });
   ctx.effect(() => ctx.im.channel(bot, {kind: 'feishu',
     ...channelSettings(config, () => account.owner(), () => account.credentials()?.appId),
     maxChars: config.maxChars,
@@ -183,13 +233,14 @@ async function start(ctx, bot, config) {
       if (!response.ok || value.code !== 0 || !key) throw new Error('飞书附件上传失败，请检查资源权限。');
       await sendMessage(target, file.image ? 'image' : 'file', {[file.image ? 'image_key' : 'file_key']: key}, file.deliveryId);
     },
-    async send(target, text) {
+    async send(target, text, options) {
+      const uuid = options?.deliveryId ? await requestId(options.deliveryId) : undefined;
       const deliver = async (type, content) => {
         if (target.messageId) {
-          try {await sendMessage(target, type, content); return;}
+          try {await sendMessage(target, type, content, uuid); return;}
           catch { /* A deleted or expired message cannot be replied to; send to the chat instead. */ }
         }
-        await sendMessage({chatId: target.chatId}, type, content);
+        await sendMessage({chatId: target.chatId}, type, content, uuid);
       };
       // Inline cards use the ordinary message API and need no CardKit write
       // permission. Preserve Markdown for fallback, commands and mirrored turns.

@@ -1,11 +1,12 @@
 import Schema from '@deepseek-ai/schemastery';
-import {botSettings, channelSettings, managementKey, registerModelCatalog} from './management.js';
+import {botSettings, channelSettings, managementKey, registerConsumers, registerModelCatalog} from './management.js';
 import {base64, fileName} from './media.js';
 import {header, json, hex, sha256} from './shared.js';
 import {botEntry, botsOf} from './bots.js';
+import {assignment} from './assign.js';
 
 export const name = 'dsh-im-email';
-export const inject = ['im', 'webServer', 'storageDomain', 'weftConnections'];
+export const inject = ['im', 'webServer', 'storageDomain', 'weftConnections', 'weftIm'];
 const endpoint = (prefix, port) => ({
   [prefix + 'Host']: Schema.string().default(''),
   [prefix + 'Port']: Schema.natural().min(1).max(65535).default(port),
@@ -30,6 +31,7 @@ export async function apply(ctx, config) {
 /** One mailbox; `bot` is its local key. */
 async function start(ctx, bot, config) {
   registerModelCatalog(ctx, bot, config.managementKey);
+  registerConsumers(ctx, bot, config.managementKey);
   let connection;
   const domain = await ctx.storageDomain.open({name: `im_${bot}`, version: 1, tables: {threads: {valueSchema: {parse: value => value}}}}), threads = domain.table('threads');
   ctx.effect(() => () => domain.close(), `${bot} thread storage`);
@@ -73,17 +75,25 @@ async function start(ctx, bot, config) {
     send: (target, text, options) => reply(target, text, undefined, options?.deliveryId),
     sendFile: (target, file) => {file.signal?.throwIfAborted(); return reply(target, '', {name: fileName(file.name), base64: base64(file.data)}, file.deliveryId);},
   }), `${bot} channel`);
+  const handOver = assignment(ctx, bot, config);
   connection = ctx.weftConnections.mail(bot, {
     version: hex(await sha256(JSON.stringify(spec))), open: () => spec,
     async response(body) {
       for (const mail of body.messages ?? []) {
         if (mail.account !== account || !mail.from || !mail.messageId) continue;
         // Unlike chat platforms, rejecting unknown email with a reply can cause backscatter.
-        if (!access.access({sender: mail.from}, false).allowed) continue;
+        // An assigned mailbox leaves admission to the package it is assigned to.
+        if (!handOver && !access.access({sender: mail.from}, false).allowed) continue;
         const references = [...(mail.references ?? []), mail.inReplyTo].filter(Boolean);
         const conversation = references.map(id => threads.get(key(mail.from, id))?.conversation).find(Boolean) || mail.messageId;
         await remember(mail.from, mail.messageId, conversation);
         const target = {account, sender: mail.from, conversation, location: mail.target};
+        if (handOver) {
+          await handOver({kind: 'email', messageId: mail.messageId, chatId: JSON.stringify([account, mail.from, conversation]), threadId: conversation, direct: true,
+            sender: {id: mail.from, ...(mail.name ? {name: mail.name} : {}), bot: false}, mentioned: false, title: mail.subject ?? '', text: mail.text || mail.subject || '',
+            at: new Date((typeof mail.date === 'number' ? mail.date : Date.parse(mail.date ?? '')) || Date.now()).toISOString(), target});
+          continue;
+        }
         await ctx.im.receive({channel: bot, conversation: JSON.stringify([account, mail.from, conversation]), sender: mail.from, senderName: mail.name,
           title: mail.subject, threadId: conversation, sentAt: mail.date, messageId: JSON.stringify([account, mail.target.validity, mail.target.uid]),
           text: mail.text || mail.subject, target,

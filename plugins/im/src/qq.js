@@ -1,10 +1,11 @@
 import Schema from '@deepseek-ai/schemastery';
 import {download, fileName, base64} from './media.js';
 import {bytes, fromHex, header, hex, json, readBody, tokenCache} from './shared.js';
-import {botSettings, channelSettings, managementKey, registerModelCatalog} from './management.js';
+import {botSettings, channelSettings, managementKey, registerConsumers, registerModelCatalog} from './management.js';
 
 import {connectionMode, qrAccount} from './qr-account.js';
 import {botEntry, botsOf} from './bots.js';
+import {assignment} from './assign.js';
 import {qqQr} from './qr-providers.js';
 import {qqConnection} from './channel-sockets.js';
 
@@ -31,7 +32,7 @@ const concat = (...parts) => {const result = new Uint8Array(parts.reduce((size, 
  * passive replies to C2C and group @ messages through the v2 message API.
  */
 export const name = 'dsh-im-qq';
-export const inject = ['im', 'webServer', 'storageDomain', 'weftConnections'];
+export const inject = ['im', 'webServer', 'storageDomain', 'weftConnections', 'weftIm'];
 const fields = () => ({
   ...botSettings(), connectionMode: connectionMode(),
   enabled: Schema.boolean().default(false).description('Receive callback events at /<bot key> and reply through the QQ bot API.'),
@@ -49,6 +50,7 @@ export async function apply(ctx, config) {
 /** One QQ bot; `bot` is its local key. */
 async function start(ctx, bot, config) {
   registerModelCatalog(ctx, bot, config.managementKey);
+  registerConsumers(ctx, bot, config.managementKey);
   const requestToken = async credentials => {
     if (!credentials?.appId || !credentials.appSecret) throw new Error('QQ credentials are required');
     const response = await fetch(TOKEN, {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({appId: credentials.appId, clientSecret: credentials.appSecret})});
@@ -57,9 +59,19 @@ async function start(ctx, bot, config) {
     return {value: body.access_token, expiresAt: Date.now() + Number(body.expires_in ?? 7200) * 1000};
   };
   const token = tokenCache(() => requestToken(account.credentials()));
+  let handOver;
   const receive = async payload => {
     if (payload.op !== 0) return;
     const event = payload.d ?? {};
+    // QQ delivers group messages only when they mention the bot.
+    if (handOver && (payload.t === 'C2C_MESSAGE_CREATE' || payload.t === 'GROUP_AT_MESSAGE_CREATE')) {
+      const direct = payload.t === 'C2C_MESSAGE_CREATE', sender = direct ? event.author?.user_openid : event.author?.member_openid;
+      if (!sender || !event.id) return;
+      await handOver({kind: 'qq', messageId: event.id, chatId: direct ? sender : event.group_openid, direct, sender: {id: sender, bot: false}, mentioned: !direct,
+        text: (event.content ?? '').replace(/<@!?[^>]+>/g, '').trim(), at: new Date(Date.parse(event.timestamp ?? '') || Date.now()).toISOString(),
+        target: direct ? {kind: 'c2c', id: sender, msgId: event.id} : {kind: 'group', id: event.group_openid, msgId: event.id}});
+      return;
+    }
     const attachments = (event.attachments ?? []).map(item => ({name: fileName(item.filename || 'attachment'), image: String(item.content_type ?? '').startsWith('image/'),
       load: () => download(item.url, ['qq.com', 'qpic.cn', 'gtimg.cn'])}));
     if (payload.t === 'C2C_MESSAGE_CREATE') {
@@ -93,6 +105,7 @@ async function start(ctx, bot, config) {
     if (sequences.size > 500) sequences.delete(sequences.keys().next().value);
     return seq;
   };
+  handOver = assignment(ctx, bot, config);
   const messagePath = target => target.kind === 'group' ? `/v2/groups/${encodeURIComponent(target.id)}` : `/v2/users/${encodeURIComponent(target.id)}`;
   ctx.effect(() => ctx.im.channel(bot, {kind: 'qq',
     ...channelSettings(config, () => account.owner(), () => account.credentials()?.appId),

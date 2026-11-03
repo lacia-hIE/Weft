@@ -72,6 +72,10 @@ EnvironmentDO 的数据库只登记安装和调度元数据，不保存插件代
 
 指令在该会话的宿主内注入，同一会话的子 Agent 也会看到。原版把已发出的系统提示留在会话历史中，指令变更按原版方式在下一轮追加，不会从模型上下文中抹去旧内容；停用或撤销授权的包不再生效，卸载后登记自动失效。
 
+## IM 机器人分配
+
+`inject: ['weftIm']` 是 Weft 专有服务，归入「管理本环境会话」授权，用于在两个环境包之间转交 IM 机器人：持有机器人连接的包（如 `@weft/dsh-im`）用 `provide(bot, {consumer, operations})` 登记机器人、它被分配给的包名和可调用的操作（如 `send`、`read`），收到消息时调用 `deliver(bot, event)`；被分配的包（如 `@weft/dsh-superagent`）用 `consume({message})` 接收事件，用 `call(bot, operation, argument)` 调用操作，`consumers()` 列出正在接收 IM 事件的包。EnvironmentDO 把事件只交给 `consumer` 指名的包；调用操作时由环境附上调用方自己的包名，只有登记时指名的那个包能调用。登记只在激活期间有效，平台不保存状态；接收方不在线时 `deliver` 返回 `unclaimed`，由持有方决定是否让平台重投。事件、参数和结果是不超过 1 MiB 的 JSON。
+
 ## 外部长连接
 
 `inject: ['weftConnections']` 是 Weft 专有服务，需要单独授予「外部长连接」（高风险，同时需要外部 HTTPS 授权）。插件用 `socket(id, handlers)` / `poll(id, handlers)` 登记连接，连接由平台共享的 `ConnectionGatewayDO` 持有，心跳和控制帧由声明式规则处理，业务消息按顺序投递回插件；环境因此可以在消息之间休眠，也不再为这些包设置 60 秒看门狗。设计、分片与成本见[出站长连接网关](connection-gateway.md)。
