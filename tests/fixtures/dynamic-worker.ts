@@ -22,6 +22,7 @@ export class NativePluginBench extends DurableObject<Env> {
   private platform: NativePluginPlatform | undefined;
   private fiber: Fiber | undefined;
   private handlers = new Map<string, (args: unknown) => Promise<unknown>>();
+  private savedHandler: ((args: unknown) => Promise<unknown>) | undefined;
   private toolController: AbortController | undefined;
   private runId: string | undefined;
   private readonly workerIds: string[] = [];
@@ -53,6 +54,8 @@ export class NativePluginBench extends DurableObject<Env> {
     });
     if (action === 'workerIds') return {ids: this.workerIds};
     if (action === 'evictFacet') {this.ctx.facets.abort('harness-plugin:counter', new Error('Simulated facet eviction')); return {};}
+    if (action === 'saveHandler') {this.savedHandler = this.handlers.get(input.method!); return {};}
+    if (action === 'invokeSaved') return this.savedHandler!(input.args);
     if (action === 'start') {
       const runId = this.runId = crypto.randomUUID();
       const plugin = await platform.evaluate(host.ctx, 'counter', runId, input.source ?? '', (method, fn) => {

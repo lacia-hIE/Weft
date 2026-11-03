@@ -13,6 +13,11 @@ test('cached plugin code receives fresh facet receipts, revokes old capabilities
     return response.json() as Promise<T>;
   };
   const ids = async (owner = 'alpha') => (await call<{ids: string[]}>(owner, 'workerIds')).ids;
+  const rejectSaved = async () => {
+    const response = await runtime.dispatchFetch('http://localhost/native-plugin', {method: 'POST', body: JSON.stringify({owner: 'alpha', action: 'invokeSaved'})});
+    assert.equal(response.status, 400);
+    assert.match(await response.text(), /Plugin activation has stopped/);
+  };
   // Keep a previous run's FS proxy in module state, as an untrusted plugin could do. It must never
   // acquire the new run's authority, even though both runs use the very same cached Worker code.
   const source = `return {apply(ctx){const fs=ctx.get('fs');const old=globalThis.previousFs;globalThis.previousFs=fs;let count=0;harness.handle('read',async()=>{let revoked=false;if(old){try{await old.resolve('old')}catch{revoked=true}}const current=await fs.resolve('current');return {current:{owner:current.owner,runId:current.runId},revoked,count:++count};})}}`;
@@ -22,9 +27,11 @@ test('cached plugin code receives fresh facet receipts, revokes old capabilities
     const before = await call<Read>('alpha', 'invoke', {method: 'read'});
     assert.equal(before.current.runId, first.runId);
     assert.equal(before.revoked, false);
+    await call('alpha', 'saveHandler', {method: 'read'});
     await call('alpha', 'stop');
     const second = await call<{runId: string}>('alpha', 'start', {source});
     assert.notEqual(second.runId, first.runId);
+    await rejectSaved();
     const after = await call<Read>('alpha', 'invoke', {method: 'read'});
     assert.equal(after.current.runId, second.runId, 'the cached Worker must receive the new facet capability');
     assert.equal(after.revoked, true, 'a retained proxy from the old run remains revoked');
@@ -59,7 +66,9 @@ test('cached plugin code receives fresh facet receipts, revokes old capabilities
     const online = {...installed, network: true};
     await call('alpha', 'start', {installed: online});
     const onlineId = (await ids()).at(-1);
+    await call('alpha', 'saveHandler', {method: 'read'});
     await call('alpha', 'start', {installed: online});
+    await rejectSaved();
     assert.notEqual((await ids()).at(-1), onlineId, 'run-bound network egress must not retain an old receipt');
     const environment = {...online, environment: true, activationId: 'approved-activation'};
     await call('alpha', 'start', {installed: environment});

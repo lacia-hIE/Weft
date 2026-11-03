@@ -57,7 +57,11 @@ export class NativePluginPlatform {
     private faultHandler: ((runId: string, error: Error) => void) | undefined;
     onFault(handler: (runId: string, error: Error) => void): void { this.faultHandler = handler; }
     constructor(private readonly state: DurableObjectState, private readonly loader: WorkerLoader | undefined, private readonly scope: object, private readonly capability?: (pluginId: string, runId: string) => Fetcher) { }
-    private async bounded<T>(allocation: Allocation, operation: (facet: FacetApi) => Promise<T>): Promise<T> {
+    private async bounded<T>(allocation: Allocation, operation: (facet: FacetApi) => Promise<T>, releasing = false): Promise<T> {
+        const assertActive = () => {
+            if (!releasing && this.allocations.get(allocation.runId) !== allocation) throw new Error('Plugin activation has stopped');
+        };
+        assertActive();
         const timer = setTimeout(() => {
             const error = new Error('Dynamic plugin operation deadline exceeded');
             this.state.facets.abort(allocation.name, error);
@@ -69,6 +73,7 @@ export class NativePluginPlatform {
             // Durable Object class props on Cloudflare production, but can cross an ordinary RPC call.
             const facet = allocation.facet;
             if (allocation.host) await facet.setHost(allocation.activationId, allocation.host);
+            assertActive();
             return await operation(facet);
         }
         finally {
@@ -149,7 +154,7 @@ export class NativePluginPlatform {
                     if (installed?.environment) continue;
                     const dispose = registerRemoteTool(ctx, tool, {
                         execute: (name,args,callId,operationId) => this.bounded(allocation, facet => facet.tool(name,args,callId,operationId)),
-                        cancel: operationId => allocation.facet.cancelTool(operationId), waitUntil: work => this.state.waitUntil(work),
+                        cancel: operationId => this.cancelTool(runId, operationId), waitUntil: work => this.state.waitUntil(work),
                     });
                     tools.set(tool.name, { signature, dispose });
                     allocation.disposers.push(dispose);
@@ -233,7 +238,7 @@ export class NativePluginPlatform {
         for (const dispose of allocation.disposers.splice(0).reverse())
             dispose();
         try {
-            await this.bounded(allocation, facet => facet.stop());
+            await this.bounded(allocation, facet => facet.stop(), true);
         }
         catch { /* A crashed or uncooperative isolate is still forcibly stopped below. */ }
         finally {
