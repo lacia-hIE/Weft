@@ -261,7 +261,10 @@ export function SourceField({ field, value, saved, fact, onChange, labels, refre
       <Input type="number" min={field.min} max={field.max} required value={String(value ?? '')}
         onChange={event => onChange(event.target.value === '' ? '' : Number(event.target.value))} />
     </Field>
-    case 'text': return <Field label={label} hint={hint} note={localized(t, fact)}>
+    // Field gives its single child the label's id, so the refresh button goes beside the fact.
+    case 'text': return <Field label={label} hint={hint} note={field.refresh && refreshLabels ? <>{localized(t, fact)}
+      <Button variant="ghost" size="sm" className={refresh.busy ? 'dt-btn-busy' : undefined} icon={<Icon name="refresh" />}
+        disabled={refresh.busy} aria-busy={refresh.busy} onClick={() => { void refresh.run() }}>{localized(t, field.refresh)}</Button></> : localized(t, fact)}>
       {field.choose && Object.keys(labels).length
         ? <select className="dt-select" value={String(value ?? '')} onChange={event => onChange(event.target.value)}>
           <option value="">{localized(t, field.choose)}</option>
@@ -270,8 +273,6 @@ export function SourceField({ field, value, saved, fact, onChange, labels, refre
         </select>
         : <Input value={String(value ?? '')} readOnly={field.readonly} pattern={field.pattern} spellCheck={false}
           onChange={event => onChange(event.target.value)} />}
-      {field.refresh && refreshLabels && <Button variant="ghost" size="sm" className={refresh.busy ? 'dt-btn-busy' : undefined} icon={<Icon name="refresh" />}
-        disabled={refresh.busy} aria-busy={refresh.busy} onClick={() => { void refresh.run() }}>{localized(t, field.refresh)}</Button>}
     </Field>
     case 'fact': return <div className="dt-field">
       <span className="dt-field-head">{label}{hint && <InfoTip text={hint} />}</span>
