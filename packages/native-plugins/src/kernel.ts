@@ -32,32 +32,33 @@ import type {VerifiedWebhookDelivery} from '@deepseek-ai/dsh-webhook';
 import {sessionMethods, workerHostServices} from './services.ts';
 import {WorkerIm} from './im.ts';
 import { snapshotJsonValue } from '@deepseek-ai/dsh-util-values';
-/** Per-facet authority; never stored in the cached Dynamic Worker environment. */
+/** Data-only class props. Service bindings are unsupported here on Cloudflare production. */
 interface KernelProps {
     ALLOWED?: string[];
     BACKGROUND?: boolean;
     ACTIVATION?: string;
     /** The environment's configuration of the bundle's entries, by entry id. */
     CONFIG?: Record<string, Record<string, unknown>>;
-    HOST?: {
-        callFs(method: string, args: unknown[]): Promise<unknown>;
-        callSession(method: string, request: unknown): Promise<unknown>;
-        uploadSessionAttachment(sessionId: string, options: unknown, data: Uint8Array): Promise<unknown>;
-        resolveCredential(ref: string): Promise<unknown>;
-        followSession(request: unknown): Promise<Response>;
-        dispatchWebhook(delivery:unknown):Promise<void>;
-        createWebhook(operationId:string,delivery:unknown,ruleId:string,request:unknown):Promise<void>;
-        cancelWebhook(operationId:string):Promise<void>;
-        watchSession(sessionId: string, watch: boolean): Promise<void>;
-        manageSession(sessionId: string, config: unknown): Promise<void>;
-        connectionOpen(connectionId: string, version: string, spec: unknown): Promise<void>;
-        connectionCall(connectionId: string, operation: string, argument?: unknown): Promise<unknown>;
-        imDeliver(consumer: string, bot: string, event: unknown): Promise<'delivered' | 'unclaimed'>;
-        imCall(bot: string, operation: string, argument: unknown): Promise<unknown>;
-        imConsumers(): Promise<string[]>;
-        imBots(): Promise<{bot: string; kind: string; name?: string}[]>;
-    };
 }
+interface KernelHost {
+    callFs(method: string, args: unknown[]): Promise<unknown>;
+    callSession(method: string, request: unknown): Promise<unknown>;
+    uploadSessionAttachment(sessionId: string, options: unknown, data: Uint8Array): Promise<unknown>;
+    resolveCredential(ref: string): Promise<unknown>;
+    followSession(request: unknown): Promise<Response>;
+    dispatchWebhook(delivery:unknown):Promise<void>;
+    createWebhook(operationId:string,delivery:unknown,ruleId:string,request:unknown):Promise<void>;
+    cancelWebhook(operationId:string):Promise<void>;
+    watchSession(sessionId: string, watch: boolean): Promise<void>;
+    manageSession(sessionId: string, config: unknown): Promise<void>;
+    connectionOpen(connectionId: string, version: string, spec: unknown): Promise<void>;
+    connectionCall(connectionId: string, operation: string, argument?: unknown): Promise<unknown>;
+    imDeliver(consumer: string, bot: string, event: unknown): Promise<'delivered' | 'unclaimed'>;
+    imCall(bot: string, operation: string, argument: unknown): Promise<unknown>;
+    imConsumers(): Promise<string[]>;
+    imBots(): Promise<{bot: string; kind: string; name?: string}[]>;
+}
+interface KernelEnv { HOST?: KernelHost }
 function wire<T>(value: T, maxBytes = 1048576): T {
     const detached = snapshotJsonValue(value);
     if (detached === undefined)
@@ -67,7 +68,14 @@ function wire<T>(value: T, maxBytes = 1048576): T {
     return detached as T;
 }
 /** One real Cordis tree in a separately isolated Durable Object facet. */
-export class PluginFacet extends DurableObject<Record<string, never>, KernelProps> {
+export class PluginFacet extends DurableObject<KernelEnv, KernelProps> {
+    private rpcHost: KernelHost | undefined;
+    private get host(): KernelHost | undefined { return this.env.HOST ?? this.rpcHost; }
+    /** RPC capability bootstrap, repeated by the supervisor so a cold facet can recover it. */
+    setHost(activationId: string, host: KernelHost): void {
+        if (this.stopped || activationId !== this.ctx.props.ACTIVATION) throw new Error('Plugin capability activation changed');
+        this.rpcHost ??= host;
+    }
     private readonly toolCaller = new AsyncLocalStorage<string>();
     private root: Context | undefined;
     private plugin: Plugin | undefined;
@@ -96,16 +104,16 @@ export class PluginFacet extends DurableObject<Record<string, never>, KernelProp
             await root.plugin(Tools);
             await root.plugin(Timer);
             if (this.ctx.props.BACKGROUND && this.ctx.props.ALLOWED?.includes('timer')) this.durableTimers = new DurablePluginTimers(this.ctx.storage, this.ctx.props.ACTIVATION ?? 'initial');
-            if (this.ctx.props.ALLOWED?.includes('weftConnections')) {this.connections = new WorkerConnections(this.ctx.props.HOST!); root.provide('weftConnections', this.connections.service);}
-            if (this.ctx.props.ALLOWED?.includes('weftIm')) {this.im = new WorkerIm(this.ctx.props.HOST!); root.provide('weftIm', this.im.service);}
-            if (this.ctx.props.ALLOWED?.includes('weftSessionEvents')) {this.sessionEvents = new WorkerSessionEvents(this.ctx.props.HOST!); root.provide('weftSessionEvents', this.sessionEvents.service);}
-            if (this.ctx.props.ALLOWED?.includes('weftManagedSessions')) {this.managedSessions = new WorkerManagedSessions(this.ctx.props.HOST!); root.provide('weftManagedSessions', this.managedSessions.service);}
+            if (this.ctx.props.ALLOWED?.includes('weftConnections')) {this.connections = new WorkerConnections(this.host!); root.provide('weftConnections', this.connections.service);}
+            if (this.ctx.props.ALLOWED?.includes('weftIm')) {this.im = new WorkerIm(this.host!); root.provide('weftIm', this.im.service);}
+            if (this.ctx.props.ALLOWED?.includes('weftSessionEvents')) {this.sessionEvents = new WorkerSessionEvents(this.host!); root.provide('weftSessionEvents', this.sessionEvents.service);}
+            if (this.ctx.props.ALLOWED?.includes('weftManagedSessions')) {this.managedSessions = new WorkerManagedSessions(this.host!); root.provide('weftManagedSessions', this.managedSessions.service);}
             if (this.ctx.props.ALLOWED?.includes('weftSql')) root.provide('weftSql', pluginSql(this.ctx.storage));
-            if (this.ctx.props.ALLOWED?.includes('webhookRuntime')) {this.webhooks=new WorkerWebhooks(this.ctx.props.HOST!,work=>this.ctx.waitUntil(work));await this.webhooks.mount(root);}
+            if (this.ctx.props.ALLOWED?.includes('webhookRuntime')) {this.webhooks=new WorkerWebhooks(this.host!,work=>this.ctx.waitUntil(work));await this.webhooks.mount(root);}
             if (this.ctx.props.ALLOWED?.includes('webServer')) {this.webServer = new WorkerWebServer();root.provide('webServer', this.webServer);}
             if (this.ctx.props.ALLOWED?.some(name => name === 'storage' || name === 'storageDomain')) await mountDurableStorage(root, this.ctx.storage);
             if (this.ctx.props.ALLOWED?.includes('sessionController')) {
-              const host = this.ctx.props.HOST!;
+              const host = this.host!;
               root.provide('sessionController', {
                 callerSessionId: () => this.toolCaller.getStore(),
                 uploadAttachment: (sessionId: string, options: unknown, data: Uint8Array) => host.uploadSessionAttachment(sessionId, wire(options), data),
@@ -113,14 +121,14 @@ export class PluginFacet extends DurableObject<Record<string, never>, KernelProp
                 follow: (request: unknown, signal?: AbortSignal) => (async function* () {yield* pluginSessionStream(await host.followSession(wire(request)), signal);})(),
               });
             }
-            if (this.ctx.props.ALLOWED?.includes('credentials')) root.provide('credentials', {resolve: (ref: string) => this.ctx.props.HOST!.resolveCredential(ref)});
-            if (this.ctx.props.HOST)
+            if (this.ctx.props.ALLOWED?.includes('credentials')) root.provide('credentials', {resolve: (ref: string) => this.host!.resolveCredential(ref)});
+            if (this.host)
                 root.provide('fs', Object.fromEntries(nativePluginFsMethods.map(method => [method, async (...args: unknown[]) => {
                         const signals = args.flatMap(arg => arg instanceof AbortSignal ? [arg] : arg && typeof arg === 'object' && 'signal' in arg && arg.signal instanceof AbortSignal ? [arg.signal] : []);
                         for (const signal of signals)
                             signal.throwIfAborted();
                         const plain = args.map(arg => arg instanceof AbortSignal ? undefined : arg && typeof arg === 'object' && 'signal' in arg ? Object.fromEntries(Object.entries(arg).filter(([key]) => key !== 'signal')) : arg);
-                        const result = await this.ctx.props.HOST!.callFs(method, plain);
+                        const result = await this.host!.callFs(method, plain);
                         for (const signal of signals)
                             signal.throwIfAborted();
                         return result;
@@ -209,7 +217,7 @@ export class PluginFacet extends DurableObject<Record<string, never>, KernelProp
         });
     }
     async invoke(method: string, args: unknown) {
-        await this.prepare();
+        await this.start();
         const handler = this.handlers.get(method);
         if (!handler)
             throw new Error('Host method is not registered: ' + method);

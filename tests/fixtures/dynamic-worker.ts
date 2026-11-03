@@ -32,7 +32,18 @@ export class NativePluginBench extends DurableObject<Env> {
   async action(action: string, input: {source?: string; method?: string; args?: unknown; installed?: Parameters<NativePluginPlatform['evaluate']>[5]}) {
     const host = await (this.host ??= openHarnessSession({sessionId: 'native-plugin', persona: 'test', model: {provider: 'validation', model: 'scripted'}, adapter: new ScriptedAdapter(), mountPersistence: async ctx => {await ctx.plugin(SqliteSessionPersistence, {storage: this.ctx.storage});}}));
     const loader: WorkerLoader = {
-      get: (id, code) => {if (id) this.workerIds.push(id); return this.env.LOADER.get(id, code);},
+      get: (id, code) => {
+        if (id) this.workerIds.push(id);
+        const worker = this.env.LOADER.get(id, code);
+        return {
+          getEntrypoint: worker.getEntrypoint.bind(worker),
+          getDurableObjectClass: (name, options) => {
+            // Miniflare accepts this, but the same binding in class props fails on Cloudflare production.
+            if (options?.props && Object.hasOwn(options.props, 'HOST')) throw new Error('Service capabilities must not be placed in facet class props');
+            return worker.getDurableObjectClass(name, options);
+          },
+        };
+      },
       load: code => this.env.LOADER.load(code),
     };
     // Deliberately identical caller scopes for every owner: the platform must also key by supervisor identity.
@@ -41,6 +52,7 @@ export class NativePluginBench extends DurableObject<Env> {
       return exports.NativePluginHost({props: {owner: this.ctx.id.toString(), runId}});
     });
     if (action === 'workerIds') return {ids: this.workerIds};
+    if (action === 'evictFacet') {this.ctx.facets.abort('harness-plugin:counter', new Error('Simulated facet eviction')); return {};}
     if (action === 'start') {
       const runId = this.runId = crypto.randomUUID();
       const plugin = await platform.evaluate(host.ctx, 'counter', runId, input.source ?? '', (method, fn) => {

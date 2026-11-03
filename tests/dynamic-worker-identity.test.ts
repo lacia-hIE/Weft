@@ -31,6 +31,10 @@ test('cached plugin code receives fresh facet receipts, revokes old capabilities
     assert.equal(after.count, 1, 'factory-local plugin state is rebuilt on restart');
     const [firstId, secondId] = await ids();
     assert.equal(firstId, secondId, 'restarting offline plugin code does not allocate another Worker ID');
+    await call('alpha', 'evictFacet');
+    const recovered = await call<Read>('alpha', 'invoke', {method: 'read'});
+    assert.equal(recovered.current.runId, second.runId, 'a cold facet receives the active receipt again before plugin code starts');
+    assert.equal(recovered.count, 1);
 
     await call('beta', 'start', {source});
     const other = await call<Read>('beta', 'invoke', {method: 'read'});

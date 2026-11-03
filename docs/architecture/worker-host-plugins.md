@@ -30,7 +30,9 @@ Worker Host 使用标准 Cordis 导出和原版 `dsh.bundle.patch`。这一轮�
 
 Cloudflare 按每天出现的不同 Dynamic Worker（ID 与代码）计费；同一天反复调用相同 ID、相同代码只计一次创建，`.load()` 每次调用计一次创建。另计请求与启动、执行 CPU。详见 [Dynamic Workers 定价](https://developers.cloudflare.com/dynamic-workers/pricing/) 与本项目的[身份和计费设计](dynamic-worker-costs.md)。
 
-插件的能力凭据与运行编号放在 `getDurableObjectClass('PluginFacet', {props})`，Kernel 从 `ctx.props` 读取；缓存 Worker 的 `env` 不保存运行期能力。无网络插件的代码 ID 由真实宿主 DO ID、scope、插件名、Kernel、源码、服务、激活、配置、兼容设置和调用限额决定，不含会话运行编号。停止后再次运行相同代码仍复用同一 Worker ID，但新 facet 取得本次运行的新能力，旧能力继续被宿主拒绝。
+`getDurableObjectClass('PluginFacet', {props})` 只放运行编号、服务清单与配置等普通数据。Cloudflare 云端不能在 facet class props 中传递服务能力：Miniflare 可以通过，同样的代码在云端会报内部错误。环境后台包和允许网络的会话包继续通过 Worker `env.HOST` 传递能力；无网络会话插件通过普通 `setHost(activationId, capability)` RPC 绑定本次运行的能力，每次有期限的操作前补绑，以支持 facet 独立重建。Kernel 校验激活编号，旧能力仍由宿主撤销。
+
+无网络插件的代码 ID 由真实宿主 DO ID、scope、插件名、Kernel、源码、服务、激活、配置、兼容设置和调用限额决定，不含会话运行编号。停止后再次运行相同代码仍复用同一 Worker ID，但新 facet 取得本次运行的新能力。RPC 补绑增加一次请求；环境和网络包使用已有 env 能力，不增加这一步。
 
 允许网络的插件仍通过 Worker 的 `globalOutbound` 绑定出口。会话出口的凭据含运行编号，因此这类 Worker ID 保留运行编号；环境出口绑定稳定激活，环境重建时复用 ID，启用批次改变时更换 ID。不能为了少计创建而将旧出口凭据复用到新运行。
 

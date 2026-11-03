@@ -12,6 +12,7 @@ const descriptionSchema = z.object({ name: z.string().max(200), inject: z.record
 const metadataSchema = descriptionSchema.extend({tools:toolDescriptions});
 type Metadata = z.infer<typeof metadataSchema>;
 interface FacetApi {
+    setHost(activationId: string, host: Fetcher): Promise<void>;
     describe(): Promise<unknown>;
     configSchemas(): Promise<unknown>;
     metadata(): Promise<unknown>;
@@ -41,6 +42,8 @@ interface Allocation {
     disposers: (() => void)[];
     releasing?: boolean;
     deadlineMs: number;
+    activationId: string;
+    host?: Fetcher;
 }
 /**
  * Per-invocation limits of a plugin's Dynamic Worker. A Session tool runs one bounded call per invocation. An
@@ -62,6 +65,9 @@ export class NativePluginPlatform {
                 this.faultHandler?.(allocation.runId, error);
         }, allocation.deadlineMs);
         try {
+            // Reattach after a facet wake as well as on first use. Service bindings cannot be placed in
+            // Durable Object class props on Cloudflare production, but can cross an ordinary RPC call.
+            if (allocation.host) await allocation.facet.setHost(allocation.activationId, allocation.host);
             return await operation();
         }
         finally {
@@ -78,26 +84,31 @@ export class NativePluginPlatform {
             }
         const factory = installed?.module ?? `export default async function(harness){\n${source}\n}`;
         const capability = this.capability?.(pluginId, runId);
-        // Runtime receipts belong to the facet's props, not the cached Worker's env. Only a network-enabled
-        // Worker's globalOutbound still captures a receipt, so that receipt must participate in its identity.
+        // Class props must contain data only: a service binding there fails with an internal error in production.
+        // Environment and networked Workers already have a stable captured receipt; reusable offline Workers
+        // receive their run-bound capability over RPC instead of putting it in the cached environment.
         const outbound = installed?.network && capability ? capability : null;
-        const outboundReceipt = outbound ? (installed?.environment && installed.activationId !== undefined ? installed.activationId : runId) : null;
+        const fixedHost = capability && (installed?.environment || outbound) ? capability : undefined;
+        const fixedReceipt = fixedHost ? (installed?.environment && installed.activationId !== undefined ? installed.activationId : runId) : null;
         const definition = installed ? {services: installed.services, environment: installed.environment === true, network: installed.network === true,
             activationId: installed.activationId ?? null, config: installed.config ?? null} : null;
         const limits = installed?.environment ? ENVIRONMENT_LIMITS : SESSION_LIMITS;
         // Include the actual supervisor ID: session names and caller-provided scopes need not be globally unique.
         const codeId = 'weft-native-host:' + createHash('sha256').update(JSON.stringify([
-            this.state.id.toString(), this.scope, pluginId, outboundReceipt, kernelRevision, factory, definition,
+            this.state.id.toString(), this.scope, pluginId, fixedReceipt, kernelRevision, factory, definition,
             COMPATIBILITY_DATE, COMPATIBILITY_FLAGS, limits,
         ])).digest('hex');
         const worker = this.loader.get(codeId, () => ({
             compatibilityDate: COMPATIBILITY_DATE, compatibilityFlags: COMPATIBILITY_FLAGS, mainModule: 'kernel.js',
             modules: { 'kernel.js': kernelModule, 'weft:plugin-factory': { js: factory } },
+            ...(fixedHost ? {env: {HOST: fixedHost}} : {}),
             globalOutbound: outbound, limits,
         }));
-        const props = {...(capability ? {HOST: capability} : {}), ...(installed ? {ALLOWED: installed.services, BACKGROUND: installed.environment === true, ACTIVATION: installed.activationId ?? runId, ...(installed.config ? {CONFIG: installed.config} : {})} : {})};
+        const activationId = installed?.activationId ?? runId;
+        const props = {ACTIVATION: activationId, ...(installed ? {ALLOWED: installed.services, BACKGROUND: installed.environment === true, ...(installed.config ? {CONFIG: installed.config} : {})} : {})};
         const facet = this.state.facets.get(name, () => ({ class: worker.getDurableObjectClass('PluginFacet', {props}) })) as unknown as FacetApi;
-        const allocation: Allocation = { name, runId, facet, disposers: [], deadlineMs: installed?.environment ? 60_000 : 15_000 };
+        const allocation: Allocation = { name, runId, facet, disposers: [], deadlineMs: installed?.environment ? 60_000 : 15_000,
+            activationId, ...(capability && !fixedHost ? {host: capability} : {}) };
         this.allocations.set(runId, allocation);
         try {
             const description = descriptionSchema.parse(await this.bounded(allocation, () => facet.describe()));

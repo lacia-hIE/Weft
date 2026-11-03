@@ -28,12 +28,14 @@ Weft 按执行语义选择复用范围。复用 ID 只复用代码与可能的�
 
 - **Worker 代码身份**：包含真实宿主 DO ID，防止不同租户、环境、会话使用相同业务名称时共享模块全局状态；Kernel 内容先计算一次摘要，避免每次激活重新序列化整个 Kernel。兼容日期、兼容标志和调用限额也参与身份，设置变化时不会命中旧定义。
 - **facet 身份**：继续使用 `harness-plugin:<pluginId>`，保留 SQLite 数据与原有停止、取消、删除语义。
-- **运行能力身份**：`HOST`、`ACTIVATION` 及服务、配置通过 facet `props` 传入。重新构建 facet 时传入当前能力，不依赖已缓存 Worker 的 `env`。宿主继续验证 plugin/run 或安装启用批次，旧 proxy 不会自动获得新运行的权限。
+- **运行能力身份**：facet `props` 仅传 `ACTIVATION`、服务清单与配置等普通数据。环境后台包和允许网络的会话包使用 `env.HOST`；其捕获的运行/激活身份参与 Worker ID。无网络会话插件的 `HOST` 通过普通 `setHost` RPC 传入，并在每次有期限的操作前补绑，facet 冷启动时也能恢复当前能力。Kernel 校验激活编号，宿主继续验证 plugin/run 或安装启用批次，旧 proxy 不会自动获得新运行的权限。无网络会话操作因此多一次 RPC 请求；收益来自减少重复创建，不能算成请求数优化。
 
 同一宿主、同一插件的 Worker 模块全局变量可能在重跑后仍存在。插件实例状态应在 factory / `apply` 内初始化；需要可靠恢复的状态写入 storage。不能承诺重新执行 ESM 模块顶层或清空 isolate 全局变量。不同宿主的代码 ID 必须不同，不能为减少账单跨租户共享不可信模块。
 
 ## 验证与观测
 
-`tests/dynamic-worker-identity.test.ts` 在真实 Miniflare/workerd 中检查重复运行使用相同代码 ID、新 facet 收到新能力、旧 FS proxy 失效、同名 scope 的不同 DO 不共享模块全局、源码/配置/权限变化更新 ID，以及会话网络出口和环境激活的不同复用边界。原有插件和 Worker Host 用例继续覆盖审批、重建、文件权限、持久存储、后台计时器与取消。
+`tests/dynamic-worker-identity.test.ts` 在 Miniflare/workerd 中检查重复运行使用相同代码 ID、新 facet 收到新能力、旧 FS proxy 失效、独立重建的 facet 重新获得当前能力、同名 scope 的不同 DO 不共享模块全局、源码/配置/权限变化更新 ID，以及会话网络出口和环境激活的不同复用边界。夹具拒绝在 facet class props 放 `HOST`，避免本地宽松行为掩盖云端限制。原有插件和 Worker Host 用例继续覆盖审批、重建、文件权限、持久存储、后台计时器与取消。
+
+2026-11-03 在隔离的云端 Worker 复现：普通数据 class props 正常，`env.HOST` 正常，普通 RPC 参数传递服务能力正常且可跨 HTTP 请求保留；服务能力放入 class props 时首次调用返回 `internal error; reference = …`。该差异导致 IM、Superagent 环境 Host 激活失败，不能只用本地 CI 证明这种能力传输在云端可用。诊断 Worker 在每次验证后删除。
 
 本地检查只证明身份与能力行为，不能证明 Cloudflare 云端计费或 CPU 上限。云端用 Workers 用量面板或官方 GraphQL Analytics 的 `workersInvocationsByOwnerAndScriptGroups.uniq.distinctDynamicWorkerCount` 观察实际创建量，并结合请求和 CPU 用量核对。
