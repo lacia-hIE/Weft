@@ -553,7 +553,7 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
           const background = inject.some(name => (environmentHostServices as readonly string[]).includes(name));
           artifact.hostScope = background ? 'environment' : 'session';
           artifact.permissions = {...artifact.permissions, network: true,
-            storage: inject.some(name => name === 'storage' || name === 'storageDomain' || name === 'weftSql'), sessions: inject.includes('sessionController') || inject.includes('weftSessionEvents') || inject.includes('weftManagedSessions') || inject.includes('webhookRuntime'),
+            storage: inject.some(name => name === 'storage' || name === 'storageDomain' || name === 'weftSql'), sessions: inject.includes('sessionController') || inject.includes('weftSessionEvents') || inject.includes('weftManagedSessions') || inject.includes('weftIm') || inject.includes('webhookRuntime'),
             credentials: inject.includes('credentials'), routes: inject.includes('webServer'), tools:inject.includes('tools'), connections: inject.includes('weftConnections'), background};
           const configs = entrySchemasSchema.parse(await platform.configSchemas(runId));
           if (configs.length) artifact.configs = configs; else delete artifact.configs;
@@ -622,6 +622,20 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
     if(new TextEncoder().encode(JSON.stringify(delivery)).byteLength>1_048_576)throw new Error('Webhook delivery exceeds 1 MiB');
     await this.backgroundPackages(scope).reconcile();this.nativePackageAuthorize(scope,receipt,'sessions');
     await this.backgroundPackages(scope).dispatchWebhook(delivery);
+  }
+  /** A package that holds an IM bot hands one event to the package the bot is assigned to. */
+  async nativeImDeliver(scope: ControlScope, receipt: {name: string; digest: string; activationId: string}, consumer: string, bot: string, event: unknown): Promise<'delivered' | 'unclaimed'> {
+    this.nativePackageAuthorize(scope, receipt, 'sessions');
+    return this.backgroundPackages(scope).imDeliver(z.string().min(1).max(214).parse(consumer), z.string().max(64).parse(bot), event);
+  }
+  /** A package runs an operation of an IM bot assigned to it; its own name is the receipt's, never an argument. */
+  async nativeImCall(scope: ControlScope, receipt: {name: string; digest: string; activationId: string}, bot: string, operation: string, argument: unknown): Promise<unknown> {
+    this.nativePackageAuthorize(scope, receipt, 'sessions');
+    return this.backgroundPackages(scope).imCall(receipt.name, z.string().max(64).parse(bot), z.string().max(32).parse(operation), argument);
+  }
+  async nativeImConsumers(scope: ControlScope, receipt: {name: string; digest: string; activationId: string}): Promise<string[]> {
+    this.nativePackageAuthorize(scope, receipt, 'sessions');
+    return this.backgroundPackages(scope).imConsumers();
   }
   async nativePackageCancelWebhook(scope:ControlScope,receipt:{name:string;digest:string;activationId:string},operationId:string):Promise<void> {
     this.scope(scope);const key=this.webhookOperation(receipt,operationId);const active=this.webhookOperations.get(key);

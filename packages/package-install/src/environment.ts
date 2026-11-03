@@ -7,7 +7,7 @@ const identity = (row: Installation) => JSON.stringify([row.digest, row.activati
 export function installedServices(row: Installation): string[] {
   const p = row.permissions;
   return [...(p.files !== 'none' ? ['fs'] : []), ...(p.tools || row.hostScope==='environment' ? ['tools'] : []), ...(p.timer ? ['timer'] : []),
-    ...(p.storage ? ['storage', 'storageDomain', 'weftSql'] : []), ...(p.sessions ? ['sessionController','weftSessionEvents','weftManagedSessions','webhookRuntime'] : []), ...(p.credentials ? ['credentials'] : []), ...(p.connections ? ['weftConnections'] : []), ...(p.routes ? ['webServer'] : [])];
+    ...(p.storage ? ['storage', 'storageDomain', 'weftSql'] : []), ...(p.sessions ? ['sessionController','weftSessionEvents','weftManagedSessions','weftIm','webhookRuntime'] : []), ...(p.credentials ? ['credentials'] : []), ...(p.connections ? ['weftConnections'] : []), ...(p.routes ? ['webServer'] : [])];
 }
 interface Active {row: Installation; runId: string; fiber?: Fiber}
 /** A single environment-owned activation, independent of open browser pages and Sessions. */
@@ -95,6 +95,32 @@ export class EnvironmentPackages {
     const results = await Promise.allSettled([...this.active.values()].filter(active => packages.includes(active.row.name) && active.row.permissions.sessions)
       .map(active => this.platform.deliverSessionEvent(active.runId, event)));
     for (const result of results) if (result.status === 'rejected') console.warn('weft.package.session-event.failed', {reason: result.reason instanceof Error ? result.reason.message : String(result.reason)});
+  }
+  /** Hand an IM bot's event to the package it is assigned to; a package that is not active or does not consume IM leaves it unclaimed. */
+  async imDeliver(consumer: string, bot: string, event: unknown): Promise<'delivered' | 'unclaimed'> {
+    await this.reconcile();
+    const active = this.active.get(consumer);
+    return active?.row.permissions.sessions ? this.platform.deliverIm(active.runId, bot, event) : 'unclaimed';
+  }
+  /**
+   * Run an operation of an IM bot for `caller`, in the package that provides the bot to it.
+   * @throws Error when no active package provides the bot to `caller`, or the operation fails.
+   */
+  async imCall(caller: string, bot: string, operation: string, argument: unknown): Promise<unknown> {
+    await this.reconcile();
+    for (const active of [...this.active.values()]) {
+      if (active.row.name === caller || !active.row.permissions.sessions) continue;
+      const answer = await this.platform.answerIm(active.runId, caller, bot, operation, argument);
+      if (answer.handled) return answer.value;
+    }
+    throw new Error(`No active package provides IM bot ${bot} to ${caller}`);
+  }
+  /** Names of active packages that consume IM events. */
+  async imConsumers(): Promise<string[]> {
+    await this.reconcile();
+    const candidates = [...this.active.values()].filter(active => active.row.permissions.sessions);
+    const consuming = await Promise.allSettled(candidates.map(active => this.platform.consumesIm(active.runId)));
+    return candidates.filter((_active, index) => {const result = consuming[index]!; return result.status === 'fulfilled' && result.value;}).map(active => active.row.name);
   }
   /** Hand gateway events to the package that owns the connection, in order. */
   async dispatchConnection(name: string, connectionId: string, events: unknown[]): Promise<'ok' | 'unknown'> {

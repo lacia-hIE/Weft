@@ -134,6 +134,9 @@ export class EnvironmentPluginCapabilities extends WorkerEntrypoint<Env, {scope:
   async manageSession(sessionId: string, config: unknown): Promise<void> {return this.owner().nativePackageManageSession(this.ctx.props.scope, this.ctx.props, sessionId, config);}
   async connectionOpen(connectionId: string, version: string, spec: unknown): Promise<void> {return this.owner().nativeConnectionOpen(this.ctx.props.scope, this.ctx.props, connectionId, version, spec);}
   async connectionCall(connectionId: string, operation: 'status' | 'send' | 'update' | 'reconnect' | 'close' | 'mailCheck' | 'mailReply' | 'mailAttachment', argument?: unknown): Promise<unknown> {return this.owner().nativeConnectionCall(this.ctx.props.scope, this.ctx.props, connectionId, operation, argument);}
+  async imDeliver(consumer: string, bot: string, event: unknown): Promise<'delivered' | 'unclaimed'> {return this.owner().nativeImDeliver(this.ctx.props.scope, this.ctx.props, consumer, bot, event);}
+  async imCall(bot: string, operation: string, argument: unknown): Promise<unknown> {return this.owner().nativeImCall(this.ctx.props.scope, this.ctx.props, bot, operation, argument);}
+  async imConsumers(): Promise<string[]> {return this.owner().nativeImConsumers(this.ctx.props.scope, this.ctx.props);}
   async callFs(method: string, args: unknown[]): Promise<unknown> {return this.owner().nativePackageFs(this.ctx.props.scope, this.ctx.props, method, args);}
   async resolveCredential(ref: string): Promise<unknown> {return this.owner().nativePackageCredential(this.ctx.props.scope, this.ctx.props, ref);}
 }

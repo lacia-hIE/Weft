@@ -13,6 +13,9 @@ interface FacetApi {
     deliverWebhook(delivery: unknown): Promise<void>;
     deliverSessionEvent(event: unknown): Promise<void>;
     deliverConnectionEvents(connectionId: string, events: unknown[]): Promise<'ok' | 'unknown'>;
+    deliverIm(bot: string, event: unknown): Promise<'delivered' | 'unclaimed'>;
+    answerIm(caller: string, bot: string, operation: string, argument: unknown): Promise<{handled: false} | {handled: true; value: unknown}>;
+    consumesIm(): Promise<boolean>;
     start(): Promise<unknown>;
     invoke(method: string, args: unknown): Promise<{
         value: unknown;
@@ -166,6 +169,18 @@ export class NativePluginPlatform {
     async deliverConnectionEvents(runId: string, connectionId: string, events: unknown[]): Promise<'ok' | 'unknown'> {
         const allocation = this.allocations.get(runId); if (!allocation) throw new Error('Plugin is not active');
         return this.bounded(allocation, () => allocation.facet.deliverConnectionEvents(connectionId, events));
+    }
+    async deliverIm(runId: string, bot: string, event: unknown): Promise<'delivered' | 'unclaimed'> {
+        const allocation = this.allocations.get(runId); if (!allocation) throw new Error('Plugin is not active');
+        return this.bounded(allocation, () => allocation.facet.deliverIm(bot, event));
+    }
+    async answerIm(runId: string, caller: string, bot: string, operation: string, argument: unknown): Promise<{handled: false} | {handled: true; value: unknown}> {
+        const allocation = this.allocations.get(runId); if (!allocation) throw new Error('Plugin is not active');
+        return this.bounded(allocation, () => allocation.facet.answerIm(caller, bot, operation, argument));
+    }
+    async consumesIm(runId: string): Promise<boolean> {
+        const allocation = this.allocations.get(runId); if (!allocation) throw new Error('Plugin is not active');
+        return this.bounded(allocation, () => allocation.facet.consumesIm());
     }
     async deliverSessionEvent(runId: string, event: unknown): Promise<void> {
         const allocation = this.allocations.get(runId); if (!allocation) throw new Error('Plugin is not active');

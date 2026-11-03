@@ -30,6 +30,7 @@ import {WorkerManagedSessions} from './managed-sessions.ts';
 import {pluginSql} from './plugin-sql.ts';
 import type {VerifiedWebhookDelivery} from '@deepseek-ai/dsh-webhook';
 import {sessionMethods, workerHostServices} from './services.ts';
+import {WorkerIm} from './im.ts';
 import { snapshotJsonValue } from '@deepseek-ai/dsh-util-values';
 interface KernelEnv {
     ALLOWED?: string[];
@@ -50,6 +51,9 @@ interface KernelEnv {
         manageSession(sessionId: string, config: unknown): Promise<void>;
         connectionOpen(connectionId: string, version: string, spec: unknown): Promise<void>;
         connectionCall(connectionId: string, operation: string, argument?: unknown): Promise<unknown>;
+        imDeliver(consumer: string, bot: string, event: unknown): Promise<'delivered' | 'unclaimed'>;
+        imCall(bot: string, operation: string, argument: unknown): Promise<unknown>;
+        imConsumers(): Promise<string[]>;
     };
 }
 function wire<T>(value: T, maxBytes = 1048576): T {
@@ -75,6 +79,7 @@ export class PluginFacet extends DurableObject<KernelEnv> {
     private webhooks: WorkerWebhooks | undefined;
     private sessionEvents: WorkerSessionEvents | undefined;
     private connections: WorkerConnections | undefined;
+    private im: WorkerIm | undefined;
     private managedSessions: WorkerManagedSessions | undefined;
     private durableTimers: DurablePluginTimers | undefined;
     private readonly handlers = new Map<string, (args: unknown) => Promise<unknown>>();
@@ -90,6 +95,7 @@ export class PluginFacet extends DurableObject<KernelEnv> {
             await root.plugin(Timer);
             if (this.env.BACKGROUND && this.env.ALLOWED?.includes('timer')) this.durableTimers = new DurablePluginTimers(this.ctx.storage, this.env.ACTIVATION ?? 'initial');
             if (this.env.ALLOWED?.includes('weftConnections')) {this.connections = new WorkerConnections(this.env.HOST!); root.provide('weftConnections', this.connections.service);}
+            if (this.env.ALLOWED?.includes('weftIm')) {this.im = new WorkerIm(this.env.HOST!); root.provide('weftIm', this.im.service);}
             if (this.env.ALLOWED?.includes('weftSessionEvents')) {this.sessionEvents = new WorkerSessionEvents(this.env.HOST!); root.provide('weftSessionEvents', this.sessionEvents.service);}
             if (this.env.ALLOWED?.includes('weftManagedSessions')) {this.managedSessions = new WorkerManagedSessions(this.env.HOST!); root.provide('weftManagedSessions', this.managedSessions.service);}
             if (this.env.ALLOWED?.includes('weftSql')) root.provide('weftSql', pluginSql(this.ctx.storage));
@@ -173,13 +179,13 @@ export class PluginFacet extends DurableObject<KernelEnv> {
                     if (this.durableTimers && (key === 'interval' || key === 'timeout')) return (callback: () => unknown, delay: number) => target.effect(() => this.durableTimers!.register(callback, delay, key === 'interval'));
                     if (key === 'timer' && this.durableTimers && provided.has('timer')) return new Proxy(target.timer, {get: (timer, method) => method === 'interval' || method === 'timeout' ? (callback: () => unknown, delay: number) => target.effect(() => this.durableTimers!.register(callback, delay, method === 'interval')) : Reflect.get(timer, method)});
                     if (key==='webhookRuntime' && provided.has('webhookRuntime')) return this.webhooks?.service;
-                    if (typeof key === 'string' && ['tools', 'timer', 'fs', 'storage', 'storageDomain', 'weftSql', 'sessionController', 'weftSessionEvents', 'weftManagedSessions', 'weftConnections', 'webhookRuntime', 'credentials', 'webServer'].includes(key) && !provided.has(key))
+                    if (typeof key === 'string' && ['tools', 'timer', 'fs', 'storage', 'storageDomain', 'weftSql', 'sessionController', 'weftSessionEvents', 'weftManagedSessions', 'weftConnections', 'weftIm', 'webhookRuntime', 'credentials', 'webServer'].includes(key) && !provided.has(key))
                         throw new Error(`Plugin permission denied: ${key}`);
                     if (key === 'get')
                         return (name: string) => provided.has(name) ? name==='webhookRuntime' ? this.webhooks?.service : name === 'timer' && this.durableTimers ? facade(target).timer : target.get(name) : undefined;
                     if (key === 'provide')
                         return (name: string, value: unknown) => {
-                            if (['systemPrompt', 'sessionController', 'weftSessionEvents', 'weftManagedSessions', 'weftConnections', 'webhookRuntime', 'credentials', 'storage', 'storageDomain', 'weftSql', 'webServer'].includes(name))
+                            if (['systemPrompt', 'sessionController', 'weftSessionEvents', 'weftManagedSessions', 'weftConnections', 'weftIm', 'webhookRuntime', 'credentials', 'storage', 'storageDomain', 'weftSql', 'webServer'].includes(name))
                                 throw new Error('The Agent systemPrompt service is not bridged');
                             const dispose = target.provide(name, value);
                             provided.add(name);
@@ -240,6 +246,9 @@ export class PluginFacet extends DurableObject<KernelEnv> {
     async deliverWebhook(delivery:VerifiedWebhookDelivery):Promise<void> {await this.start();await this.webhooks?.deliver(delivery);}
     async deliverSessionEvent(event: unknown): Promise<void> {await this.start(); await this.sessionEvents?.deliver(event);}
     async deliverConnectionEvents(connectionId: string, events: unknown[]): Promise<'ok' | 'unknown'> {await this.start(); return this.connections ? this.connections.deliver(String(connectionId), events as never) : 'unknown';}
+    async deliverIm(bot: string, event: unknown): Promise<'delivered' | 'unclaimed'> {await this.start(); return this.im ? this.im.receive(bot, event) : 'unclaimed';}
+    async answerIm(caller: string, bot: string, operation: string, argument: unknown): Promise<{handled: false} | {handled: true; value: unknown}> {await this.start(); return this.im ? this.im.answer(caller, bot, operation, argument) : {handled: false};}
+    async consumesIm(): Promise<boolean> {await this.start(); return this.im?.consuming() ?? false;}
     async tick(): Promise<void> { await this.start(); if(this.webhooks)await this.webhooks.run(async()=>{await this.durableTimers?.tick();});else await this.durableTimers?.tick(); }
     async nextAlarm(): Promise<number | undefined> { await this.start(); return this.durableTimers?.next(); }
     async stop(): Promise<void> {
