@@ -3,12 +3,12 @@ import {weixinAttachments, sendWeixinAttachment} from './media.js';
 import {background, header, json, sleep} from './shared.js';
 import {qrSvg} from './qr.js';
 import {botSettings, channelSettings, registerModelCatalog} from './management.js';
+import {botEntry, botsOf} from './bots.js';
 
 const BASE = 'https://ilinkai.weixin.qq.com/';
 const PROTOCOL = '2.4.6';
 const CLIENT_VERSION = String((2 << 16) | (4 << 8) | 6);
 const record = {parse: value => value};
-const DOMAIN = {name: 'im_weixin', version: 1, tables: {}, global: {schema: record, initial: {state: 'idle'}}};
 
 const isWeixinHost = host => /(?:^|\.)(?:weixin\.qq\.com|wechat\.com)$/i.test(host.replace(/\.$/, ''));
 /** The API base a login names, accepted only on WeChat hosts. */
@@ -39,18 +39,25 @@ const escape = text => String(text).replace(/[&<>"']/g, char => `&#${char.charCo
  */
 export const name = 'dsh-im-weixin';
 export const inject = ['im', 'webServer', 'storageDomain', 'weftConnections'];
-export const Config = Schema.object({
+const fields = () => ({
   ...botSettings(),
-  enabled: Schema.boolean().default(false).description('Log in at /weixin/login and long-poll messages.'),
-  loginKey: Schema.string().role('secret').default('').description('Required as ?key= on the login page; anyone with the page can bind a WeChat account.'),
+  enabled: Schema.boolean().default(false).description('Log in at /<bot key>/login and long-poll messages.'),
   allowedSenders: Schema.array(Schema.string()).default([]).description('User ids allowed besides the account that scanned the login code.'),
   maxChars: Schema.natural().min(200).max(4000).default(1800),
 });
+export const Config = botEntry(fields, {
+  loginKey: Schema.string().role('secret').default('').description('Required as ?key= on the login pages; anyone with a page can bind a WeChat account.'),
+});
 
 export async function apply(ctx, config) {
-  registerModelCatalog(ctx, 'weixin', config);
-  const domain = await ctx.storageDomain.open(DOMAIN);
-  ctx.effect(() => () => domain.close(), 'dsh-im weixin storage');
+  for (const bot of botsOf(config, 'weixin', ['loginKey'])) await start(ctx, bot.key, bot.config);
+}
+
+/** One WeChat account; `bot` is its local key. */
+async function start(ctx, bot, config) {
+  registerModelCatalog(ctx, bot, config.loginKey);
+  const domain = await ctx.storageDomain.open({name: `im_${bot}`, version: 1, tables: {}, global: {schema: record, initial: {state: 'idle'}}});
+  ctx.effect(() => () => domain.close(), `dsh-im ${bot} storage`);
   const state = () => domain.global.get();
   const save = patch => domain.global.set({...state(), ...patch});
   let connection, login, starting;
@@ -60,7 +67,7 @@ export async function apply(ctx, config) {
   /** The long poll lives in the shared gateway; the cursor advances once a batch is handled here. */
   const poll = () => {
     const account = state();
-    connection = ctx.weftConnections.poll('weixin', {
+    connection = ctx.weftConnections.poll(bot, {
       version: `${account.botId}:${account.session ?? ''}`,
       open() {
         const current = state();
@@ -77,7 +84,7 @@ export async function apply(ctx, config) {
           const sender = message?.from_user_id, id = message?.message_id ?? message?.client_id, text = textOf(message);
           const attachments = weixinAttachments(message);
           if (!sender || id === undefined || !text && !attachments.length) continue;
-          await ctx.im.receive({channel: 'weixin', conversation: sender, sender, text, attachments, messageId: String(id), target: {to: sender, contextToken: message.context_token}});
+          await ctx.im.receive({channel: bot, conversation: sender, sender, text, attachments, messageId: String(id), target: {to: sender, contextToken: message.context_token}});
         }
         if (typeof body.get_updates_buf === 'string' && body.get_updates_buf) await save({cursor: body.get_updates_buf});
       },
@@ -88,7 +95,7 @@ export async function apply(ctx, config) {
       },
     });
   };
-  const stopPolling = async () => {connection = undefined; await ctx.weftConnections.close('weixin').catch(() => {});};
+  const stopPolling = async () => {connection = undefined; await ctx.weftConnections.close(bot).catch(() => {});};
 
   const createLogin = async () => {
     const created = await call(BASE, 'ilink/bot/get_bot_qrcode?bot_type=3', {body: {local_token_list: []}});
@@ -98,7 +105,7 @@ export async function apply(ctx, config) {
     login?.abort();
     await stopPolling();
     await save({state: 'login', qrcode: created.qrcode, qrcodeUrl: url.toString(), error: undefined});
-    login = background(ctx, 'dsh-im weixin login', async signal => {
+    login = background(ctx, `dsh-im ${bot} login`, async signal => {
       let base = BASE;
       while (!signal.aborted && state().state === 'login') {
         let status;
@@ -133,28 +140,28 @@ export async function apply(ctx, config) {
     response.setHeader('cache-control', 'no-store');
     json(response, code, value);
   };
-  ctx.effect(() => ctx.webServer.register({kind: 'exact', path: '/weixin/status', handler: (request, response) => {
+  ctx.effect(() => ctx.webServer.register({kind: 'exact', path: `/${bot}/status`, handler: (request, response) => {
     if (!authorized(request)) {reply(response, 403, {error: 'login key required'}); return;}
     if (request.method !== 'GET') {reply(response, 405, {error: 'GET required'}); return;}
     reply(response, 200, statusView());
-  }}), 'dsh-im weixin status route');
+  }}), `dsh-im ${bot} status route`);
 
-  ctx.effect(() => ctx.webServer.register({kind: 'exact', path: '/weixin/disconnect', handler: async (request, response) => {
+  ctx.effect(() => ctx.webServer.register({kind: 'exact', path: `/${bot}/disconnect`, handler: async (request, response) => {
     if (!authorized(request)) {reply(response, 403, {error: 'login key required'}); return;}
     if (request.method !== 'POST') {reply(response, 405, {error: 'POST required'}); return;}
     login?.abort(); await stopPolling();
     if (starting) await starting.catch(() => {});
     login?.abort(); await stopPolling();
-    await ctx.im.clear('weixin');
+    await ctx.im.clear(bot);
     await domain.global.set({state: 'idle'});
     reply(response, 200, {state: 'idle'});
-  }}), 'dsh-im weixin disconnect route');
+  }}), `dsh-im ${bot} disconnect route`);
   // Only an enabled, logged-in account keeps a long poll in the gateway.
   if (!config.enabled || state().state !== 'online') await stopPolling();
   if (!config.enabled) return;
 
   const typingTickets = new Map();
-  ctx.effect(() => ctx.im.channel('weixin', {
+  ctx.effect(() => ctx.im.channel(bot, {kind: 'weixin',
     ...channelSettings(config, () => state().owner, () => state().botId),
     maxChars: config.maxChars,
     async typing(target, active) {
@@ -186,9 +193,9 @@ export async function apply(ctx, config) {
       }}});
       if ((response?.ret ?? 0) !== 0 || response?.errcode) throw new Error(`WeChat sendmessage rejected: ${response.ret ?? response.errcode}`);
     },
-  }), 'dsh-im weixin channel');
+  }), `dsh-im ${bot} channel`);
 
-  ctx.effect(() => ctx.webServer.register({kind: 'exact', path: '/weixin/login', handler: async (request, response) => {
+  ctx.effect(() => ctx.webServer.register({kind: 'exact', path: `/${bot}/login`, handler: async (request, response) => {
     const query = new URL(request.url, 'https://plugin.invalid').searchParams;
     if (request.method === 'POST') {
       if (!authorized(request)) {reply(response, 403, {error: 'login key required'}); return;}
@@ -210,7 +217,7 @@ export async function apply(ctx, config) {
     catch (error) {html(502, page('无法获取二维码', `<p>${escape(error instanceof Error ? error.message : String(error))}</p>`)); return;}
     const next = state();
     html(200, page('用微信扫码登录', `${qrSvg(next.qrcodeUrl)}<p>请用作为机器人的微信扫码并确认，页面会自动刷新。</p>${next.error ? `<p>${escape(next.error)}</p>` : ''}`, true));
-  }}), 'dsh-im weixin route');
+  }}), `dsh-im ${bot} route`);
 
   if (state().state === 'online') poll();
 }

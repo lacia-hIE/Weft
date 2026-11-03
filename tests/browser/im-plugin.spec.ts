@@ -146,6 +146,26 @@ test('IM setup follows the channel rail, binding, QR and bot card flow with dura
   await expect(feishu.getByRole('alert')).toHaveText('Credential verification failed. Check the app credentials and network connection, then retry.');
   await expect(feishu.getByText('Connection error', {exact: true})).toBeVisible();
   await expect(feishu.getByText('invalid-fixture', {exact: false})).toHaveCount(0);
+  // An added bot has its own credentials, callback route and settings under `bots`.
+  await feishu.getByRole('button', {name: 'Add bot', exact: true}).click();
+  const added = feishu.locator('.dim-botPage').last();
+  await added.getByRole('button', {name: 'Manual setup', exact: true}).click();
+  await expect(added.getByLabel('Callback URL')).toHaveValue(new RegExp(`/${environment}/${encodeURIComponent(plugin.name)}/feishu_[0-9a-f]{6}$`));
+  await added.getByLabel('App ID', {exact: true}).fill('cli_second');
+  await added.getByLabel('App Secret', {exact: true}).fill('second-secret');
+  await added.getByLabel('Verification Token', {exact: true}).fill('second-verify');
+  await added.getByRole('button', {name: 'Bind bot', exact: true}).click();
+  await expect(feishu.getByText('2 bots configured', {exact: true})).toBeVisible();
+  form = await settings('feishu');
+  const [second] = Object.keys(form.value.bots);
+  expect(form.value.bots[second!].appId).toBe('cli_second');
+  expect(form.value.appId).toBe('cli_browser_updated');
+  expect(form.secrets.some((item: {path: string[]; set: boolean}) => item.path.join('/') === `bots/${second}/appSecret` && item.set)).toBe(true);
+  expect(JSON.stringify(form.value)).not.toContain('second-secret');
+  await added.getByRole('button', {name: 'Remove bot', exact: true}).click();
+  await added.getByRole('button', {name: 'Confirm removal', exact: true}).click();
+  await expect.poll(async () => Object.keys((await settings('feishu')).value.bots ?? {})).toEqual([]);
+  expect((await settings('feishu')).value.appId).toBe('cli_browser_updated');
   await navigation.getByRole('tab', {name: 'QQ', exact: true}).click();
   const qq = panel.getByRole('tabpanel', {name: 'QQ', exact: true});
   await qq.getByRole('button', {name: 'Manual setup', exact: true}).first().click();

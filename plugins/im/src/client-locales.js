@@ -58,7 +58,7 @@ export const zh = {
   moreSettings: '更多设置', general: '通用', access: '访问设置', back: '返回机器人列表', displayName: '机器人别名', workspace: '工作区', agentPreset: 'Agent Preset', defaultPreset: '默认 Agent Preset', followDefault: '跟随默认', maxChars: '单条回复最大字符数',
   allowedSenders: '允许对话的用户 ID', sendersHint: '每行一个 ID。飞书使用 open_id，QQ 使用 user_openid / member_openid。未获授权的用户会收到自己的 ID，不会创建 AI 会话。通过扫码绑定的账号自动允许。',
   newSessionsHint: '工作区须是已存在的目录，可先在工作区中创建。工作区和 Agent Preset 只影响新会话；已有聊天发送 /new 后生效。', titlePrefix: '会话标题显示渠道前缀',
-  oneOnline: '1 / 1 在线', oneConfigured: '已接入 1 个', callbackTransport: 'HTTP 回调', weixinTransport: 'iLink 长轮询', weixinAccount: '微信机器人账号',
+  addBot: '添加机器人', botCount: '已接入 {count} 个', newBot: '新机器人', callbackTransport: 'HTTP 回调', weixinTransport: 'iLink 长轮询', weixinAccount: '微信机器人账号',
   online: '运行正常', ready: '凭据已验证', disabled: '已暂停', unchecked: '尚未检查', idle: '未连接', expired: '连接已失效', login: '等待扫码', waiting: '等待扫码确认', error: '连接异常',
   lastChecked: '最近检查', check: '检查连接', checking: '检查中…', pause: '暂停接入', resume: '恢复接入', remove: '移除接入',
   removeTitle: '移除这个机器人？', removeHint: '这会停止接入，清除保存的机器人凭据和 IM 聊天绑定。已创建的 AI 会话仍会保留。', keep: '保留机器人', confirmRemove: '确认移除',
@@ -66,7 +66,7 @@ export const zh = {
   scanStep1: '打开微信，使用“扫一扫”扫描二维码', scanStep2: '在手机上确认机器人登录', scanStep3: '连接成功后，向机器人发送第一条消息', refreshQr: '刷新二维码',
   save: '保存配置', saved: '配置已保存', saving: '处理中…', discard: '放弃修改', cancel: '取消', failed: '配置保存失败或已被修改。输入已保留，请检查后重试。',
   unavailable: '配置暂不可用，请确认插件已安装并批准启用。', routeFailed: '连接服务暂不可用，请检查插件的网络和 Webhook 权限后重试。',
-  setupHelp: '接入说明', permissions: '插件需要浏览器模块、外部网络、Webhook 路由、持久存储、会话管理和环境后台权限。', singleBotHint: '此版本每个渠道接入一个机器人。三个渠道均支持扫码；飞书和 QQ 也支持凭据与 HTTP 回调接入。',
+  setupHelp: '接入说明', permissions: '插件需要浏览器模块、外部网络、Webhook 路由、持久存储、会话管理和环境后台权限。', botsHint: '每个渠道可以接入多个机器人，各自有独立的凭据、连接、设置和会话。三个渠道均支持扫码；飞书和 QQ 也支持凭据与 HTTP 回调接入，每个机器人有自己的回调地址。',
 };
 export const en = {
   email: 'Email', emailEmptyTitle: 'Connect your mailbox', emailTransport: 'IMAP inbox · SMTP replies',
@@ -128,7 +128,7 @@ export const en = {
   moreSettings: 'More settings', general: 'General', access: 'Access', back: 'Back to bot list', displayName: 'Bot alias', workspace: 'Workspace', agentPreset: 'Agent Preset', defaultPreset: 'Default Agent Preset', followDefault: 'Follow default', maxChars: 'Maximum characters per reply',
   allowedSenders: 'Allowed user IDs', sendersHint: 'One ID per line. Use Feishu open_id or QQ user_openid / member_openid. Users without access receive their own ID without opening an AI session. Accounts that bind through QR are automatically allowed.',
   newSessionsHint: 'Use an existing workspace directory; create it in the workspace first if needed. Workspace and Agent Preset changes apply to new sessions. Send /new in an existing chat to use them.', titlePrefix: 'Prefix session titles with the channel',
-  oneOnline: '1 / 1 online', oneConfigured: '1 bot configured', callbackTransport: 'HTTP callback', weixinTransport: 'iLink long polling', weixinAccount: 'WeChat bot account',
+  addBot: 'Add bot', botCount: '{count} bots configured', newBot: 'New bot', callbackTransport: 'HTTP callback', weixinTransport: 'iLink long polling', weixinAccount: 'WeChat bot account',
   online: 'Running normally', ready: 'Credentials verified', disabled: 'Paused', unchecked: 'Not checked yet', idle: 'Not connected', expired: 'Connection expired', login: 'Waiting for scan', waiting: 'Waiting for confirmation', error: 'Connection error',
   lastChecked: 'Last checked', check: 'Check connection', checking: 'Checking…', pause: 'Pause', resume: 'Resume', remove: 'Remove bot',
   removeTitle: 'Remove this bot?', removeHint: 'This stops the connection and clears saved bot credentials and IM chat bindings. Existing AI sessions are retained.', keep: 'Keep bot', confirmRemove: 'Confirm removal',
@@ -136,5 +136,5 @@ export const en = {
   scanStep1: 'Open WeChat and scan this code', scanStep2: 'Confirm the bot login on your phone', scanStep3: 'Send the bot your first message after it connects', refreshQr: 'Refresh QR code',
   save: 'Save configuration', saved: 'Configuration saved', saving: 'Working…', discard: 'Discard changes', cancel: 'Cancel', failed: 'The configuration could not be saved or changed elsewhere. Your input was kept; review it and retry.',
   unavailable: 'Configuration is unavailable. Install, approve and enable the plugin first.', routeFailed: 'The connection service is unavailable. Check the plugin network and Webhook permissions, then retry.',
-  setupHelp: 'Setup details', permissions: 'The plugin requires browser module, external network, Webhook routes, persistent storage, session management and environment background access.', singleBotHint: 'This version connects one bot per channel. All three support QR setup; Feishu and QQ also support credentials with HTTP callbacks.',
+  setupHelp: 'Setup details', permissions: 'The plugin requires browser module, external network, Webhook routes, persistent storage, session management and environment background access.', botsHint: 'Each channel can connect several bots, each with its own credentials, connection, settings and Sessions. All three support QR setup; Feishu and QQ also support credentials with HTTP callbacks, and each bot has its own callback URL.',
 };

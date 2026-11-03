@@ -4,6 +4,7 @@ import {bytes, fromHex, header, hex, json, readBody, tokenCache} from './shared.
 import {botSettings, channelSettings, managementKey, registerModelCatalog} from './management.js';
 
 import {connectionMode, qrAccount} from './qr-account.js';
+import {botEntry, botsOf} from './bots.js';
 import {qqQr} from './qr-providers.js';
 import {qqConnection} from './channel-sockets.js';
 
@@ -26,22 +27,28 @@ async function keys(secret) {
 const concat = (...parts) => {const result = new Uint8Array(parts.reduce((size, part) => size + part.length, 0)); let offset = 0; for (const part of parts) {result.set(part, offset); offset += part.length;} return result;};
 
 /**
- * QQ official bots over the HTTP callback: Ed25519-signed events at /qq,
+ * QQ official bots over the HTTP callback: Ed25519-signed events at /<bot key>,
  * passive replies to C2C and group @ messages through the v2 message API.
  */
 export const name = 'dsh-im-qq';
 export const inject = ['im', 'webServer', 'storageDomain', 'weftConnections'];
-export const Config = Schema.object({
-  ...botSettings(), managementKey: managementKey(), connectionMode: connectionMode(),
-  enabled: Schema.boolean().default(false).description('Receive callback events at /qq and reply through the QQ bot API.'),
+const fields = () => ({
+  ...botSettings(), connectionMode: connectionMode(),
+  enabled: Schema.boolean().default(false).description('Receive callback events at /<bot key> and reply through the QQ bot API.'),
   appId: Schema.string().default('').description('AppID of the bot.'),
   appSecret: Schema.string().role('secret').default('').description('AppSecret; it also signs and verifies callbacks.'),
   allowedSenders: Schema.array(Schema.string()).default([]).description('user_openid / member_openid values allowed to talk to the bot.'),
   maxChars: Schema.natural().min(200).max(5000).default(2000),
 });
+export const Config = botEntry(fields, {managementKey: managementKey()});
 
 export async function apply(ctx, config) {
-  registerModelCatalog(ctx, 'qq', config);
+  for (const bot of botsOf(config, 'qq', ['managementKey'])) await start(ctx, bot.key, bot.config);
+}
+
+/** One QQ bot; `bot` is its local key. */
+async function start(ctx, bot, config) {
+  registerModelCatalog(ctx, bot, config.managementKey);
   const requestToken = async credentials => {
     if (!credentials?.appId || !credentials.appSecret) throw new Error('QQ credentials are required');
     const response = await fetch(TOKEN, {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({appId: credentials.appId, clientSecret: credentials.appSecret})});
@@ -58,16 +65,16 @@ export async function apply(ctx, config) {
     if (payload.t === 'C2C_MESSAGE_CREATE') {
       const openid = event.author?.user_openid;
       if (!openid || typeof event.content !== 'string' && !attachments.length) return;
-      await ctx.im.receive({channel: 'qq', conversation: 'c2c:' + openid, sender: openid, text: event.content ?? '', attachments, messageId: event.id,
+      await ctx.im.receive({channel: bot, conversation: 'c2c:' + openid, sender: openid, text: event.content ?? '', attachments, messageId: event.id,
         target: {kind: 'c2c', id: openid, msgId: event.id}});
     } else if (payload.t === 'GROUP_AT_MESSAGE_CREATE') {
       const group = event.group_openid, member = event.author?.member_openid;
       if (!group || !member || typeof event.content !== 'string' && !attachments.length) return;
-      await ctx.im.receive({channel: 'qq', conversation: 'group:' + group, sender: member, group: true, text: (event.content ?? '').replace(/<@!?[^>]+>/g, '').trim(), attachments, messageId: event.id,
+      await ctx.im.receive({channel: bot, conversation: 'group:' + group, sender: member, group: true, text: (event.content ?? '').replace(/<@!?[^>]+>/g, '').trim(), attachments, messageId: event.id,
         target: {kind: 'group', id: group, msgId: event.id}});
     }
   };
-  const account = await qrAccount(ctx, 'qq', config, {...qqQr, validate: requestToken, changed: () => token.clear(),
+  const account = await qrAccount(ctx, bot, config, {...qqQr, validate: requestToken, changed: () => token.clear(),
     socket: () => qqConnection(() => token.get(), receive)});
   // A disabled channel still closes the gateway connection it may have left open.
   if (!config.enabled) {account.launch(); return;}
@@ -87,7 +94,7 @@ export async function apply(ctx, config) {
     return seq;
   };
   const messagePath = target => target.kind === 'group' ? `/v2/groups/${encodeURIComponent(target.id)}` : `/v2/users/${encodeURIComponent(target.id)}`;
-  ctx.effect(() => ctx.im.channel('qq', {
+  ctx.effect(() => ctx.im.channel(bot, {kind: 'qq',
     ...channelSettings(config, () => account.owner(), () => account.credentials()?.appId),
     maxChars: config.maxChars,
     typingInterval: 30_000,
@@ -109,14 +116,14 @@ export async function apply(ctx, config) {
       // The passive window closed during a long turn: send an active message instead.
       catch {await post(path, {content: text, msg_type: 0});}
     },
-  }), 'dsh-im qq channel');
+  }), `dsh-im ${bot} channel`);
 
   account.launch();
   if (config.connectionMode === 'qr') return;
   if (!config.appSecret) throw new Error('QQ AppSecret is required');
   const signing = keys(config.appSecret);
   void signing.catch(() => {});
-  ctx.effect(() => ctx.webServer.register({kind: 'exact', path: '/qq', handler: async (request, response) => {
+  ctx.effect(() => ctx.webServer.register({kind: 'exact', path: `/${bot}`, handler: async (request, response) => {
     if (request.method !== 'POST') {json(response, 405, {error: 'method not allowed'}); return;}
     const raw = await readBody(request);
     let payload;
@@ -135,5 +142,5 @@ export async function apply(ctx, config) {
     }
     json(response, 200, {op: 12, d: 0});
     await receive(payload);
-  }}), 'dsh-im qq route');
+  }}), `dsh-im ${bot} route`);
 }

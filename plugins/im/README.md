@@ -9,10 +9,10 @@ Connects Feishu, WeChat, QQ and email conversations to DeepSeek Harness Sessions
 | Entry | Role |
 |---|---|
 | `im-core` (`@weft/dsh-im/core`) | The `im` service: one Session per conversation, deduplicated prompts, `/new` `/stop` `/help`, and delivery of each finished turn from a durable cursor |
-| `im-feishu` | Feishu / Lark QR app creation and outbound WebSocket; manual event subscription at `/feishu` |
-| `im-weixin` | WeChat iLink: QR login at `/weixin/login?key=…`, long-polled messages, replies with the user's context token |
+| `im-feishu` | Feishu / Lark QR app creation and outbound WebSocket; manual event subscription at `/feishu` (`/<bot key>` for an added bot) |
+| `im-weixin` | WeChat iLink: QR login at `/weixin/login?key=…` (`/<bot key>/login` for an added account), long-polled messages, replies with the user's context token |
 | `im-email` | Generic IMAP inbox and SMTP threaded replies, with TLS/STARTTLS and attachments |
-| `im-qq` | QQ QR bot creation and outbound WebSocket; manual HTTP callback at `/qq` (Ed25519) |
+| `im-qq` | QQ QR bot creation and outbound WebSocket; manual HTTP callback at `/qq` (`/<bot key>` for an added bot; Ed25519) |
 
 Channels inject `im`; other plugins can do the same to add a channel. Every channel is disabled until configured. By default only listed senders and the QR binding owner may talk to the bot. The access page can explicitly enable open access separately for private and group chats, and control command permission per user. A refused sender is told their id so an administrator can add it.
 
@@ -40,9 +40,9 @@ In **More settings → General**, edit the bot alias, workspace, Agent Preset, r
 
 New IM Sessions use the native content-based automatic title, labeled `微信 · …`, `飞书 · …` or `QQ · …`, instead of pinning a raw chat/user ID. In the Session tree and search results, the loaded channel logo replaces the visual text prefix; the full title remains accessible, searchable and editable. Native status dots and row actions are preserved. Disabling the title-prefix option applies to new Sessions. Older `[weixin]`, `[feishu]` and `[qq]` titles also receive logos; their pinned titles remain editable, or send `/new` to start with automatic titles. The title decorator ignores inherited prompts in Web forks. Disabling the bundle removes its visual decoration and restores the plain text prefixes.
 
-This Worker version connects one bot per channel and supports Feishu, WeChat and QQ. All three support QR setup; Feishu/QQ retain manual credentials and HTTP callbacks as an alternative. The Worker uses standard fetch, WebCrypto and the existing approved WebSocket egress, without requiring the reference project's Node SDK runtime. QR-created Feishu apps request message events, resource access and CardKit write permission. Existing apps must grant `im:resource` and `cardkit:card:write` and publish the updated permissions to use attachments and streaming cards. Secret inputs are write-only: leaving them blank preserves saved credentials. Existing per-entry configuration forms remain available for advanced settings.
+Each channel connects one or more bots (see [Several bots per channel](#several-bots-per-channel-090)) and supports Feishu, WeChat and QQ. All three support QR setup; Feishu/QQ retain manual credentials and HTTP callbacks as an alternative. The Worker uses standard fetch, WebCrypto and the existing approved WebSocket egress, without requiring the reference project's Node SDK runtime. QR-created Feishu apps request message events, resource access and CardKit write permission. Existing apps must grant `im:resource` and `cardkit:card:write` and publish the updated permissions to use attachments and streaming cards. Secret inputs are write-only: leaving them blank preserves saved credentials. Existing per-entry configuration forms remain available for advanced settings.
 
-中文操作：从左侧选择渠道。微信、飞书和 QQ 均可点击「扫码接入机器人」，飞书／QQ 也保留「手动接入」；接入后在机器人卡片上检查连接、暂停／恢复或移除。通过「更多设置」修改别名、工作区、Agent Preset、消息处理、访问权限与上下文增强；右上角齿轮打开通用设置。每个渠道当前支持一个机器人。飞书／QQ 扫码后通过长连接收消息，无需配置 HTTP 回调；只有手动接入需要在平台后台配置回调。飞书仍需按平台要求确认权限、发布或审批。扫码凭据仅保存在服务端，取消或失败不会覆盖已有绑定。
+中文操作：从左侧选择渠道。微信、飞书和 QQ 均可点击「扫码接入机器人」，飞书／QQ 也保留「手动接入」；接入后在机器人卡片上检查连接、暂停／恢复或移除。通过「更多设置」修改别名、工作区、Agent Preset、消息处理、访问权限与上下文增强；右上角齿轮打开通用设置。每个渠道可以接入多个机器人，见下文「同渠道多个机器人（0.9.0）」。飞书／QQ 扫码后通过长连接收消息，无需配置 HTTP 回调；只有手动接入需要在平台后台配置回调。飞书仍需按平台要求确认权限、发布或审批。扫码凭据仅保存在服务端，取消或失败不会覆盖已有绑定。
 
 0.7.3 支持按渠道配置工作区权限：「更多设置 → 通用 → 工作区权限」可选「跟随默认」「仅可查看」「工作区内修改」「完全权限」，对应宿主的原生权限预设 `read-only`、`workspace-write`、`danger-full-access`。默认跟随宿主新会话设置；仅可查看拦截写入，工作区内修改限制写入范围并在扩大权限时请求审批，完全权限不请求审批。设置在原生 Session 创建期间、第一条消息进入前写入并持久化；不修改宿主默认值或已有会话权限。保存后发送 `/new` 将聊天切换到使用新设置的会话。用户访问白名单与聊天命令权限仍在「访问设置」中单独配置。此功能需要同时部署对应 Weft 宿主与更新 IM 插件。
 
@@ -86,3 +86,11 @@ Validation runs in the `Test` GitHub Actions workflow on the `ci` branch. The un
 同一发送者的 References / In-Reply-To 关联同一会话，不同发送者隔离。Harness 完成后发送一封纯文本邮件（保留原始 Markdown），不是逐段发信；保留邮件主题、References 和 In-Reply-To，只回原始 From，不使用 Reply-To、不抄送其它收件人。正文可直接使用 `/new`、`/stop` 等命令。自动回复、退信、邮件列表和自身输出会被过滤；投递结果不确定时保留记录并停止自动重发，需管理员检查邮箱。
 
 邮件原始大小限制 24 MiB，正文最多 100,000 字符；附件每个 10 MiB、每封最多 10 个、总计 20 MiB，沿用 IM 附件导出及 `im_send_file` 回传。超过 24 MiB 的整封邮件跳过；超限附件按共享桥的错误提示处理。当前每个环境配置一个邮箱。
+
+## Several bots per channel (0.9.0)
+
+A channel entry holds its first bot at the top level of its configuration and each added bot under `bots`, keyed by `<channel>_<six hex digits>` (for example `feishu_0a1b2c`). That key never changes: it names the bot's routes (`/<key>/status`, `/<key>/login`, and the manual callback `/<key>`), its storage, its gateway connection and its IM conversations. The first bot's key is the channel name, so configuration, conversations and callback URLs from earlier versions keep working without migration. Every bot has its own credentials, connection, alias, workspace, Agent Preset, model, permission, access and context settings, and two bots in the same chat keep separate Sessions. The channel's management key (WeChat: login key) is shared by its bots. Removing an added bot closes its connection, forgets its conversations and deletes its configuration; its native Sessions remain.
+
+## 同渠道多个机器人（0.9.0）
+
+渠道配置的顶层是第一个机器人，新增的机器人保存在 `bots` 下，键为 `<渠道>_<6 位十六进制>`（例如 `feishu_0a1b2c`）。这个键不会改变，决定机器人的路由（`/<键>/status`、`/<键>/login`，手动接入的回调地址 `/<键>`）、存储、长连接和 IM 会话。第一个机器人的键就是渠道名，所以旧版本的配置、会话和回调地址无需迁移。每个机器人有独立的凭据、连接、别名、工作区、Agent Preset、模型、权限、访问控制和上下文增强；两个机器人在同一个群里也各自使用独立的会话。同一渠道的机器人共用该渠道的管理密钥（微信为登录密钥）。移除新增的机器人会关闭它的连接、清除它的会话绑定并删除它的配置，原生会话保留。在设置页的渠道中点击「添加机器人」，再扫码或手动接入。

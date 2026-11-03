@@ -7,10 +7,13 @@ const fingerprint = text => {let hash = 0x811c9dc5; for (const char of String(te
 export const connectionMode = () => Schema.union(['manual', 'qr']).default('manual').description('Manual HTTP callback or QR-created bot with an outbound WebSocket.');
 const record = {parse: value => value};
 
-/** One channel-owned account. Device codes and encryption keys never leave this activation. */
-export async function qrAccount(ctx, channel, config, provider) {
-  const domain = await ctx.storageDomain.open({name: `im_${channel}_account`, version: 1, tables: {}, global: {schema: record, initial: {}}});
-  ctx.effect(() => () => domain.close(), `${channel} account storage`);
+/**
+ * One bot's account; `bot` is its local key, which names its storage, gateway
+ * connection and routes. Device codes and encryption keys never leave this activation.
+ */
+export async function qrAccount(ctx, bot, config, provider) {
+  const domain = await ctx.storageDomain.open({name: `im_${bot}_account`, version: 1, tables: {}, global: {schema: record, initial: {}}});
+  ctx.effect(() => () => domain.close(), `${bot} account storage`);
   // Switching back to manual credentials removes the previous QR identity.
   if (config.connectionMode !== 'qr' && domain.global.get().credentials) await domain.global.set({});
   let attempt, connection, writes = Promise.resolve();
@@ -21,12 +24,12 @@ export async function qrAccount(ctx, channel, config, provider) {
     if (attempt) {attempt.task?.abort(); attempt = undefined;}
   };
   /** The socket lives in the shared gateway; only an explicit stop closes it. */
-  const stop = async () => {connection = undefined; await ctx.weftConnections.close(channel).catch(() => {});};
+  const stop = async () => {connection = undefined; await ctx.weftConnections.close(bot).catch(() => {});};
   const launch = () => {
     provider.changed?.();
     if (!config.enabled || config.connectionMode !== 'qr' || !stored()) {void stop(); return;}
     const current = stored();
-    connection = ctx.weftConnections.socket(channel, {version: `${current.appId}:${fingerprint(current.appSecret)}`, ...provider.socket(current)});
+    connection = ctx.weftConnections.socket(bot, {version: `${current.appId}:${fingerprint(current.appSecret)}`, ...provider.socket(current)});
   };
   const health = async () => {
     const status = await connection?.status().catch(() => null);
@@ -51,7 +54,7 @@ export async function qrAccount(ctx, channel, config, provider) {
       const device = await provider.start(abort.signal, config.domain);
       abort.signal.throwIfAborted();
       Object.assign(current, {state: 'login', publicUrl: device.url, expiresAt: device.expiresAt});
-      current.task = background(ctx, `${channel} registration`, async signal => {
+      current.task = background(ctx, `${bot} registration`, async signal => {
         try {
           for (let interval = device.interval; !signal.aborted;) {
             await sleep(interval, signal);
@@ -72,7 +75,7 @@ export async function qrAccount(ctx, channel, config, provider) {
             });
             if (attempt !== current || signal.aborted) return;
             if (credentials()?.appId !== result.credentials.appId) return;
-            await ctx.im.clear(channel);
+            await ctx.im.clear(bot);
             if (attempt !== current || signal.aborted) return;
             attempt = undefined; launch(); return;
           }
@@ -82,20 +85,20 @@ export async function qrAccount(ctx, channel, config, provider) {
     } catch (error) {if (attempt === current) {current.state = 'error'; current.error = 'qrFailed';} throw error;}
     finally {starting = undefined;}
   })();
-  const route = (path, method, run) => ctx.effect(() => ctx.webServer.register({kind: 'exact', path: `/${channel}/${path}`, handler: async (request, response) => {
+  const route = (path, method, run) => ctx.effect(() => ctx.webServer.register({kind: 'exact', path: `/${bot}/${path}`, handler: async (request, response) => {
     response.setHeader('cache-control', 'no-store');
     if (!config.managementKey || header(request, 'authorization') !== `Bearer ${config.managementKey}`) {json(response, 403, {error: 'management key required'}); return;}
     if (request.method !== method) {json(response, 405, {error: `${method} required`}); return;}
     try {json(response, 200, await run());} catch {json(response, 502, {error: 'channel_operation_failed'});}
-  }}), `${channel} ${path}`);
+  }}), `${bot} ${path}`);
   route('status', 'GET', async () => ({...await view(true), ...provider.status?.()}));
   route('login', 'POST', () => {if (!config.enabled || config.connectionMode !== 'qr') throw new Error('QR setup is disabled'); return begin();});
   route('cancel', 'POST', async () => {cancel(); return view();});
   route('disconnect', 'POST', async () => {
     cancel(); await stop();
     await persist(() => domain.global.set({})); provider.changed?.();
-    await ctx.im.clear(channel); return {state: 'idle'};
+    await ctx.im.clear(bot); return {state: 'idle'};
   });
-  ctx.effect(() => () => {cancel();}, `${channel} account lifecycle`);
+  ctx.effect(() => () => {cancel();}, `${bot} account lifecycle`);
   return {credentials, launch, owner: () => config.connectionMode === 'qr' ? stored()?.owner : undefined};
 }

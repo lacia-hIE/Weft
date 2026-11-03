@@ -43,16 +43,19 @@ export function channelSettings(config, owner, botId) {
   };
 }
 
-/** Catalog metadata contains no credentials and is protected by the channel's management capability. */
-export function registerModelCatalog(ctx, channel, config) {
-  ctx.effect(() => ctx.webServer.register({kind: 'exact', path: `/${channel}/catalog`, handler: async (request, response) => {
+/**
+ * Catalog metadata contains no credentials and is protected by the channel's management capability.
+ * @param {string} bot - the bot's local key, which prefixes the route.
+ * @param {string} key - the channel's management capability; empty refuses every request.
+ */
+export function registerModelCatalog(ctx, bot, key) {
+  ctx.effect(() => ctx.webServer.register({kind: 'exact', path: `/${bot}/catalog`, handler: async (request, response) => {
     response.setHeader('cache-control', 'no-store');
-    const key = channel === 'weixin' ? config.loginKey : config.managementKey;
     if (!key || header(request, 'authorization') !== `Bearer ${key}`) {json(response, 403, {error: 'management key required'}); return;}
     if (request.method !== 'GET') {json(response, 405, {error: 'GET required'}); return;}
     try {json(response, 200, await ctx.im.catalog());}
     catch {json(response, 502, {error: 'model_catalog_failed'});}
-  }}), `${channel} model catalog`);
+  }}), `${bot} model catalog`);
 }
 
 export const managementKey = () => Schema.string().role('secret').default('').description('Capability for the settings page connection checks.');

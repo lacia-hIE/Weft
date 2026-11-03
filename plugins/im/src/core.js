@@ -29,8 +29,10 @@ function textOf(message) {
  * deduplicated by channel message id, and each finished turn delivered back
  * through the channel that owns the conversation.
  *
- * Channels register with `ctx.im.channel(name, {send, maxChars, allows})` and
- * hand inbound messages to `ctx.im.receive(...)`.
+ * Each bot registers with `ctx.im.channel(bot, {kind, send, maxChars, allows})`
+ * under its local key and hands inbound messages to `ctx.im.receive(...)` with
+ * that key as `channel`; conversations are keyed by bot, so two bots of one
+ * channel never share a Session.
  */
 class ImBridge {
   constructor(ctx, config) {
@@ -58,12 +60,12 @@ class ImBridge {
   }
 
   /**
-   * Register a channel transport for this plugin's lifetime.
-   * @param {string} name - channel id, such as `feishu`.
-   * @param {{send(target: unknown, text: string): Promise<void>, maxChars?: number, allows?(sender: string): boolean}} channel
+   * Register one bot's transport for this plugin's lifetime.
+   * @param {string} name - the bot's local key: its channel, such as `feishu`, or `<channel>_<hex>` for an added bot.
+   * @param {{kind: string, send(target: unknown, text: string): Promise<void>, maxChars?: number, allows?(sender: string): boolean}} channel - `kind` is the channel the bot belongs to.
    */
   channel(name, channel) {
-    if (this.channels.has(name)) throw new Error(`IM channel ${name} is registered twice`);
+    if (this.channels.has(name)) throw new Error(`IM bot ${name} is registered twice`);
     this.channels.set(name, channel);
     void this.ready.then(() => {
       if (this.closed || this.channels.get(name) !== channel) return;
@@ -250,12 +252,12 @@ class ImBridge {
     const stableId = await requestId(seenKey);
     // Durable native prompt provenance lets the Host decorate automatic titles
     // without pinning an opaque sender id as an explicit user rename.
-    const id = row.titlePrefix ? `${message.channel}-${stableId}` : stableId;
+    const id = row.titlePrefix ? `${channel.kind}-${stableId}` : stableId;
     row = await this.conversations.update(key, current => ({...current, target: message.target, group: !!message.group, pending: [...new Set([...(current.pending ?? []), id])].slice(-32)}));
     const body = command === 'steer' ? text.replace(/^\/steer\b\s*/i, '') : text;
     const content = message.group && message.senderName ? `${message.senderName}：${body}` : body;
     const captured = captureContextEnhancementSource({botId: channel.botId?.(), getSettings: () => channel.contextEnhancement}, message.group ? 'group' : 'direct', withSentAt(() => ({
-      channel: message.channel, senderId: message.sender, senderName: message.senderName,
+      channel: channel.kind, senderId: message.sender, senderName: message.senderName,
       conversationTitle: message.title, chatId: message.chatId ?? message.conversation, threadId: message.threadId,
     }), message.sentAt));
     const mode = command === 'steer' || channel.busyMessageMode === 'steer' && channel.access?.(message, true)?.allowed !== false ? 'steer' : 'queue';

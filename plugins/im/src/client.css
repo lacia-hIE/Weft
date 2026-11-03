@@ -37,6 +37,7 @@
 .weft-im .dim-divider { width: 1px; align-self: stretch; background: var(--dsw-alias-border-l1, #eef0f3); }
 .weft-im .dim-panel { min-width: 0; container-type: inline-size; }
 .weft-im .dim-panel .dim-channelPage { min-width: 0; width: 100%; max-width: none; display: flex; flex-direction: column; gap: 12px; padding: 0 0 24px; color: var(--dsw-alias-label-primary, #1f2329); box-sizing: border-box; }
+.weft-im .dim-panel .dim-botPage { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .weft-im .dim-panel .dim-surfaceCard { position: relative; overflow: hidden; border: 1px solid var(--dsw-alias-border-l2, #e5e6eb); border-radius: 14px; background: var(--dsw-alias-bg-layer-1, #fff); box-shadow: 0 1px 2px rgb(31 35 41 / 3%); }
 .weft-im .dim-panel .dim-surfaceCard::before { display: none; }
 .weft-im .dim-panel .dim-surfaceBody { padding: 24px; }

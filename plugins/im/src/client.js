@@ -17,6 +17,13 @@ const logos = {weixin: WeixinLogoGlyph, feishu: FeishuLogoGlyph, qq: QqLogoGlyph
 const namespace = channel => `installed/${PACKAGE}/im-${channel}`;
 const secretFields = ['appSecret', 'verificationToken', 'encryptKey', 'imapPassword', 'smtpPassword'];
 const keyField = channel => channel === 'weixin' ? 'loginKey' : 'managementKey';
+/** Entry fields shared by every bot of a channel; all other fields belong to one bot. */
+const entryFields = ['loginKey', 'managementKey'];
+/** Settings path of a field: the first bot (`bot` null) keeps its fields at the top level, an added bot under `bots`. */
+const pathOf = (bot, field) => bot && !entryFields.includes(field) ? ['bots', bot, field] : [field];
+const botValue = (bot, value) => (bot ? value?.bots?.[bot] : value) ?? {};
+const newBotKey = channel => `${channel}_${Array.from(crypto.getRandomValues(new Uint8Array(3)), byte => byte.toString(16).padStart(2, '0')).join('')}`;
+const configuredOf = (channel, value) => value?.accountConfigured ?? (channel === 'weixin' ? !!value?.enabled : !!(value?.appId || value?.address));
 
 /** The deployment mount identifies the tenant and the selected environment. */
 export function hookBase(base = document.baseURI) {
@@ -33,8 +40,8 @@ export function apply(ctx) {
   ctx.effect(() => ctx.locale.register(NS, {zh, en}), 'dsh-im dictionaries');
   const forms = Object.fromEntries(channels.map(channel => [channel, {
     scope: ctx.configForms.get(namespace(channel)),
-    hasSecret: field => ctx.configForms.describe().getSnapshot().view?.namespaces.find(row => row.ns === namespace(channel))?.secrets
-      ?.some(secret => secret.path.length === 1 && secret.path[0] === field && secret.set) === true,
+    hasSecret: path => ctx.configForms.describe().getSnapshot().view?.namespaces.find(row => row.ns === namespace(channel))?.secrets
+      ?.some(secret => secret.path.length === path.length && secret.path.every((key, index) => key === path[index]) && secret.set) === true,
   }]));
   const core = ctx.configForms.get(`installed/${PACKAGE}/im-core`);
   const directories = workspaceDirectories(ctx), presets = agentPresets(ctx);
@@ -63,9 +70,16 @@ function Field({label, value, onChange, secret, ...props}) {
     h('input', {...props, type: secret ? 'password' : 'text', autoComplete: 'off', value: value ?? '', onChange: onChange ? event => onChange(event.target.value) : undefined}));
 }
 
-/** Atomic, revision-fenced edits retain drafts on a refused write and never replay redacted secrets. */
-function useForm(scope, t) {
-  const snapshot = React.useSyncExternalStore(React.useCallback(fn => scope.subscribe(fn), [scope]), React.useCallback(() => scope.getSnapshot(), [scope]));
+function useSnapshot(scope) {
+  return React.useSyncExternalStore(React.useCallback(fn => scope.subscribe(fn), [scope]), React.useCallback(() => scope.getSnapshot(), [scope]));
+}
+
+/**
+ * Atomic, revision-fenced edits retain drafts on a refused write and never replay redacted secrets.
+ * `bot` names an added bot whose fields live under `bots`; null edits the entry's top-level fields.
+ */
+function useForm(scope, t, bot = null) {
+  const snapshot = useSnapshot(scope);
   const [draft, setDraft] = React.useState({}), revision = React.useRef();
   const [busy, setBusy] = React.useState(false), [error, setError] = React.useState(), [message, setMessage] = React.useState();
   const lock = React.useRef(false);
@@ -80,14 +94,15 @@ function useForm(scope, t) {
       if (values.accessPolicy != null) values.accessPolicy = validateAccessPolicy(values.accessPolicy);
       if (values.contextEnhancement) values.contextEnhancement = validateContextEnhancementConfig(values.contextEnhancement);
       if (includeDraft) for (const field of secretFields) if (values[field] === '') delete values[field];
-      const ops = Object.entries(values).map(([field, value]) => ({op: 'set', path: [field], value}));
+      const ops = Object.entries(values).map(([field, value]) => ({op: 'set', path: pathOf(bot, field), value}));
       if (ops.length && !await scope.mutate(ops, includeDraft ? revision.current ?? snapshot.revision : scope.getSnapshot().revision)) throw new Error(t('failed'));
       if (includeDraft) {setDraft({}); revision.current = undefined; setMessage(t('saved'));}
       return true;
     } catch (reason) {setError(reason instanceof Error ? reason.message : String(reason)); return false;}
     finally {lock.current = false; setBusy(false);}
   };
-  return {snapshot, draft, value: {...snapshot.value, ...draft}, dirty: Object.keys(draft).length > 0, busy, error, message, edit, discard, commit, setError};
+  const current = botValue(bot, snapshot.value);
+  return {snapshot, current, draft, value: {...current, ...draft}, dirty: Object.keys(draft).length > 0, busy, error, message, edit, discard, commit, setError};
 }
 
 function ImSettings({forms, core, directories, presets, t}) {
@@ -103,7 +118,7 @@ function ImSettings({forms, core, directories, presets, t}) {
   };
   return h('section', {className: 'weft-im dim-page', 'aria-label': t('title')},
     h('header', {className: 'dim-title'},
-      h('div', {className: 'dim-brand'}, h('div', {className: 'dim-brandHeading'}, h('strong', {className: 'dim-brandName'}, 'DSH-IM'), h('span', {className: 'dim-brandVersion'}, 'v0.8.0')), h('p', null, t('tagline'))),
+      h('div', {className: 'dim-brand'}, h('div', {className: 'dim-brandHeading'}, h('strong', {className: 'dim-brandName'}, 'DSH-IM'), h('span', {className: 'dim-brandVersion'}, 'v0.9.0')), h('p', null, t('tagline'))),
       h('div', {className: 'im-title-actions'},
         h('a', {href: 'https://github.com/xmanrui/dsh-im', target: '_blank', rel: 'noopener noreferrer', className: 'im-help'}, t('help')),
         h(Action, {'aria-label': t('generalSettings'), 'aria-pressed': selected === 'general', onClick: () => setSelected(selected === 'general' ? 'weixin' : 'general')}, h(Icon, {kind: 'settings'})))),
@@ -119,10 +134,11 @@ function ImSettings({forms, core, directories, presets, t}) {
         selected === 'general' ? h(GeneralSettings, {scope: core, presets, t}) : null)));
 }
 
-async function channelRequest(base, channel, key, path, method, t, signal) {
+/** One management request to a bot's routes; `route` is the bot's local key. */
+async function channelRequest(base, channel, route, key, path, method, t, signal) {
   for (let attempt = 0; ; attempt++) {
     signal?.throwIfAborted();
-    const response = await fetch(`${base}/${channel}/${path}`, {method, headers: {authorization: `Bearer ${key}`}, cache: 'no-store', ...(signal ? {signal} : {})});
+    const response = await fetch(`${base}/${route}/${path}`, {method, headers: {authorization: `Bearer ${key}`}, cache: 'no-store', ...(signal ? {signal} : {})});
     if ([403, 404, 503].includes(response.status) && attempt < 8) {
       await new Promise((resolve, reject) => {
         const done = () => {signal?.removeEventListener('abort', stop); resolve();};
@@ -137,34 +153,60 @@ async function channelRequest(base, channel, key, path, method, t, signal) {
   }
 }
 
+/**
+ * A channel's bots: the first bot at the entry's top level, then added bots.
+ * Every bot of the channel uses the entry's management capability, so it is held here.
+ */
 function Channel({channel, editor, active, directories, presets, t}) {
-  const form = useForm(editor.scope, t);
+  const snapshot = useSnapshot(editor.scope);
+  const [access, setAccess] = React.useState(), [adding, setAdding] = React.useState();
+  const added = Object.keys(snapshot.value?.bots ?? {});
+  // A new bot is shown before its first save; once saved it is one of the entry's bots.
+  React.useEffect(() => {if (adding && added.includes(adding)) setAdding(undefined);}, [adding, added.join()]);
+  if (snapshot.status !== 'ready') return h(Notice, null, t('unavailable'));
+  const firstConfigured = configuredOf(channel, snapshot.value);
+  const count = [snapshot.value, ...added.map(key => snapshot.value.bots[key])].filter(value => configuredOf(channel, value)).length;
+  const bots = [...added, ...(adding && !added.includes(adding) ? [adding] : [])];
+  const shared = {channel, editor, active, directories, presets, access, setAccess, t};
+  return h('div', {className: 'dim-channelPage'},
+    firstConfigured ? h('div', {className: 'im-channel-toolbar'},
+      h(Action, {kind: 'primary', disabled: !!adding || !snapshot.writable, onClick: () => setAdding(newBotKey(channel))}, t('addBot')),
+      h('span', {className: 'im-count'}, t('botCount', {count: String(count)}))) : null,
+    h(Bot, {...shared, bot: null, others: added.length > 0}),
+    bots.map(key => h(Bot, {...shared, key, bot: key, others: true, onDiscard: key === adding ? () => setAdding(undefined) : undefined})));
+}
+
+/** One bot of a channel; `bot` is an added bot's local key, or null for the first bot. */
+function Bot({channel, bot, others, onDiscard, editor, active, access, setAccess, directories, presets, t}) {
+  const form = useForm(editor.scope, t, bot);
+  const route = bot ?? channel;
   const [view, setView] = React.useState('list'), [settingsTab, setSettingsTab] = React.useState('general');
-  const [access, setAccess] = React.useState(), [status, setStatus] = React.useState(), [checkedAt, setCheckedAt] = React.useState();
+  const [status, setStatus] = React.useState(), [checkedAt, setCheckedAt] = React.useState();
   const [catalog, setCatalog] = React.useState();
   const [working, setWorking] = React.useState(false), [removing, setRemoving] = React.useState(false), [copied, setCopied] = React.useState(false);
   const task = React.useRef(), locked = React.useRef(false);
   const hydrated = React.useRef(false);
   const [generation, setGeneration] = React.useState(0);
   const id = React.useId();
-  const {snapshot, value, draft} = form;
+  const {snapshot, current, value, draft} = form;
   const base = hookBase();
-  const configured = snapshot.value?.accountConfigured ?? (channel === 'weixin' ? !!snapshot.value?.enabled : !!(snapshot.value?.appId || snapshot.value?.address));
-  const enabled = !!snapshot.value?.enabled;
+  const configured = configuredOf(channel, current);
+  const enabled = !!current.enabled;
   const busy = working || form.busy, disabled = busy || !snapshot.writable || snapshot.status !== 'ready';
   const state = !enabled ? 'disabled' : status?.state ?? 'unchecked';
   const connected = state === 'online';
+  const hasSecret = field => editor.hasSecret(pathOf(bot, field));
   const reset = () => {form.discard(); setView('list');};
   React.useEffect(() => () => task.current?.abort(), []);
   // Polling belongs to the selected panel; switching channels preserves its draft and QR capability.
   React.useEffect(() => {
-    if (!active || !access || !enabled || working || channel !== 'weixin' && snapshot.value.connectionMode !== 'qr') return;
+    if (!active || !access || !enabled || working || channel !== 'weixin' && current.connectionMode !== 'qr') return;
     const abort = new AbortController(); let timer;
     const read = async () => {
       try {
-        const next = await channelRequest(base, channel, access, 'status', 'GET', t, abort.signal);
+        const next = await channelRequest(base, channel, route, access, 'status', 'GET', t, abort.signal);
         if (abort.signal.aborted) return;
-        if (channel !== 'weixin' && next.botId && !editor.scope.getSnapshot().value?.accountConfigured) await form.commit({accountConfigured: true}, false);
+        if (channel !== 'weixin' && next.botId && !botValue(bot, editor.scope.getSnapshot().value).accountConfigured) await form.commit({accountConfigured: true}, false);
         setStatus(next); setCheckedAt(Date.now());
         if (next.state === 'online') setView(previous => previous === 'scan' ? 'list' : previous);
         if (['online', 'login', 'ready', 'connecting'].includes(next.state) || next.botId) timer = setTimeout(read, ['login', 'connecting'].includes(next.state) ? 2000 : 10000);
@@ -172,7 +214,7 @@ function Channel({channel, editor, active, directories, presets, t}) {
     };
     timer = setTimeout(read, 2000);
     return () => {abort.abort(); clearTimeout(timer);};
-  }, [access, active, enabled, working, generation, base, channel, snapshot.value.connectionMode, t]);
+  }, [access, active, enabled, working, generation, base, channel, route, current.connectionMode, t]);
 
   const perform = async operation => {
     if (locked.current) return;
@@ -182,21 +224,28 @@ function Channel({channel, editor, active, directories, presets, t}) {
       let key = access;
       if (!key || operation === 'scan' && !enabled) {
         key = crypto.randomUUID() + crypto.randomUUID();
-        if (!await form.commit({[keyField(channel)]: key, ...(operation === 'scan' ? {enabled: true, accountConfigured: channel === 'weixin' || snapshot.value.connectionMode === 'qr' && configured, ...(channel !== 'weixin' ? {connectionMode: 'qr'} : {})} : {})}, false)) return;
+        if (!await form.commit({[keyField(channel)]: key, ...(operation === 'scan' ? {enabled: true, accountConfigured: channel === 'weixin' || current.connectionMode === 'qr' && configured, ...(channel !== 'weixin' ? {connectionMode: 'qr'} : {})} : {})}, false)) return;
+        setAccess(key);
       }
-      if (operation === 'scan' && channel !== 'weixin' && (snapshot.value.connectionMode !== 'qr' || !enabled)) {
-        if (!await form.commit({connectionMode: 'qr', enabled: true, accountConfigured: snapshot.value.connectionMode === 'qr' && configured}, false)) return;
+      if (operation === 'scan' && channel !== 'weixin' && (current.connectionMode !== 'qr' || !enabled)) {
+        if (!await form.commit({connectionMode: 'qr', enabled: true, accountConfigured: current.connectionMode === 'qr' && configured}, false)) return;
       }
-      const next = await channelRequest(base, channel, key, operation === 'catalog' ? 'catalog' : operation === 'scan' ? 'login?reset=1' : operation === 'cancel' ? 'cancel' : operation === 'remove' ? 'disconnect' : 'status', ['check', 'catalog'].includes(operation) ? 'GET' : 'POST', t, abort.signal);
+      const next = await channelRequest(base, channel, route, key, operation === 'catalog' ? 'catalog' : operation === 'scan' ? 'login?reset=1' : operation === 'cancel' ? 'cancel' : operation === 'remove' ? 'disconnect' : 'status', ['check', 'catalog'].includes(operation) ? 'GET' : 'POST', t, abort.signal);
       if (abort.signal.aborted) return;
-      if (operation === 'catalog') {setCatalog(next); setAccess(key); return;}
+      if (operation === 'catalog') {setCatalog(next); return;}
       if (operation === 'remove') {
-        setAccess(undefined); setStatus(undefined);
-        if (await form.commit({enabled: false, accountConfigured: false, displayName: '', [keyField(channel)]: '', ...(channel === 'weixin' ? {} : channel === 'email' ? {address: '', imapPassword: '', smtpPassword: ''} : {appId: '', appSecret: '', ...(channel === 'feishu' ? {verificationToken: '', encryptKey: ''} : {})})}, false)) {setRemoving(false); reset();}
+        setStatus(undefined);
+        // An added bot leaves the entry; the first bot keeps its slot, and the shared capability while other bots use it.
+        const removed = bot
+          ? await editor.scope.mutate([{op: 'unset', path: ['bots', bot]}], editor.scope.getSnapshot().revision)
+          : await form.commit({enabled: false, accountConfigured: false, displayName: '', ...(others ? {} : {[keyField(channel)]: ''}), ...(channel === 'weixin' ? {} : channel === 'email' ? {address: '', imapPassword: '', smtpPassword: ''} : {appId: '', appSecret: '', ...(channel === 'feishu' ? {verificationToken: '', encryptKey: ''} : {})})}, false);
+        if (!removed) throw new Error(t('failed'));
+        if (!others) setAccess(undefined);
+        setRemoving(false); reset();
         return;
       }
-      setAccess(key); setStatus(next); setCheckedAt(Date.now()); setGeneration(value => value + 1);
-      if (channel !== 'weixin' && next.botId && !snapshot.value.accountConfigured) await form.commit({accountConfigured: true}, false);
+      setStatus(next); setCheckedAt(Date.now()); setGeneration(value => value + 1);
+      if (channel !== 'weixin' && next.botId && !current.accountConfigured) await form.commit({accountConfigured: true}, false);
       if (operation === 'scan') setView(next.state === 'online' ? 'list' : 'scan');
       if (operation === 'cancel') setView('list');
     } catch (reason) {if (!abort.signal.aborted) {if (operation === 'check') setStatus({state: 'error'}); form.setError(reason instanceof Error ? reason.message : String(reason));}}
@@ -205,39 +254,38 @@ function Channel({channel, editor, active, directories, presets, t}) {
   // A scan may finish while the page is closed. Recover the stored identity
   // through a fresh capability without exposing credentials to the browser.
   React.useEffect(() => {
-    if (!active || hydrated.current || access || working || form.busy || !enabled || snapshot.status !== 'ready' || !snapshot.writable || snapshot.value.connectionMode !== 'qr') return;
+    if (!active || hydrated.current || access || working || form.busy || !enabled || snapshot.status !== 'ready' || !snapshot.writable || current.connectionMode !== 'qr') return;
     hydrated.current = true; void perform('check');
-  }, [active, access, working, form.busy, enabled, snapshot.status, snapshot.writable, snapshot.value.connectionMode]);
+  }, [active, access, working, form.busy, enabled, snapshot.status, snapshot.writable, current.connectionMode]);
   const bind = async event => {
     event.preventDefault();
     if (channel === 'email') {
-      if (!value.address?.trim() || !value.imapHost?.trim() || !value.smtpHost?.trim() || ['imap', 'smtp'].some(prefix => !value[prefix + 'Password'] && !editor.hasSecret(prefix + 'Password'))) {form.setError(t('emailMissing')); return;}
-      if (await form.commit({enabled: true, accountConfigured: true})) {setStatus(undefined); setAccess(undefined); setView('list');}
+      if (!value.address?.trim() || !value.imapHost?.trim() || !value.smtpHost?.trim() || ['imap', 'smtp'].some(prefix => !value[prefix + 'Password'] && !hasSecret(prefix + 'Password'))) {form.setError(t('emailMissing')); return;}
+      if (await form.commit({enabled: true, accountConfigured: true})) {setStatus(undefined); setView('list');}
       return;
     }
-    if (!value.appId?.trim() || !value.appSecret && !(configured && editor.hasSecret('appSecret')) || channel === 'feishu' && !value.verificationToken && !(configured && editor.hasSecret('verificationToken'))) {form.setError(t('missing')); return;}
-    if (await form.commit({enabled: true, accountConfigured: true, connectionMode: 'manual'})) {setStatus(undefined); setAccess(undefined); setView('list');}
+    if (!value.appId?.trim() || !value.appSecret && !(configured && hasSecret('appSecret')) || channel === 'feishu' && !value.verificationToken && !(configured && hasSecret('verificationToken'))) {form.setError(t('missing')); return;}
+    if (await form.commit({enabled: true, accountConfigured: true, connectionMode: 'manual'})) {setStatus(undefined); setView('list');}
   };
   const saveSettings = async event => {event.preventDefault(); if (await form.commit()) setStatus(undefined);};
   const field = (name, secret = false) => h(Field, {key: name, label: t(name), disabled, secret, value: secret ? draft[name] ?? '' : value[name] ?? '', placeholder: secret ? t('secretHint') : '', onChange: text => form.edit(name, text)});
   const scan = channel === 'email' ? null : h(Action, {kind: 'primary', disabled: disabled || form.dirty, onClick: () => void perform('scan')}, h(Icon, {kind: 'qr'}), t(configured ? 'rescan' : 'scan'));
   const manual = h(Action, {disabled, 'aria-pressed': view === 'manual', onClick: async () => {if (view === 'manual') reset(); else {if (view === 'scan') await perform('cancel'); setView('manual');}}}, h(Icon, {kind: 'key'}), t(view === 'manual' ? 'hideCredentials' : 'manual'));
-  const transportLabel = channel === 'email' ? 'emailTransport' : channel === 'weixin' ? 'weixinTransport' : snapshot.value.connectionMode === 'qr' ? 'websocketTransport' : 'callbackTransport';
+  const transportLabel = channel === 'email' ? 'emailTransport' : channel === 'weixin' ? 'weixinTransport' : current.connectionMode === 'qr' ? 'websocketTransport' : 'callbackTransport';
   const tabs = ['general', 'access', 'context', ...(channel === 'feishu' ? ['groupSettings'] : [])];
-  if (snapshot.status !== 'ready') return h(Notice, null, t('unavailable'));
-  return h('div', {className: 'dim-channelPage'},
-    h('div', {className: 'im-channel-toolbar'}, h('div', {className: 'im-bind-actions'}, scan, channel !== 'weixin' ? manual : null),
-      configured ? h('span', {className: 'im-count'}, t(connected ? 'oneOnline' : 'oneConfigured')) : null),
+  const name = value.displayName || t(channel);
+  return h('div', {className: 'dim-botPage'},
+    configured ? h('div', {className: 'im-channel-toolbar'}, h('div', {className: 'im-bind-actions'}, scan, channel !== 'weixin' ? manual : null)) : null,
     view === 'manual' ? h('section', {className: 'dim-surfaceCard dim-credentialPanel', 'aria-label': t('manualTitle')},
-      h('h3', {className: 'dim-credentialTitle'}, `${t('manualTitle')} · ${t(channel)}`), h('p', {className: 'im-description'}, t(`${channel}Guide`)),
+      h('h3', {className: 'dim-credentialTitle'}, `${t('manualTitle')} · ${name}`), h('p', {className: 'im-description'}, t(`${channel}Guide`)),
       h('form', {className: 'dim-credentialForm', onSubmit: bind},
         channel === 'feishu' ? h('label', {className: 'dim-credentialField im-full'}, t('domain'), h('select', {disabled, value: value.domain || 'feishu', onChange: event => form.edit('domain', event.target.value)}, h('option', {value: 'feishu'}, 'Feishu'), h('option', {value: 'lark'}, 'Lark'))) : null,
         channel === 'email' ? h(EmailCredentials, {value, field, edit: form.edit, disabled, t}) : [field('appId'), field('appSecret', true)], channel === 'feishu' ? [field('verificationToken', true), field('encryptKey', true)] : null,
-        channel !== 'email' ? h('div', {className: 'im-full'}, h(Callback, {url: `${base}/${channel}`, copied, setCopied, t, onError: form.setError})) : null,
+        channel !== 'email' ? h('div', {className: 'im-full'}, h(Callback, {url: `${base}/${route}`, copied, setCopied, t, onError: form.setError})) : null,
         h('div', {className: 'dim-credentialActions im-actions'}, h('button', {type: 'submit', className: 'im-button', 'data-kind': 'primary', disabled}, t(busy ? 'saving' : 'bind')), h(Action, {disabled, onClick: reset}, t('cancel'))))) : null,
     view === 'scan' ? h(QrPanel, {status, busy, channel, t, onRefresh: () => void perform('scan'), onClose: () => channel === 'weixin' ? setView('list') : void perform('cancel')}) : null,
     view === 'settings' ? h('section', {className: 'im-settings', 'aria-label': t('moreSettings')},
-      h('div', {className: 'dim-deliveryHeader'}, h(Action, {onClick: reset, disabled}, h(Icon, {kind: 'back'}), t('back')), h('strong', null, value.displayName || t(channel))),
+      h('div', {className: 'dim-deliveryHeader'}, h(Action, {onClick: reset, disabled}, h(Icon, {kind: 'back'}), t('back')), h('strong', null, name)),
       h('div', {className: 'dim-botSettingsTabsBar'}, h('div', {className: 'dim-botSettingsTabsList', role: 'tablist', 'aria-label': t('moreSettings')}, tabs.map((tab, index) => h('button', {
         key: tab, type: 'button', role: 'tab', tabIndex: settingsTab === tab ? 0 : -1, className: 'dim-botSettingsTab', 'aria-selected': settingsTab === tab, 'aria-controls': `${id}-${tab}`, id: `${id}-tab-${tab}`, onClick: () => setSettingsTab(tab),
         onKeyDown: event => {
@@ -261,19 +309,21 @@ function Channel({channel, editor, active, directories, presets, t}) {
           h('p', {key: 'session-sync-hint', className: 'im-description'}, t('sessionSyncHint')),
           h('p', {key: 'new', className: 'im-description'}, t('newSessionsHint')),
           channel !== 'email' ? h('label', {key: 'chars', className: 'dim-credentialField'}, t('maxChars'), h('input', {type: 'number', min: 200, max: channel === 'feishu' ? 10000 : channel === 'qq' ? 5000 : 4000, disabled, value: value.maxChars, onChange: event => form.edit('maxChars', Number(event.target.value))})) : null,
-          channel !== 'weixin' && channel !== 'email' && snapshot.value.connectionMode !== 'qr' ? h('div', {key: 'callback'}, h(Callback, {url: `${base}/${channel}`, copied, setCopied, t, onError: form.setError})) : null] : settingsTab === 'access' ? h(AccessSettings, {channel, value, edit: form.edit, disabled, t})
+          channel !== 'weixin' && channel !== 'email' && current.connectionMode !== 'qr' ? h('div', {key: 'callback'}, h(Callback, {url: `${base}/${route}`, copied, setCopied, t, onError: form.setError})) : null] : settingsTab === 'access' ? h(AccessSettings, {channel, value, edit: form.edit, disabled, t})
           : settingsTab === 'context' ? h(ContextSettings, {channel, value, edit: form.edit, disabled, t}) : [
             h('label', {key: 'group-mode', className: 'dim-credentialField'}, t('groupResponseMode'), h('select', {disabled, value: value.groupResponseMode || 'mention', onChange: event => form.edit('groupResponseMode', event.target.value)}, h('option', {value: 'mention'}, t('mentionOnly')), h('option', {value: 'all'}, t('allGroupMessages')))),
             h('p', {key: 'group-hint', className: 'im-description'}, t('groupPermissionHint'))],
         h('div', {className: 'im-actions'}, h('button', {type: 'submit', className: 'im-button', 'data-kind': 'primary', disabled: disabled || !form.dirty}, t(busy ? 'saving' : 'save')), h(Action, {disabled: disabled || !form.dirty, onClick: form.discard}, t('discard'))))) : null,
     view === 'list' && !configured ? h('section', {className: 'dim-surfaceCard dim-surfaceBody dim-emptyView'},
-      h('div', {className: 'dim-emptyCopy'}, h('div', {className: 'dim-stateLabel'}, h('span', {className: 'dim-stateDot'}), t('notConnected')),
+      h('div', {className: 'dim-emptyCopy'}, h('div', {className: 'dim-stateLabel'}, h('span', {className: 'dim-stateDot'}), t(bot ? 'newBot' : 'notConnected')),
         h('h3', null, t(channel === 'weixin' ? 'emptyScanTitle' : `${channel}EmptyTitle`)), h('p', null, t(channel === 'weixin' ? 'weixinGuide' : channel === 'email' ? 'emailGuide' : `${channel}QrGuide`)),
-        h('div', {className: 'dim-viewActions'}, scan, channel !== 'weixin' ? manual : null, channel !== 'weixin' && enabled && snapshot.value.connectionMode === 'qr' ? h(Action, {disabled, onClick: () => void perform('check')}, t('check')) : null)), h('div', {className: 'dim-emptyBrand'}, h(Logo, {channel, large: true}))) : null,
+        h('div', {className: 'dim-viewActions'}, scan, channel !== 'weixin' ? manual : null, channel !== 'weixin' && enabled && current.connectionMode === 'qr' ? h(Action, {disabled, onClick: () => void perform('check')}, t('check')) : null,
+          onDiscard ? h(Action, {disabled, onClick: onDiscard}, t('cancel')) : bot ? h(Action, {kind: 'danger', disabled, onClick: () => void perform('remove')}, t('remove')) : null)),
+      h('div', {className: 'dim-emptyBrand'}, h(Logo, {channel, large: true}))) : null,
     view === 'list' && configured ? h('section', {className: 'dim-listSection', 'aria-label': t('bots')},
-      h('div', {className: 'dim-listHeading'}, h('h3', null, t('bots')), h('span', {className: 'im-transport', title: t(transportLabel)}, t(transportLabel))),
-      h('article', {className: 'dim-botCard', 'aria-label': value.displayName || t(channel)}, h('div', {className: 'dim-botCardBody'},
-        h('div', {className: 'dim-botCardTop'}, h('div', {className: 'dim-botIdentity'}, h(Logo, {channel}), h('div', {className: 'dim-botName'}, h('h3', null, value.displayName || t(channel)), h('p', null, status?.botId || snapshot.value?.appId || snapshot.value?.address || t('weixinAccount')))),
+      h('div', {className: 'dim-listHeading'}, h('h3', null, name), h('span', {className: 'im-transport', title: t(transportLabel)}, t(transportLabel))),
+      h('article', {className: 'dim-botCard', 'aria-label': name}, h('div', {className: 'dim-botCardBody'},
+        h('div', {className: 'dim-botCardTop'}, h('div', {className: 'dim-botIdentity'}, h(Logo, {channel}), h('div', {className: 'dim-botName'}, h('h3', null, name), h('p', null, status?.botId || current.appId || current.address || t('weixinAccount')))),
           h('div', {className: 'dim-botHealthGroup'}, h('div', {className: 'dim-botHealth', role: 'status'}, h('span', {className: 'dim-healthDot', 'data-tone': connected || state === 'ready' ? 'success' : state === 'expired' ? 'error' : 'warning'}), t(state)),
             h('div', {className: 'dim-lastChecked'}, t('lastChecked'), checkedAt ? new Date(checkedAt).toLocaleTimeString() : '—'))),
         channel === 'feishu' && status?.reply ? h('div', {className: 'im-description', role: 'status'},
@@ -282,11 +332,11 @@ function Channel({channel, editor, active, directories, presets, t}) {
             Number.isInteger(status.reply.failure.code) ? ` · code ${status.reply.failure.code}` : '',
             Number.isInteger(status.reply.failure.status) ? ` · HTTP ${status.reply.failure.status}` : '') : null) : null,
         h('div', {className: 'im-bot-options'},
-          h('div', {className: 'dim-workspace'}, h('div', {className: 'dim-workspaceHeader'}, h('span', null, t('workspace'))), h('code', {className: 'dim-workspacePath'}, snapshot.value.workspace || '/workspace')),
-          h('div', {className: 'dim-workspace'}, h('div', {className: 'dim-workspaceHeader'}, h('span', null, t('agentPreset'))), h('span', {className: 'dim-workspacePath'}, snapshot.value.agentPreset || t('followDefault')))),
+          h('div', {className: 'dim-workspace'}, h('div', {className: 'dim-workspaceHeader'}, h('span', null, t('workspace'))), h('code', {className: 'dim-workspacePath'}, current.workspace || '/workspace')),
+          h('div', {className: 'dim-workspace'}, h('div', {className: 'dim-workspaceHeader'}, h('span', null, t('agentPreset'))), h('span', {className: 'dim-workspacePath'}, current.agentPreset || t('followDefault')))),
         h('div', {className: 'im-card-footer'}, h(Action, {className: 'dim-botSettingsButton', disabled, onClick: () => setView('settings')}, h(Icon, {kind: 'settings'}), t('moreSettings')),
           h('div', {className: 'im-actions'}, h(Action, {disabled, onClick: () => void perform('check')}, h(Icon, {kind: 'refresh'}), t(working ? 'checking' : 'check')),
-            h(Action, {disabled, onClick: async () => {if (await form.commit({enabled: !enabled}, false)) {setStatus(undefined); setAccess(undefined);}}}, t(enabled ? 'pause' : 'resume')),
+            h(Action, {disabled, onClick: async () => {if (await form.commit({enabled: !enabled}, false)) setStatus(undefined);}}, t(enabled ? 'pause' : 'resume')),
             h(Action, {kind: 'danger', disabled, onClick: () => setRemoving(true)}, t('remove'))))),
         removing ? h('div', {className: 'dim-confirm', role: 'alertdialog', 'aria-label': t('removeTitle')}, h('strong', null, t('removeTitle')), h('p', null, t('removeHint')), h('div', {className: 'dim-viewActions'}, h(Action, {disabled, onClick: () => setRemoving(false)}, t('keep')), h(Action, {kind: 'danger', disabled, onClick: () => void perform('remove')}, t('confirmRemove')))) : null)) : null,
     h(Notice, {error: true}, form.error || (status?.error ? ['qrExpiredError', 'qrFailed', 'qrDenied'].includes(status.error) ? t(status.error) : status.error : undefined)), h(Notice, null, form.message));
@@ -330,6 +380,6 @@ function GeneralSettings({scope, presets, t}) {
         : h(Field, {label: t('defaultPreset'), value: form.value.agentPreset || '', disabled: form.busy, onChange: value => form.edit('agentPreset', value)}),
       h('label', {className: 'im-checkbox'}, h('input', {type: 'checkbox', disabled: form.busy, checked: form.value.titlePrefix !== false, onChange: event => form.edit('titlePrefix', event.target.checked)}), t('titlePrefix')),
       h('p', {className: 'im-description'}, t('newSessionsHint')), h('button', {type: 'submit', className: 'im-button', 'data-kind': 'primary', disabled: form.busy || !form.dirty}, t('save'))),
-    h('details', {className: 'im-about'}, h('summary', null, t('setupHelp')), h('p', {className: 'im-description'}, t('permissions')), h('p', {className: 'im-description'}, t('singleBotHint'))),
+    h('details', {className: 'im-about'}, h('summary', null, t('setupHelp')), h('p', {className: 'im-description'}, t('permissions')), h('p', {className: 'im-description'}, t('botsHint'))),
     h(Notice, {error: true}, form.error), h(Notice, null, form.message));
 }

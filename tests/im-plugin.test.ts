@@ -116,7 +116,7 @@ test('the deployment-bundled IM plugin bridges Feishu, QQ and WeChat conversatio
       const body = text ? JSON.parse(text) as Record<string, unknown> : {};
       const record = () => sent.push({host: target.hostname, path: target.pathname + target.search, body, authorization: request.headers.get('authorization')});
       if (target.hostname === 'open.feishu.cn') {
-        if (target.pathname === '/open-apis/auth/v3/tenant_access_token/internal') return Response.json({code: 0, tenant_access_token: 'feishu-token', expire: 7200});
+        if (target.pathname === '/open-apis/auth/v3/tenant_access_token/internal') return Response.json({code: 0, tenant_access_token: body.app_id === 'cli_second' ? 'feishu-second-token' : 'feishu-token', expire: 7200});
         if (target.pathname === '/open-apis/bot/v3/info') {record(); return Response.json(botIdentityAvailable ? {code: 0, bot: {open_id: 'ou_fixture_bot'}} : {code: 1});}
         if (target.pathname.includes('/resources/')) return new Response(attachmentBytes);
         record();
@@ -577,5 +577,26 @@ test('the deployment-bundled IM plugin bridges Feishu, QQ and WeChat conversatio
     const streamingStatus = await statusResponse.json() as {reply: {mode: string; failure?: unknown}};
     assert.equal(streamingStatus.reply.mode, 'streaming');
     assert.equal(streamingStatus.reply.failure, undefined, 'A successful new streaming reply clears the previous failure');
+    // An added Feishu bot has its own route, credentials and Session, also for a chat the first bot serves.
+    const sessionsBefore = (await api.call<SessionListValue>('session/list', {_request: {}})).items.length;
+    await configure('im-feishu', {bots: {feishu_0a1b2c: {enabled: true, appId: 'cli_second', appSecret: 'second-secret', verificationToken: 'second-verify', encryptKey: 'second-encrypt', allowedSenders: ['ou_allowed']}}});
+    const second = await waitFor(async () => {
+      const response = await hook('/feishu_0a1b2c/status', {headers: {authorization: 'Bearer invalid-model-regression'}});
+      return response.status === 200 ? await response.json() as {state: string; botId: string} : undefined;
+    }, 'added Feishu bot activation');
+    assert.deepEqual([second.state, second.botId], ['ready', 'cli_second']);
+    const secondEvent = {schema: '2.0', header: {event_id: crypto.randomUUID(), event_type: 'im.message.receive_v1', token: 'second-verify', app_id: 'cli_second'},
+      event: {sender: {sender_id: {open_id: 'ou_allowed'}, sender_type: 'user'}, message: {message_id: 'om_second', chat_id: 'oc_chat', chat_type: 'p2p', message_type: 'text', content: JSON.stringify({text: 'SECOND_BOT'})}}};
+    const secondIv = randomBytes(16), secondCipher = createCipheriv('aes-256-cbc', createHash('sha256').update('second-encrypt').digest(), secondIv);
+    const secondBody = JSON.stringify({encrypt: Buffer.concat([secondIv, secondCipher.update(JSON.stringify(secondEvent)), secondCipher.final()]).toString('base64')});
+    const secondTimestamp = String(Math.floor(Date.now() / 1000));
+    const secondSignature = createHash('sha256').update(secondTimestamp + 'nonce-second' + 'second-encrypt' + secondBody).digest('hex');
+    assert.equal((await hook('/feishu_0a1b2c', {method: 'POST', headers: {'content-type': 'application/json', 'x-lark-request-timestamp': secondTimestamp, 'x-lark-request-nonce': 'nonce-second', 'x-lark-signature': createHash('sha256').update(secondTimestamp + 'nonce-second' + 'feishu-encrypt' + secondBody).digest('hex')}, body: secondBody})).status, 401,
+      'A signature made with the first bot\'s encrypt key is refused on the added bot\'s route');
+    assert.equal((await hook('/feishu_0a1b2c', {method: 'POST', headers: {'content-type': 'application/json', 'x-lark-request-timestamp': secondTimestamp, 'x-lark-request-nonce': 'nonce-second', 'x-lark-signature': secondSignature}, body: secondBody})).status, 200);
+    const secondReply = await waitFor(() => sent.find(row => row.path === '/open-apis/im/v1/messages/om_second/reply'), 'added Feishu bot reply');
+    assert.equal(secondReply.authorization, 'Bearer feishu-second-token');
+    assert.equal((await api.call<SessionListValue>('session/list', {_request: {}})).items.length, sessionsBefore + 1, 'The added bot keeps its own Session for a chat the first bot also serves');
+    assert.equal((await hook('/feishu/status', {headers: {authorization: 'Bearer invalid-model-regression'}})).status, 200, 'The first bot keeps its route');
   } finally {releaseCard?.(); releaseBusy?.(); await runtime.dispose();}
 });

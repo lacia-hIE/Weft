@@ -4,6 +4,7 @@ import {bytes, header, hex, json, readBody, sha256, tokenCache} from './shared.j
 import {botSettings, channelSettings, managementKey, registerModelCatalog} from './management.js';
 
 import {connectionMode, qrAccount} from './qr-account.js';
+import {botEntry, botsOf} from './bots.js';
 import {feishuQr} from './qr-providers.js';
 import {feishuConnection} from './channel-sockets.js';
 
@@ -30,9 +31,9 @@ async function signed(request, body, encryptKey) {
  */
 export const name = 'dsh-im-feishu';
 export const inject = ['im', 'webServer', 'storageDomain', 'weftConnections'];
-export const Config = Schema.object({
-  ...botSettings(), managementKey: managementKey(), connectionMode: connectionMode(),
-  enabled: Schema.boolean().default(false).description('Receive events at /feishu and reply through the open platform.'),
+const fields = () => ({
+  ...botSettings(), connectionMode: connectionMode(),
+  enabled: Schema.boolean().default(false).description('Receive events at /<bot key> and reply through the open platform.'),
   domain: Schema.union(['feishu', 'lark']).default('feishu').description('feishu: open.feishu.cn; lark: open.larksuite.com.'),
   appId: Schema.string().default('').description('App ID of the self-built app.'),
   appSecret: Schema.string().role('secret').default('').description('App Secret.'),
@@ -42,9 +43,15 @@ export const Config = Schema.object({
   groupResponseMode: Schema.union(['mention', 'all']).default('mention').description('Respond to mentions or all received group messages; all requires platform group-message permission.'),
   maxChars: Schema.natural().min(200).max(10000).default(4000),
 });
+export const Config = botEntry(fields, {managementKey: managementKey()});
 
 export async function apply(ctx, config) {
-  registerModelCatalog(ctx, 'feishu', config);
+  for (const bot of botsOf(config, 'feishu', ['managementKey'])) await start(ctx, bot.key, bot.config);
+}
+
+/** One Feishu bot; `bot` is its local key. */
+async function start(ctx, bot, config) {
+  registerModelCatalog(ctx, bot, config.managementKey);
   const requestToken = async credentials => {
     if (!credentials?.appId || !credentials.appSecret) throw new Error('Feishu credentials are required');
     const base = HOSTS[credentials.domain] ?? HOSTS.feishu;
@@ -110,10 +117,10 @@ export async function apply(ctx, config) {
       }}));
     for (const mention of message.mentions ?? []) text = text.replaceAll(mention.key, '');
     const senderId = sender?.sender_id?.open_id ?? '';
-    await ctx.im.receive({channel: 'feishu', conversation: message.chat_id, chatId: message.chat_id, sender: senderId, senderName: sender?.name, sentAt: Number(message.create_time) || undefined, group, text, attachments, messageId: message.message_id,
+    await ctx.im.receive({channel: bot, conversation: message.chat_id, chatId: message.chat_id, sender: senderId, senderName: sender?.name, sentAt: Number(message.create_time) || undefined, group, text, attachments, messageId: message.message_id,
       target: {chatId: message.chat_id, messageId: message.message_id}});
   };
-  const account = await qrAccount(ctx, 'feishu', config, {...feishuQr, validate: requestToken, status: () => replyStatus ? {reply: replyStatus} : {}, changed: () => {token.clear(); identity = undefined; replyStatus = undefined;},
+  const account = await qrAccount(ctx, bot, config, {...feishuQr, validate: requestToken, status: () => replyStatus ? {reply: replyStatus} : {}, changed: () => {token.clear(); identity = undefined; replyStatus = undefined;},
     socket: credentials => feishuConnection(credentials, receive)});
   // A disabled channel still closes the gateway connection it may have left open.
   if (!config.enabled) {account.launch(); return;}
@@ -132,7 +139,7 @@ export async function apply(ctx, config) {
     if (target.messageId) return api(`/open-apis/im/v1/messages/${encodeURIComponent(target.messageId)}/reply`, data);
     return api('/open-apis/im/v1/messages?receive_id_type=chat_id', {receive_id: target.chatId, ...data});
   };
-  ctx.effect(() => ctx.im.channel('feishu', {
+  ctx.effect(() => ctx.im.channel(bot, {kind: 'feishu',
     ...channelSettings(config, () => account.owner(), () => account.credentials()?.appId),
     maxChars: config.maxChars,
     async startReply(target, uuid) {
@@ -194,11 +201,11 @@ export async function apply(ctx, config) {
         await deliver('text', {text});
       }
     },
-  }), 'dsh-im feishu channel');
+  }), `dsh-im ${bot} channel`);
 
   account.launch();
   if (config.connectionMode === 'qr') return;
-  ctx.effect(() => ctx.webServer.register({kind: 'exact', path: '/feishu', handler: async (request, response) => {
+  ctx.effect(() => ctx.webServer.register({kind: 'exact', path: `/${bot}`, handler: async (request, response) => {
     if (request.method !== 'POST') {json(response, 405, {error: 'method not allowed'}); return;}
     const raw = await readBody(request);
     let payload;
@@ -217,5 +224,5 @@ export async function apply(ctx, config) {
     // Answer within the platform's 3 s window; the bridge records the message before replying.
     json(response, 200, {});
     await receive(payload);
-  }}), 'dsh-im feishu route');
+  }}), `dsh-im ${bot} route`);
 }
