@@ -136,12 +136,14 @@ export class RemoteExecutor implements Executor {
           const current = store.tickets.get(ticket.id)!, report = runningAssignment(current)?.report
           if ((!report || report.state === 'progress') && !current.attention) {
             const summary = state.summary || report?.summary || 'Executor is waiting for input.'
-            this.host.notify?.(engine.report(ticket.id, { state: 'waiting', summary }), 'waiting', summary)
+            const updated = engine.report(ticket.id, { state: 'waiting', summary })
+            this.host.notify?.(updated, 'waiting', summary)
           }
         }
         if (state.state === 'failed' && job.state !== 'failed' && liveTicket(store.tickets.get(ticket.id)!)) {
           const summary = state.error || 'Local executor failed'
-          this.host.notify?.(engine.report(ticket.id, { state: 'failed', summary }), 'failed', summary)
+          const updated = engine.report(ticket.id, { state: 'failed', summary })
+          this.host.notify?.(updated, 'failed', summary)
         }
         store.set(jobs(ticket.id), { ...store.get(jobs(ticket.id))!, revision: state.revision, state: state.state, sessionId: state.sessionId,
           accepted: [...new Set([...job.accepted, ...accepted])], ...state.error ? { error: state.error } : {} })

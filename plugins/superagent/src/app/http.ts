@@ -128,13 +128,6 @@ function machineView({ promptMaxChars, admissionContextMaxPages, admissionContex
 function setupView(runtime: HttpHost) {
   const resolved = runtime.configured() ? runtime.deployment : undefined
   return {
-    'GET executors': () => runtime.remote?.list() ?? [],
-    'POST executors': async ({ body }) => {
-      const input = z.object({ name: z.string().trim().min(1).max(80) }).strict().parse(await body())
-      if (!runtime.remote) throw new RouteError(400, 'Remote execution is unavailable')
-      return runtime.remote.create(input.name)
-    },
-    'POST executors/:id/revoke': ({ params }) => { runtime.remote?.revoke(params.id); return { revoked: true } },
     machine: machineView(runtime.machine), secrets: runtime.secrets(), problem: runtime.setupProblem ?? null,
     accounts: resolved ? { repository: resolved.repository, agent: resolved.github.login } : null,
   }
@@ -191,6 +184,13 @@ function routes(runtime: HttpHost): Routes {
   const ticket = (id: string) => { if (!store.tickets.get(id)) throw new RouteError(404, 'Ticket not found'); return id }
   const promptBody = (input: { body: (maxBytes?: number) => Promise<unknown> }) => input.body(4 * runtime.machine.promptMaxChars.get() + 4096)
   return {
+    'GET executors': () => runtime.remote?.list() ?? [],
+    'POST executors': async ({ body }) => {
+      const input = z.object({ name: z.string().trim().min(1).max(80) }).strict().parse(await body())
+      if (!runtime.remote) throw new RouteError(400, 'Remote execution is unavailable')
+      return runtime.remote.create(input.name)
+    },
+    'POST executors/:id/revoke': ({ params }) => { runtime.remote?.revoke(params.id); return { revoked: true } },
     'GET state': () => stateView(runtime),
     'GET overview': () => overview(views(runtime), runtime.health, policyVersion(store.settings()),
       executorLoad(store, runtime.executor.activeCount()), runtime.setupProblem),
@@ -287,7 +287,7 @@ export function registerHttp(ctx: HostContext, runtime: HttpHost): () => void {
         if (req.method !== 'POST' || header(req, 'origin')) { json(res, 403, { error: 'Device requests only' }); return }
         const match = /^\/executor\/([a-f0-9-]{36})\/(pair|sync|tool)$/.exec(new URL(req.url ?? '/', 'http://localhost').pathname)
         if (!match || !runtime.remote) { json(res, 404, { error: 'Unknown executor operation' }); return }
-        const [, id, operation] = match as [string, string, string]
+        const id = match[1]!, operation = match[2]!
         const token = header(req, 'authorization').replace(/^Bearer /, '')
         if (operation === 'pair') { json(res, 200, await runtime.remote.pair(id, token)); return }
         await runtime.remote.authenticate(id, token)

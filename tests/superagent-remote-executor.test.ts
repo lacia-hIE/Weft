@@ -14,7 +14,7 @@ async function harness() {
       calls++; engine.report(ticket.id, args as {state: 'progress' | 'ready'; summary: string}); return {reported: true}
     }}]})
   const policy: Policy = {version: 'v1', paused: false, evalTimeoutMs: 60_000,
-    gate: () => ({admissible: true, strength: 'explicit', basis: {via: 'listed', sender: {source: 'chat', id: 'alice'}}}), revalidate: () => true, admitsInferred: () => false}
+    gate: () => ({admissible: true, strength: 'explicit', basis: {via: 'listed', sender: 'alice'}}), revalidate: () => true, admitsInferred: () => false}
   engine = new Engine({repo: store, scope: {scope: () => ({listened: true, observed: false})}, policy: () => policy,
     assessor: {request() {}}, executor: remote, outbox: {send() {}, status: () => 'pending', withdraw() {}},
     prepareTicket: ticket => ({...ticket, execution: {name: `work-${ticket.id.slice(0,12)}`, directory: `/workspace/${ticket.id}`, assignment: '', executorId: selected}})})

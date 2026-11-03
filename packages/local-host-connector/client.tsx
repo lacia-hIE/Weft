@@ -43,7 +43,7 @@ function ExecutorSettings({t}:{t:Props['t']}):ReactNode {
   },[endpoint,remote,t]);
   const action=async(action:string,values:object={})=>{
     setBusy(true);setError('');
-    try{const response=await fetch(endpoint,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action,...values})});const result=await response.json();if(!response.ok)throw new Error(result.error??t('failed'));setState(result);if(action==='pair')setCode('');}
+    try{const response=await fetch(endpoint,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action,...values})});const result=await response.json() as ExecutorState&{error?:string};if(!response.ok)throw new Error(result.error??t('failed'));setState(result);if(action==='pair')setCode('');}
     catch(error){setError(String(error));}finally{setBusy(false);}
   };
   return <section data-weft-local-executor>
