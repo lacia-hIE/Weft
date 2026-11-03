@@ -282,7 +282,7 @@ export function registerHttp(ctx: HostContext, runtime: HttpHost): () => void {
         json(res, 202, { accepted: true })
       } catch (error) { json(res, ...failure(error)) }
     } }),
-    ctx.webServer.register({ kind: 'prefix', path: '/executor/', handler: async (req: HttpRequest, res: HttpResponse) => {
+    ctx.webServer.register({ kind: 'prefix', path: '/executor', handler: async (req: HttpRequest, res: HttpResponse) => {
       try {
         if (req.method !== 'POST' || header(req, 'origin')) { json(res, 403, { error: 'Device requests only' }); return }
         const match = /^\/executor\/([a-f0-9-]{36})\/(pair|sync|tool)$/.exec(new URL(req.url ?? '/', 'http://localhost').pathname)

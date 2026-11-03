@@ -4,9 +4,11 @@ import metadata from './package.json' with {type:'json'};
 import {connectionStyles} from './client-styles.ts';
 
 const zh={title:'连接设置',description:'通过 Weft 使用本机环境，数据由本地 DSH 管理。',code:'配对码',hint:'在 Weft 首页生成配对码，复制并粘贴到这里。',placeholder:'粘贴配对码',saved:'配置自动保存在本机，无需下载文件。',details:'连接详情',address:'连接地址',hostVersion:'DSH 版本',pair:'保存并连接',reconnect:'重新连接',stop:'停止连接',busy:'正在处理…',failed:'操作失败，请检查配对码或稍后重试。',remote:'请在本机 DSH 页面管理连接。',
+  executorPermission:'执行权限预设',executorLocalDefault:'使用本机默认权限',
   executor:'Superagent 执行器',executorHint:'接收当前 Weft 环境的任务，在本机运行 Agent。',executorCode:'执行器配对码',executorRoot:'任务根目录（绝对路径）',executorPreset:'DSH Agent 预设（留空使用本机默认）',executorPair:'配对执行器',executorAccept:'允许接收任务',executorMax:'最大并发任务',executorSave:'保存接单设置',executorSafety:'Agent 使用本机模型、凭据和所选预设的权限。目录不是权限隔离；建议使用独立 DSH profile。',executorSource:'配对码在 Superagent → 设置 → 执行中生成。配对后默认暂停接单。',
   unpaired:'尚未配对',connecting:'正在连接…',connected:'已连接',retrying:'网络中断，正在重试…',revoked:'授权已撤销，请在 Weft 重新配对。',incompatible:'版本不兼容，请更新 DSH 或连接插件。','pairing-rejected':'配对码已过期或使用过，请在 Weft 生成新配对码。','configuration-error':'配置文件无法读取，请重新配对。',stopped:'连接已停止'};
 const en:typeof zh={title:'Connection settings',description:'Use this computer through Weft. Your data stays managed by local DSH.',code:'Pairing code',hint:'Generate a pairing code on the Weft home page, then paste it here.',placeholder:'Paste pairing code',saved:'Settings are saved on this computer; no file download is needed.',details:'Connection details',address:'Endpoint',hostVersion:'DSH version',pair:'Save and connect',reconnect:'Reconnect',stop:'Stop connection',busy:'Working…',failed:'The operation failed. Check the pairing code or try again.',remote:'Manage this connection from your local DSH page.',
+  executorPermission:'Execution permission preset',executorLocalDefault:'Use local default permissions',
   executor:'Superagent Executor',executorHint:'Accept tasks from your Weft environment and run the Agent on this computer.',executorCode:'Executor pairing code',executorRoot:'Task root directory (absolute path)',executorPreset:'DSH Agent preset (blank uses local default)',executorPair:'Pair executor',executorAccept:'Accept tasks',executorMax:'Maximum concurrent tasks',executorSave:'Save task settings',executorSafety:'Agents use this computer’s model, credentials and preset permissions. Directories do not isolate permissions; use a dedicated DSH profile.',executorSource:'Generate the code in Superagent → Settings → Execution. Pairing starts with task acceptance paused.',
   unpaired:'Not paired',connecting:'Connecting…',connected:'Connected',retrying:'Network interrupted; retrying…',revoked:'Authorization revoked. Pair again in Weft.',incompatible:'Version incompatible. Update DSH or the connector.','pairing-rejected':'Pairing code expired or already used. Generate a new code in Weft.','configuration-error':'Cannot read the connection file. Pair again.',stopped:'Connection stopped'};
 type State={state:string;endpoint?:string;hostVersion?:string;configured?:boolean};
@@ -27,10 +29,11 @@ function ConnectionCard({view,t}:Props):ReactNode {
   return <><ConnectionSettings t={t}/><ExecutorSettings t={t}/></>;
 }
 
-type ExecutorState={state:string;configured?:boolean;accepting:boolean;root:string;maxWorkers:number;agentPreset:string;running:number;jobs?:{ticketId:string;sessionId:string;state:string;cwd:string}[]};
+type ExecutorState={state:string;configured?:boolean;accepting:boolean;root:string;maxWorkers:number;agentPreset:string;permissionPreset?:string;running:number;jobs?:{ticketId:string;sessionId:string;state:string;cwd:string}[]};
 function ExecutorSettings({t}:{t:Props['t']}):ReactNode {
   const [state,setState]=useState<ExecutorState>({state:'unpaired',accepting:false,root:'',maxWorkers:1,agentPreset:'',running:0});
   const [code,setCode]=useState(''),[root,setRoot]=useState(''),[preset,setPreset]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false);
+  const [permission,setPermission]=useState('');
   const id=useId(),remote=location.pathname.includes('/local/web/'),endpoint=new URL('api/weft-executor',document.baseURI).href;
   useEffect(()=>{
     if(remote)return;
@@ -54,10 +57,13 @@ function ExecutorSettings({t}:{t:Props['t']}):ReactNode {
         <p className="weft-connection-hint">{t('executorSource')}</p>
         <p className="weft-connection-hint">{t('executorSafety')}</p>
         <p role="status">{t(state.state in zh?state.state as keyof typeof zh:'connecting')}</p>
-        <form className="weft-connection-form" onSubmit={event=>{event.preventDefault();void action('pair',{code,root,agentPreset:preset});}}>
+        <form className="weft-connection-form" onSubmit={event=>{event.preventDefault();void action('pair',{code,root,agentPreset:preset,permissionPreset:permission});}}>
           <label htmlFor={id+'-code'}>{t('executorCode')}</label><Input id={id+'-code'} type="password" autoComplete="off" value={code} onChange={event=>setCode(event.target.value)} disabled={busy}/>
           <label htmlFor={id+'-root'}>{t('executorRoot')}</label><Input id={id+'-root'} value={root} onChange={event=>setRoot(event.target.value)} disabled={busy}/>
           <label htmlFor={id+'-preset'}>{t('executorPreset')}</label><Input id={id+'-preset'} value={preset} onChange={event=>setPreset(event.target.value)} disabled={busy}/>
+          <label htmlFor={id+'-permission'}>{t('executorPermission')}</label><select id={id+'-permission'} value={permission} onChange={event=>setPermission(event.target.value)} disabled={busy}>
+            <option value="">{t('executorLocalDefault')}</option><option value="read-only">read-only</option><option value="workspace-write">workspace-write</option><option value="danger-full-access">danger-full-access</option>
+          </select>
           <Button type="submit" variant="primary" disabled={busy||!code.trim()||!root.trim()}>{t('executorPair')}</Button>
         </form>
         {state.configured&&<form className="weft-connection-form" onSubmit={event=>{event.preventDefault();void action('configure',{accepting:state.accepting,maxWorkers:state.maxWorkers});}}>

@@ -71,16 +71,23 @@ test('published local DSH pairs in native settings, runs Files, Git and PTY and 
   // A full Agent runs in the published native Host, using local model credentials and native file tools.
   const broker=await(await request.get('/__test/executor')).json();
   const taskRoot=project+'/../execution';
-  expect((await context.request.post(executorUrl,{data:{action:'pair',code:broker.pairingCode,root:taskRoot}})).status()).toBe(200);
+  expect((await context.request.post(executorUrl,{data:{action:'pair',code:broker.pairingCode,root:taskRoot,permissionPreset:'danger-full-access'}})).status()).toBe(200);
   expect((await context.request.post(executorUrl,{data:{action:'configure',accepting:true,maxWorkers:1}})).status()).toBe(200);
   expect((await context.request.post(executorUrl,{data:{action:'reconnect'}})).status()).toBe(200);
   expect((await request.post('/__test/executor',{data:{start:true}})).status()).toBe(200);
-  await expect.poll(async()=>{
+  try { await expect.poll(async()=>{
     const state=await(await request.get('/__test/executor')).json();
     const ticket=state.tickets[0];
     if(ticket?.assignments?.at(-1)?.report?.state==='failed')throw new Error(ticket.assignments.at(-1).report.summary);
     return ticket?.ended?.outcome;
-  },{timeout:60_000}).toBe('completed');
+  },{timeout:60_000}).toBe('completed'); } catch(error) {
+    const local=await(await context.request.get(executorUrl)).json();
+    const sessionId=local.jobs[0]?.sessionId;
+    const details={local,broker:await(await request.get('/__test/executor')).json(),
+      ...(sessionId?{state:await rpc('session/state',{request:{sessionId}}),history:await rpc('session/page',{request:{address:{kind:'session',sessionId},maxMessages:10}})}:{})};
+    await testInfo.attach('executor-diagnostics.json',{body:JSON.stringify(details),contentType:'application/json'});
+    throw error;
+  }
   expect(await readFile(taskRoot+'/native-proof/executor-proof.txt','utf8')).toBe('LOCAL_EXECUTOR_FILE_CREATED\n');
   const worked=await(await request.get('/__test/executor')).json();
   expect(worked.modelCalls).toBeGreaterThanOrEqual(2);

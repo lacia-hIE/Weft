@@ -6,8 +6,9 @@ The same package can accept Assignments from a cloud Superagent while running th
 independent of remote workbench access: pairing an executor neither creates a local Weft environment nor grants
 remote browser access. Generate the pairing code in **Superagent → Settings → Execution**, paste it into this
 plugin's **Superagent Executor** settings, choose an absolute root directory and an optional installed DSH Agent
-preset, then separately enable **Accept tasks**. Configure the model provider on this computer. Use an unattended
-preset if the work should run without local approvals. Directory selection establishes a default, not a sandbox;
+preset and execution permission preset, then separately enable **Accept tasks**. Configure the model provider on
+this computer. Permissions inherit the local default unless explicitly selected locally; `danger-full-access`
+allows unattended execution without approval prompts. Directory selection establishes a default, not a sandbox;
 use a dedicated OS account or container for isolation.
 
 Executor identity, acceptance settings and native inbox receipts are stored privately (`0600`) in

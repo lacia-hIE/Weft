@@ -33,6 +33,7 @@ export function createExecutorController({ctx,file,request=fetch}){
   }
   function attach(agent){
     const job=jobOf(agent);if(!job||configured.has(agent))return;configured.add(agent);
+    if(data.permissionPreset)agent.ctx.permissionPresets.set(agent.session,data.permissionPreset);
     disposers.push(agent.ctx.systemPrompt.section({name:'weft-executor',order:600,interpolate:false,text:()=>jobOf(agent)?.instructions??''}));
     const names=[...agent.ctx.tools.view(agent).restrictableNames];
     // Agent subdelegation is disabled until its durable lifecycle is tracked by this carrier.
@@ -182,7 +183,7 @@ export function createExecutorController({ctx,file,request=fetch}){
   const start=()=>{if(closed||!data.endpoint||stop)return;stop=new AbortController();loop=run(stop.signal);};
   const disconnect=async()=>{stop?.abort();await loop;stop=undefined;status='stopped';};
   return {
-    snapshot:()=>({state:status,configured:!!data.endpoint,endpoint:data.endpoint,accepting:data.accepting,root:data.root??'',maxWorkers:data.maxWorkers,agentPreset:data.agentPreset??'',
+    snapshot:()=>({state:status,configured:!!data.endpoint,endpoint:data.endpoint,accepting:data.accepting,root:data.root??'',maxWorkers:data.maxWorkers,agentPreset:data.agentPreset??'',permissionPreset:data.permissionPreset??'',
       running:activeJobs().length,jobs:Object.values(data.jobs).map(({ticketId,sessionId,state,cwd})=>({ticketId,sessionId,state,cwd}))}),
     load:()=>serial(async()=>{
       try{
@@ -201,8 +202,9 @@ export function createExecutorController({ctx,file,request=fetch}){
       if(code.protocol!==PROTOCOL||!token.test(code.pairingKey??''))throw new Error('Invalid Executor pairing code');
       const endpoint=executorEndpoint(code.endpoint);
       if(!isAbsolute(input.root))throw new Error('Choose an absolute execution directory');
+      if(input.permissionPreset&&!['read-only','workspace-write','danger-full-access'].includes(input.permissionPreset))throw new Error('Invalid permission preset');
       await mkdir(input.root,{recursive:true});const root=await realpath(input.root);
-      await disconnect();data={endpoint,pairingKey:code.pairingKey,root,accepting:false,maxWorkers:1,jobs:{},agentPreset:input.agentPreset?.trim()??''};
+      await disconnect();data={endpoint,pairingKey:code.pairingKey,root,accepting:false,maxWorkers:1,jobs:{},agentPreset:input.agentPreset?.trim()??'',permissionPreset:input.permissionPreset??''};
       await save();start();
     }),
     configure:input=>serial(async()=>{
