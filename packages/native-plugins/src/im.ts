@@ -20,8 +20,8 @@ function bot(value: unknown): string {
 export interface ImProvider {
   /** Package name of the consumer; only that package may receive the bot's events or run its operations. */
   consumer: string;
-  /** The bot's channel, such as `feishu`, and its display name, as the consumer lists them. */
-  kind: string;
+  /** The bot's channel, such as `feishu`, and its display name, as the consumer lists them; the channel defaults to the key's part before `_`. */
+  kind?: string;
   name?: string;
   /** Operations the consumer may run, such as `send` or `read`; each takes and returns JSON. */
   operations: Record<string, (argument: unknown) => unknown>;
@@ -54,7 +54,6 @@ export class WorkerIm {
     provide: (key: string, provider: ImProvider) => {
       const name = bot(key);
       if (typeof provider?.consumer !== 'string' || !provider.consumer) throw new TypeError('An IM bot names the package it is assigned to');
-      if (typeof provider.kind !== 'string' || !provider.kind) throw new TypeError('An IM bot names its channel');
       if (this.providers.has(name)) throw new Error(`IM bot ${name} is provided twice`);
       this.providers.set(name, provider);
       return () => {if (this.providers.get(name) === provider) this.providers.delete(name);};
@@ -102,7 +101,7 @@ export class WorkerIm {
   /** Host → holder: the bots this package provides to `caller`. */
   assigned(caller: string): ImBot[] {
     return [...this.providers].filter(([, provider]) => provider.consumer === caller)
-      .map(([bot, provider]) => ({bot, kind: provider.kind, ...typeof provider.name === 'string' && provider.name ? {name: provider.name.slice(0, 100)} : {}}));
+      .map(([bot, provider]) => ({bot, kind: typeof provider.kind === 'string' && provider.kind ? provider.kind : bot.split('_')[0]!, ...typeof provider.name === 'string' && provider.name ? {name: provider.name.slice(0, 100)} : {}}));
   }
   consuming(): boolean {return this.consumer !== undefined;}
 }

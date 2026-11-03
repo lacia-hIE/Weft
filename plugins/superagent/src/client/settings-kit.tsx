@@ -248,7 +248,7 @@ export function SourceField({ field, value, saved, fact, onChange, labels, refre
   const refresh = useAction(async () => {
     try {
       const added = await refreshLabels!()
-      notify(added.length ? t('labelsAdded', { names: added.join(t('listSeparator')) }) : t('labelsCurrent'))
+      notify(added.length ? t('labelsAdded', { names: added.join(t('listSeparator')) }) : Object.keys(labels).length ? t('labelsCurrent') : t('labelsNone'))
     } catch (failure) { notify(t('labelsFailed', { error: errorText(failure) })) }
   })
   switch (field.type) {

@@ -7,7 +7,9 @@ test('weftIm hands a bot to the package it is assigned to and to no other', asyn
   const im = new WorkerIm({imDeliver: async (consumer, bot, event) => {delivered.push([consumer, bot, event]); return 'delivered';}, imCall: async () => null, imConsumers: async () => [], imBots: async () => []});
   const withdraw = im.service.provide('feishu_0a1b2c', {consumer: '@weft/dsh-superagent', kind: 'feishu', name: 'Team bot', operations: {send: argument => ({echo: argument})}});
   im.service.provide('qq', {consumer: '@other/package', kind: 'qq', operations: {}});
-  assert.deepEqual(im.assigned('@weft/dsh-superagent'), [{bot: 'feishu_0a1b2c', kind: 'feishu', name: 'Team bot'}], 'a package lists only the bots assigned to it');
+  im.service.provide('weixin_00aa11', {consumer: '@weft/dsh-superagent', operations: {}});
+  assert.deepEqual(im.assigned('@weft/dsh-superagent'), [{bot: 'feishu_0a1b2c', kind: 'feishu', name: 'Team bot'}, {bot: 'weixin_00aa11', kind: 'weixin'}],
+    'a package lists only the bots assigned to it; a holder that names no channel has it read from the key');
   assert.deepEqual(await im.answer('@other/package', 'feishu_0a1b2c', 'send', {text: 'x'}), {handled: false}, 'another package is not answered');
   assert.deepEqual(await im.answer('@weft/dsh-superagent', 'feishu_0a1b2c', 'send', {text: 'x'}), {handled: true, value: {echo: {text: 'x'}}});
   await assert.rejects(im.answer('@weft/dsh-superagent', 'feishu_0a1b2c', 'toString', null), /no toString operation/, 'only declared operations run');
