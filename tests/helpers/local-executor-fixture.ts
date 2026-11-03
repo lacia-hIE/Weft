@@ -19,7 +19,7 @@ export async function localExecutorFixture() {
   const pairing=await remote.create('Native computer');deviceId=pairing.id
   const prefix=`/v1/plugin-hooks/native/default/%40weft%2Fdsh-superagent/executor/${deviceId}`
   const taskId=key('native-executor-source')
-  const event=(name:string,data:unknown)=>`event: ${name}\ndata: ${JSON.stringify(data)}\n\n`
+  const event=(type:string,data:object)=>`event: ${type}\ndata: ${JSON.stringify({type,...data})}\n\n`
   const model=(body:{system?:unknown;messages?:unknown[];tools?:{name:string}[]})=>{
     const history=JSON.stringify(body.messages),managed=JSON.stringify(body.system).includes('LOCAL_EXECUTOR_NATIVE_TEST')
     if(managed)modelCalls++

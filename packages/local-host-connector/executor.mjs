@@ -183,6 +183,12 @@ export function createExecutorController({ctx,file,request=fetch}){
   const start=()=>{if(closed||!data.endpoint||stop)return;stop=new AbortController();loop=run(stop.signal);};
   const disconnect=async()=>{stop?.abort();await loop;stop=undefined;status='stopped';};
   return {
+    inspect:async sessionId=>{
+      if(!data.jobs[sessionId])throw new Error('Session does not belong to this Executor');
+      const signal=AbortSignal.timeout(5000),agent=ctx.agents.get(sessionId);
+      return {state:typeof ctx.sessionController.state==='function'?await ctx.sessionController.state({sessionId},signal):{running:agent?.status==='running'},
+        events:agent?.session.snapshotEvents().slice(-40)??[]};
+    },
     snapshot:()=>({state:status,configured:!!data.endpoint,endpoint:data.endpoint,accepting:data.accepting,root:data.root??'',maxWorkers:data.maxWorkers,agentPreset:data.agentPreset??'',permissionPreset:data.permissionPreset??'',
       running:activeJobs().length,jobs:Object.values(data.jobs).map(({ticketId,sessionId,state,cwd})=>({ticketId,sessionId,state,cwd}))}),
     load:()=>serial(async()=>{

@@ -34,6 +34,7 @@ export async function apply(ctx,config={}) {
     try{
       let body='';for await(const chunk of req){body+=chunk.toString();if(Buffer.byteLength(body)>12000)throw new Error('Request too large');}
       const input=JSON.parse(body);
+      if(input.action==='inspect'){reply(200,await executor.inspect(input.sessionId));return;}
       if(input.action==='pair')await executor.pair(input);
       else if(input.action==='configure')await executor.configure(input);
       else if(input.action==='reconnect')await executor.reconnect();

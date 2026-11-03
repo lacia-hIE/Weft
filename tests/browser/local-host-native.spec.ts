@@ -84,7 +84,7 @@ test('published local DSH pairs in native settings, runs Files, Git and PTY and 
     const local=await(await context.request.get(executorUrl)).json();
     const sessionId=local.jobs[0]?.sessionId;
     const details={local,broker:await(await request.get('/__test/executor')).json(),
-      ...(sessionId?{state:await rpc('session/state',{request:{sessionId}}),history:await rpc('session/page',{request:{address:{kind:'session',sessionId},maxMessages:10}})}:{})};
+      ...(sessionId?{session:await(await context.request.post(executorUrl,{data:{action:'inspect',sessionId}})).json()}: {})};
     await testInfo.attach('executor-diagnostics.json',{body:JSON.stringify(details),contentType:'application/json'});
     throw error;
   }
