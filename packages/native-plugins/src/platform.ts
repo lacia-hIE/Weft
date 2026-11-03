@@ -57,7 +57,7 @@ export class NativePluginPlatform {
     private faultHandler: ((runId: string, error: Error) => void) | undefined;
     onFault(handler: (runId: string, error: Error) => void): void { this.faultHandler = handler; }
     constructor(private readonly state: DurableObjectState, private readonly loader: WorkerLoader | undefined, private readonly scope: object, private readonly capability?: (pluginId: string, runId: string) => Fetcher) { }
-    private async bounded<T>(allocation: Allocation, operation: () => Promise<T>): Promise<T> {
+    private async bounded<T>(allocation: Allocation, operation: (facet: FacetApi) => Promise<T>): Promise<T> {
         const timer = setTimeout(() => {
             const error = new Error('Dynamic plugin operation deadline exceeded');
             this.state.facets.abort(allocation.name, error);
@@ -67,8 +67,9 @@ export class NativePluginPlatform {
         try {
             // Reattach after a facet wake as well as on first use. Service bindings cannot be placed in
             // Durable Object class props on Cloudflare production, but can cross an ordinary RPC call.
-            if (allocation.host) await allocation.facet.setHost(allocation.activationId, allocation.host);
-            return await operation();
+            const facet = allocation.facet;
+            if (allocation.host) await facet.setHost(allocation.activationId, allocation.host);
+            return await operation(facet);
         }
         finally {
             clearTimeout(timer);
@@ -106,12 +107,12 @@ export class NativePluginPlatform {
         }));
         const activationId = installed?.activationId ?? runId;
         const props = {ACTIVATION: activationId, ...(installed ? {ALLOWED: installed.services, BACKGROUND: installed.environment === true, ...(installed.config ? {CONFIG: installed.config} : {})} : {})};
-        const facet = this.state.facets.get(name, () => ({ class: worker.getDurableObjectClass('PluginFacet', {props}) })) as unknown as FacetApi;
-        const allocation: Allocation = { name, runId, facet, disposers: [], deadlineMs: installed?.environment ? 60_000 : 15_000,
+        const getFacet = () => this.state.facets.get(name, () => ({ class: worker.getDurableObjectClass('PluginFacet', {props}) })) as unknown as FacetApi;
+        const allocation: Allocation = { name, runId, get facet() {return getFacet();}, disposers: [], deadlineMs: installed?.environment ? 60_000 : 15_000,
             activationId, ...(capability && !fixedHost ? {host: capability} : {}) };
         this.allocations.set(runId, allocation);
         try {
-            const description = descriptionSchema.parse(await this.bounded(allocation, () => facet.describe()));
+            const description = descriptionSchema.parse(await this.bounded(allocation, facet => facet.describe()));
             const handlers = new Map<string, () => void>();
             const tools = new Map<string, {
                 signature: string;
@@ -128,7 +129,7 @@ export class NativePluginPlatform {
                 for (const method of metadata.handlers)
                     if (!handlers.has(method)) {
                         const dispose = handle(method, async (args: unknown) => {
-                            const result = await this.bounded(allocation, () => facet.invoke(method, args));
+                            const result = await this.bounded(allocation, facet => facet.invoke(method, args));
                             sync(metadataSchema.parse(result.metadata));
                             return result.value;
                         });
@@ -147,7 +148,7 @@ export class NativePluginPlatform {
                     tools.get(tool.name)?.dispose();
                     if (installed?.environment) continue;
                     const dispose = registerRemoteTool(ctx, tool, {
-                        execute: (name,args,callId,operationId) => this.bounded(allocation, () => facet.tool(name,args,callId,operationId)),
+                        execute: (name,args,callId,operationId) => this.bounded(allocation, facet => facet.tool(name,args,callId,operationId)),
                         cancel: operationId => facet.cancelTool(operationId), waitUntil: work => this.state.waitUntil(work),
                     });
                     tools.set(tool.name, { signature, dispose });
@@ -158,7 +159,7 @@ export class NativePluginPlatform {
             return {
                 name: description.name, inject: installed?.environment ? {} : description.inject as NonNullable<Plugin.Object['inject']>, apply: async (child) => {
                     child.effect(() => () => this.release(runId), 'weft.native-plugin-facet');
-                    sync(metadataSchema.parse(await this.bounded(allocation, () => facet.start())));
+                    sync(metadataSchema.parse(await this.bounded(allocation, facet => facet.start())));
                 }
             };
         }
@@ -171,57 +172,57 @@ export class NativePluginPlatform {
     async configSchemas(runId: string): Promise<unknown> {
         const allocation = this.allocations.get(runId);
         if (!allocation) throw new Error('Plugin is not active');
-        return this.bounded(allocation, () => allocation.facet.configSchemas());
+        return this.bounded(allocation, facet => facet.configSchemas());
     }
     async tick(runId: string): Promise<void> {
         const allocation = this.allocations.get(runId);
-        if (allocation) await this.bounded(allocation, () => allocation.facet.tick());
+        if (allocation) await this.bounded(allocation, facet => facet.tick());
     }
     async fetch(runId: string, request: Request): Promise<Response> {
         const allocation = this.allocations.get(runId);
         if (!allocation) return new Response(null, {status:404});
-        return this.bounded(allocation, () => allocation.facet.fetch(request));
+        return this.bounded(allocation, facet => facet.fetch(request));
     }
     async nextAlarm(runId: string): Promise<number | undefined> {
         const allocation = this.allocations.get(runId);
-        return allocation ? this.bounded(allocation, () => allocation.facet.nextAlarm()) : undefined;
+        return allocation ? this.bounded(allocation, facet => facet.nextAlarm()) : undefined;
     }
     async toolMetadata(runId: string) {
         const allocation=this.allocations.get(runId);if(!allocation)throw new Error('Plugin is not active');
-        return metadataSchema.parse(await this.bounded(allocation,()=>allocation.facet.metadata())).tools;
+        return metadataSchema.parse(await this.bounded(allocation,facet=>facet.metadata())).tools;
     }
     async tool(runId:string,name:string,args:unknown,callId:string,operationId:string,callerSessionId?:string):Promise<ToolExecutionResult> {
         const allocation=this.allocations.get(runId);if(!allocation)throw new Error('Plugin is not active');
-        return this.bounded(allocation,()=>allocation.facet.tool(name,args,callId,operationId,callerSessionId));
+        return this.bounded(allocation,facet=>facet.tool(name,args,callId,operationId,callerSessionId));
     }
     async cancelTool(runId:string,operationId:string):Promise<void> {await this.allocations.get(runId)?.facet.cancelTool(operationId);}
     async deliverWebhook(runId:string,delivery:unknown):Promise<void> {
         const allocation=this.allocations.get(runId);if(!allocation)throw new Error('Plugin is not active');
-        await this.bounded(allocation,()=>allocation.facet.deliverWebhook(delivery));
+        await this.bounded(allocation,facet=>facet.deliverWebhook(delivery));
     }
     async deliverConnectionEvents(runId: string, connectionId: string, events: unknown[]): Promise<'ok' | 'unknown'> {
         const allocation = this.allocations.get(runId); if (!allocation) throw new Error('Plugin is not active');
-        return this.bounded(allocation, () => allocation.facet.deliverConnectionEvents(connectionId, events));
+        return this.bounded(allocation, facet => facet.deliverConnectionEvents(connectionId, events));
     }
     async deliverIm(runId: string, bot: string, event: unknown): Promise<'delivered' | 'unclaimed'> {
         const allocation = this.allocations.get(runId); if (!allocation) throw new Error('Plugin is not active');
-        return this.bounded(allocation, () => allocation.facet.deliverIm(bot, event));
+        return this.bounded(allocation, facet => facet.deliverIm(bot, event));
     }
     async answerIm(runId: string, caller: string, bot: string, operation: string, argument: unknown): Promise<{handled: false} | {handled: true; value: unknown}> {
         const allocation = this.allocations.get(runId); if (!allocation) throw new Error('Plugin is not active');
-        return this.bounded(allocation, () => allocation.facet.answerIm(caller, bot, operation, argument));
+        return this.bounded(allocation, facet => facet.answerIm(caller, bot, operation, argument));
     }
     async consumesIm(runId: string): Promise<boolean> {
         const allocation = this.allocations.get(runId); if (!allocation) throw new Error('Plugin is not active');
-        return this.bounded(allocation, () => allocation.facet.consumesIm());
+        return this.bounded(allocation, facet => facet.consumesIm());
     }
     async assignedIm(runId: string, caller: string): Promise<{bot: string; kind: string; name?: string}[]> {
         const allocation = this.allocations.get(runId); if (!allocation) throw new Error('Plugin is not active');
-        return this.bounded(allocation, () => allocation.facet.assignedIm(caller));
+        return this.bounded(allocation, facet => facet.assignedIm(caller));
     }
     async deliverSessionEvent(runId: string, event: unknown): Promise<void> {
         const allocation = this.allocations.get(runId); if (!allocation) throw new Error('Plugin is not active');
-        await this.bounded(allocation, () => allocation.facet.deliverSessionEvent(event));
+        await this.bounded(allocation, facet => facet.deliverSessionEvent(event));
     }
     async release(runId: string, destroy = false): Promise<void> {
         const allocation = this.allocations.get(runId);
@@ -232,7 +233,7 @@ export class NativePluginPlatform {
         for (const dispose of allocation.disposers.splice(0).reverse())
             dispose();
         try {
-            await this.bounded(allocation, () => allocation.facet.stop());
+            await this.bounded(allocation, facet => facet.stop());
         }
         catch { /* A crashed or uncooperative isolate is still forcibly stopped below. */ }
         finally {
