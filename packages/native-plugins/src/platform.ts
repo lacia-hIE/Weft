@@ -149,7 +149,7 @@ export class NativePluginPlatform {
                     if (installed?.environment) continue;
                     const dispose = registerRemoteTool(ctx, tool, {
                         execute: (name,args,callId,operationId) => this.bounded(allocation, facet => facet.tool(name,args,callId,operationId)),
-                        cancel: operationId => facet.cancelTool(operationId), waitUntil: work => this.state.waitUntil(work),
+                        cancel: operationId => allocation.facet.cancelTool(operationId), waitUntil: work => this.state.waitUntil(work),
                     });
                     tools.set(tool.name, { signature, dispose });
                     allocation.disposers.push(dispose);
