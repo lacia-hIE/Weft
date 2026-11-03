@@ -68,6 +68,26 @@ test('published local DSH pairs in native settings, runs Files, Git and PTY and 
   await expect(page.getByLabel('Task root directory (absolute path)',{exact:true})).toBeVisible();
   await page.screenshot({path:testInfo.outputPath('local-executor-settings.png')});
   await page.locator('[data-weft-local-executor] summary').click();
+  // A full Agent runs in the published native Host, using local model credentials and native file tools.
+  const broker=await(await request.get('/__test/executor')).json();
+  const taskRoot=project+'/../execution';
+  expect((await context.request.post(executorUrl,{data:{action:'pair',code:broker.pairingCode,root:taskRoot}})).status()).toBe(200);
+  expect((await context.request.post(executorUrl,{data:{action:'configure',accepting:true,maxWorkers:1}})).status()).toBe(200);
+  expect((await context.request.post(executorUrl,{data:{action:'reconnect'}})).status()).toBe(200);
+  expect((await request.post('/__test/executor',{data:{start:true}})).status()).toBe(200);
+  await expect.poll(async()=>{
+    const state=await(await request.get('/__test/executor')).json();
+    const ticket=state.tickets[0];
+    if(ticket?.assignments?.at(-1)?.report?.state==='failed')throw new Error(ticket.assignments.at(-1).report.summary);
+    return ticket?.ended?.outcome;
+  },{timeout:60_000}).toBe('completed');
+  expect(await readFile(taskRoot+'/native-proof/executor-proof.txt','utf8')).toBe('LOCAL_EXECUTOR_FILE_CREATED\n');
+  const worked=await(await request.get('/__test/executor')).json();
+  expect(worked.modelCalls).toBeGreaterThanOrEqual(2);
+  await expect.poll(async()=>(await(await context.request.get(executorUrl)).json()).jobs[0]?.state,{timeout:30_000}).toBe('stopped');
+  const nativeSession=(await(await context.request.get(executorUrl)).json()).jobs[0].sessionId;
+  // Native session listing is independent from the cloud Ticket; it exists only on this computer.
+  expect(nativeSession).toMatch(/^weft-/);
   expect((await context.request.post(settingsUrl,{headers:{origin:'https://untrusted.invalid'},data:{action:'disconnect'}})).status()).toBe(403);
   await page.getByRole('button',{name:'Stop connection',exact:true}).click();await expect(connectionStatus).toHaveText('Connection stopped');
   await page.getByRole('button',{name:'Reconnect',exact:true}).click();await expect(connectionStatus).toHaveText('Connected',{timeout:30_000});

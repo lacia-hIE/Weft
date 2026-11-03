@@ -14,12 +14,14 @@ import {buildPackage} from '../../apps/plugin-builder/server.mjs';
 import {Response as FixtureResponse} from 'miniflare';
 import type {V4FetchHandler} from 'miniflare';
 import {imQrFixture} from '../helpers/im-qr.ts';
+import {localExecutorFixture} from '../helpers/local-executor-fixture.ts';
 
 // Test-only bridge. Production serves directly from the authenticated Worker.
 // Native Access identities are supplied by Miniflare, never application headers.
 const live = process.env.WEFT_BROWSER_LIVE === "1";
 const production = process.env.WEFT_BROWSER_PRODUCTION === "1";
 const localDsh=process.env.WEFT_LOCAL_DSH_TEST==='1';
+const executorFixture=localDsh?await localExecutorFixture():undefined;
 let localFixture:ReturnType<typeof startLocalDsh>|undefined;
 const queue = process.env.WEFT_BROWSER_QUEUE === '1' ? modelGate() : undefined;
 const plugins = process.env.WEFT_BROWSER_PLUGINS === '1' ? nativePluginModel() : undefined;
@@ -65,6 +67,11 @@ const cert = join(tlsDirectory, 'cert.pem'), keyFile = join(tlsDirectory, 'key.p
 execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', keyFile, '-out', cert, '-subj', '/CN=localhost', '-addext', 'subjectAltName=IP:127.0.0.1,DNS:localhost', '-days', '1'], {stdio: 'ignore'});
 const server = createSecureServer({key: readFileSync(keyFile), cert: readFileSync(cert), allowHTTP1: true}, async (request, response) => {
   try {
+    if(executorFixture?.matches(request.url??'')){
+      const chunks:Buffer[]=[];for await(const chunk of request)chunks.push(Buffer.from(chunk));
+      const result=await executorFixture.handle(request.url!,Buffer.concat(chunks).toString(),String(request.headers.authorization??''));
+      response.writeHead(result.status,Object.fromEntries(result.headers));response.end(await result.text());return;
+    }
     if (imGateway && request.url === '/__test/im-qr' && request.method === 'POST') {
       const input: Buffer[] = []; for await (const part of request) input.push(Buffer.from(part));
       const {channel, mode} = JSON.parse(Buffer.concat(input).toString()) as {channel: 'qq' | 'feishu'; mode: 'wait' | 'confirm' | 'expire' | 'deny' | 'invalid'};
@@ -146,6 +153,7 @@ server.listen(4173, "127.0.0.1", () => {
   console.log("Browser verification server ready on 4173");
 });
 async function close(): Promise<void> {
+  executorFixture?.close();
   imGateway?.close();
   if(localFixture)await(await localFixture.catch(()=>undefined))?.stop();
   for(const socket of sockets.clients)socket.terminate();sockets.close();
