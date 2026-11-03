@@ -29,7 +29,7 @@ export class NativePluginBench extends DurableObject<Env> {
     if (runId !== this.runId) throw new Error('Plugin capability has been revoked');
     return {owner: this.ctx.id.toString(), runId, method, args};
   }
-  async action(action: string, input: {source?: string; method?: string; args?: unknown; installed?: Parameters<NativePluginPlatform['evaluate']>[6]}) {
+  async action(action: string, input: {source?: string; method?: string; args?: unknown; installed?: Parameters<NativePluginPlatform['evaluate']>[5]}) {
     const host = await (this.host ??= openHarnessSession({sessionId: 'native-plugin', persona: 'test', model: {provider: 'validation', model: 'scripted'}, adapter: new ScriptedAdapter(), mountPersistence: async ctx => {await ctx.plugin(SqliteSessionPersistence, {storage: this.ctx.storage});}}));
     const loader: WorkerLoader = {
       get: (id, code) => {if (id) this.workerIds.push(id); return this.env.LOADER.get(id, code);},
@@ -64,7 +64,7 @@ export class NativePluginBench extends DurableObject<Env> {
 }
 export class NativePluginHost extends WorkerEntrypoint<Env, {owner: string; runId: string}> {
   callFs(method: string, args: unknown[]): Promise<unknown> {
-    return this.env.NATIVE_PLUGINS.get(this.ctx.props.owner).readCapability(this.ctx.props.runId, method, args);
+    return this.env.NATIVE_PLUGINS.get(this.env.NATIVE_PLUGINS.idFromString(this.ctx.props.owner)).readCapability(this.ctx.props.runId, method, args);
   }
 }
 export class ScopedHost extends WorkerEntrypoint<Env, { tenantId: string }> {
