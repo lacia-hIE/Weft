@@ -12,6 +12,7 @@ import { SetupError, type SetupProblem } from '../setup.ts'
 import { UserError, type EngineForPeople, type Ticket } from '../core/index.ts'
 import type { Deployment, Machine } from '../deployment.ts'
 import type { DshExecutor } from '../executor/dsh.ts'
+import { deliveryOf, type Delivery } from '../sources/github.ts'
 import type { Health } from '../sources/host.ts'
 import type { SourceRegistry } from '../sources/registry.ts'
 import type { Sessions } from './sessions.ts'
@@ -51,7 +52,8 @@ export interface HttpHost {
   managementKey(): string
   webhookSecret(): string
   /** Reads GitHub at once and runs what that brings. */
-  wake(): Promise<void>
+  /** Reads what a verified webhook delivery names; see `Runtime.wake`. */
+  wake(delivery: Delivery): Promise<void>
   /** Runs what a management operation left due. */
   settled(): Promise<void>
   links(): LinkTarget
@@ -253,7 +255,7 @@ function match(table: Routes, method: string, segments: string[]) {
   }
   return undefined
 }
-/** A delivery only says to look; what GitHub holds says what happened, so the Source reads it as it does on any pass. */
+/** A delivery names what to look at; what GitHub holds says what happened, so the Source reads it as on any pass. */
 const WEBHOOK_SETTLE_MS = 2000, WEBHOOK_REPLY_MS = 8000
 export function registerHttp(ctx: HostContext, runtime: HttpHost): () => void {
   const table = routes(runtime)
@@ -263,7 +265,9 @@ export function registerHttp(ctx: HostContext, runtime: HttpHost): () => void {
         const body = await readBytes(req, 1 << 20)
         if (!await verifiedWebhook(runtime.webhookSecret(), body, header(req, 'x-hub-signature-256'))) { json(res, 401, { error: 'Unverified delivery' }); return }
         // GitHub gives up after ten seconds, and a slow read is finished by the next pass.
-        const wake = new Promise(resolve => setTimeout(resolve, WEBHOOK_SETTLE_MS)).then(() => runtime.wake()).catch(() => { /* Reported in the Source's health; the next pass reads again. */ })
+        let payload: unknown
+        try { payload = JSON.parse(new TextDecoder().decode(body)) } catch { payload = undefined /* A form-encoded or empty delivery names nothing; the scheduled round reads. */ }
+        const wake = new Promise(resolve => setTimeout(resolve, WEBHOOK_SETTLE_MS)).then(() => runtime.wake(deliveryOf(payload))).catch(() => { /* Reported in the Source's health; the next pass reads again. */ })
         await Promise.race([wake, new Promise(resolve => setTimeout(resolve, WEBHOOK_REPLY_MS))])
         json(res, 202, { accepted: true })
       } catch (error) { json(res, ...failure(error)) }

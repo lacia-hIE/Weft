@@ -77,8 +77,9 @@ test('a request on GitHub becomes a Ticket worked on in its own Session, without
     for (const end = Date.now() + 120_000; Date.now() < end; await delay(500)) {const value = await read(); if (value !== undefined) return value;}
     throw new Error(`${label} did not happen; comments: ${JSON.stringify(comments)}; requests: ${requests.length}`);
   };
-  const deliver = async () => {
-    const body = JSON.stringify({action: 'opened'});
+  /** An Issue event as GitHub sends it; the Source reads the Issue it names because its body mentions the agent. */
+  const deliver = async (opened = issue) => {
+    const body = JSON.stringify({action: 'opened', issue: {number: opened.number, body: opened.body}, sender: {login: opened.user.login}});
     return hook('/github', {method: 'POST', body, headers: {'content-type': 'application/json', 'x-hub-signature-256': `sha256=${createHmac('sha256', secret).update(body).digest('hex')}`}});
   };
   try {
@@ -157,7 +158,7 @@ test('a request on GitHub becomes a Ticket worked on in its own Session, without
     quiet.created_at = quiet.updated_at = new Date().toISOString();
     announced = [8];
     const idle = await waitFor(async () => {
-      await deliver();
+      await deliver(quiet);
       const list = await (await panel('tickets?state=idle')).json() as {items?: {id: string; title: string}[]};
       return list.items?.find(item => item.title === 'QUIET_WORK');
     }, 'the worker that ended its turn without a report');

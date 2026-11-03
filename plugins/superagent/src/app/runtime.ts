@@ -10,7 +10,7 @@ import { HealthBoard } from '../infra/health.ts'
 import type { SqlService } from '../infra/sql.ts'
 import { KV } from '../kv.ts'
 import { settingsPolicy } from '../policy.ts'
-import { githubKind, pollDue } from '../sources/github.ts'
+import { githubKind, pollDue, readDelivered, type Delivery } from '../sources/github.ts'
 import { pullEndNotices } from '../sources/github-pull.ts'
 import { feishuKind } from '../sources/feishu.ts'
 import { IM_CHANNELS, ImEventSchema, imKind, imTrigger, type ImChannel } from '../sources/im.ts'
@@ -94,6 +94,10 @@ export class Runtime implements SourceHost {
   private readonly githubContext: SourceContext
   private readonly imKinds: Record<ImChannel, Pick<SourceKind, 'kind' | 'health'>>
   private driving?: Promise<void> | undefined
+  private polling?: Promise<void> | undefined
+  private reading?: Promise<void> | undefined
+  /** Webhook deliveries that arrived while an earlier read ran; the running read takes them next. */
+  private readonly delivered: Delivery[] = []
   private readonly disposers: (() => void)[] = []
   /** Non-zero while a main-Session tool is executing an Engine command, suppressing self-triggered domain event notices. */
   private quiet = 0
@@ -266,8 +270,22 @@ export class Runtime implements SourceHost {
   }
   /** Waits for the current drive, so a Host request keeps the environment awake until it is done. */
   settled(): Promise<void> { return this.driving ?? Promise.resolve() }
-  /** The background pass and a webhook: read GitHub, find lost turn ends, and run what is due. */
-  async tick(force = false): Promise<void> {
+  /**
+   * A webhook delivery: reads the Issue or PR it names when that concerns the agent, together with deliveries that arrive
+   * meanwhile, then runs the background pass, whose full round runs only when GitHub's poll interval has passed.
+   */
+  async wake(delivery: Delivery): Promise<void> {
+    this.delivered.push(delivery)
+    this.reading ??= (async () => {
+      await this.ready
+      while (this.delivered.length && this.configured()) await readDelivered(this.githubContext, this.delivered.splice(0), this.lifetime)
+      this.delivered.length = 0
+    })().finally(() => { this.reading = undefined })
+    await this.reading
+    await this.tick()
+  }
+  /** The background pass: read GitHub when due, find lost turn ends, and run what is due. One round runs at a time. */
+  async tick(): Promise<void> {
     await this.ready
     // A check that failed for a passing reason, such as GitHub being unreachable, is tried again here.
     if (!this.configured()) {
@@ -275,7 +293,7 @@ export class Runtime implements SourceHost {
       else this.githubContext.report('github', health('paused', 'setupPending'))
       return
     }
-    await pollDue(this.githubContext, this.lifetime, force)
+    await (this.polling ??= pollDue(this.githubContext, this.lifetime).finally(() => { this.polling = undefined }))
     await this.executor.reconcile()
     await this.drive()
   }
@@ -310,7 +328,7 @@ export class Runtime implements SourceHost {
     const runtime = this
     const { store, sources, prompts, sessions, settings, engine, executor, machine, masterId, ready, sourceLinks, setup, passes } = this
     return { store, sources, prompts, sessions, settings, engine, executor, get health() { return runtime.health }, machine, masterId, ready, sourceLinks,
-      secrets: () => ({ githubToken: !!this.config.githubToken, webhookSecret: !!this.config.webhookSecret }), managementKey: () => this.config.managementKey, webhookSecret: () => this.config.webhookSecret, wake: () => this.tick(true), settled: () => this.drive(),
+      secrets: () => ({ githubToken: !!this.config.githubToken, webhookSecret: !!this.config.webhookSecret }), managementKey: () => this.config.managementKey, webhookSecret: () => this.config.webhookSecret, wake: delivery => this.wake(delivery), settled: () => this.drive(),
       get deployment() { return setup.deployment }, get setupProblem() { return setup.problem },
       configured: () => setup.configured(), links: () => runtime.links(), ticketEnvironment: ticket => runtime.ticketEnvironment(ticket),
       checkSetup: () => { setup.check() }, requestPass: () => { passes.request() }, models: () => this.ctx.sessionController.modelCatalog({}) as never }

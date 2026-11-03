@@ -10,6 +10,10 @@ export class CliError extends Error {
   constructor(message: string, readonly code?: number, readonly exitCode?: number) { super(message) }
 }
 export interface Tally { skipped: number }
+/** Requests sent through one deployment's client, and the rate limit GitHub reported with the latest response. */
+export interface Meter { requests: number; remaining?: number; limit?: number }
+/** A list read with a validator from the previous read: `unchanged` costs no rate limit. */
+export type Listed<T> = { unchanged: true } | { unchanged: false; items: T[]; etag?: string }
 /** Parses array elements against a schema, skipping invalid items and incrementing `tally.skipped`. */
 export function validItems<T>(item: z.ZodType<T>, list: readonly unknown[], tally?: Tally): T[] {
   const items = list.flatMap(value => { const parsed = item.safeParse(value); return parsed.success ? [parsed.data] : [] })
@@ -40,16 +44,22 @@ function parseFlags(flags: readonly string[]): Request {
  */
 export class Commands {
   /** @param resolved - returns the resolved deployment setup, or throws while setup is still pending. */
-  constructor(private readonly resolved: () => Deployment, private readonly token: () => string, private readonly signal: AbortSignal) {}
+  constructor(private readonly resolved: () => Deployment, private readonly token: () => string, private readonly signal: AbortSignal,
+    /** Shared by every client derived with `withSignal`. */
+    readonly meter: Meter = { requests: 0 }) {}
   get deployment(): Deployment { return this.resolved() }
   get repository(): string { return this.deployment.repository }
-  withSignal(signal?: AbortSignal): Commands { return signal ? new Commands(this.resolved, this.token, AbortSignal.any([this.signal, signal])) : this }
+  withSignal(signal?: AbortSignal): Commands { return signal ? new Commands(this.resolved, this.token, AbortSignal.any([this.signal, signal]), this.meter) : this }
   /** Sends one REST request to `path` under api.github.com. */
   async fetch(path: string, { method, headers, fields }: Pick<Request, 'method' | 'headers' | 'fields'>): Promise<Response> {
     const body = method === 'GET' ? undefined : JSON.stringify(fields)
     const response = await fetch(`https://api.github.com/${path}`, { method, redirect: 'follow', signal: AbortSignal.any([this.signal, AbortSignal.timeout(TIMEOUT_MS)]),
       headers: { accept: 'application/vnd.github+json', authorization: `Bearer ${this.token()}`, 'user-agent': 'weft-superagent', 'x-github-api-version': '2022-11-28',
         ...body === undefined ? {} : { 'content-type': 'application/json' }, ...headers }, ...body === undefined ? {} : { body } })
+    this.meter.requests++
+    const remaining = Number(response.headers.get('x-ratelimit-remaining') ?? NaN), limit = Number(response.headers.get('x-ratelimit-limit') ?? NaN)
+    if (Number.isFinite(remaining)) this.meter.remaining = remaining
+    if (Number.isFinite(limit)) this.meter.limit = limit
     if (response.ok) return response
     const text = await response.text().catch(() => '')
     let message = text.slice(0, 2000)
@@ -73,16 +83,31 @@ export class Commands {
     const [path = '', ...flags] = rest
     return schema.parse(await (await this.fetch(this.path(path), parseFlags(flags))).json())
   }
-  /** Fetches the pages of a GitHub API list within the configured repository, skipping items that fail schema validation. */
-  async pages<T>(item: z.ZodType<T>, path: string, tally?: Tally): Promise<T[]> {
+  /**
+   * Fetches the pages of a GitHub API list within the configured repository, skipping items that fail schema validation.
+   * @param field - the response property holding the list, for lists wrapped in an object such as `check_runs`.
+   */
+  async pages<T>(item: z.ZodType<T>, path: string, tally?: Tally, field?: string): Promise<T[]> {
+    const listed = await this.listed(item, path, { ...tally ? { tally } : {}, ...field ? { field } : {} })
+    return listed.unchanged ? [] : listed.items
+  }
+  /**
+   * Fetches a list like `pages`; with the `etag` of an earlier read of the same path, an unchanged list answers
+   * HTTP 304, which costs no rate limit. The result carries a validator only when the list fits one page.
+   */
+  async listed<T>(item: z.ZodType<T>, path: string, options: { tally?: Tally; field?: string; etag?: string } = {}): Promise<Listed<T>> {
     const items: unknown[] = []
-    let next: string | undefined = this.path(path)
+    let next: string | undefined = this.path(path), etag: string | undefined
     for (let page = 0; next && page < MAX_PAGES; page++) {
-      const response: Response = await this.fetch(next, { method: 'GET', headers: {}, fields: {} })
-      items.push(...z.array(z.unknown()).parse(await response.json()))
+      let response: Response
+      try { response = await this.fetch(next, { method: 'GET', headers: page === 0 && options.etag ? { 'if-none-match': options.etag } : {}, fields: {} }) }
+      catch (error) { if (page === 0 && options.etag && error instanceof CliError && error.code === 304) return { unchanged: true }; throw error }
+      const body: unknown = await response.json()
+      items.push(...z.array(z.unknown()).parse(options.field ? (body as Record<string, unknown> | null)?.[options.field] : body))
       next = /<https:\/\/api\.github\.com\/([^>]+)>;\s*rel="next"/.exec(response.headers.get('link') ?? '')?.[1]
+      if (page === 0 && !next) etag = response.headers.get('etag') ?? undefined
     }
-    return validItems(item, items, tally)
+    return { unchanged: false, items: validItems(item, items, options.tally), ...etag ? { etag } : {} }
   }
   /** Reads the agent's account, which is not under the repository. */
   async user<T>(schema: z.ZodType<T>): Promise<T> { return schema.parse(await (await this.fetch('user', { method: 'GET', headers: {}, fields: {} })).json()) }

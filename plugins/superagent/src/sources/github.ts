@@ -4,7 +4,7 @@ import { sameName } from '../infra/text.ts'
 import { GithubAccountsSchema } from '../deployment.ts'
 import { CliError, validItems, type Commands, type Tally } from '../infra/commands.ts'
 import { ciCounts, ciFact, ciFailures, ciSummary, githubThreadContext, pullChecks } from './github-read.ts'
-import { branchCiTrigger, ciTrigger, commentTrigger, CommentSchema, githubAddress, issueTrigger, IssueSchema, pullTrigger, SOURCE }
+import { branchCiTrigger, ciTrigger, commentTrigger, CommentSchema, githubAddress, issueTrigger, IssueSchema, mentions, pullTrigger, SOURCE }
   from './github-trigger.ts'
 import { githubLink, sendGithub } from './github-channel.ts'
 import type { GithubComment, PullRef } from './github-trigger.ts'
@@ -108,15 +108,16 @@ export function pollFailure(failures: number, threshold: number, error: unknown)
   return failures >= threshold ? health('error', 'pollFailures', { count: String(failures), error: String(error) }) : undefined
 }
 /**
- * Runs one polling round if the Source is on and GitHub's requested interval has passed; a webhook and the background
- * pass both land here, and what they read is deduplicated by Trigger id. Failures count toward the health threshold.
+ * Runs one polling round if the Source is on and GitHub's requested interval has passed. A webhook does not force a
+ * round: it reads what its delivery names (`readDelivered`) and lands here like the background pass. Failures count
+ * toward the health threshold.
  */
-export async function pollDue(ctx: SourceContext, signal: AbortSignal, force = false): Promise<void> {
+export async function pollDue(ctx: SourceContext, signal: AbortSignal): Promise<void> {
   if (!ctx.configured()) { ctx.report('github', health('paused', 'setupPending')); return }
   const config = ctx.config<GithubConfig>(SOURCE)
   if (!config) { ctx.report('github', health('paused', 'sourceOff')); return }
   const { at = 0, failures = 0 } = ctx.state.get(KV.github.poll) ?? {}
-  if (!force && Date.now() < at) return
+  if (Date.now() < at) return
   try {
     const interval = await pollRound(ctx, signal)
     ctx.state.set(KV.github.poll, { at: Date.now() + interval * 1000, failures: 0 })
@@ -261,7 +262,7 @@ async function pollBranchCi(ctx: SourceContext, round: Round): Promise<void> {
  * @returns the polling interval requested by GitHub, in seconds.
  */
 export async function pollRound(ctx: SourceContext, signal?: AbortSignal): Promise<number> {
-  const round = newRound(signal)
+  const round = newRound(signal), requests = ctx.commands.meter.requests
   const notified = await pollNotifications(ctx, round).then(value => ({ value }), (error: unknown) => ({ error }))
   await pollRepository(ctx, round)
   await pollTicketPulls(ctx, signal, round)
@@ -274,7 +275,8 @@ export async function pollRound(ctx: SourceContext, signal?: AbortSignal): Promi
   const dropped = (round.dropped.length ? `; deleted on GitHub: ${named(round.dropped)}` : '')
     + (round.abandoned.length ? `; dropped after their reads kept failing: ${named(round.abandoned)}` : '')
     + (round.tally.skipped ? `; ${round.tally.skipped} unreadable items skipped` : '')
-  ctx.report('github', { state: 'ready', detail: `${count} notifications; next poll ≥ ${interval}s${dropped}`, at: round.started })
+  const { meter } = ctx.commands, left = meter.remaining === undefined ? '' : `, ${meter.remaining}${meter.limit === undefined ? '' : `/${meter.limit}`} left this hour`
+  ctx.report('github', { state: 'ready', detail: `${count} notifications; ${meter.requests - requests} requests this round${left}; next poll ≥ ${interval}s${dropped}`, at: round.started })
   return interval
 }
 /** Reads notifications since the cursor and each Issue or PR they name, advancing the cursor atomically with the retry map for failed reads; deleted (410) Issues are dropped once their error is recorded. */
@@ -324,9 +326,17 @@ async function pollNotifications(ctx: SourceContext, round: Round): Promise<{ co
   ctx.atomic(() => { state.set(KV.github.since, cursorAt(round.started)); state.set(KV.github.retries, retries) })
   return { count: notifications.length, interval }
 }
+/**
+ * Moves an Issue's or PR's read cursor to five seconds before its newest comment, or keeps it: an unchanged thread is
+ * then read at the same paths, which its stored validators answer without rate limit.
+ */
+function advance(ctx: SourceContext, number: number, since: string, newest: number | undefined): void {
+  const moved = newest === undefined ? since : cursorAt(new Date(newest).toISOString())
+  ctx.state.set(KV.github.cursor(number), Date.parse(moved) > Date.parse(since) ? moved : since)
+}
 async function readNotified(ctx: SourceContext, round: Round, number: number, item: Retry): Promise<void> {
   const { since } = item
-  let isPr = item.pr
+  let isPr = item.pr, newest: number | undefined
   if (!isPr) {
     const issue = await ctx.commands.withSignal(round.signal).api(IssueSchema, `issues/${number}`)
     // `issues/<n>` also returns PRs with `pull_request` set; handle them in the PR branch below.
@@ -337,7 +347,7 @@ async function readNotified(ctx: SourceContext, round: Round, number: number, it
       const { login } = ctx.deployment.github
       const opened = Date.parse(issue.created_at) >= Date.parse(since) && !sameName(issue.user.login, login)
       if (opened) await ctx.receive(issueTrigger(issue, login))
-      await intakeComments(ctx, { number, isPr: false, url: issue.html_url }, since, round)
+      newest = await intakeComments(ctx, { number, isPr: false, url: issue.html_url }, since, round)
       nameThread(ctx, number, issue.title)
     }
   }
@@ -349,11 +359,42 @@ async function readNotified(ctx: SourceContext, round: Round, number: number, it
       const opened = { number, title: pr.title ?? '', body: pr.body, user: pr.user, created_at: pr.created_at, html_url: pr.html_url }
       await ctx.receive(pullTrigger(opened, login))
     }
-    await intakeComments(ctx, { number, isPr: true, url: pr.html_url, prAuthor: pr.user.login }, since, round)
+    newest = await intakeComments(ctx, { number, isPr: true, url: pr.html_url, prAuthor: pr.user.login }, since, round)
     if (pr.title) nameThread(ctx, number, pr.title)
   }
-  ctx.state.set(KV.github.cursor(number), cursorAt(round.started))
+  advance(ctx, number, since, newest)
   ctx.threads.patch(`github:${number}`, { pollError: undefined })
+}
+/** What a repository webhook delivery names: its Issue or PR, the account that caused it, and the text it carries. */
+export interface Delivery { number?: number; sender?: string; text: string }
+/** Reads the fields of a delivery's JSON payload that `readDelivered` uses; anything else in it is ignored. */
+export function deliveryOf(payload: unknown): Delivery {
+  const value = (payload ?? {}) as { issue?: { number?: unknown; body?: unknown }; pull_request?: { number?: unknown; body?: unknown }
+    comment?: { body?: unknown }; review?: { body?: unknown }; sender?: { login?: unknown } }
+  const number = Number(value.issue?.number ?? value.pull_request?.number)
+  const text = [value.comment?.body, value.review?.body, value.issue?.body, value.pull_request?.body].filter((item): item is string => typeof item === 'string').join('\n')
+  return { ...Number.isSafeInteger(number) && number > 0 ? { number } : {}, ...typeof value.sender?.login === 'string' ? { sender: value.sender.login } : {}, text }
+}
+/**
+ * Reads the Issues and PRs that webhook deliveries name when they concern the agent: a subscribed Thread, a PR of an
+ * open Ticket, or text that mentions the agent's account. A delivery the agent's own account caused, or one about
+ * anything else, reads nothing; scheduled rounds still find what notifications and observed streams hold.
+ */
+export async function readDelivered(ctx: SourceContext, deliveries: readonly Delivery[], signal?: AbortSignal): Promise<void> {
+  if (!ctx.configured() || !ctx.config<GithubConfig>(SOURCE)) return
+  const { login } = ctx.deployment.github
+  const followed = new Set([...ctx.threads.subscribed(SOURCE).map(thread => Number(thread.ref.id)), ...ctx.tickets.open().flatMap(ticket => pullsOf(ticket, true))])
+  const numbers = new Set(deliveries.flatMap(delivery => delivery.number !== undefined && !(delivery.sender && sameName(delivery.sender, login))
+    && (followed.has(delivery.number) || mentions(delivery.text, login)) ? [delivery.number] : []))
+  const round = newRound(signal)
+  const fallback = ctx.state.get(KV.github.since) ?? round.started
+  for (const number of numbers) {
+    if (stopped(ctx, round)) return
+    round.read.add(number)
+    const pr = ctx.threads.get(`${SOURCE}:${number}`)?.meta.isPr === true
+    try { await readNotified(ctx, round, number, { since: ctx.state.get(KV.github.cursor(number)) ?? fallback, pr }) }
+    catch (error) { if (!stopped(ctx, round)) failed(ctx, round, number, error) }
+  }
 }
 /** Reads and observes a PR at most once per polling round. */
 function pull(ctx: SourceContext, round: Round, number: number): Promise<Pull> {
@@ -364,25 +405,37 @@ function pull(ctx: SourceContext, round: Round, number: number): Promise<Pull> {
   }
   return read
 }
-async function intakeComments(ctx: SourceContext, ref: PullRef, since: string, round: Round): Promise<void> {
+/**
+ * Reads an Issue's or PR's comments (and a PR's inline comments and reviews) updated since `since` and receives each as a
+ * Trigger. A list read before at the same path is asked for with its ETag, so an unchanged one costs no rate limit.
+ * @returns the newest update time among the comments read, or undefined when there were none.
+ */
+async function intakeComments(ctx: SourceContext, ref: PullRef, since: string, round: Round): Promise<number | undefined> {
   const commands = ctx.commands.withSignal(round.signal)
   const { login } = ctx.deployment.github
   const kinds = ref.isPr ? ['conversation', 'inline', 'review'] as const : ['conversation'] as const
+  let newest: number | undefined
   for (const kind of kinds) {
     const suffix = `&since=${encodeURIComponent(since)}`
     const path = kind === 'conversation' ? `issues/${ref.number}/comments?per_page=100${suffix}` : kind === 'inline' ? `pulls/${ref.number}/comments?per_page=100${suffix}` : `pulls/${ref.number}/reviews?per_page=100`
-    const comments = await commands.pages(CommentSchema, path, round.tally)
-    for (const comment of comments) {
+    const validator = KV.github.comments(ref.number, kind), stored = ctx.state.get(validator)
+    const listed = await commands.listed(CommentSchema, path, { tally: round.tally, ...stored?.path === path ? { etag: stored.etag } : {} })
+    if (listed.unchanged) continue
+    for (const comment of listed.items) {
       // Stopping mid-read throws so the thread's cursor stays where it was.
       if (stopped(ctx, round)) throw new Error('The GitHub Source stopped during the poll')
       const timestamp = Date.parse(comment.updated_at ?? comment.submitted_at ?? comment.created_at ?? '')
       if (!Number.isFinite(timestamp) || timestamp < Date.parse(since)) continue
+      newest = Math.max(newest ?? timestamp, timestamp)
       if (sameName(comment.user.login, login)) continue
       // A review decision without a body still reaches the ticket: a worker may be waiting for that approval.
       const trigger = commentTrigger(comment, ref, kind, login)
       if (trigger.text) await ctx.receive(trigger)
     }
+    // Kept only once every comment of the list is received, so an interrupted read is read again.
+    ctx.state.set(validator, listed.etag ? { path, etag: listed.etag } : undefined)
   }
+  return newest
 }
 export async function pollTicketPulls(ctx: SourceContext, signal?: AbortSignal, round = newRound(signal)): Promise<void> {
   const numbers = [...new Set(ctx.tickets.open().flatMap(ticket => pullsOf(ticket, true)))]
@@ -434,9 +487,10 @@ async function pollThread(ctx: SourceContext, round: Round, thread: Thread): Pro
   }
   const checkpoint = KV.github.cursor(number)
   const since = ctx.state.get(checkpoint) ?? thread.createdAt
+  let newest: number | undefined
   if (thread.meta.isPr === true) {
     const pr = await pull(ctx, round, number)
-    await intakeComments(ctx, { number, isPr: true, url: pr.html_url, prAuthor: pr.user.login }, since, round)
-  } else await intakeComments(ctx, { number, isPr: false }, since, round)
-  ctx.state.set(checkpoint, cursorAt(round.started))
+    newest = await intakeComments(ctx, { number, isPr: true, url: pr.html_url, prAuthor: pr.user.login }, since, round)
+  } else newest = await intakeComments(ctx, { number, isPr: false }, since, round)
+  advance(ctx, number, since, newest)
 }

@@ -10,7 +10,7 @@ Upstream calls the prototype research code, and so is this adaptation at 0.x. Re
 2. Create a dedicated GitHub account for the agent and add it only to the target repository, public or private, with Write access. Protect the default branch: Write access can otherwise merge.
 3. In the **Superagent** panel, under Settings → Deployment, fill in its classic token with the `repo` and `notifications` scopes. A fine-grained token cannot read notifications, which is how the Source learns it was addressed, and a GitHub App is no user with notifications. The token reaches every repository the account can.
 4. Under Settings → Sources, name the repository, and under Eval list who may start work under Policy. The Agent acts only on them.
-5. Optional, for prompt reactions: under Settings → Deployment, generate a webhook secret and copy it, the URL and the content type into the repository's Add webhook page, which takes admin rights there. `/v1/plugin-hooks/*` needs a Cloudflare Access Bypass. Without a webhook the Source polls on the background pass, every five minutes by default.
+5. Optional, for prompt reactions: under Settings → Deployment, generate a webhook secret and copy it, the URL and the content type into the repository's Add webhook page, which takes admin rights there. `/v1/plugin-hooks/*` needs a Cloudflare Access Bypass. A delivery reads only the Issue or PR it names, and only when that concerns the agent (a followed Thread, a Ticket's PR, or a mention of the agent's account); full rounds, which read notifications, run on the background pass at most as often as GitHub's poll interval allows, every five minutes by default. Without a webhook the Source relies on those rounds alone.
 
 ## IM Sources
 

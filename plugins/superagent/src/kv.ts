@@ -52,10 +52,12 @@ export const KV = {
   /**
    * GitHub Source: notification cursor and pending retries; per-Issue/PR read cursor shared by notification and polled reads;
    * per-stream cursor, start times by kind, and ETag; default-branch CI state; and per-PR CI fingerprint and revision (`revision`
-   * counts reported CI changes so each produces a distinct Trigger ID).
+   * counts reported CI changes so each produces a distinct Trigger ID); and per-Issue/PR comment list validators, each
+   * valid only for the exact path it was read at.
    */
   github: { poll: record<{ at: number; failures: number }>('github-poll'), since: record<string>('github-since'), retries: record<Record<string, Retry>>('github-retry'),
     cursor: family<string, [number: number]>('github-cursor:'),
+    comments: family<{ path: string; etag: string }, [number: number, kind: string]>('github-comments:'),
     stream: family<{ since: string; started: Record<string, string>; etag?: string }, [stream: string]>('github-stream:'),
     branchCi: record<{ branch?: string; failures?: string[]; revision: number }>('github-branch-ci'),
     ci: family<{ fingerprint: string; revision: number }, [number: number]>('github-ci:') },

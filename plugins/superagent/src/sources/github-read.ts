@@ -58,9 +58,8 @@ export async function readRepositoryPath(commands: Commands, path: string, kind:
 
 /** Reads check runs and commit statuses for a commit without emitting a trigger. */
 export async function pullChecks(commands: Commands, head: string, tally?: Tally): Promise<CiSnapshot> {
-  const page = z.looseObject({ check_runs: z.array(z.unknown()) })
-  const pages = await commands.api(z.array(page), `commits/${head}/check-runs?per_page=100`, '--paginate', '--slurp')
-  const runs = validItems(CheckSchema, pages.flatMap(page => page.check_runs), tally)
+  // Check runs come wrapped in an object on every page.
+  const runs = await commands.pages(CheckSchema, `commits/${head}/check-runs?per_page=100`, tally, 'check_runs')
   const statuses = await commands.pages(StatusSchema, `commits/${head}/statuses?per_page=100`, tally)
   const latest = new Map<string, string>()
   for (const status of statuses) if (!latest.has(status.context)) latest.set(status.context, status.state)
