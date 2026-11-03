@@ -34,3 +34,10 @@ export interface HostFs {
   writeText(file: unknown, text: string): Promise<unknown>
   stat(file: unknown): Promise<unknown>
 }
+/** Weft's IM routing: the events of IM bots assigned to this package, and their operations. */
+export interface HostIm {
+  /** Receives the events of every bot assigned to this package; one handler per activation. */
+  consume(handler: { message(bot: string, event: unknown): unknown }): () => void
+  /** Runs an operation, such as `send` or `read`, of a bot assigned to this package. */
+  call(bot: string, operation: string, argument?: unknown): Promise<unknown>
+}

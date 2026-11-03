@@ -6,7 +6,8 @@ Against [deepseek-ai/dsh-superagent-prototype](https://github.com/deepseek-ai/ds
 | --- | --- |
 | Domain core, Policy, Eval, Tickets, Outbox | Kept as written; the core's specs run in CI |
 | GitHub Source | Same reads and Trigger ids over REST instead of `gh`; a webhook wakes a poll round instead of a fixed loop |
-| Feishu Source | Not ported; intended to come through `@weft/dsh-im` |
+| Feishu Source | Through a dsh-im bot assigned with `weftIm` instead of `lark-cli`: same Triggers, scope, Policy part and topic replies; Assessments read the topic, or the newest page of a chat without topics. Chat history backfill, chat name refresh, member sync and images are not ported; a message that arrives while dsh-superagent is inactive is delivered again by dsh-im's connection |
+| WeChat, QQ and email Sources | New: one Thread per chat (per conversation for email), direct messages and QQ group mentions, replies through the same dsh-im bot |
 | Worker tools | Kept; scoped to the Sessions configured with them |
 | Prompts | Kept; `prepare` is an instruction to the worker, since an environment plugin runs no process |
 | Agent presets | Not ported: no custom presets exist for a plugin here, so Sessions use the default preset and instructions |

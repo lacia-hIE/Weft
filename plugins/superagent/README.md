@@ -12,6 +12,10 @@ Upstream calls the prototype research code, and so is this adaptation at 0.x. Re
 4. Under Settings → Sources, name the repository, and under Eval list who may start work under Policy. The Agent acts only on them.
 5. Optional, for prompt reactions: under Settings → Deployment, generate a webhook secret and copy it, the URL and the content type into the repository's Add webhook page, which takes admin rights there. `/v1/plugin-hooks/*` needs a Cloudflare Access Bypass. Without a webhook the Source polls on the background pass, every five minutes by default.
 
+## IM Sources
+
+Besides GitHub, requests can come from Feishu, WeChat, QQ and email bots of `@weft/dsh-im`. In dsh-im, open a bot's **More settings → General → Assign to plugin** and choose `@weft/dsh-superagent`; then, under Settings → Sources here, enable the channel's Source and enter the bot's key (`feishu` for the first Feishu bot, `feishu_0a1b2c` for an added one). List who may start work under the Source's Policy. A direct message or a mention of the bot from someone on the list is an explicit request; the Feishu Source also observes whole chats set to "All". Replies go out through the bot that received the request, in the message's topic on Feishu. Ticket work still lands in the GitHub repository, so the GitHub setup above remains required.
+
 ## How it runs here
 
 - All orchestration lives in the environment's plugin facet, and its state in the facet's SQLite. The environment hibernates between webhooks, turn ends, tool calls and the background pass.

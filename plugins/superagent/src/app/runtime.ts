@@ -4,7 +4,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import { Engine, key, type EngineForSettings, type ReceiveResult, type Ticket, type Trigger } from '../core/index.ts'
 import { machineOf, type Deployment, type DeploymentConfig, type Machine } from '../deployment.ts'
 import { DshExecutor, mandateInstructions, sourceTrigger, workerSessionId } from '../executor/dsh.ts'
-import type { HostFs, HostManagedSessions, HostSessionController, HostSessionEvents } from '../host-services.ts'
+import type { HostFs, HostIm, HostManagedSessions, HostSessionController, HostSessionEvents } from '../host-services.ts'
 import { Commands } from '../infra/commands.ts'
 import { HealthBoard } from '../infra/health.ts'
 import type { SqlService } from '../infra/sql.ts'
@@ -12,6 +12,9 @@ import { KV } from '../kv.ts'
 import { settingsPolicy } from '../policy.ts'
 import { githubKind, pollDue } from '../sources/github.ts'
 import { pullEndNotices } from '../sources/github-pull.ts'
+import { feishuKind } from '../sources/feishu.ts'
+import { IM_CHANNELS, ImEventSchema, imKind, imTrigger, type ImChannel } from '../sources/im.ts'
+import type { SourceKind } from '../sources/kind.ts'
 import { health, type Health, type SourceContext, type SourceHost } from '../sources/host.ts'
 import { SourceRegistry } from '../sources/registry.ts'
 import type { SetupProblem } from '../setup.ts'
@@ -43,6 +46,8 @@ const now = (): string => new Date().toISOString()
 const MASTER_ID = 'orchestrator-main'
 /** How long one wake waits for retries that come due soon, inside a Host request's deadline. */
 const DRIVE_WINDOW_MS = 40_000, DRIVE_STEP_MS = 2000
+/** How long an IM delivery keeps the environment awake for the pass it wakes; the next wake runs the rest. */
+const IM_WAKE_MS = 8000
 
 /** The Host services dsh-superagent's Cordis context provides. */
 export interface HostServices {
@@ -53,6 +58,7 @@ export interface HostServices {
   fs: HostFs
   tools: { register(tool: unknown): () => void }
   webServer: { register(route: unknown): () => void }
+  weftIm: HostIm
 }
 export type HostContext = Context & HostServices
 
@@ -86,6 +92,7 @@ export class Runtime implements SourceHost {
   private readonly sourceDeps: SourceContextDeps
   private readonly toolHost: MainToolsHost & ExecutorToolsHost
   private readonly githubContext: SourceContext
+  private readonly imKinds: Record<ImChannel, Pick<SourceKind, 'kind' | 'health'>>
   private driving?: Promise<void> | undefined
   private readonly disposers: (() => void)[] = []
   /** Non-zero while a main-Session tool is executing an Engine command, suppressing self-triggered domain event notices. */
@@ -150,6 +157,11 @@ export class Runtime implements SourceHost {
     const github = githubKind(commands)
     this.sources.register(github)
     this.githubContext = this.context(github)
+    const feishu = feishuKind(ctx.weftIm), weixin = imKind('weixin', ctx.weftIm), qq = imKind('qq', ctx.weftIm), email = imKind('email', ctx.weftIm)
+    this.imKinds = { feishu, weixin, qq, email }
+    this.disposers.push(this.sources.register(feishu), this.sources.register(weixin), this.sources.register(qq), this.sources.register(email))
+    this.disposers.push(ctx.weftIm.consume({ message: (bot, event) => this.imMessage(bot, event) }))
+    this.reportIm()
     this.ready = this.initialize()
     // Reads GitHub if it is due, so a first read does not wait for the background pass.
     void this.ready.then(() => this.tick()).catch(report)
@@ -266,6 +278,33 @@ export class Runtime implements SourceHost {
     await pollDue(this.githubContext, this.lifetime, force)
     await this.executor.reconcile()
     await this.drive()
+  }
+  /**
+   * A message of an IM bot assigned to dsh-superagent becomes a Trigger of the enabled Source that uses the bot, and
+   * wakes a pass for as long as a webhook would; a bot no Source uses is reported and its message dropped.
+   */
+  private async imMessage(bot: string, raw: unknown): Promise<void> {
+    const event = ImEventSchema.parse(raw)
+    const channel = IM_CHANNELS.find(item => item === event.kind)
+    const instance = channel && this.sources.instance<{ bot: string }>(channel)
+    if (!channel || !instance?.enabled || instance.config.bot !== bot) {
+      console.warn(`dsh-superagent: no enabled Source uses the IM bot ${bot}; its message is dropped`)
+      return
+    }
+    const context = this.context(this.imKinds[channel])
+    await context.receive(imTrigger(channel, bot, event))
+    context.report(channel, { state: 'ready', detail: `Last message at ${event.at} from bot ${bot}`, at: now() })
+    await Promise.race([this.drive(), new Promise(resolve => setTimeout(resolve, IM_WAKE_MS))])
+  }
+  /** Each IM Source's health while no message has arrived since activation: off, without a bot, or waiting. */
+  private reportIm(): void {
+    for (const channel of IM_CHANNELS) {
+      const instance = this.sources.instance<{ bot: string }>(channel)
+      const context = this.context(this.imKinds[channel])
+      if (!instance?.enabled) context.report(channel, health('paused', 'sourceOff'))
+      else if (!instance.config.bot) context.report(channel, { state: 'paused', detail: 'No dsh-im bot is chosen', at: now() })
+      else context.report(channel, { state: 'ready', detail: `Waiting for messages from bot ${instance.config.bot}`, at: now() })
+    }
   }
   private httpHost(): HttpHost {
     const runtime = this
