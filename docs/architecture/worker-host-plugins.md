@@ -28,6 +28,8 @@ Worker Host 使用标准 Cordis 导出和原版 `dsh.bundle.patch`。这一轮�
 
 插件的 Dynamic Worker 每次调用限 100 ms CPU。会话宿主的工具插件每次调用最多 64 个子请求；环境宿主的包会在第一个到达的请求里完成激活并运行自己的后台工作（例如一整轮外部读取和宿主调用），每次调用最多 10,000 个子请求，与 Workers 付费计划的默认值相同。
 
+Cloudflare 按每天出现的不同 Dynamic Worker（ID 与代码）计费，并复用已加载 Worker 创建时的 env。会话宿主插件的能力凭据含本次运行，每次运行使用自己的 Worker；环境宿主的包和安装检查的 Worker ID 由模块、服务、网络、激活与配置决定，不含运行编号，环境休眠唤醒或重新协调不会产生新的 Dynamic Worker。
+
 ## 存储与恢复
 
 Kernel 装配原版 Storage 和 StorageDomain，使用已有 DurableStorageBackend 写入 facet 的独立 SQLite。DomainSpec 的 schema 在插件所在 isolate 执行，保留原版同步内存读取、写入队列、校验与 `domain/changed` 行为；不把 schema 函数序列化成远程协议。

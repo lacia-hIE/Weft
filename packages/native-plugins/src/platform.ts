@@ -72,9 +72,16 @@ export class NativePluginPlatform {
                 await this.release(id);
             }
         const factory = installed?.module ?? `export default async function(harness){\n${source}\n}`;
-        const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify([this.scope, pluginId, runId, kernelModule, factory])));
-        const codeId = 'weft-native-host:' + Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
         const capability = this.capability?.(pluginId, runId);
+        // Cloudflare bills each distinct Dynamic Worker id and code once a day, and reuses a loaded Worker with the env
+        // it was created with. A Session plugin's capability names its run, so each run needs its own Worker. An
+        // environment package's capability names its activation and an inspection has none, so their Worker stays the
+        // same across runs and changes only with its code, services, network, activation or configuration.
+        const perRun = capability !== undefined && !(installed?.environment === true && installed.activationId !== undefined);
+        const definition = installed ? {services: installed.services, environment: installed.environment === true, network: installed.network === true,
+            activationId: installed.activationId ?? null, config: installed.config ?? null} : null;
+        const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify([this.scope, pluginId, perRun ? runId : null, kernelModule, factory, definition])));
+        const codeId = 'weft-native-host:' + Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
         const worker = this.loader.get(codeId, () => ({
             compatibilityDate: '2026-07-30', compatibilityFlags: ['nodejs_compat'], mainModule: 'kernel.js',
             modules: { 'kernel.js': kernelModule, 'weft:plugin-factory': { js: factory } },
