@@ -112,7 +112,7 @@ jobs:
       - run: npm run build
       - run: npx tsc --noEmit
       - name: Local executor dispatch and recovery smoke checks
-        run: npx tsx --test tests/local-executor.test.ts tests/superagent-remote-executor.test.ts
+        run: npx tsx --test tests/local-executor.test.ts tests/superagent-remote-executor.test.ts tests/superagent-executor-settings.test.ts
       - name: Dynamic Worker capability smoke check
         run: npx tsx --test tests/dynamic-worker-identity.test.ts tests/dynamic-worker-observation.test.ts tests/dynamic-worker-observability.test.ts
       - name: Mail protocol and durable gateway smoke checks
