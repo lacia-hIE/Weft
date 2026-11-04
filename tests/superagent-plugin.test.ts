@@ -153,7 +153,7 @@ test('a request on GitHub becomes a Ticket worked on in its own Session, without
     const worker = await waitFor(() => requests.find(item => item.tools.includes('orchestrator_report')), 'the worker\'s model request');
     assert.ok(worker.system.includes('dsh-superagent prompt revision'), 'the worker runs under the composed instructions');
     assert.ok(!worker.tools.includes('orchestrator_route'), 'a worker is not offered the main Session\'s tools');
-    const work = new Set(['read', 'write', 'edit', 'read_image', 'glob', 'grep', 'bash', 'pwsh', 'job_output', 'job_list', 'job_kill', 'web_search', 'web_fetch', 'skill', 'todo_write', 'subagent', 'list_subagent_models', 'send_message', 'list_agents', 'interrupt_agent', 'workspace_runtime']);
+    const work = new Set(['read', 'write', 'edit', 'read_image', 'glob', 'grep', 'bash', 'pwsh', 'job_output', 'job_list', 'job_kill', 'web_search', 'web_fetch', 'skill', 'todo_write', 'subagent', 'subagent_fork', 'wait_agent', 'list_subagent_models', 'send_message', 'list_agents', 'interrupt_agent', 'workspace_runtime']);
     assert.deepEqual(worker.tools.filter(name => !work.has(name) && !name.startsWith('orchestrator_')), [], 'a worker keeps only its work tools');
     assert.ok(worker.tools.includes('write'), 'a worker keeps what it works with');
     const main = requests.find(item => item.tools.includes('orchestrator_route'))!;

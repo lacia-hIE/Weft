@@ -62,12 +62,14 @@ export function createExecutorController({ctx,agentOwner=ctx,file,request=fetch}
     const root=agent.id===job.sessionId,assignmentId=job.assignmentId;
     // Native delegation already pins the child's sandbox and non-interactive approval policy.
     if(root&&data.permissionPreset)ctx.permissionPresets.set(agent.session,data.permissionPreset);
-    disposers.push(agent.ctx.systemPrompt.section({name:'weft-executor',order:600,interpolate:false,text:()=>`${jobOf(agent)?.instructions??''}${root?'':'\nYou are a delegated worker. Return results to your parent; only the root worker reports or changes the cloud Ticket.'}`}));
+    // The native Agent scope owns these effects. Retain its guards if shutdown fails;
+    // completed children release them with their scope instead of accumulating controller references.
+    agent.ctx.systemPrompt.section({name:'weft-executor',order:600,interpolate:false,text:()=>`${jobOf(agent)?.instructions??''}${root?'':'\nYou are a delegated worker. Return results to your parent; only the root worker reports or changes the cloud Ticket.'}`});
     const names=[...agent.ctx.tools.view(agent).restrictableNames];
     const allow=names.filter(name=>job.allow.some(pattern=>pattern.endsWith('*')?name.startsWith(pattern.slice(0,-1)):name===pattern));
     const cloudTools=job.tools.filter(tool=>root||tool.name==='orchestrator_read');
-    disposers.push(agent.ctx.tools.restrict({allow}));
-    disposers.push(agent.ctx.on('tools/execute',async(execution,next)=>{
+    agent.ctx.tools.restrict({allow});
+    agent.ctx.on('tools/execute',async(execution,next)=>{
       const current=jobOf(agent);
       if(execution.agent&&execution.agent!==agent)return next();
       if(!current||current.assignmentId!==assignmentId||current.state==='stopped'||current.stopping)throw new Error('Assignment ended');
@@ -75,10 +77,10 @@ export function createExecutorController({ctx,agentOwner=ctx,file,request=fetch}
         &&(!allow.includes(execution.name)&&!current.allow.some(pattern=>pattern.endsWith('*')?execution.name.startsWith(pattern.slice(0,-1)):execution.name===pattern)))throw new Error('Tool is unavailable to this Executor');
       if(!root&&TOOL_NAMES.has(execution.name)&&execution.name!=='orchestrator_read')throw new Error('Only the root Executor may change the Ticket');
       return next();
-    }));
+    });
     for(const tool of cloudTools){
       if(!TOOL_NAMES.has(tool.name))throw new Error('Unrecognized Executor tool');
-      disposers.push(agent.ctx.tools.register({...tool,output:{schema:{type:'object',additionalProperties:true},render:(_args,value)=>[{type:'text',text:JSON.stringify(value)}]},
+      agent.ctx.tools.register({...tool,output:{schema:{type:'object',additionalProperties:true},render:(_args,value)=>[{type:'text',text:JSON.stringify(value)}]},
         execute:async(args,execution)=>{
           const current=jobOf(agent);
           if(!current||current.assignmentId!==assignmentId||current.state==='stopped'||current.stopping)throw new Error('Assignment ended');
@@ -89,7 +91,7 @@ export function createExecutorController({ctx,agentOwner=ctx,file,request=fetch}
             await change(current,{handoff:args.state!=='progress'||!!args.human_action});
           }
           return result;
-        }}));
+        }});
     }
   }
   disposers.push(ctx.on('agent/created',({agent})=>attach(agent)));

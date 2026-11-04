@@ -16,12 +16,12 @@ function native() {
   const emit=async(event: string,...args: any[])=>{for(const callback of listeners.get(event)??[])await callback(...args)}
   const create=async(input:any)=>{
     const sessionId=input.sessionId??input.resumeSessionId,session=sessions.get(sessionId)??{header:{id:sessionId,...input.meta},snapshotEvents:()=>[]};sessions.set(sessionId,session)
-    const localTools=new Map<string,any>(),guards:any[]=[],restrictions:string[][]=[]
+    const localTools=new Map<string,any>(),guards:any[]=[],restrictions:string[][]=[],resources:(()=>void)[]=[]
     const agent:any={id:sessionId,session,status:'idle',inbox:{nextTurn:[],nextStep:[]},localTools,guards,restrictions,
       cancel:()=>{cancelled.push(sessionId);agent.status='idle'},
       ctx:{on:(name:string,callback:any)=>{if(name==='tools/execute')guards.push(callback);return()=>{}},systemPrompt:{section:()=>()=>{}},
-        tools:{view:()=>({restrictableNames:new Set(['read','write','subagent','subagent_fork','wait_agent'])}),restrict:({allow}:{allow:string[]})=>{restrictions.push(allow);return()=>{}},register:(tool:any)=>{localTools.set(tool.name,tool);tools.set(tool.name,tool);return()=>{localTools.delete(tool.name);tools.delete(tool.name)}}}}}
-    agents.set(sessionId,agent);await input.setup?.(agent.ctx,agent);await emit('agent/created',{agent});return {agent,dispose:async()=>{agents.delete(sessionId)}}
+        tools:{view:()=>({restrictableNames:new Set(['read','write','subagent','subagent_fork','wait_agent'])}),restrict:({allow}:{allow:string[]})=>{restrictions.push(allow);return()=>{}},register:(tool:any)=>{localTools.set(tool.name,tool);tools.set(tool.name,tool);const dispose=()=>{localTools.delete(tool.name);if(tools.get(tool.name)===tool)tools.delete(tool.name)};resources.push(dispose);return dispose}}}}
+    agents.set(sessionId,agent);await input.setup?.(agent.ctx,agent);await emit('agent/created',{agent});return {agent,dispose:async()=>{for(const dispose of resources)dispose();agents.delete(sessionId)}}
   }
   const runtime={drain:async(roots:any[])=>{for(const root of roots){drained.push(root.id);for(const child of [...agents.values()])if(child.session.header.parentSession===root.id){child.cancel();agents.delete(child.id);await emit('subagent/end',{id:child.id,parentSessionId:root.id,runId:child.id,stopReason:'aborted',local:true})}}}}
   const ctx={on,agents:{get:(id:string)=>agents.get(id),create,resume:create},agentPresets:{resolve:async()=>({id:'local'}),mount:async()=>{}},agentDefaultModel:{currentSelection:()=>({provider:'local',model:'local'})},
@@ -145,5 +145,20 @@ test('unreadable descendant catalogs block reconnect without replaying child wor
     await controller.load();assert.equal(controller.snapshot().state,'configuration-error')
     await assert.rejects(controller.reconnect(),/could not be reconciled/)
     assert.equal(networkCalls,0);assert.equal(host.prompts.length,0)
+  }finally{await controller.close();await rm(directory,{recursive:true,force:true})}
+})
+
+test('failed native cleanup retains the guard on a surviving delegated worker',async()=>{
+  const directory=await mkdtemp(join(tmpdir(),'weft-failed-drain-')),host=native()
+  const command={kind:'run',ticketId:ticket,assignmentId:assignment,name:'failed-drain',directory:'/workspace/tree',title:'Tree',instructions:'Task',allow:['read','subagent'],tools:[],messages:[{id:'run',text:'Task'}]}
+  const request=async(address:string)=>address.endsWith('/pair')?Response.json({protocol,token}):Response.json({protocol,commands:[command],retryAfterMs:1000})
+  const controller=createExecutorController({ctx:host.ctx,file:join(directory,'executor.json'),request})
+  try{
+    await controller.pair({code:JSON.stringify({protocol,endpoint,pairingKey}),root:join(directory,'work')});await controller.configure({accepting:true,maxWorkers:1});await controller.reconnect();await waitFor(()=>host.prompts.length===1)
+    const child=await host.child(host.prompts[0].sessionId)
+    host.runtime.drain=async()=>{throw new Error('Native cleanup failed')}
+    await controller.close()
+    assert.notEqual(controller.snapshot().jobs[0].state,'stopped')
+    await assert.rejects(child.guards[0]({agent:child,name:'read'},()=>{throw new Error('Guard bypassed')}),/Assignment ended/)
   }finally{await controller.close();await rm(directory,{recursive:true,force:true})}
 })
