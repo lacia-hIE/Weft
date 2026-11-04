@@ -35,7 +35,7 @@ function SourceCard({ source, form }: { source: SourceView; form?: DeploymentFor
     refreshLabels={refreshLabels} fact={spec.type === 'fact' || !changed(spec.key) ? source.facts[spec.key] : undefined}
     onChange={next => draft.edit({ ...value, config: { ...value.config, [spec.key]: next } })} />
   const advanced = source.fields.filter(spec => spec.advanced)
-  return <form id={`dt-source-${source.id}`} className="dt-card" onSubmit={event => { void draft.submit(event) }}>
+  return <div id={`dt-source-${source.id}`} className="dt-card dt-form"><form className="dt-form" onSubmit={event => { void draft.submit(event) }}>
     <Fields disabled={draft.busy}>
       {source.value.kind && <Field label={t('sourceInstanceName')}><Input value={value.name ?? ''} onChange={event => draft.edit({...value, name: event.target.value})}/></Field>}
       <div className="dt-card-head">
@@ -58,11 +58,12 @@ function SourceCard({ source, form }: { source: SourceView; form?: DeploymentFor
         <div className="dt-disclosure-body">{advanced.map(field)}</div>
       </DisclosureRow>}
     </Fields>
-    {['github-webhook', 'gitlab', 'feed'].includes(source.kind) && <SourceCredentials id={source.id} kind={source.kind} form={form}/>}
     {source.value.kind && <div><Button variant="ghost" size="sm" onClick={() => draft.edit({...value, enabled: false, archived: true})}>{t('sourceArchive')}</Button></div>}
     <SaveBar {...draft} status={restarts && running > 0 ? t('restartInterrupts', { count: running }) : undefined}
       onDiscard={draft.discard} />
   </form>
+    {['github-webhook', 'gitlab', 'feed'].includes(source.kind) && <SourceCredentials id={source.id} kind={source.kind} form={form}/>}
+  </div>
 }
 
 export function SourceSettings({ focus, form }: { focus?: string; form?: DeploymentForm }) {
@@ -77,7 +78,7 @@ export function SourceSettings({ focus, form }: { focus?: string; form?: Deploym
   }
   useEffect(() => { if (focus) document.getElementById(`dt-source-${focus}`)?.scrollIntoView?.({ block: 'start' }) }, [focus])
   return <div className="dt-form">
-    <div className="dt-card dt-form"><div className="dt-grid3">
+    <div className="dt-card dt-form" data-add-source><div className="dt-grid3">
       <Field label={t('sourceType')}><Select value={kind} placeholder={t('sourceType')} options={[{value: 'github-webhook', label: 'GitHub'}, {value: 'gitlab', label: 'GitLab'}, {value: 'feed', label: 'RSS / Atom'}]} onChange={value => setKind(value as typeof kind)}/></Field>
       <Field label={t('sourceInstanceName')}><Input value={name} onChange={event => setName(event.target.value)}/></Field>
     </div><div><Button variant="outline" disabled={busy} onClick={() => {void add()}}>{t('sourceAdd')}</Button></div></div>
@@ -138,7 +139,7 @@ function SourceRow({ source }: { source: SourceStatusRow }) {
         </button>
       </p>}
       {notes.map(item => <p key={item.name} className={item.state === 'error' ? 'dt-error dt-clamp' : 'dt-hint dt-clamp'}>
-        {valueLabel(t, 'health', item.name)}{t('labelSeparator')}<span className={item.code ? undefined : 'dt-mono'}>{healthText(t,
+        {valueLabel(t, 'health', item.name.endsWith(':feed') ? 'feed' : item.name.endsWith(':webhook') ? 'webhook' : item.name)}{t('labelSeparator')}<span className={item.code ? undefined : 'dt-mono'}>{healthText(t,
           item)}</span>
       </p>)}
       {source.filtered.length > 0 && <DisclosureRow icon={<Icon name="filter" />} title={t('sourceFilteredTitle')} open={filteredOpen}

@@ -69,7 +69,7 @@ export class RepositoryEvents {
       kind: id, type, defaultEnabled: false,
       get title() {const name = events.host.store.settings().sources[id]?.name || (type === 'github-webhook' ? 'GitHub' : type === 'gitlab' ? 'GitLab' : 'RSS / Atom');return {zh: name, en: name}},
       description: {zh: '独立接收 Webhook 或 RSS/Atom，按来源策略评估事件。仓库操作由执行器负责。', en: 'Receive webhooks or RSS/Atom independently. Source Policy evaluates events; Executors own repository operations.'},
-      schema: type === 'feed' ? EventConfig.extend({webhook: z.boolean().default(false), feed: z.boolean().default(true)}) : EventConfig, health: [id],
+      schema: type === 'feed' ? EventConfig.extend({webhook: z.boolean().default(false), feed: z.boolean().default(true)}) : EventConfig, health: [`${id}:webhook`, `${id}:feed`],
       fields: [
         {key: 'repository', type: 'text', label: {zh: '监听范围（仓库路径）', en: 'Repository scope'}, hint: {zh: 'Webhook 必填，例如 team/repository；清空可保存为草稿。', en: 'Required for webhooks, e.g. team/repository. Clear to save an unconfigured draft.'}},
         {key: 'site', type: 'text', label: {zh: '平台地址（可选）', en: 'Site origin (optional)'}},
@@ -117,19 +117,20 @@ export class RepositoryEvents {
     const seen = this.host.store.get(deliveries(id)) ?? []
     if (seen.includes(delivery)) return
     this.host.store.atomic(() => {ctx.receive(trigger);this.host.store.set(deliveries(id), [delivery, ...seen].slice(0, 500))})
-    ctx.report(id, {state: 'ready', detail: 'Webhook event received', at: new Date().toISOString()})
+    ctx.report(`${id}:webhook`, {state: 'ready', detail: 'Webhook event received', at: new Date().toISOString()})
   }
   async poll(id: string, type: EventType, signal: AbortSignal): Promise<void> {
     const ctx = this.host.context(id), config = ctx.config<Config>(id)
-    if (!config) {ctx.report(id, {state: 'paused', detail: 'Off'});return}
-    if (!config.feed) {
-      ctx.report(id, {state: config.webhook && !!config.repository && !!this.host.secret(id, 'webhook') ? 'ready' : 'paused', detail: config.webhook ? 'Webhook waiting for verified delivery' : 'No reception method enabled'});return
-    }
+    if (!config) {for (const part of ['webhook', 'feed']) ctx.report(`${id}:${part}`, {state: 'paused', detail: 'Off'});return}
+    const hookReady = config.webhook && !!config.repository && !!this.host.secret(id, 'webhook')
+    ctx.report(`${id}:webhook`, {state: hookReady ? 'ready' : 'paused', detail: hookReady ? 'Waiting for verified webhook delivery' : config.webhook ? 'Webhook needs repository scope and a shared secret' : 'Off'})
+    if (!config.feed) {ctx.report(`${id}:feed`, {state: 'paused', detail: 'Off'});return}
+    const subscription = this.host.secret(id, 'feed'), fingerprint = key(subscription)
     let state = this.host.store.get(cursors(id)) ?? {initialized: false, seen: [], next: 0}
+    if (state.fingerprint !== fingerprint) state = {initialized: false, seen: [], next: 0, fingerprint}
     if (state.next > Date.now()) return
     try {
-      const url = https(this.host.secret(id, 'feed')), fingerprint = key(url.href)
-      if (state.fingerprint !== fingerprint) state = {initialized: false, seen: [], next: 0, fingerprint}
+      const url = https(subscription)
       const response = await fetch(url, {redirect: 'error', signal: AbortSignal.any([signal, AbortSignal.timeout(15000)]), headers: {
         accept: 'application/atom+xml, application/rss+xml, application/xml', ...(state.etag ? {'if-none-match': state.etag} : {}), ...(state.modified ? {'if-modified-since': state.modified} : {}),
       }})
@@ -144,12 +145,12 @@ export class RepositoryEvents {
         this.host.store.set(cursors(id), {fingerprint, initialized: true, seen: [...new Set([...entries.map(entry => entry.id), ...state.seen])].slice(0, 1000), next: Date.now() + config.intervalSeconds * 1000,
           ...(response.headers.get('etag') ? {etag: response.headers.get('etag')!} : {}), ...(response.headers.get('last-modified') ? {modified: response.headers.get('last-modified')!} : {})})
       })
-      ctx.report(id, {state: 'ready', detail: state.initialized ? 'Subscription checked' : 'Subscription baseline saved; historical entries were not dispatched', at: new Date().toISOString()})
+      ctx.report(`${id}:feed`, {state: 'ready', detail: state.initialized ? 'Subscription checked' : 'Subscription baseline saved; historical entries were not dispatched', at: new Date().toISOString()})
     } catch (error) {
       if (signal.aborted) return
       this.host.store.set(cursors(id), {...state, next: Date.now() + config.intervalSeconds * 1000})
       // Subscription URLs can carry credentials. Never include raw fetch errors or addresses in diagnostics.
-      ctx.report(id, {state: 'error', detail: error instanceof Error && /^Subscription HTTP \d+$/.test(error.message) ? error.message : 'Subscription could not be read; check the private address and authentication'})
+      ctx.report(`${id}:feed`, {state: 'error', detail: error instanceof Error && /^Subscription HTTP \d+$/.test(error.message) ? error.message : 'Subscription could not be read; check the private address and authentication'})
     }
   }
   private async reply(id: string, type: EventType, messageId: string, address: Record<string, string>, body: string, signal?: AbortSignal): Promise<'sent' | 'gone'> {

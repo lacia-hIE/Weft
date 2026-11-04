@@ -46,14 +46,14 @@ test('Atom polling establishes a baseline, sends only changes, preserves conditi
   const xml=(number:number)=>`<feed xmlns="http://www.w3.org/2005/Atom"><entry><id>issue-7</id><title>Task ${number}</title><updated>2026-11-04T01:00:0${number}Z</updated><link href="https://gitlab.example/team/a/-/issues/7"/><summary>Original context</summary></entry></feed>`
   t.mock.method(globalThis,'fetch',async(_url:unknown,init:RequestInit)=>{calls++;if(calls===2)assert.equal(new Headers(init.headers).get('if-none-match'),'"first"');return new Response(xml(version),{headers:{etag:'"first"'}})})
   try {
-    const id=h.add('feed'),other=h.add('feed');h.secrets[`${id}-feed`]='https://gitlab.example/feed.atom?feed_token=PRIVATE'
+    const id=h.add('feed',{intervalSeconds:60}),other=h.add('feed');h.secrets[`${id}-feed`]='https://gitlab.example/feed.atom?feed_token=PRIVATE'
     await h.events.poll(id,'feed',new AbortController().signal)
     assert.equal(h.received.length,0,'first subscription never turns old entries into tasks')
     version=2;now+=61_000;await h.events.poll(id,'feed',new AbortController().signal)
     assert.equal(h.received.length,1);assert.equal(h.received[0]!.human,false);assert.equal(h.received[0]!.actor.id,'')
     now+=61_000;await h.events.poll(id,'feed',new AbortController().signal);assert.equal(h.received.length,1)
     await h.events.poll(other,'feed',new AbortController().signal)
-    assert.equal((h.reports.get(other) as {state:string}).state,'error');assert.equal((h.reports.get(id) as {state:string}).state,'ready')
+    assert.equal((h.reports.get(`${other}:feed`) as {state:string}).state,'error');assert.equal((h.reports.get(`${id}:feed`) as {state:string}).state,'ready')
     assert.equal(JSON.stringify([...h.reports.values()]).includes('PRIVATE'),false)
     h.secrets[`${id}-feed`]='https://gitlab.example/another.atom?feed_token=CHANGED';now+=61_000
     await h.events.poll(id,'feed',new AbortController().signal);assert.equal(h.received.length,1,'changing a subscription creates a new baseline')

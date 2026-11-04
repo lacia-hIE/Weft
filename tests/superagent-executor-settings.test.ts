@@ -42,6 +42,24 @@ test('executor selection persists without requiring GitHub setup', {timeout: 600
     for (let attempt = 0; state.status !== 200 && attempt < 40; attempt++) {await new Promise(resolve => setTimeout(resolve, 100)); state = await panel('state');}
     assert.equal(state.status, 200, await state.clone().text());
     assert.equal((await state.json() as {setup: {problem: unknown}}).setup.problem, null);
+    const createdSource=await panel('sources','POST',{kind:'gitlab',name:'Internal GitLab'});assert.equal(createdSource.status,200,await createdSource.clone().text());
+    const sourceId=(await createdSource.json() as {id:string}).id, hookSecret='independent-source-secret';
+    const currentForm=(await api.call<SettingsDescribeValue>('settings/describe',{})).namespaces.find(row=>row.ns===ns)!;
+    await api.call('settings/update',{ns,patch:{sourceSecrets:{[`${sourceId}-webhook`]:hookSecret}},expectedRevision:currentForm.revision});
+    const sourceSettings=await(await panel('settings')).json() as {sources:{id:string;revision:number}[]};
+    const source=sourceSettings.sources.find(item=>item.id===sourceId)!;
+    const savedSource=await panel(`settings/source:${sourceId}`,'PUT',{revision:source.revision,value:{kind:'gitlab',name:'Internal GitLab',enabled:true,config:{repository:'team/internal'}}});
+    assert.equal(savedSource.status,200,await savedSource.clone().text());
+    const deliver=(secret:string,repository='team/internal')=>runtime.dispatchFetch(url('anonymous',`/v1/plugin-hooks/${tenantId('alpha')}/default/${encodeURIComponent(plugin.name)}/source-events/${sourceId}`),
+      {method:'POST',headers:{'content-type':'application/json','x-gitlab-token':secret,'x-gitlab-event-uuid':'delivery-1'},body:JSON.stringify({project:{path_with_namespace:repository},user:{username:'observer'},object_kind:'issue',object_attributes:{iid:7,title:'UniqueSourceObservation',description:'Observe only',action:'open',url:'https://gitlab.example/team/internal/-/issues/7'}})} as never);
+    assert.equal((await deliver('wrong')).status,401);assert.equal((await deliver(hookSecret,'another/project')).status,400);
+    assert.equal((await deliver(hookSecret)).status,202);assert.equal((await deliver(hookSecret)).status,202);
+    const found=await(await panel('search?q=UniqueSourceObservation')).json() as {items:unknown[]};assert.equal(found.items.length,1,'webhook redelivery creates one source event');
+    const publicSettings=await(await panel('settings')).text();assert.equal(publicSettings.includes(hookSecret),false);
+    const sourceLatest=JSON.parse(publicSettings).sources.find((item:{id:string})=>item.id===sourceId);
+    const cleared=await panel(`settings/source:${sourceId}`,'PUT',{revision:sourceLatest.revision,value:{kind:'gitlab',name:'Internal GitLab',enabled:true,config:{repository:''}}});
+    assert.equal(cleared.status,200,'clearing a Source does not require repository connectivity or credentials');
+
     const read = async () => await (await panel('settings')).json() as {blocks: {executor: {revision: number; value: Record<string, unknown>}}};
     const current = (await read()).blocks.executor;
     const device = await panel('executors', 'POST', {name: 'Connected DSH'}); assert.equal(device.status, 200);

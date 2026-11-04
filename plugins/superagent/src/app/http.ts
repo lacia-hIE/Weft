@@ -313,7 +313,8 @@ export function registerHttp(ctx: HostContext, runtime: HttpHost): () => void {
         if (!verified) {json(res, 401, {error: 'Unverified delivery'});return}
         const delivery = header(req, 'x-github-delivery') || header(req, 'x-gitlab-event-uuid') || header(req, 'x-gitlab-webhook-uuid')
         if (!delivery || delivery.length > 200) {json(res, 400, {error: 'Delivery identity required'});return}
-        await runtime.repositoryEvents.webhook(id, instance.kind as 'github-webhook' | 'gitlab' | 'feed', JSON.parse(new TextDecoder().decode(bytes)), delivery)
+        try {await runtime.repositoryEvents.webhook(id, instance.kind as 'github-webhook' | 'gitlab' | 'feed', JSON.parse(new TextDecoder().decode(bytes)), delivery)}
+        catch (error) {throw new RouteError(400, error instanceof Error ? error.message : 'Invalid Source event')}
         json(res, 202, {accepted: true});await runtime.settled()
       } catch (error) {json(res, ...failure(error))}
     }}),

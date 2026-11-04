@@ -109,7 +109,7 @@ export class Runtime implements SourceHost {
   private readonly disposers: (() => void)[] = []
   /** Non-zero while a main-Session tool is executing an Engine command, suppressing self-triggered domain event notices. */
   private quiet = 0
-  constructor(private readonly ctx: HostContext, private readonly config: DeploymentConfig, restart: () => void) {
+  constructor(private readonly ctx: HostContext, private readonly config: DeploymentConfig, restart: () => void, private readonly scheduleChanged: () => void = () => {}) {
     const runtime = this
     this.machine = machineOf(config)
     const report = (error: unknown) => { console.warn('dsh-superagent:', String(error)) }
@@ -130,7 +130,7 @@ export class Runtime implements SourceHost {
       collaboration: this.collaboration, masterId: MASTER_ID, lifetime: this.lifetime, environment: ticket => this.ticketEnvironment(ticket), mandate: ticket => mandateInstructions(ticket.mandate),
       tools: role => this.toolNames[role] })
     const policyChanged: EngineForSettings['policyChanged'] = (from, to, changes) => { this.engine.policyChanged(from, to, changes) }
-    this.settings = new Settings({ store, sources, engine: { policyChanged }, health: board, lifetime: this.lifetime, sessions, sourceHost: this, setup, requestPass: () => { this.passes.request() } })
+    this.settings = new Settings({ store, sources, engine: { policyChanged }, health: board, lifetime: this.lifetime, sessions, sourceHost: this, setup, requestPass: () => { this.passes.request(); this.scheduleChanged() } })
     const remote: RemoteExecutor = new RemoteExecutor({ store, get engine() { return runtime.engine },
       configuration: ticket => sessions.configuration('worker', ticket), tools: ticket => executorTools(this.toolHost, ticket),
       usedSlots: () => this.executor.slotCount() + remote.activeCount(),
@@ -180,13 +180,17 @@ export class Runtime implements SourceHost {
     const feishu = feishuKind(ctx.weftIm), weixin = imKind('weixin', ctx.weftIm), qq = imKind('qq', ctx.weftIm), email = imKind('email', ctx.weftIm)
     this.imKinds = { feishu, weixin, qq, email }
     this.disposers.push(this.sources.register(feishu), this.sources.register(weixin), this.sources.register(qq), this.sources.register(email))
-    this.repositoryEvents = new RepositoryEvents({store, context: id => this.context({kind: id, health: [id]}), secret: (id, name) => config.sourceSecrets[`${id}-${name}`] ?? ''})
+    this.repositoryEvents = new RepositoryEvents({store, context: id => this.context({kind: id, health: [`${id}:webhook`, `${id}:feed`]}), secret: (id, name) => config.sourceSecrets[`${id}-${name}`] ?? ''})
     for (const type of EVENT_TYPES) this.sources.registerFactory(type, id => this.repositoryEvents.kind(id, type))
     this.disposers.push(ctx.weftIm.consume({ message: (bot, event) => this.imMessage(bot, event) }))
     this.reportIm()
     this.ready = this.initialize()
     // Reads GitHub if it is due, so a first read does not wait for the background pass.
     void this.ready.then(() => this.tick()).catch(report)
+  }
+  wakePeriod(): number {
+    const intervals = this.sources.instances().filter(instance => instance.enabled && instance.config.feed === true).map(instance => Number(instance.config.intervalSeconds) || 300)
+    return Math.max(60, Math.min(this.config.reconcileSeconds, ...intervals))
   }
   get health(): Readonly<Record<string, Health>> { return this.board.all }
   /** Aborted when dsh-superagent stops, cancelling running reads. */

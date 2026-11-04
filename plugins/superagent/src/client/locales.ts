@@ -6,6 +6,8 @@ import { SETUP_PROBLEMS } from '../setup.ts'
 import { HEALTH_TEXT } from '../sources/host.ts'
 
 const TEXT = {
+  'health.feed': ['RSS / Atom', 'RSS / Atom'],
+  'health.webhook': ['Webhook', 'Webhook'],
   sourceType: ['来源类型', 'Source type'],
   sourceInstanceName: ['来源名称', 'Source name'],
   sourceAdd: ['添加来源', 'Add Source'],
