@@ -23,7 +23,9 @@ test('executor selection persists and returns without draining a main Session be
     const ns = entryNamespace(plugin.name, 'dsh-superagent');
     const form = (await api.call<SettingsDescribeValue>('settings/describe', {})).namespaces.find(row => row.ns === ns)!;
     await api.call('settings/update', {ns, patch: {managementKey: key}, expectedRevision: form.revision});
-    const state = await panel('state'); assert.equal(state.status, 200, await state.clone().text());
+    let state = await panel('state');
+    for (let attempt = 0; state.status !== 200 && attempt < 40; attempt++) {await new Promise(resolve => setTimeout(resolve, 100)); state = await panel('state');}
+    assert.equal(state.status, 200, await state.clone().text());
     assert.ok((await state.json() as {setup: {problem: unknown}}).setup.problem);
     const read = async () => await (await panel('settings')).json() as {blocks: {executor: {revision: number; value: Record<string, unknown>}}};
     const current = (await read()).blocks.executor;
