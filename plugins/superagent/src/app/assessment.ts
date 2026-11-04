@@ -207,7 +207,7 @@ export class MasterAssessor implements Assessor {
     const settings = this.host.settings()
     const others = candidate.triggers.filter(item => item.id !== trigger.id)
     return { trigger_id: trigger.id, strength: candidate.strength, mode: sourceMode(settings, trigger.source),
-      source: { kind: trigger.source, actor: trigger.actor.id, thread: threadKey(trigger.threads[0]!), ...(trigger.url
+      source: { kind: trigger.source, provider: settings.sources[trigger.source]?.kind ?? trigger.source, name: settings.sources[trigger.source]?.name || trigger.source, actor: trigger.actor.id, thread: threadKey(trigger.threads[0]!), ...(trigger.url
         ? { url: trigger.url } : {}) },
       ...cut(trigger.text, TRIGGER_CHARS), ...imageIds(source?.messageId ?? '', trigger.text),
       ...others.length ? { batch: others.map(item => {

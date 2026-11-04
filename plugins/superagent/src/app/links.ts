@@ -47,6 +47,7 @@ export async function candidateCard(host: LinkHost, candidate: Candidate) {
   // Format the primary trigger like a worker input (including the message it replies to) and summarize earlier batch triggers as cards.
   const others = candidate.triggers.filter(trigger => trigger.id !== primary.id)
   return { ...triggerMessage(primary, await sourceLink(host, primary), undefined, repliedTo(host, primary)), strength: candidate.strength,
+    connection: {id: primary.source, type: host.sources.instance(primary.source)?.kind ?? primary.source, name: host.sources.instance(primary.source)?.name || primary.source},
     execution_target: target ? {mode: target.placement ?? 'fixed', executor_id: target.executorId, ...(target.projectId ? {legacy_project_id: target.projectId} : {})} : {mode: 'auto', default_executor_id: settings.executor.executorId},
     mode: sourceMode(settings, primary.source), ...others.length ? { batch: others.map(trigger => triggerCard(trigger)) } : {},
     ...handedBack.length ? { handed_back: handedBack } : {}, ...relatedTickets(candidate.tickets),

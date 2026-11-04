@@ -1,3 +1,21 @@
+## Source connections (0.4.1)
+
+Sources are managed as a searchable list with type and status filters. Add multiple connections of the
+same type, name each one, and open its focused editor for configuration. Feishu, WeChat, QQ and email
+reuse bots assigned to Superagent by IM; the picker can add several bots at once. One active Source
+owns each bot, so a delivery cannot create duplicate tasks across connections. Existing built-in Source
+identities remain valid for historical work.
+
+Policy & Eval selects a Source connection by name. Sender lists and admission remain scoped to that
+connection. Its assessment mode can inherit the global default, accept explicit requests only, observe,
+or automatically assess matching work. Shared task rules remain global. Candidate cards and the main
+Session's Policy context identify the effective mode and connection; the Engine checks the same mode.
+
+Deleting a Source disconnects incoming events and replies, removes its private Source credentials and
+retains Tickets and historical events. IM bot accounts themselves are kept. Removed connections do not
+appear in current Source or assessment pickers. A GitHub connection without a token is shown as pending
+configuration on that Source; it is not a system setup problem and does not block other work.
+
 ## Settings redesign (0.4.0)
 
 Settings separate **Sources**, **Policy & Eval**, **Execution**, **Prompts**, and **Advanced**.

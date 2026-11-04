@@ -42,7 +42,7 @@ export interface PromptVersion { revision: number; previousRevision: number | nu
 export const defaultPrompts = (): PromptConfig => ({ ...teamDefaults, skills: {} })
 
 const ENVIRONMENT_HEADING = 'Execution environment (from this installation\'s settings; it takes precedence over any repository or account named elsewhere in these instructions; an empty value means that part is not configured here). The prepare command of a ticket directory reads the same variables:'
-const POLICY_HEAD = '## Policy\nPolicy version {version}; accept mode {mode}. The accept mode and the rules decide proactive candidates only: an explicit request is routed as dispatch says, in any mode and whatever the rules.'
+const POLICY_HEAD = '## Policy\nPolicy version {version}; default accept mode {mode}. A Source may override this default; use the candidate card’s effective mode. The accept mode and the rules decide proactive candidates only: an explicit request is routed as dispatch says, in any mode and whatever the rules.'
 type Role = 'orchestrator' | 'worker'
 /** A built-in part a team may override: the roles that read it, its text, and the placeholders a template's override keeps. */
 interface BuiltInPart { roles: readonly Role[]; text: string; placeholders?: readonly string[] }
@@ -92,7 +92,8 @@ export function policySection(settings: Settings, config: PromptConfig = default
   const line = (text: string) => text.replace(/\s*\n\s*/g, ' ')
   const rules = settings.policy.rules.filter(rule => rule.enabled).map(({ id, name, instruction }) => `- ${line(name)} (${id}): ${line(instruction)}`)
   const part = rules.length ? 'runtime/policy' : 'runtime/policy/none'
-  return { key: part, text: fill(builtIn(config, part), { version: policyVersion(settings), mode: settings.eval.mode, rules: rules.join('\n') }) }
+  const modes = Object.entries(settings.policy.sources).filter(([id, policy]) => policy.mode && policy.mode !== 'inherit' && !settings.sources[id]?.archived).map(([id, policy]) => ({id, name: settings.sources[id]?.name || id, mode: policy.mode}))
+  return { key: part, text: fill(builtIn(config, part), { version: policyVersion(settings), mode: settings.eval.mode, rules: rules.join('\n') }) + (modes.length ? `\nSource assessment overrides (by connection ID): ${JSON.stringify(modes)}` : '') }
 }
 /**
  * Assemble a role's system prompt sections in order from fixed templates, team sections, the generated execution environment
