@@ -6,6 +6,20 @@ import { SETUP_PROBLEMS } from '../setup.ts'
 import { HEALTH_TEXT } from '../sources/host.ts'
 
 const TEXT = {
+  githubIntegration: ['GitHub 集成（可选）', 'GitHub integration (optional)'],
+  githubOptional: ['仅监听 GitHub 或使用云端 GitHub 工具时需要；本地项目任务不需要配置 Token 或 Webhook。', 'Needed only for GitHub subscriptions or cloud GitHub tools. Local project tasks require no GitHub token or webhook.'],
+  requestFollowup: ['补充需求或回复执行器', 'Follow up or answer the executor'],
+  requestSend: ['发送', 'Send'],
+  requestReplies: ['需求会话', 'Request conversation'],
+  requestNew: ['提出需求', 'New request'],
+  requestSubmit: ['提交评估', 'Submit for evaluation'],
+  requestIntro: ['无需监听仓库事件。描述任务、验收标准及允许的交付操作，评估后由指定环境执行。', 'No repository subscription is needed. Describe the task, acceptance criteria and authorized delivery actions for evaluation and execution in the selected environment.'],
+  requestEnvironment: ['此次任务的执行环境', 'Execution environment for this request'],
+  requestProject: ['本地项目', 'Local project'],
+  requestNoProject: ['不指定项目', 'No project selected'],
+  requestProjectHint: ['仓库目录、验证、合并和部署要求在本机 DSH 配置。', 'Configure the repository directory, verification, merge and deployment requirements in local DSH.'],
+  requestWaitingComputer: ['需求将等待这台电脑上线并允许接单，不会转到云端执行。', 'The request will wait for this computer to connect and accept tasks. Execution remains assigned to it.'],
+  requestText: ['任务需求与验收标准', 'Task and acceptance criteria'],
   executionComputer: ['默认执行位置', 'Default execution location'],
   executionComputerHint: ['只影响新工单；本地任务的模型和权限由本机 DSH 配置。', 'Applies to new Tickets only. Local DSH supplies its model and permissions.'],
   cloudExecutor: ['云端', 'Cloud'],
@@ -51,6 +65,7 @@ const TEXT = {
   'mode.observe': ['仅观察', 'Observe'],
   'mode.auto': ['自动接单', 'Auto'],
   'source.feishu': ['飞书', 'Feishu'],
+  'source.request': ['用户需求', 'User request'],
   'source.github': ['GitHub', 'GitHub'],
   'source.github-issue': ['GitHub Issue', 'GitHub Issue'],
   'health.github': ['GitHub 来源', 'GitHub Source'],

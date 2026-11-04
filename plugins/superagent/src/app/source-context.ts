@@ -18,7 +18,7 @@ export interface SourceContextDeps {
   /** Throws when accessed before initial setup completes. */
   readonly deployment: Deployment
   readonly ready: Promise<void>
-  configured(): boolean
+  configured(kind?: string): boolean
   /** Setup problem whose `place` matches the Source kind receives it on `context.problem`. */
   readonly setupProblem?: SetupProblem | undefined
   /** Hands a Trigger to the Engine and schedules the pass that assesses it. */
@@ -41,7 +41,7 @@ export function sourceContextOf(deps: SourceContextDeps, kind: { kind: string; h
     get deployment() { return deps.deployment },
     commands: deps.commands,
     ready: deps.ready,
-    configured: () => deps.configured(),
+    configured: () => deps.configured(kind.kind),
     get problem() { return deps.setupProblem?.place === kind.kind ? deps.setupProblem : undefined },
     config: <C extends Record<string, unknown>>(id: string) => {
       const instance = deps.sources.instance<C>(id)

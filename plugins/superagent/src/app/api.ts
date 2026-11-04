@@ -18,6 +18,8 @@ interface Paged { offset?: number; limit?: number }
 type Delivery = 'injected' | 'pending'
 
 export interface Api {
+  'POST requests/:id/messages': {body: {requestId: string; text: string}; response: ReturnType<typeof import('./requests.ts').submitRequest>}
+  'POST requests': { body: import('./requests.ts').UserRequest; response: ReturnType<typeof import('./requests.ts').submitRequest> }
   'GET executors': { response: ReturnType<import('../executor/remote.ts').RemoteExecutor['list']> }
   'POST executors': { body: { name: string }; response: Awaited<ReturnType<import('../executor/remote.ts').RemoteExecutor['create']>> }
   'POST executors/:id/revoke': { body?: object; response: { revoked: true } }

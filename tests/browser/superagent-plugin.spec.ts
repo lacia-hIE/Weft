@@ -23,12 +23,19 @@ test('the Superagent panel opens from the sidebar, gets its key through Settings
   await page.goto('/agents/' + environment);
   await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
   await page.getByRole('button', {name: 'Superagent', exact: true}).click({timeout: 45_000});
-  await expect(page.getByText('The GitHub Source names no repository.').first()).toBeVisible({timeout: 60_000});
+  await expect(page.getByRole('button',{name:'New request',exact:true})).toBeVisible({timeout:60_000});
+  await expect(page.getByText('The GitHub Source names no repository.',{exact:true})).toHaveCount(0);
+  await page.getByRole('button',{name:'New request',exact:true}).click();
+  const requestDialog=page.getByRole('dialog',{name:'New request',exact:true});
+  await expect(requestDialog.getByRole('textbox',{name:'Task and acceptance criteria',exact:true})).toBeVisible();
+  await expect(requestDialog.getByRole('button',{name:'Submit for evaluation',exact:true})).toBeDisabled();
+  await requestDialog.getByRole('button',{name:'Close',exact:true}).click();
 
   // The credentials are written from the panel and never shown again.
   await page.locator('#dt-tab-settings').click();
   await page.getByRole('button', {name: 'Deployment', exact: true}).click();
   const panel = page.locator('#dt-page');
+  await panel.locator('summary').filter({hasText:'GitHub integration (optional)'}).click();
   await expect(panel.getByText('Not set', {exact: true})).toHaveCount(2);
   await page.getByLabel('Agent GitHub token', {exact: true}).fill('browser-token');
   await page.getByRole('button', {name: 'Save credentials', exact: true}).click();
@@ -36,6 +43,7 @@ test('the Superagent panel opens from the sidebar, gets its key through Settings
   await expect(page.getByLabel('Agent GitHub token', {exact: true})).toHaveValue('');
 
   // Webhook setup: the page shows what GitHub's form asks for, and a generated secret is saved and shown once.
+  await panel.locator('details').filter({has:page.getByText('GitHub integration (optional)',{exact:true})}).evaluate(element=>{(element as HTMLDetailsElement).open=true});
   await expect(page.getByText(new RegExp(`/v1/plugin-hooks/${tenantId}/${environment}/%40weft%2Fdsh-superagent/github$`))).toBeVisible();
   await page.getByRole('button', {name: 'Generate secret and copy', exact: true}).click();
   await expect(page.getByText(/^[0-9a-f]{64}$/)).toBeVisible({timeout: 45_000});

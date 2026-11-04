@@ -8,7 +8,7 @@ import {createRuntime, tenantId, url} from './helpers/miniflare.ts';
 import {nativeClient} from './helpers/native.ts';
 import {entryNamespace, type Installation} from '../packages/package-install/src/contracts.ts';
 
-test('executor selection persists and returns without draining a main Session before setup', {timeout: 60000}, async () => {
+test('executor selection persists without requiring GitHub setup', {timeout: 60000}, async () => {
   const plugin = JSON.parse(readFileSync('plugins/superagent/package.json', 'utf8')) as {name: string; version: string};
   const runtime = createRuntime(undefined, {packages: true, packageBuilder: async request => Response.json(await buildPackage(JSON.parse(await request.text())))});
   const api = nativeClient(() => runtime), base = `/v1/tenants/${tenantId('alpha')}/environments/default`;
@@ -26,7 +26,7 @@ test('executor selection persists and returns without draining a main Session be
     let state = await panel('state');
     for (let attempt = 0; state.status !== 200 && attempt < 40; attempt++) {await new Promise(resolve => setTimeout(resolve, 100)); state = await panel('state');}
     assert.equal(state.status, 200, await state.clone().text());
-    assert.ok((await state.json() as {setup: {problem: unknown}}).setup.problem);
+    assert.equal((await state.json() as {setup: {problem: unknown}}).setup.problem, null);
     const read = async () => await (await panel('settings')).json() as {blocks: {executor: {revision: number; value: Record<string, unknown>}}};
     const current = (await read()).blocks.executor;
     const device = await panel('executors', 'POST', {name: 'Connected DSH'}); assert.equal(device.status, 200);
@@ -34,7 +34,7 @@ test('executor selection persists and returns without draining a main Session be
     const value = {...current.value, executorId: id};
     const saved = await panel('settings/executor', 'PUT', {revision: current.revision, value});
     assert.equal(saved.status, 200, await saved.clone().text());
-    assert.deepEqual(await saved.json(), {saved: true, revision: current.revision + 1, policy_changed: false, restarting: false, context_delivery: 'pending'});
+    assert.deepEqual(await saved.json(), {saved: true, revision: current.revision + 1, policy_changed: false, restarting: false, context_delivery: 'injected'});
     const next = (await read()).blocks.executor; assert.equal(next.value.executorId, id);
     const repeated = await panel('settings/executor', 'PUT', {revision: next.revision, value});
     assert.equal(repeated.status, 200); assert.equal((await repeated.json() as {restarting: boolean}).restarting, false);

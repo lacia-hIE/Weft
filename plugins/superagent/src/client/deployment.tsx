@@ -145,8 +145,11 @@ export function DeploymentPage({ setup, form, accounts: showAccounts }: { setup:
         <Hint>{t('deploymentAccountsWhere')}</Hint>
       </Section>}
       {readOnlyHint && <Hint>{readOnlyHint}</Hint>}
+      <details open={!!accounts}><summary>{t('githubIntegration')}</summary><div className="dt-form">
+      <Hint>{t('githubOptional')}</Hint>
       <Secrets form={form} editable={!!editable} revision={editable ? snapshot.revision : undefined} saved={setup.secrets} />
       <WebhookSetup form={form} editable={!!editable} revision={editable ? snapshot.revision : undefined} repository={accounts?.repository} isSet={setup.secrets.webhookSecret} />
+      </div></details>
       <Section title={t('deploymentLimits')} hint={t('deploymentLimitsHint')}>
         {limit('promptMaxChars', t('deploymentPromptMaxChars'))}
         {limit('admissionContextMaxPages', t('deploymentContextPages'))}

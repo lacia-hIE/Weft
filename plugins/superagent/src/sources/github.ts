@@ -36,6 +36,7 @@ function scopeOf(meta: Record<string, unknown>): Scope | undefined {
 /** The GitHub Source kind, reading and replying through the deployment's GitHub client. */
 export const githubKind = (commands: Commands): SourceKind<GithubConfig> => ({
   kind: SOURCE,
+  defaultEnabled: false,
   title: { zh: 'GitHub', en: 'GitHub' },
   description: { zh: '智能体的 GitHub 账号；接收仓库里发给它的通知、已订阅 Issue 与 PR 的讨论、CI 状态变化和 PR 合并关闭。', en: 'The agent\'s GitHub accounts; receives notifications to it in the repository, discussion on subscribed Issues and PRs, CI changes, and PR merge or close.' },
   schema: GithubConfigSchema,
@@ -94,6 +95,7 @@ export const githubKind = (commands: Commands): SourceKind<GithubConfig> => ({
       { key: 'DSH_SUPERAGENT_GITHUB_PR_HEAD', description: { zh: '接下工单的 PR 的 head 引用 refs/pull/<编号>/head；不是 PR 时为空', en: 'Head ref refs/pull/<number>/head of the PR that started the ticket; empty when it was not a PR' } },
     ],
     values: ({ deployment, trigger }) => {
+      if (!deployment) return {}
       const number = trigger?.threads[0]?.source === SOURCE ? Number(trigger.meta.number) || 0 : 0
       return { DSH_SUPERAGENT_GITHUB_REPOSITORY: deployment.repository, DSH_SUPERAGENT_GITHUB_ACCOUNT: deployment.github.login, DSH_SUPERAGENT_GITHUB_COMMIT_EMAIL: deployment.github.noreply, DSH_SUPERAGENT_GITHUB_NUMBER: number ? String(number) : '',
         DSH_SUPERAGENT_GITHUB_PR_HEAD: number && trigger?.meta.isPr === true ? `refs/pull/${number}/head` : '' }
@@ -113,9 +115,9 @@ export function pollFailure(failures: number, threshold: number, error: unknown)
  * toward the health threshold.
  */
 export async function pollDue(ctx: SourceContext, signal: AbortSignal): Promise<void> {
-  if (!ctx.configured()) { ctx.report('github', health('paused', 'setupPending')); return }
   const config = ctx.config<GithubConfig>(SOURCE)
   if (!config) { ctx.report('github', health('paused', 'sourceOff')); return }
+  if (!ctx.configured()) { ctx.report('github', health('paused', 'setupPending')); return }
   const { at = 0, failures = 0 } = ctx.state.get(KV.github.poll) ?? {}
   if (Date.now() < at) return
   try {

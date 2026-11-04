@@ -77,6 +77,10 @@ test('published local DSH pairs in native settings, runs Files, Git and PTY and 
   const taskRoot=resolve(project,'../execution');
   await page.getByLabel('Task root directory (absolute path)',{exact:true}).fill(taskRoot);
   await page.getByRole('combobox',{name:'Execution permission preset',exact:true}).selectOption('danger-full-access');
+  await page.getByRole('button',{name:'Add project',exact:true}).click();
+  await page.getByRole('textbox',{name:'Project name',exact:true}).fill('Internal CI project');
+  await page.getByRole('textbox',{name:'Local repository directory (absolute path)',exact:true}).fill(project);
+  await page.getByRole('textbox',{name:'Verification requirements',exact:true}).fill('Create and verify executor-proof.txt.');
   await page.getByRole('switch',{name:'Accept tasks',exact:true}).check();
   await page.getByRole('button',{name:'Save execution settings',exact:true}).click();
   await expect.poll(async()=>(await(await context.request.get(executorUrl)).json()).ready).toBe(true);
@@ -89,6 +93,7 @@ test('published local DSH pairs in native settings, runs Files, Git and PTY and 
   expect((await request.post(base+'/local/web/api/weft-executor',{data:{action:'configure',root:'/elsewhere',accepting:true,maxWorkers:1}})).status()).toBe(403);
   expect((await request.post(base+'/local/web/api/weft-executor',{data:{action:'attach',code:broker.pairingCode}})).status()).toBe(200);
   expect((await context.request.post(executorUrl,{data:{action:'reconnect'}})).status()).toBe(200);
+  await expect.poll(async()=>(await(await request.get('/__test/executor')).json()).devices[0]?.projects?.[0]?.name).toBe('Internal CI project');
   expect((await request.post('/__test/executor',{data:{start:true}})).status()).toBe(200);
   try { await expect.poll(async()=>{
     const state=await(await request.get('/__test/executor')).json();

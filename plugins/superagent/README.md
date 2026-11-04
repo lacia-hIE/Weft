@@ -1,3 +1,24 @@
+## Request-driven local tasks (0.3.2)
+
+GitHub is optional and defaults off on new installations. A broken or disabled GitHub Source does not
+block the orchestrator, IM Sources or local execution. Existing configured GitHub Sources keep their settings.
+Deployment settings group GitHub credentials and webhook setup under an optional integration.
+
+Use **New request** to select a connected local DSH and a project, then submit the task and acceptance criteria.
+Configure project repository paths, verification, merge and deployment instructions in local DSH.
+Project summaries are advertised over the existing device protocol; private paths and instructions stay local.
+The authenticated gateway assigns the owner identity and stores placement independently of model-visible metadata.
+The normal Source → Trigger → Eval → Mandate → Ticket → Assignment flow still applies; submitting a request
+never creates an unauthorized Ticket directly. Each task's computer/project is immutable, survives default
+changes and cannot be bypassed by attaching it to another computer's Ticket. A missing or offline local
+computer never triggers cloud fallback. Follow-ups and human-action answers stay in the request conversation.
+
+Workers use native local tools and credentials for local Git, GitLab and internal repositories. No event
+subscription is required. Merge/deploy each require the current request's authorization and nonempty local
+instructions. Evidence is reported through the existing worker report contract; non-GitHub tasks omit pr_number.
+Cloud-side orchestration still receives request text and worker reports; this is not an offline or local-only
+orchestrator mode. Native local Sessions are now registered in their task Workspaces, with historical backfill.
+
 # @weft/dsh-superagent
 
 A proactive agent for one GitHub repository, adapted to Weft's Worker Host from the [dsh-superagent research prototype](https://github.com/deepseek-ai/dsh-superagent-prototype). When someone allowed asks it for work, it opens a Ticket, works on it in its own Session and directory, and answers in the original conversation. The panel lists what needs a person.
@@ -26,7 +47,7 @@ See [PARITY.md](PARITY.md) for what differs from the prototype.
 
 ## Local execution computers
 
-Connect the computer to Weft using DSH and `@laciaproject/dsh-local-host` 0.3.1. In the local plugin's
+Connect the computer to Weft using DSH and `@laciaproject/dsh-local-host` 0.3.2. In the local plugin's
 **Superagent Executor** settings, save an absolute task root, select an installed Agent preset from the dropdown
 and choose execution permissions. Task acceptance starts paused; enable it explicitly on that computer.
 Configure its model provider locally. Use a dedicated DSH profile and agent credentials; a directory or profile
@@ -52,4 +73,4 @@ drains the entire native tree and its processes before acknowledging stop, and r
 so Retry can resume its retained Session with fresh admission. Restart reconciliation preserves child history
 and requires an explicit Retry instead of replaying unfinished child prompts. Ordinary shell jobs use native DSH job delivery. Tests still follow the repository's CI policy.
 
-Existing independently paired 0.3.0 executors remain supported. Direct selection of an existing DSH connection requires connector 0.3.1.
+Existing independently paired 0.3.0 executors remain supported. Direct selection of an existing DSH connection requires connector 0.3.2.

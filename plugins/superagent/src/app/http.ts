@@ -29,6 +29,8 @@ import { executorLoad, ticketDetail, ticketList } from './views/tickets.ts'
 import { ExecutorRequestError, type RemoteExecutor } from '../executor/remote.ts'
 
 export interface HttpHost {
+  appendRequest?(id: string, input: unknown): import('./api.ts').ApiResponse<'POST requests'>
+  submitRequest?(input: unknown): import('./api.ts').ApiResponse<'POST requests'>
   readonly remote?: RemoteExecutor
   readonly store: Store
   /** Links resolved since startup, used by search. */
@@ -45,7 +47,7 @@ export interface HttpHost {
   /** Resolves once startup finishes or setup determines what is still missing. */
   readonly ready: Promise<void>
   /** Resolved deployment; throws if read while waiting for setup (`!configured()`). */
-  readonly deployment: Deployment
+  readonly deployment: Deployment | undefined
   readonly setupProblem?: SetupProblem | undefined
   configured(): boolean
   /** Whether each write-only credential holds a value; the panel never reads the values. */
@@ -126,9 +128,9 @@ function machineView({ promptMaxChars, admissionContextMaxPages, admissionContex
     admissionContextTimeoutMs: admissionContextTimeoutMs.get() }
 }
 function setupView(runtime: HttpHost) {
-  const resolved = runtime.configured() ? runtime.deployment : undefined
+  const resolved = runtime.deployment
   return {
-    machine: machineView(runtime.machine), secrets: runtime.secrets(), problem: runtime.setupProblem ?? null,
+    machine: machineView(runtime.machine), secrets: runtime.secrets(), problem: null as SetupProblem | null, githubProblem: runtime.setupProblem ?? null,
     accounts: resolved ? { repository: resolved.repository, agent: resolved.github.login } : null,
   }
 }
@@ -137,7 +139,7 @@ export function stateView(runtime: HttpHost) {
   const settings = runtime.store.settings()
   return { setup: setupView(runtime), load: { ...executorLoad(runtime.store, runtime.executor.activeCount()),
     maxWorkers: settings.executor.maxWorkers },
-    masterId: runtime.masterId, paused: settings.paused, health: runtime.health }
+    masterId: runtime.masterId, ...(settings.executor.executorId ? {defaultExecutorId: settings.executor.executorId} : {}), paused: settings.paused, health: runtime.health }
 }
 const views = (runtime: HttpHost): ViewHost => ({ store: runtime.store, sources: runtime.sources, links: runtime.links() })
 const setupState = (runtime: HttpHost): SetupState => ({ deployment: runtime.configured() ? runtime.deployment : undefined,
@@ -184,6 +186,14 @@ function routes(runtime: HttpHost): Routes {
   const ticket = (id: string) => { if (!store.tickets.get(id)) throw new RouteError(404, 'Ticket not found'); return id }
   const promptBody = (input: { body: (maxBytes?: number) => Promise<unknown> }) => input.body(4 * runtime.machine.promptMaxChars.get() + 4096)
   return {
+    'POST requests': async ({ body }) => {
+      if (!runtime.submitRequest) throw new RouteError(400, 'User requests are unavailable')
+      return runtime.submitRequest(await body())
+    },
+    'POST requests/:id/messages': async ({ params, body }) => {
+      if (!runtime.appendRequest) throw new RouteError(400, 'User requests are unavailable')
+      return runtime.appendRequest(params.id, await body())
+    },
     'GET executors': () => runtime.remote?.list() ?? [],
     'POST executors': async ({ body }) => {
       const input = z.object({ name: z.string().trim().min(1).max(80) }).strict().parse(await body())

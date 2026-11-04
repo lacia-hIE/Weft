@@ -7,7 +7,7 @@ import { reasonText, threadKey, type Assessor, type AssessmentOutcome, type Cand
 import { AdmissionDirectionSchema, RuleAssessmentSchema, assessmentOutcome, type Assessment, directionAllowed, type Settings } from '../policy.ts'
 import { checkedImText } from '../infra/text.ts'
 import type { Commands } from '../infra/commands.ts'
-import type { Deployment } from '../deployment.ts'
+import type { Machine } from '../deployment.ts'
 import { admissionContext } from '../sources/admission-context.ts'
 import { readRepositoryPath } from '../sources/github-read.ts'
 import type { TriggerContext } from '../sources/kind.ts'
@@ -51,7 +51,7 @@ export interface AssessorHost {
   /** Active evaluations in `Engine` that the assessor reads and decides. */
   readonly engine: Pick<EngineForMainSession, 'candidate' | 'candidateDelivered' | 'decide'>
   readonly commands: Commands
-  readonly deployment: Deployment
+  readonly deployment: Machine
   /** Durable effect queue through which candidate assessments are delivered. */
   readonly effects: Pick<Effects, 'enqueue' | 'handle'>
   settings(): Settings

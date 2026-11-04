@@ -211,6 +211,7 @@ export class Store implements Repositories {
   replyStatus(id: string): ReplyStatus | undefined { return this.receipts.get(id)?.status }
   /** Outbox message receipts for channel delivery; only `Outbox` writes to `receipts`. */
   readonly receipts = {
+    conversation: (source: string, thread: string): Receipt[] => this.values("SELECT value FROM (SELECT rowid, value FROM outbox WHERE value ->> '$.channel.source' = ? AND value ->> '$.channel.thread' = ? ORDER BY rowid DESC LIMIT 100) ORDER BY rowid", source, thread),
     get: (id: string): Receipt | undefined => this.values<Receipt>('SELECT value FROM outbox WHERE id = ?', id)[0],
     /** Pending message receipts, oldest first. */
     waiting: (): Receipt[] => this.values("SELECT value FROM outbox WHERE value ->> '$.status' = 'pending' ORDER BY rowid"),

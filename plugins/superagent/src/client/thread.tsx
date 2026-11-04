@@ -3,6 +3,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { ApiError, usePoll, type ThreadPageView, type TriggerRow } from './api.ts'
 import { Button, DisclosureRow, Icon, Tag } from './controls.tsx'
+import { RequestReply } from './request.tsx'
 import { decisionMark } from './marks.ts'
 import { useAction, usePanel } from './provider.tsx'
 import { DecisionLine, Earlier, TicketLine, automatedRuns } from './rows.tsx'
@@ -167,6 +168,10 @@ export function ThreadPage({ id, target }: { id: string; target?: string }) {
         </Button>
       </div>}
     </Section>
+    {id.startsWith('request:') && <Section title={t('requestReplies')}>
+      {data.replies?.map(reply => <div key={reply.id} className="dt-row-quote"><ClampText text={reply.text} /></div>)}
+      <RequestReply conversation={id.slice('request:'.length)} reload={reload} />
+    </Section>}
     {data.tickets.length > 0 && <div className="dt-danger-zone">
       <span className="dt-hint">{t('unsubscribeHint')}</span>
       <ConfirmButton variant="outline" icon="unsubscribe" label={t('unsubscribe')} title={t('unsubscribeTitle')}

@@ -1,6 +1,6 @@
 # Weft local Host connector
 
-## Superagent Executor mode (0.3.1)
+## Superagent Executor mode (0.3.2)
 
 The same package accepts Assignments from a cloud Superagent while running the full Agent locally.
 Connect this DSH to Weft once using the workbench instructions below. In the local plugin's
@@ -26,6 +26,26 @@ their concurrency and depth. Only the root worker may change the cloud Ticket; s
 tree and its processes. Restart reconciliation retains child history without replaying unfinished prompts.
 Active Sessions remain on their original computer.
 
+### Local projects and visible task Sessions
+
+Add projects in the **local** plugin settings: choose an existing repository directory, then write its
+verification, merge and deployment requirements. GitHub, GitLab and internal Git checkouts all use the
+local Agent's existing tools and credentials. The cloud receives only project IDs and names; repository
+paths and execution requirements stay in the local private configuration. Blank merge or deployment
+instructions disable that operation; the current request must authorize it too. Local policy is captured
+when a task first starts and retained on retries.
+
+In Superagent select **New request**, this computer and its project. No GitHub token, webhook or event
+subscription is required. Submit the task and acceptance criteria; Eval still decides whether it can
+become a Ticket. Each request retains its selected computer and project, including while that computer
+is offline or paused. Follow-up messages and answers to worker questions remain in the same request
+conversation. The orchestrator remains in Weft; the worker Agent runs on this computer.
+
+Every task directory is registered as a native Workspace and the root Session is explicitly attached.
+Existing connector Sessions are backfilled on upgrade/restart, without resuming work or replaying prompts.
+The task Workspace uses the Session's exact directory; registering only its parent is insufficient.
+Removed historical directories produce a per-task diagnostic rather than disabling all execution.
+
 The installation instructions below establish the reusable local DSH connection.
 
 A native DSH Host plugin for **DSH 0.2.1-rc.2, 0.2.1-rc.3, 0.2.1-rc.4 and 0.2.1-rc.5**, installed through the original
@@ -46,8 +66,8 @@ Untested releases remain rejected by both the native installer and the relay.
 2. Install `@laciaproject/dsh-local-host` from the native DSH Plugins page.
    Select **Enable now** when installation completes.
    The downloadable tarball remains available for offline installation by absolute path.
-   CLI: `dsh plugin --profile web add @laciaproject/dsh-local-host@0.3.1`, or for Desktop (fully quit, opened once
-   before) `dsh plugin --profile desktop add @laciaproject/dsh-local-host@0.3.1`.
+   CLI: `dsh plugin --profile web add @laciaproject/dsh-local-host@0.3.2`, or for Desktop (fully quit, opened once
+   before) `dsh plugin --profile desktop add @laciaproject/dsh-local-host@0.3.2`.
 3. Open **Plugins → Weft local connection** (`@laciaproject/dsh-local-host`) on the local DSH page, paste the code
    and select **Save and connect**. The plugin saves settings on this computer;
    no JSON download, manual file editing or restart is needed. Settings survive

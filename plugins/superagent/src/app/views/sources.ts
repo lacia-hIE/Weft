@@ -33,7 +33,6 @@ function sourceState(instance: SourceInstance & { installed: boolean }, parts: {
   if (!instance.installed) return 'missing'
   if (!instance.enabled) return 'off'
   if (problemOf(instance.id, setup) || parts.some(part => part.state === 'error')) return 'error'
-  if (setup.problem) return 'setup'
   if (parts.some(part => part.state === 'starting')) return 'starting'
   return parts.some(part => part.state === 'paused') ? 'paused' : 'ready'
 }

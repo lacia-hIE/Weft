@@ -1,3 +1,4 @@
+import { requestTargets } from '../requests.ts'
 /** Main Session tools for routing triggers, assessing candidates, sending replies, and updating settings and prompts. */
 import { z } from 'zod'
 import { UserError, followupOwners, key, reasonText, type Decision, type DecisionKind, type EngineForMainSession, type EngineForPeople }
@@ -18,7 +19,7 @@ const RoutingNoteSchema = z.string().trim()
 export interface MainToolsHost {
   readonly logger: { warn(format: string, ...args: unknown[]): void }
   readonly engine: Pick<EngineForMainSession, 'decide' | 'attach' | 'reply' | 'requestStatus' | 'note'> & EngineForPeople
-  readonly store: Pick<Store, 'tickets' | 'triggers' | 'threads' | 'atomic' | 'replyStatus' | 'settings'>
+  readonly store: Pick<Store, 'tickets' | 'triggers' | 'threads' | 'atomic' | 'replyStatus' | 'settings' | 'get'>
   readonly prompts: Pick<Prompts, 'preview' | 'save'>
   readonly sessions: Pick<Sessions, 'status' | 'notify' | 'delivery' | 'modelRetry'>
   readonly settings: Pick<Settings, 'view' | 'block' | 'save' | 'pause' | 'sync'>
@@ -102,6 +103,10 @@ function route(host: MainToolsHost, item: RouteItem, decided: ReadonlyMap<string
       return { ...fromDecision(decision), triggerIds: decision.triggerIds }
     }
     case 'attach': {
+      const target = host.store.get(requestTargets(item.trigger_id)), existing = host.store.tickets.get(item.ticket_id!)
+      if (target && (target.executorId !== (existing?.execution?.executorId ?? null) || target.projectId !== (existing?.execution?.projectId ?? null))) {
+        return {refused: 'This request is bound to a different execution computer or project; accept it as a separate Ticket'}
+      }
       const ticket = host.quietly(() => host.engine.attach(item.ticket_id!, item.trigger_id, item.note ?? undefined))
       return { reason: 'Attached: the ticket follows the trigger\'s thread and receives the trigger', ticketId: ticket.id }
     }

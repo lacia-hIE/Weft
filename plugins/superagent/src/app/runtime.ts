@@ -16,6 +16,8 @@ import { feishuKind } from '../sources/feishu.ts'
 import { IM_CHANNELS, ImEventSchema, imKind, imTrigger, type ImChannel } from '../sources/im.ts'
 import type { SourceKind } from '../sources/kind.ts'
 import { health, type Health, type SourceContext, type SourceHost } from '../sources/host.ts'
+import { requestKind } from '../sources/request.ts'
+import { submitRequest, appendRequest } from './requests.ts'
 import { SourceRegistry } from '../sources/registry.ts'
 import type { SetupProblem } from '../setup.ts'
 import { MasterAssessor } from './assessment.ts'
@@ -109,7 +111,7 @@ export class Runtime implements SourceHost {
     const report = (error: unknown) => { console.warn('dsh-superagent:', String(error)) }
     const store = this.store = new Store(ctx.weftSql, report)
     const setup = this.setup = new Setup({ machine: this.machine, token: () => config.githubToken, lifetime: this.lifetime, restart })
-    const deployed = () => setup.configured() ? environmentOf({ deployment: setup.deployment, sources: this.sources, settings: store.settings() }) : undefined
+    const deployed = () => environmentOf({ deployment: setup.githubDeployment, sources: this.sources, settings: store.settings() })
     const prompts = this.prompts = new Prompts(store, () => config.promptMaxChars, deployed)
     const commands = this.commands = new Commands(() => setup.deployment, () => config.githubToken, this.lifetime)
     const board = this.board
@@ -132,7 +134,7 @@ export class Runtime implements SourceHost {
     this.executor = new HybridExecutor({ controller: ctx.sessionController, fs: ctx.fs, get engine() { return runtime.engine }, store, effects, health: board.claim('worker'),
       additionalSlots: () => remote.activeCount(),
       lifetime: this.lifetime, sessions, paused: () => this.paused(), sourceLink: link, repliedTo: trigger => repliedTo({ store, sources }, trigger) }, remote)
-    this.assessor = new MasterAssessor({ get engine() { return runtime.engine }, commands, get deployment() { return setup.deployment }, effects,
+    this.assessor = new MasterAssessor({ get engine() { return runtime.engine }, commands, get deployment() { return runtime.machine }, effects,
       settings: () => store.settings(), paused: () => this.paused(), threadContext: trigger => sources.threadContext(trigger),
       deliver: (id, text) => sessions.prompt(MASTER_ID, id, text, 'steer'), candidateCard: candidate => candidateCard(links, candidate) })
     const outbox = this.outbox = new Outbox({ store, effects, sources, paused: () => this.paused() })
@@ -150,7 +152,7 @@ export class Runtime implements SourceHost {
       // Notify the ticket's conversations whenever it ends via a pull request.
       const ended = event.type === 'ticket.ended' ? store.tickets.get(event.data.ticketId) : undefined
       if (ended) effects.enqueue('settle', ended.id, { ticketId: ended.id })
-      if (ended && setup.configured()) {
+      if (ended && setup.githubConfigured()) {
         const request = store.triggers.get(ended.origin.triggerId)?.text ?? ''
         for (const message of pullEndNotices(ended, request, setup.deployment.repository)) outbox.send(message)
       }
@@ -161,13 +163,14 @@ export class Runtime implements SourceHost {
     const passes = this.passes = new Passes({ engine: { receive: trigger => engine.receive(trigger), evaluateDue }, effects, health: this.runtimeHealth, lifetime: this.lifetime,
       configured: () => setup.configured(), closing: () => this.stopped.signal.aborted })
     this.sourceDeps = { store, engine, outbox, commands, sources, get ready() { return runtime.ready }, get deployment() { return setup.deployment },
-      configured: () => setup.configured(), get setupProblem() { return setup.problem }, receive: trigger => passes.receive(trigger) }
+      configured: kind => kind === 'github' ? setup.githubConfigured() : setup.configured(), get setupProblem() { return setup.problem }, receive: trigger => passes.receive(trigger) }
     this.toolHost = { logger: console, engine, store, prompts, sessions, settings: this.settings, assessor, resources,
       get github() { return runtime.context({ kind: 'github', health: ['github'] }) },
       requestPass: () => { passes.request() }, sendReplies: () => outbox.sent(),
       quietly: run => { this.quiet++; try { return run() } finally { this.quiet-- } } }
     const github = githubKind(commands)
     this.sources.register(github)
+    this.disposers.push(this.sources.register(requestKind))
     this.githubContext = this.context(github)
     const feishu = feishuKind(ctx.weftIm), weixin = imKind('weixin', ctx.weftIm), qq = imKind('qq', ctx.weftIm), email = imKind('email', ctx.weftIm)
     this.imKinds = { feishu, weixin, qq, email }
@@ -187,13 +190,14 @@ export class Runtime implements SourceHost {
   configured(): boolean { return this.setup.configured() }
   get setupProblem(): SetupProblem | undefined { return this.setup.problem }
   links(): LinkTarget {
-    const resolved = this.setup.configured() ? this.setup.deployment : undefined
+    const resolved = this.setup.githubDeployment
     const links = resolved ? { repository: resolved.repository } : {}
     return channel => this.sources.link(channel, links)
   }
   ticketEnvironment(ticket: Ticket): Variable[] {
     const trigger = sourceTrigger(this, ticket)
-    const { setup: { deployment }, sources } = this
+    const { sources } = this
+    const deployment = this.setup.githubDeployment
     return ticketEnvironment({ deployment, sources, settings: this.store.settings(), ticket, ...trigger ? { trigger } : {} })
   }
   receive(trigger: Trigger): ReceiveResult { return this.passes.receive(trigger) }
@@ -288,7 +292,7 @@ export class Runtime implements SourceHost {
     this.delivered.push(delivery)
     this.reading ??= (async () => {
       await this.ready
-      while (this.delivered.length && this.configured()) await readDelivered(this.githubContext, this.delivered.splice(0), this.lifetime)
+      while (this.delivered.length && this.setup.githubConfigured()) await readDelivered(this.githubContext, this.delivered.splice(0), this.lifetime)
       this.delivered.length = 0
     })().finally(() => { this.reading = undefined })
     await this.reading
@@ -297,12 +301,8 @@ export class Runtime implements SourceHost {
   /** The background pass: read GitHub when due, find lost turn ends, and run what is due. One round runs at a time. */
   async tick(): Promise<void> {
     await this.ready
-    // A check that failed for a passing reason, such as GitHub being unreachable, is tried again here.
-    if (!this.configured()) {
-      if (await this.setup.run(this.store.settings())) this.setup.restart()
-      else this.githubContext.report('github', health('paused', 'setupPending'))
-      return
-    }
+    // Optional GitHub readiness never holds user requests or other Sources.
+    if (!this.setup.githubConfigured() && this.store.settings().sources.github?.enabled) await this.setup.run(this.store.settings())
     this.refreshImBots()
     await (this.polling ??= pollDue(this.githubContext, this.lifetime).finally(() => { this.polling = undefined }))
     await this.executor.reconcile()
@@ -345,8 +345,10 @@ export class Runtime implements SourceHost {
     const { store, sources, prompts, sessions, settings, engine, executor, machine, masterId, ready, sourceLinks, setup, passes } = this
     return { store, sources, prompts, sessions, settings, engine, executor, remote: executor.remote, get health() { return runtime.health }, machine, masterId, ready, sourceLinks,
       secrets: () => ({ githubToken: !!this.config.githubToken, webhookSecret: !!this.config.webhookSecret }), managementKey: () => this.config.managementKey, webhookSecret: () => this.config.webhookSecret, wake: delivery => this.wake(delivery), settled: () => this.drive(),
-      get deployment() { return setup.deployment }, get setupProblem() { return setup.problem },
+      get deployment() { return setup.githubDeployment }, get setupProblem() { return setup.problem },
       configured: () => setup.configured(), links: () => runtime.links(), ticketEnvironment: ticket => runtime.ticketEnvironment(ticket),
+      appendRequest: (id, input) => appendRequest({store, remote: executor.remote, receive: trigger => passes.receive(trigger)}, id, input),
+      submitRequest: input => submitRequest({store, remote: executor.remote, receive: trigger => passes.receive(trigger)}, input),
       checkSetup: () => { setup.check() }, requestPass: () => { passes.request() }, models: () => this.ctx.sessionController.modelCatalog({}) as never }
   }
   /** Stops reads; the Sessions themselves live on, and the next activation picks up from the Store. */

@@ -8,7 +8,7 @@ import { toolParameters } from '../app/tools/parameters.ts'
 import { inputMessage } from './dsh.ts'
 
 export const EXECUTOR_PROTOCOL = 'weft-executor/1'
-interface Device { id: string; name: string; pairHash?: string; expires?: number; tokenHash?: string; seen?: number; accepting?: boolean }
+interface Device { id: string; name: string; pairHash?: string; expires?: number; tokenHash?: string; seen?: number; accepting?: boolean; projects?: {id: string; name: string}[] }
 interface Message { id: string; text: string; inputs: string[] }
 interface Job { ticketId: string; assignmentId: string; executorId: string; messages: Message[]; accepted: string[];
   revision: number; state: 'queued' | 'dispatched' | 'running' | 'waiting' | 'failed' | 'stopping' | 'stopped'; sessionId?: string; error?: string }
@@ -20,6 +20,7 @@ const secret = () => Array.from(crypto.getRandomValues(new Uint8Array(32)), byte
 const hash = async (value: string) => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))), byte => byte.toString(16).padStart(2, '0')).join('')
 const identity = z.string().regex(/^[a-f0-9]{32}$/), messageId = z.string().min(1).max(180)
 const Sync = z.object({ protocol: z.literal(EXECUTOR_PROTOCOL), accepting: z.boolean(),
+  projects: z.array(z.object({id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/), name: z.string().trim().min(1).max(80)}).strict()).max(32).default([]),
   states: z.array(z.object({ ticketId: identity, assignmentId: identity, revision: z.number().int().nonnegative(),
     state: z.enum(['running', 'waiting', 'failed', 'stopped']), sessionId: z.string().min(1).max(180),
     accepted: z.array(messageId).max(200), read: z.array(messageId).max(200).default([]), error: z.string().max(4000).optional(), summary: z.string().max(12000).optional() }).strict()).max(100),
@@ -43,7 +44,7 @@ export class RemoteExecutor implements Executor {
   list() {
     return this.host.store.keys(devices.prefix).map(key => this.host.store.get<Device>(key)!).map(device => ({
       id: device.id, name: device.name, paired: !!device.tokenHash, online: !!device.seen && Date.now() - device.seen < 90_000,
-      accepting: device.accepting ?? false, lastSeen: device.seen ?? null,
+      projects: device.projects ?? [], accepting: device.accepting ?? false, lastSeen: device.seen ?? null,
     }))
   }
   status(ticketId: string) {
@@ -120,7 +121,7 @@ export class RemoteExecutor implements Executor {
     store.atomic(() => {
       const device = store.get(devices(id))
       if (!device) throw new ExecutorRequestError(401, 'Executor revoked')
-      store.set(devices(id), { ...device, seen: Date.now(), accepting: input.accepting })
+      store.set(devices(id), { ...device, seen: Date.now(), accepting: input.accepting, projects: input.projects })
       for (const state of input.states) {
         const job = store.get(jobs(state.ticketId)), ticket = store.tickets.get(state.ticketId)
         if (!job || job.executorId !== id || job.assignmentId !== state.assignmentId || state.revision <= job.revision) continue
@@ -182,7 +183,7 @@ export class RemoteExecutor implements Executor {
         store.set(jobs(job.ticketId), { ...job, state: 'dispatched' })
       }
       commands.push({ kind: 'run', ticketId: ticket.id, assignmentId: job.assignmentId, name: ticket.execution!.name,
-        directory: ticket.execution!.directory, title: ticket.title, byPerson, ...this.host.configuration(ticket),
+        directory: ticket.execution!.directory, ...(ticket.execution!.projectId ? {projectId: ticket.execution!.projectId} : {}), title: ticket.title, byPerson, ...this.host.configuration(ticket),
         tools: this.host.tools(ticket).map(tool => ({ name: tool.name, description: tool.description, parameters: toolParameters(tool.schema) })), messages })
       if (commands.length >= 4) break
     }

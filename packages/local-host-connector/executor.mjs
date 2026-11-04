@@ -1,8 +1,10 @@
-import {readFile,writeFile,rename,mkdir,chmod,unlink,realpath} from 'node:fs/promises';
+import {readFile,writeFile,rename,mkdir,chmod,unlink,realpath,stat} from 'node:fs/promises';
 import {dirname,resolve,isAbsolute,relative,sep} from 'node:path';
 const PROTOCOL='weft-executor/1';
 const TOOL_NAMES=new Set(['orchestrator_read','orchestrator_ack','orchestrator_report','orchestrator_thread_follow','orchestrator_thread_unrelated','orchestrator_trigger_handback']);
 const hex=/^[a-f0-9]{32}$/,token=/^[a-f0-9]{64}$/;
+const projectId=/^[a-z0-9][a-z0-9-]{0,63}$/;
+const projectContext=project=>project?'\n\nLocal project execution settings (configured on this computer; never execute commands outside the native Agent tools):\n'+JSON.stringify(project)+'\nRepository access uses this computer’s credentials. Prepare an isolated checkout or worktree inside the task directory; preserve unrelated work in the source checkout. Follow verification requirements and report the commands actually run. Merge and deployment each require both the current request’s authorization and the corresponding local instructions; an empty merge or deploy field grants no permission. Report a concrete human_action when a required target or permission is missing. A GitHub PR is required only when the request or local delivery instructions require one. Report the actual local/GitLab/other deliverable with orchestrator_report; omit pr_number for non-GitHub work.':'';
 const sleep=(ms,signal)=>new Promise(resolve=>{const end=()=>{clearTimeout(timer);signal.removeEventListener('abort',end);resolve();};const timer=setTimeout(end,ms);signal.addEventListener('abort',end,{once:true});if(signal.aborted)end();});
 export function executorEndpoint(value){
   const url=new URL(value);
@@ -187,11 +189,13 @@ export function createExecutorController({ctx,agentOwner=ctx,file,request=fetch}
       await mkdir(cwd,{recursive:true});
       const canonical=await realpath(cwd),inside=relative(data.root,canonical);
       if(inside==='..'||inside.startsWith('..'+sep)||isAbsolute(inside))throw new Error('Task directory escapes the execution root');
-      job={ticketId:command.ticketId,assignmentId:command.assignmentId,sessionId,cwd:canonical,revision:0,state:'waiting',accepted:[],requested:[],read:[],tools:command.tools,allow:command.allow,
-        instructions:command.instructions.split(command.directory).join(canonical),created:data.jobs[sessionId]?.created??false,children:data.jobs[sessionId]?.children??{},preset:data.jobs[sessionId]?.preset,handoff:false};
+      const previous=data.jobs[sessionId],project=previous?.created?previous.project:command.projectId?(data.projects??[]).find(project=>project.id===command.projectId):undefined;
+      if(command.projectId&&(!project||project.id!==command.projectId))throw new Error('Selected local project is unavailable; configure it on this computer before retrying');
+      job={project,ticketId:command.ticketId,assignmentId:command.assignmentId,sessionId,cwd:canonical,revision:0,state:'waiting',accepted:[],requested:[],read:[],tools:command.tools,allow:command.allow,
+        instructions:command.instructions.split(command.directory).join(canonical)+projectContext(project),created:data.jobs[sessionId]?.created??false,children:data.jobs[sessionId]?.children??{},preset:data.jobs[sessionId]?.preset,handoff:false};
       data.jobs[sessionId]=job;await save();
     }
-    job.instructions=command.instructions.split(command.directory).join(job.cwd);
+    job.instructions=command.instructions.split(command.directory).join(job.cwd)+projectContext(job.project);
     await save();
     // Own the native Agent handle so drain can release it; Retry resumes the same durable Session.
     if(!ctx.agents.get(sessionId)){
@@ -230,7 +234,7 @@ export function createExecutorController({ctx,agentOwner=ctx,file,request=fetch}
         await saving;
         const states=Object.values(data.jobs).filter(job=>job.revision>(job.syncedRevision??-1)).slice(0,100)
           .map(({ticketId,assignmentId,sessionId,revision,state,accepted,read,error,summary})=>({ticketId,assignmentId,sessionId,revision,state,accepted:accepted.slice(-200),read:read.slice(-200),...error?{error}:{},...summary?{summary}:{}}));
-        const reply=await post('sync',{protocol:PROTOCOL,accepting:data.accepting,states},signal);
+        const reply=await post('sync',{protocol:PROTOCOL,accepting:data.accepting,projects:(data.projects??[]).map(({id,name})=>({id,name})),states},signal);
         if(reply.protocol!==PROTOCOL||!Array.isArray(reply.commands))throw new Error('Invalid Executor response');
         for(const ack of reply.acknowledged??[]){const job=Object.values(data.jobs).find(job=>job.ticketId===ack.ticketId&&job.assignmentId===ack.assignmentId);if(job)job.syncedRevision=ack.revision;}
         if(reply.acknowledged?.length)await save();
@@ -264,7 +268,7 @@ export function createExecutorController({ctx,agentOwner=ctx,file,request=fetch}
       return {state:typeof ctx.sessionController.state==='function'?await ctx.sessionController.state({sessionId},signal):{running:agent?.status==='running'},
         events:agent?.session.snapshotEvents().slice(-40)??[],tree:members(data.jobs[sessionId]).map(id=>({id,resident:!!ctx.agents.get(id),running:ctx.agents.get(id)?.status==='running',jobs:ctx.jobs.list(id).map(({id,status})=>({id,status}))}))};
     },
-    snapshot:()=>({state:status,configured:!!data.endpoint,ready:!!data.root&&reconciled,endpoint:data.endpoint,accepting:data.accepting,root:data.root??'',maxWorkers:data.maxWorkers,agentPreset:data.agentPreset??'',permissionPreset:data.permissionPreset??'',
+    snapshot:()=>({state:status,configured:!!data.endpoint,ready:!!data.root&&reconciled,endpoint:data.endpoint,accepting:data.accepting,root:data.root??'',maxWorkers:data.maxWorkers,agentPreset:data.agentPreset??'',permissionPreset:data.permissionPreset??'',projects:data.projects??[],
       running:activeJobs().length,jobs:Object.values(data.jobs).map(({ticketId,sessionId,state,cwd,children,workspaceId,workspaceError})=>({ticketId,sessionId,state,cwd,workspaceId,workspaceError,children:Object.values(children??{}).map(({id,parentSessionId,active,stopReason})=>({id,parentSessionId,active,stopReason}))}))}),
     load:()=>serial(async()=>{
       try{
@@ -319,8 +323,21 @@ export function createExecutorController({ctx,agentOwner=ctx,file,request=fetch}
       if(typeof next.agentPreset!=='string'||next.agentPreset.length>256)throw new Error('Invalid Agent preset');
       if(next.permissionPreset&&!['read-only','workspace-write','danger-full-access'].includes(next.permissionPreset))throw new Error('Invalid permission preset');
       if(input.agentPreset!==undefined){const preset=await ctx.agentPresets.resolve(next.agentPreset||undefined);if(preset.broken)throw new Error(preset.broken);}
+      if(input.projects!==undefined){
+        if(!Array.isArray(input.projects)||input.projects.length>32)throw new Error('At most 32 local projects may be configured');
+        const ids=new Set();next.projects=[];
+        for(const project of input.projects){
+          if(!project||!projectId.test(project.id)||ids.has(project.id)||typeof project.name!=='string'||!project.name.trim()||project.name.length>80)throw new Error('Local project requires a unique ID and name');
+          ids.add(project.id);
+          if(typeof project.repository!=='string'||!isAbsolute(project.repository))throw new Error('Choose an existing absolute local repository directory');
+          const repository=await realpath(project.repository);
+          if(!(await stat(repository)).isDirectory())throw new Error('Repository must be a directory');
+          for(const key of ['verify','merge','deploy'])if(typeof project[key]!=='string'||project[key].length>16000)throw new Error('Invalid local project instructions');
+          next.projects.push({id:project.id,name:project.name.trim(),repository,verify:project.verify,merge:project.merge,deploy:project.deploy});
+        }
+      }
       await mkdir(next.root,{recursive:true});next.root=await realpath(next.root);
-      if(Object.values(data.jobs).some(job=>job.state!=='stopped')&&Object.entries(next).some(([key,value])=>(data[key]??'')!==value))throw new Error('Stop existing Assignments before changing execution settings');
+      if(Object.values(data.jobs).some(job=>job.state!=='stopped')&&Object.entries(next).some(([key,value])=>JSON.stringify(data[key]??(key==='projects'?[]:''))!==JSON.stringify(value)))throw new Error('Stop existing Assignments before changing execution settings');
       Object.assign(data,next,{accepting:input.accepting,maxWorkers:input.maxWorkers});await save();
     }),
     reconnect:()=>serial(async()=>{if(!reconciled)throw new Error('Executor configuration or child catalogs could not be reconciled; repair them before reconnecting');await disconnect();start();}),

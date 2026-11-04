@@ -16,7 +16,7 @@ export async function localExecutorFixture(tenant='native') {
   })
   const policy:Policy={version:'v1',paused:false,evalTimeoutMs:60_000,gate:()=>({admissible:true,strength:'explicit',basis:{via:'listed',sender:'alice'}}),revalidate:()=>true,admitsInferred:()=>false}
   engine=new Engine({repo:store,scope:{scope:()=>({listened:true,observed:false})},policy:()=>policy,assessor:{request(){}},executor:remote,
-    outbox:{send(){},withdraw(){},status:()=> 'pending'},prepareTicket:ticket=>({...ticket,execution:{name:sequence===1?'native-proof':`native-tree-${sequence}`,directory:'/workspace/native-proof',assignment:'',executorId:deviceId}})})
+    outbox:{send(){},withdraw(){},status:()=> 'pending'},prepareTicket:ticket=>({...ticket,execution:{name:sequence===1?'native-proof':`native-tree-${sequence}`,directory:'/workspace/native-proof',assignment:'',executorId:deviceId,...(remote.list().find(device=>device.id===deviceId)?.projects[0]?.id ? {projectId:remote.list().find(device=>device.id===deviceId)!.projects[0]!.id} : {})}})})
   const pairing=await remote.create('Native computer');deviceId=pairing.id
   const prefix=`/v1/plugin-hooks/${tenant}/default/%40weft%2Fdsh-superagent/executor/${deviceId}`
   const event=(type:string,data:object)=>`event: ${type}\ndata: ${JSON.stringify({type,...data})}\n\n`

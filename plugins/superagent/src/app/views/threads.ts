@@ -42,7 +42,7 @@ export function threadDetail(host: ViewHost, key: string, before: string | undef
   const first = store.read.firstTrigger(key)
   const url = attribute(thread.meta.url) ?? first?.url ?? (first?.channel ? channelLink(view, first.channel).url : undefined)
   // `context` lists tickets whose Executor follows this thread for context only (messages reach them without granting authority).
-  return { ...threadSummary(view, thread), url, context: thread.context ?? [],
+  return { ...threadSummary(view, thread), ...(thread.ref.source === 'request' ? {replies: store.receipts.conversation('request', key).filter(reply => reply.status !== 'dropped').map(({id, text, kind}) => ({id, text, kind}))} : {}), url, context: thread.context ?? [],
     correlated: thread.correlated.map(other => {
       const value = store.threads.get(other)
       return { key: other, title: value ? threadTitle(store, value) : other }

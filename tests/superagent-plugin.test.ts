@@ -101,7 +101,7 @@ test('a request on GitHub becomes a Ticket worked on in its own Session, without
 
     const state = await waitFor(async () => {const response = await panel('state'); return response.status === 200 ? await response.json() as {setup: {problem: {code: string} | null; secrets: unknown}} : undefined;}, 'state');
     assert.deepEqual(state.setup.secrets, {githubToken: true, webhookSecret: true}, 'the panel learns what is set without reading it');
-    assert.equal(state.setup.problem?.code, 'repositoryUnset');
+    assert.equal(state.setup.problem, null, 'GitHub setup is optional and does not stop the orchestrator');
 
     // Remote Executors use a separate device credential, scoped to this plugin in this environment.
     const deviceResponse = await panel('executors', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({name: 'Local CI'})});

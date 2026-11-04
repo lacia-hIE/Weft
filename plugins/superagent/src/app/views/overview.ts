@@ -49,7 +49,7 @@ export function overview(host: ViewHost, health: HealthMap, policyVersionValue: 
     ...(setup ? [{ kind: 'setup' as const, ...setup }] : []),
     ...(running.length ? [] : [{ kind: 'no-source' as const }]),
     // Only allowed senders can originate work, so empty allowlists mean no request can ever become a ticket.
-    ...(anyoneAllowed(settings) ? [] : [{ kind: 'no-allowed' as const }]),
+    ...(anyoneAllowed(settings) || sources.instance('request')?.enabled ? [] : [{ kind: 'no-allowed' as const }]),
     ...running.flatMap(source => source.health.filter(item => item.state === 'error').map(item => ({ kind: 'source-error' as const, source: { id: source.id, title: source.title, health: item } }))),
     ...(settings.paused ? [{ kind: 'executor-paused' as const }] : []),
     // Unavailable Evals behind the `evals` health entry are listed individually as `eval-unavailable` below.
