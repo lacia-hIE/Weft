@@ -1,3 +1,4 @@
+import {requestTargets} from './requests.ts'
 /** Source message link resolution and candidate card assembly for the main Session. */
 import type { Candidate, Ticket, Trigger } from '../core/index.ts'
 import type { Commands } from '../infra/commands.ts'
@@ -8,7 +9,7 @@ import type { Store } from './store.ts'
 import type { TextCache } from './cache.ts'
 
 export interface LinkHost {
-  readonly store: Pick<Store, 'settings' | 'triggers' | 'threads' | 'tickets'>
+  readonly store: Pick<Store, 'settings' | 'triggers' | 'threads' | 'tickets' | 'get'>
   readonly links: TextCache
   readonly commands: Commands
   readonly sources: SourceRegistry
@@ -36,7 +37,7 @@ function referencedTickets(host: LinkHost, trigger: Trigger, known: readonly Tic
 /** Builds the main Session's candidate card with routing metadata, handback history, and related or referenced tickets. */
 export async function candidateCard(host: LinkHost, candidate: Candidate) {
   const primary = candidate.triggers.at(-1)!
-  const settings = host.store.settings()
+  const settings = host.store.settings(), target = host.store.get(requestTargets(primary.id))
   const delivered = host.store.triggers.disposition(primary.id)?.fanout ?? []
   const referenced = referencedTickets(host, primary, candidate.tickets)
   // Triggers that a worker Session handed back as outside its ticket's scope, with the worker's reason.
@@ -45,6 +46,7 @@ export async function candidateCard(host: LinkHost, candidate: Candidate) {
   // Format the primary trigger like a worker input (including the message it replies to) and summarize earlier batch triggers as cards.
   const others = candidate.triggers.filter(trigger => trigger.id !== primary.id)
   return { ...triggerMessage(primary, await sourceLink(host, primary), undefined, repliedTo(host, primary)), strength: candidate.strength,
+    execution_target: target ? {mode: target.placement ?? 'fixed', executor_id: target.executorId, ...(target.projectId ? {legacy_project_id: target.projectId} : {})} : {mode: 'auto', default_executor_id: settings.executor.executorId},
     mode: settings.eval.mode, ...others.length ? { batch: others.map(trigger => triggerCard(trigger)) } : {},
     ...handedBack.length ? { handed_back: handedBack } : {}, ...relatedTickets(candidate.tickets),
     ...(delivered.length ? { delivered_to: delivered } : {}), ...(referenced.length ? { referenced_tickets: referenced.map(ticketCard) } : {}),

@@ -85,7 +85,7 @@ test('proactive assessments preserve an explicit local placement through the rea
   const assessor=new MasterAssessor({get engine(){return engine},settings:()=>store.settings(),effects:{handle(){},enqueue(){}},paused:()=>false,
     threadContext:()=>undefined,deliver:async()=>{},candidateCard:async()=>({})} as never)
   engine=new Engine({repo:store,scope:{scope:()=>({listened:true,observed:true})},policy:()=>({version:'test-policy',paused:false,evalTimeoutMs:60_000,
-    gate:()=>({admissible:true,strength:'inferred',basis:{via:'observed'}}),revalidate:()=>true,admitsInferred:()=>true}),assessor,executor,
+    gate:()=>({admissible:true,strength:'inferred',basis:{via:'admission',cell:'unlistedUnaddressed',observation:{mode:'auto'}}}),revalidate:()=>true,admitsInferred:()=>true}),assessor,executor,
     outbox:{send(){},withdraw(){},status:()=> 'sent'},prepareTicket:(ticket,outcome)=>executor.prepare(ticket,outcome)})
   try {
     const computer=await remote.create('Private repository computer');await remote.pair(computer.id,computer.pairingKey)
