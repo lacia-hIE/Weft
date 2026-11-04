@@ -66,8 +66,7 @@ test('Atom polling establishes a baseline, sends only changes, preserves conditi
 test('feed parser admits RSS and Atom, rejects other XML, and never expands external entities',()=>{
   assert.equal(feedEntries('<rss><channel><item><guid>x</guid><title>News</title><link>https://example.com/x</link></item></channel></rss>')[0]!.title,'News')
   assert.throws(()=>feedEntries('<html>not a feed</html>'),/Expected/)
-  const parsed=feedEntries('<!DOCTYPE rss [<!ENTITY secret SYSTEM "file:///etc/passwd">]><rss><channel><item><guid>one</guid><title>&secret;</title></item></channel></rss>')
-  assert.doesNotMatch(parsed[0]!.title,/root:/)
+  assert.throws(()=>feedEntries('<!DOCTYPE rss [<!ENTITY secret SYSTEM "file:///etc/passwd">]><rss><channel><item><guid>one</guid><title>&secret;</title></item></channel></rss>'),/External entities are not supported|Invalid RSS/)
 })
 
 test('verified mentions have account boundaries and Source context uses its own scoped credentials',async t=>{
