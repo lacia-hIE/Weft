@@ -59,7 +59,7 @@ test('workspace stop coalesces requests, gates new connections, syncs before des
       const db = new DatabaseSync(':memory:');
       const kv = new Map<string, unknown>();
       const sql = sqlStorage(db);
-      const storage = {sql, transactionSync: <T>(callback: () => T) => callback(), sync: async () => {},
+      const storage = {sql, kv: {get: (key: string) => kv.get(key), put: (key: string, value: unknown) => {kv.set(key, value);}}, transactionSync: <T>(callback: () => T) => callback(), sync: async () => {},
         get: async (key: string) => kv.get(key), put: async (key: string | Record<string,unknown>, value?: unknown) => {if(typeof key==='string')kv.set(key,value);else for(const [name,item] of Object.entries(key))kv.set(name,item);}, delete: async (key: string) => kv.delete(key), deleteAlarm: async()=>{}};
       const container = {running: options.running ?? true, destroy: async () => {calls.push('destroy'); container.running = false;}};
       const containerHost = new host.WorkspaceContainerBasicDO({storage, container} as never, {});

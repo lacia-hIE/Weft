@@ -1,5 +1,6 @@
 import {test,expect} from '@playwright/test';
 import {readFile} from 'node:fs/promises';
+import {resolve} from 'node:path';
 import localHostPackage from '../../packages/local-host-connector/package.json' with {type:'json'};
 test('published local DSH pairs in native settings, runs Files, Git and PTY and recovers through Weft',async({page,request,context},testInfo)=>{
   test.setTimeout(420_000);
@@ -73,7 +74,7 @@ test('published local DSH pairs in native settings, runs Files, Git and PTY and 
   expect(await page.locator('[data-weft-local-executor]').evaluate(element=>getComputedStyle(element).fontFamily)).not.toContain('Times New Roman');
   // A full Agent runs in the published native Host, using local model credentials and native file tools.
   const broker=await(await request.get('/__test/executor')).json();
-  const taskRoot=project+'/../execution';
+  const taskRoot=resolve(project,'../execution');
   await page.getByLabel('Task root directory (absolute path)',{exact:true}).fill(taskRoot);
   await page.getByRole('combobox',{name:'Execution permission preset',exact:true}).selectOption('danger-full-access');
   await page.getByRole('switch',{name:'Accept tasks',exact:true}).check();
