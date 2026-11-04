@@ -1,4 +1,5 @@
 import {createHash} from 'node:crypto';
+import {observedLoader, observationScope} from '../../dynamic-worker-observability/src/loader.ts';
 import {z} from 'zod';
 import { DurableObject } from 'cloudflare:workers';
 import { FsError } from '@deepseek-ai/dsh-fs';
@@ -38,6 +39,7 @@ const DEFAULT_INSTANCE: ContainerInstance = 'basic';
 /** No unscoped Computer stub is exposed to clients or model tools. */
 export class WorkspaceDO extends DurableObject<Env> {
   private readonly lifecycle:LifecycleGate;
+  private observationOwner: WorkspaceScope | undefined;
   private lifecycleRegistration:Promise<void>|undefined;
   private lifecycleRegistered=false;
   private readonly javascriptTasks!: WorkspaceJavaScript;
@@ -65,11 +67,13 @@ export class WorkspaceDO extends DurableObject<Env> {
     this.ctx=lifecycle.state(this.ctx);ctx=this.ctx;
     this.lifecycle=lifecycle;
     if(lifecycle.mode==='deleted'){lifecycle.finishBoot();return;}
+    const owner = workspaceScopeSchema.safeParse(ctx.storage.kv.get('weft:observation-owner'));
+    if (owner.success && ctx.id.equals(env.WORKSPACES.idFromName(workspaceAddress(owner.data)))) this.observationOwner = owner.data;
     this.admission = new ContainerAdmission(ctx.storage.sql);
     // Shell commands run in just-bash inside a Dynamic Worker whose filesystem calls come back
     // here through `WorkspaceServiceProxy`; public egress serves its curl command.
     const shell = env.LOADER ? new WorkerShellBackend({
-      loader: env.LOADER, ctx, workspace: {binding: 'WORKSPACES', id: ctx.id.toString()},
+      loader: observedLoader(env.LOADER, ctx, () => observationScope(this.observationOwner ?? {}, 'workspace-shell', {resourceId: ctx.id.toString()}))!, ctx, workspace: {binding: 'WORKSPACES', id: ctx.id.toString()},
       commands: [curlCommands], egress: {mode: 'direct'},
     }) : undefined;
     // Only a deployment that declares the container hosts exports them as namespaces; the size this
@@ -101,7 +105,7 @@ export class WorkspaceDO extends DurableObject<Env> {
       for (const change of changes) this.invalidate(change.path);
     }, () => [...this.sandboxes.values()]);
     this.files = new WorkspaceStore(ctx.storage, shell ? {backends, observer} : undefined);
-    this.javascriptTasks = new WorkspaceJavaScript(ctx.storage, env.LOADER, observer, () => ctx.storage.setAlarm(Date.now() + 30000));
+    this.javascriptTasks = new WorkspaceJavaScript(ctx.storage, observedLoader(env.LOADER, ctx, () => observationScope(this.observationOwner ?? {}, 'workspace-javascript', {resourceId: ctx.id.toString()})), observer, () => ctx.storage.setAlarm(Date.now() + 30000));
     this.documents = new WorkerDocuments(env.AI, new SQLiteDocumentCache(ctx.storage.sql));
     lifecycle.finishBoot();
   }
@@ -111,6 +115,7 @@ export class WorkspaceDO extends DurableObject<Env> {
     // callers must never register a resource in a different environment.
     if(!parsed.success || !this.ctx.id.equals(this.env.WORKSPACES.idFromName(workspaceAddress(parsed.data))))return;
     const scope=parsed.data;
+    if (!this.observationOwner) {this.observationOwner = scope; this.ctx.storage.kv.put('weft:observation-owner', scope);}
     if(this.lifecycleRegistered || !this.env.ENVIRONMENTS)return;
     if(!this.lifecycleRegistration){
       const owner={tenantId:scope.tenantId,environmentId:scope.environmentId??'default'};

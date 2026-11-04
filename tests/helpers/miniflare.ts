@@ -96,6 +96,7 @@ export function createRuntime(
     configureModel?: boolean;
     packages?: boolean;
     packageBuilder?: V4FetchHandler;
+    durableObjects?: Record<string, {className: string; useSQLite: true}>;
   } = {},
 ): Miniflare {
   const profiles = [
@@ -149,6 +150,7 @@ export function createRuntime(
           d1Databases: {CONFIG_DB: 'weft-config'},
           ...(model.images ? {images: {binding: 'IMAGES'}} : {}),
           durableObjects: {
+            ...model.durableObjects,
             SESSIONS: {
               className: "SessionDO",
               scriptName: "alpha",

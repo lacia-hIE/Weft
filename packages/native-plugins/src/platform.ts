@@ -4,6 +4,7 @@ import { z } from 'zod';
 import {registerRemoteTool, toolDescriptions} from './tool-bridge.ts';
 import { kernelModule } from '../../../.generated/native-plugin-kernel.ts';
 import {createHash} from 'node:crypto';
+import {observedLoader, observationScope} from '../../dynamic-worker-observability/src/loader.ts';
 
 // The bundled kernel is large. Hash it once, rather than serializing and hashing it for every activation.
 const kernelRevision = createHash('sha256').update(kernelModule).digest('hex');
@@ -80,7 +81,7 @@ export class NativePluginPlatform {
             clearTimeout(timer);
         }
     }
-    async evaluate(ctx: Context, pluginId: string, runId: string, source: string, handle: (method: unknown, fn: unknown) => () => void, installed?: {module: string; services: string[]; environment?: boolean; network?: boolean; activationId?: string; config?: Record<string, Record<string, unknown>>}): Promise<Plugin> {
+    async evaluate(ctx: Context, pluginId: string, runId: string, source: string, handle: (method: unknown, fn: unknown) => () => void, installed?: {module: string; services: string[]; environment?: boolean; network?: boolean; activationId?: string; config?: Record<string, Record<string, unknown>>; version?: string}): Promise<Plugin> {
         if (!this.loader)
             throw new Error('Dynamic Workers loader is not configured');
         const name = 'harness-plugin:' + pluginId;
@@ -104,7 +105,11 @@ export class NativePluginPlatform {
             this.state.id.toString(), this.scope, pluginId, fixedReceipt, kernelRevision, factory, definition,
             COMPATIBILITY_DATE, COMPATIBILITY_FLAGS, limits,
         ])).digest('hex');
-        const worker = this.loader.get(codeId, () => ({
+        const loader = observedLoader(this.loader, this.state, () => observationScope(this.scope, 'plugin', {
+            resourceId: this.state.id.toString(), pluginId, pluginScope: installed?.environment ? 'environment' : 'session',
+            ...(installed?.version ? {pluginVersion: installed.version} : {}),
+        }))!;
+        const worker = loader.get(codeId, () => ({
             compatibilityDate: COMPATIBILITY_DATE, compatibilityFlags: COMPATIBILITY_FLAGS, mainModule: 'kernel.js',
             modules: { 'kernel.js': kernelModule, 'weft:plugin-factory': { js: factory } },
             ...(fixedHost ? {env: {HOST: fixedHost}} : {}),

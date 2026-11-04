@@ -65,6 +65,8 @@ import {subagentRemote, type SubagentEndpoint} from '../../../packages/native-su
 import {nativeSessionList} from '../../../packages/harness-runtime/src/session-list.ts';
 import process from 'node:process';
 import type {JavaScriptList} from '../../../packages/workspace/src/javascript.ts';
+import {observedLoader, observationScope} from '../../../packages/dynamic-worker-observability/src/loader.ts';
+export {DynamicWorkerTail} from '../../../packages/dynamic-worker-observability/src/tail.ts';
 
 // Every environment volume is rooted at /workspace (the Remote Events host home),
 // so the Harness and shared agent homes resolve inside the environment's own filesystem.
@@ -219,6 +221,10 @@ export class SessionDO extends DurableObject<Env> {
     }
     return reader;
   }
+  private observedEnvironment(scope: SessionScope): Env {
+    const loader = observedLoader(this.env.LOADER, this.ctx, () => observationScope(scope, 'ptc', {resourceId: this.ctx.id.toString()}));
+    return loader ? {...this.env, LOADER: loader} : this.env;
+  }
   private async getReader() {
     const reader = await (this.readerPromise ??= this.createReader(sessionId => {
       const scope = this.ownerScope;
@@ -251,7 +257,7 @@ export class SessionDO extends DurableObject<Env> {
       if (!stored || stored.presentation !== 1 || !stored.agent_document) throw new RemoteError('session/not-found', 'Native Session not found', {sessionId: SessionId(scope.sessionId)});
       const profile = JSON.parse(stored.agent_document) as AgentRevision;
       if (!supportsAgentRuntime(profile.upstream)) throw new Error('Agent runtime revision unavailable');
-      const runtime = await sessionRuntime(this.env, this.ctx.storage, scope, profile, stored.workspace_id, profile.spec.persona, true, await this.getReader(), {}, this.nativeCwd(scope.sessionId), false);
+      const runtime = await sessionRuntime(this.observedEnvironment(scope), this.ctx.storage, scope, profile, stored.workspace_id, profile.spec.persona, true, await this.getReader(), {}, this.nativeCwd(scope.sessionId), false);
       const seed=this.webhookSeed();if(seed)runtime.options.model={provider:seed.selection.provider,model:seed.selection.model,...(seed.request.model?.maxTokens===undefined?{}:{maxTokens:seed.request.model.maxTokens})};
       const owner = controlScope(scope.tenantId, scope.environmentId);
       const pluginsReady = Promise.withResolvers<void>();
@@ -516,7 +522,7 @@ export class SessionDO extends DurableObject<Env> {
           const attachedWorkspace = stored ? stored.workspace_id : profile?.spec.workspaceId ?? workspaceId ?? null;
           if (profile && workspaceId !== undefined && workspaceId !== attachedWorkspace) return { ok: false, requestId, error: { code: 'WORKSPACE_MISMATCH', message: 'Workspace conflicts with the published agent', status: 409 } };
           this.replay.begin(); began = true;
-          const runtime = await sessionRuntime(this.env, this.ctx.storage, scope, profile, attachedWorkspace, persona, false, undefined, {...hooks, onEvent: (event, session) => {
+          const runtime = await sessionRuntime(this.observedEnvironment(scope), this.ctx.storage, scope, profile, attachedWorkspace, persona, false, undefined, {...hooks, onEvent: (event, session) => {
             hooks.onEvent?.(event, session);
             if (session.id === scope.sessionId) this.replay.event(event);
           }});
@@ -612,7 +618,7 @@ export class SessionDO extends DurableObject<Env> {
       workspaceIdSchema.parse(attachedWorkspace);
       const reader = await this.getReader();
       const directory = workspacePath(cwd ?? '/workspace');
-      const runtime = await sessionRuntime(this.env, this.ctx.storage, scope, profile, attachedWorkspace, profile.spec.persona, true, reader, {}, directory, false);
+      const runtime = await sessionRuntime(this.observedEnvironment(scope), this.ctx.storage, scope, profile, attachedWorkspace, profile.spec.persona, true, reader, {}, directory, false);
       let configure:Parameters<typeof initializeHarnessSession>[1];
       if (permissionPreset !== undefined) configure = (ctx, agent) => {ctx.permissionPresets.set(agent.session, permissionPreset);};
       if(webhook) {
@@ -673,7 +679,7 @@ export class SessionDO extends DurableObject<Env> {
       if (!supportsAgentRuntime(fork.profile.upstream)) throw new Error('Agent runtime revision unavailable');
       workspaceIdSchema.parse(fork.workspaceId);
       const directory = workspacePath(fork.cwd);
-      const runtime = await sessionRuntime(this.env, this.ctx.storage, scope, fork.profile, fork.workspaceId, fork.profile.spec.persona, true, await this.getReader(), {}, directory, false);
+      const runtime = await sessionRuntime(this.observedEnvironment(scope), this.ctx.storage, scope, fork.profile, fork.workspaceId, fork.profile.spec.persona, true, await this.getReader(), {}, directory, false);
       await initializeHarnessSession({...runtime.options, seed: {events: fork.events, inherited: fork.inherited}, meta: {...runtime.options.meta, parentSession: fork.parentSession, isSeeded: true}});
       this.ctx.storage.sql.exec('INSERT INTO weft_session_config (id,workspace_id,agent_document,presentation) VALUES (1,?,?,1)', fork.workspaceId, JSON.stringify(fork.profile));
       const owner = controlScope(scope.tenantId, scope.environmentId);
@@ -834,7 +840,7 @@ export class SessionDO extends DurableObject<Env> {
     return this.exclusive(async () => {
       const stored = this.ctx.storage.sql.exec<{workspace_id: string; agent_document: string}>('SELECT workspace_id,agent_document FROM weft_session_config WHERE id=1').one();
       const profile = JSON.parse(stored.agent_document) as AgentRevision;
-      const runtime = await sessionRuntime(this.env, this.ctx.storage, scope, profile, stored.workspace_id, profile.spec.persona, true, await this.getReader(), {}, this.nativeCwd(scope.sessionId));
+      const runtime = await sessionRuntime(this.observedEnvironment(scope), this.ctx.storage, scope, profile, stored.workspace_id, profile.spec.persona, true, await this.getReader(), {}, this.nativeCwd(scope.sessionId));
       const value = await renameHarnessSession(runtime.options, title);
       await this.publishNativeSummary(scope);
       return value;
@@ -864,7 +870,7 @@ export class SessionDO extends DurableObject<Env> {
     else value = await this.exclusive(async () => {
       const stored = this.ctx.storage.sql.exec<{workspace_id: string; agent_document: string}>('SELECT workspace_id,agent_document FROM weft_session_config WHERE id=1').one();
       const profile = JSON.parse(stored.agent_document) as AgentRevision;
-      const runtime = await sessionRuntime(this.env, this.ctx.storage, scope, profile, stored.workspace_id, profile.spec.persona, true, await this.getReader(), {}, this.nativeCwd(scope.sessionId));
+      const runtime = await sessionRuntime(this.observedEnvironment(scope), this.ctx.storage, scope, profile, stored.workspace_id, profile.spec.persona, true, await this.getReader(), {}, this.nativeCwd(scope.sessionId));
       return selectHarnessModel(runtime.options, request);
     });
     await this.publishNativeSummary(scope);

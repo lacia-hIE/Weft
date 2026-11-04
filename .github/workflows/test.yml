@@ -114,7 +114,7 @@ jobs:
       - name: Local executor dispatch and recovery smoke checks
         run: npx tsx --test tests/local-executor.test.ts tests/superagent-remote-executor.test.ts
       - name: Dynamic Worker capability smoke check
-        run: npx tsx --test tests/dynamic-worker-identity.test.ts
+        run: npx tsx --test tests/dynamic-worker-identity.test.ts tests/dynamic-worker-observation.test.ts tests/dynamic-worker-observability.test.ts
       - name: Mail protocol and durable gateway smoke checks
         run: npx tsx --test --test-concurrency=1 --test-timeout=300000 tests/im-email.test.ts tests/mail-gateway.test.ts
       - name: Pack test inputs

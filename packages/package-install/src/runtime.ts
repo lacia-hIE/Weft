@@ -82,7 +82,7 @@ export class InstalledPackageRuntime {
           if (artifact.host) {
             const p = installation.permissions;
             const services = [...(p.files !== 'none' ? ['fs'] : []), ...(p.tools ? ['tools'] : []), ...(p.timer ? ['timer'] : [])];
-            const plugin = await this.platform.evaluate(this.ctx, `installed:${installation.name}`, runId, '', () => {throw new Error('Bundle handlers use native Cordis services');}, {module: artifact.host, services, network: p.network === true, ...(installation.config ? {config: installation.config} : {})});
+            const plugin = await this.platform.evaluate(this.ctx, `installed:${installation.name}`, runId, '', () => {throw new Error('Bundle handlers use native Cordis services');}, {module: artifact.host, services, version: installation.version, network: p.network === true, ...(installation.config ? {config: installation.config} : {})});
             row.fiber = this.ctx.plugin(plugin as Plugin);
             await row.fiber.await();
           }

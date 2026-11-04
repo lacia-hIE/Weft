@@ -49,6 +49,7 @@ export default defineConfig({
       ACCESS_TEAM_DOMAIN: bindings.text(deployment.accessTeamDomain ?? 'local.cloudflareaccess.com'),
     },
     exports: {
+      DynamicWorkerTail: exports.worker(),
       PluginCapabilities: exports.worker(),
       PluginBuilderDO: exports.durableObject({storage: 'sqlite', container: pluginBuilder}),
       SessionDO: exports.durableObject({ storage: 'sqlite' }),
