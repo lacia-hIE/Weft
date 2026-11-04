@@ -42,7 +42,7 @@ export function Select({id, value, options, onChange, placeholder, disabled = fa
     <div className="dt-choice-trigger" data-open={open || undefined} onClick={() => {if (!disabled) {input.current?.focus();setOpen(true);setActive(Math.max(0, choices.findIndex(option => option.value === value)))}}}>
       <input ref={input} id={id} role="combobox" aria-expanded={open} aria-controls={listId} aria-autocomplete="list"
         aria-activedescendant={open && choices[active] ? `${listId}-${active}` : undefined} disabled={disabled}
-        autoComplete="off" spellCheck={false} value={open ? query : selected} placeholder={open ? placeholder : selected || placeholder}
+        autoComplete="off" spellCheck={false} value={open ? query : selected} placeholder={selected || placeholder}
         onChange={event => {setQuery(event.target.value); setActive(0); setOpen(true)}}
         onKeyDown={event => {
           if (event.key === 'Escape') {event.stopPropagation(); event.preventDefault(); close(); return}

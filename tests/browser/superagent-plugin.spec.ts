@@ -116,6 +116,7 @@ test('the Superagent panel opens from the sidebar, gets its key through Settings
   await expect(provider).toHaveValue('Provider Alpha');
   await provider.click();
   await expect(page.getByRole('listbox')).toBeVisible();
+  await expect(provider).toHaveAttribute('placeholder','Provider Alpha');
   await page.screenshot({path:testInfo.outputPath('superagent-model-selectors.png')});
   await provider.press('Escape');
   await expect(page.getByRole('listbox')).toHaveCount(0);
