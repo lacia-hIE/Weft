@@ -72,7 +72,7 @@ test('the Superagent panel opens from the sidebar, gets its key through Settings
   await panel.getByRole('textbox',{name:'Convention',exact:true}).fill('Verify internal repositories on the connected computer.');
   await panel.getByRole('button',{name:'Save',exact:true}).click();
   await expect(panel.getByRole('button',{name:'Save',exact:true})).toHaveCount(0,{timeout:45_000});
-  await panel.getByRole('button',{name:'Remove',exact:true}).click();
+  await panel.getByRole('button',{name:'Delete',exact:true}).click();
   await panel.getByRole('button',{name:'Save',exact:true}).click();
   await expect(panel.getByRole('textbox',{name:'Convention',exact:true})).toHaveCount(0,{timeout:45_000});
   await expect(panel.getByRole('button',{name:'Save',exact:true})).toHaveCount(0,{timeout:45_000});
