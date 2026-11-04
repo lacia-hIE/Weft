@@ -22,8 +22,10 @@ export async function apply(ctx,config={}) {
   };
   const controller=createController({file,origin,authorize,version});
   ctx.effect(()=>()=>controller.close(),'weft-local-host-connection');
-  const executor=createExecutorController({ctx,file:config.executorFile??process.env.WEFT_EXECUTOR_CONFIG??join(homedir(),'.dsh','weft-executor.json')});
-  ctx.effect(()=>()=>executor.close(),'weft-local-executor');
+  const agentOwner=ctx.plugin({name:'weft-executor-agents',inject:['agents'],apply(){}});
+  await agentOwner;
+  const executor=createExecutorController({ctx,agentOwner:agentOwner.ctx,file:config.executorFile??process.env.WEFT_EXECUTOR_CONFIG??join(homedir(),'.dsh','weft-executor.json')});
+  ctx.effect(function*(){yield agentOwner.dispose;yield()=>executor.close();},'weft-local-executor');
   ctx.effect(()=>ctx.webServer.register({kind:'exact',path:'/api/weft-executor',handler:async(req,res)=>{
     const admission=ctx.connection.admit(req);
     const reply=(status,value)=>{res.writeHead(status,{'content-type':'application/json','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(JSON.stringify(value));};

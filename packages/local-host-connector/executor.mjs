@@ -16,7 +16,7 @@ async function privateWrite(file,value){
 }
 
 /** One native DSH, one persisted mailbox; reconnects do not replay accepted prompts. */
-export function createExecutorController({ctx,file,request=fetch}){
+export function createExecutorController({ctx,agentOwner=ctx,file,request=fetch}){
   let data={accepting:false,maxWorkers:1,jobs:{}},status='unpaired',closed=false,loop,stop;
   let saving=Promise.resolve(),actions=Promise.resolve();const disposers=[],configured=new WeakSet(),handles=new Map();
   const save=()=>{const copy=JSON.parse(JSON.stringify(data));return saving=saving.catch(()=>{}).then(()=>privateWrite(file,copy));};
@@ -185,7 +185,7 @@ export function createExecutorController({ctx,file,request=fetch}){
       const defaults=ctx.agentDefaultModel;
       const options={agentOptions:{get provider(){return defaults.currentSelection().provider;},get model(){return defaults.currentSelection().model;},get reasoningEffort(){return defaults.currentSelection().reasoningEffort;}},
         setup:async agentCtx=>{await ctx.agentPresets.mount(agentCtx,preset);}};
-      const handle=job.created?await ctx.agents.resume({resumeSessionId:sessionId,...options}):await ctx.agents.create({sessionId,meta:{cwd:job.cwd,agentPreset:preset},...options});
+      const handle=job.created?await agentOwner.agents.resume({resumeSessionId:sessionId,...options}):await agentOwner.agents.create({sessionId,meta:{cwd:job.cwd,agentPreset:preset},...options});
       handles.set(sessionId,handle);
       await change(job,{created:true,preset});
       await ctx.sessionController.rename({sessionId,title:command.title});

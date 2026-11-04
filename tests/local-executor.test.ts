@@ -114,3 +114,23 @@ test('delegated workers retain durable ancestry, inherit restrictions and cannot
     await assert.rejects(child.guards[0]({agent:child,name:'read'},()=>{}),/Assignment ended/)
   }finally{await controller.close();await rm(directory,{recursive:true,force:true})}
 })
+
+test('retry resumes the same Session under a fresh native root and preserves child catalogs',async()=>{
+  const directory=await mkdtemp(join(tmpdir(),'weft-retry-tree-')),file=join(directory,'executor.json'),host=native()
+  let phase='run',attempt=assignment
+  const command=()=>({kind:'run',ticketId:ticket,assignmentId:attempt,name:'retry-tree',directory:'/workspace/tree',title:'Tree',instructions:'Task',allow:['read','subagent'],tools:[],messages:[{id:attempt,text:'Task'}]})
+  const request=async(address:string,init:RequestInit)=>address.endsWith('/pair')?Response.json({protocol,token}):Response.json({protocol,commands:[phase==='stop'?{kind:'stop',ticketId:ticket,assignmentId:attempt}:command()],retryAfterMs:1000})
+  const controller=createExecutorController({ctx:host.ctx,file,request})
+  try{
+    await controller.pair({code:JSON.stringify({protocol,endpoint,pairingKey}),root:join(directory,'work')});await controller.configure({accepting:true,maxWorkers:1});await controller.reconnect()
+    await waitFor(()=>host.prompts.length===1)
+    const id=host.prompts[0].sessionId,old=host.agents.get(id);await host.child(id,'old-child')
+    phase='stop';await controller.reconnect();await waitFor(()=>controller.snapshot().jobs[0]?.state==='stopped')
+    assert.equal(host.agents.has(id),false)
+    attempt='e'.repeat(32);phase='run';await controller.reconnect();await waitFor(()=>host.prompts.length===2)
+    assert.equal(host.prompts[1].sessionId,id);assert.notEqual(host.agents.get(id),old)
+    await host.child(id,'new-child')
+    assert.deepEqual(controller.snapshot().jobs[0].children.map((child:any)=>child.id).sort(),['new-child','old-child'])
+    const saved=JSON.parse(await readFile(file,'utf8'));assert.equal(saved.jobs[id].accepted.includes(attempt),true)
+  }finally{await controller.close();await rm(directory,{recursive:true,force:true})}
+})
