@@ -4,13 +4,13 @@ import {z} from 'zod'
 import {key, isoTime, type Trigger} from '../core/index.ts'
 import {family} from '../kv.ts'
 import type {Store} from '../app/store.ts'
-import type {SourceKind} from './kind.ts'
+import type {SourceKind, FieldSpec} from './kind.ts'
 import type {SourceHost} from './host.ts'
 
 export const EVENT_TYPES = ['github-webhook', 'gitlab', 'feed'] as const
 export type EventType = typeof EVENT_TYPES[number]
 export const EventConfig = z.object({
-  repository: z.string().trim().max(300).default(''),
+  repository: z.string().trim().max(300).refine(value => !value || /^(?:[A-Za-z0-9_.-]+\/)+[A-Za-z0-9_.-]+$/.test(value), 'Use a repository path such as team/repository').default(''),
   site: z.string().trim().max(1000).default(''),
   webhook: z.boolean().default(true), feed: z.boolean().default(false),
   mention: z.string().trim().max(100).default(''), reply: z.boolean().default(false),
@@ -73,7 +73,7 @@ export class RepositoryEvents {
       get title() {const name = events.host.store.settings().sources[id]?.name || (type === 'github-webhook' ? 'GitHub' : type === 'gitlab' ? 'GitLab' : 'RSS / Atom');return {zh: name, en: name}},
       description: {zh: '独立接收 Webhook 或 RSS/Atom，按来源策略评估事件。仓库操作由执行器负责。', en: 'Receive webhooks or RSS/Atom independently. Source Policy evaluates events; Executors own repository operations.'},
       schema: type === 'feed' ? EventConfig.extend({webhook: z.boolean().default(false), feed: z.boolean().default(true)}) : EventConfig, health: [`${id}:webhook`, `${id}:feed`],
-      fields: [
+      fields: ([
         {key: 'repository', type: 'text', label: {zh: '监听范围（仓库路径）', en: 'Repository scope'}, hint: {zh: 'Webhook 必填，例如 team/repository；清空可保存为草稿。', en: 'Required for webhooks, e.g. team/repository. Clear to save an unconfigured draft.'}},
         {key: 'site', type: 'text', label: {zh: '平台地址（可选）', en: 'Site origin (optional)'}},
         {key: 'webhook', type: 'switch', label: {zh: '接收 Webhook', en: 'Receive webhooks'}},
@@ -81,7 +81,7 @@ export class RepositoryEvents {
         {key: 'mention', type: 'text', label: {zh: '直接请求时提及的账号', en: 'Account mentioned in direct requests'}},
         {key: 'reply', type: 'switch', label: {zh: '通过平台回复（需 API 凭据）', en: 'Reply through the platform (requires API credentials)'}},
         {key: 'intervalSeconds', type: 'number', advanced: true, min: 60, max: 3600, label: {zh: '订阅检查间隔（秒）', en: 'Feed polling interval (seconds)'}},
-      ],
+      ] as FieldSpec[]).filter(field => type !== 'feed' || ['feed', 'intervalSeconds'].includes(field.key)),
       scope: ({meta}, config) => meta.repository && String(meta.repository).toLowerCase() !== config.repository.toLowerCase() ? {listened: false, reason: 'repository_changed'} : {listened: true, observed: true, row: 'activity'},
       policy: {
         schema: z.object({allowed: z.array(z.object({id: z.string().trim().min(1).max(100)}).strict()).default([])}).strict(),
@@ -89,6 +89,10 @@ export class RepositoryEvents {
         explicit: {zh: '经过验证的 Webhook 中，名单里的账号直接提及智能体。RSS/Atom 只形成观察型候选。', en: 'An allowed account mentions the agent in a verified webhook. Feed entries are observational candidates only.'},
         rows: () => [{id: 'activity', label: {zh: '来源事件', en: 'Source events'}, note: {zh: '全部', en: 'All'}, cells: {listedUnaddressed: true, unlistedAddressed: true, unlistedUnaddressed: true}}],
       },
+      ...(type !== 'feed' && this.host.secret(id, 'token') ? {threadContext: {
+        messageId: (trigger: Trigger) => text(trigger.meta.messageId) || trigger.id,
+        read: (trigger: Trigger, part: 'root' | 'parent' | 'thread', cursor: string | undefined, _config: Config, signal?: AbortSignal) => this.readContext(id, type, trigger, part, cursor, signal),
+      }} : {}),
       channel: {link: address => ({url: address.url ?? '', label: {zh: '原始讨论', en: 'Original discussion'}}), send: (message, signal) => this.reply(id, type, message.id, message.channel.address, message.text, signal)},
       poll: async (_host, signal) => this.poll(id, type, signal),
     }
@@ -113,10 +117,10 @@ export class RepositoryEvents {
     const version = text(comment.updated_at ?? subject.updated_at ?? subject.sha ?? payload.after) || delivery
     const event = text(payload.action ?? subject.action ?? payload.object_kind) || 'activity'
     const trigger: Trigger = {id: key(id, url, event, version), source: id, threads: [{source: id, id: thread(url)}], actor: {source: id, id: actor}, human,
-      ...(config.mention && body.includes(`@${config.mention}`) && human ? {addressed: 'mention' as const} : {}),
+      ...(config.mention && new RegExp(`(^|[^\\w@])@${config.mention.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w-])`).test(body) && human ? {addressed: 'mention' as const} : {}),
       at: Number.isNaN(Date.parse(at)) ? new Date().toISOString() : isoTime(at), text: `${title}\n${body}`.slice(0, 24000), url,
       ...(config.reply && address ? {channel: {source: id, thread: `${id}:${thread(url)}`, address: {path: address, url}}} : {}),
-      meta: {repository, number, provider: type, event, title, transport: 'webhook'}}
+      meta: {repository, number, messageId: text(comment.id) || '', resource: github ? payload.pull_request || payload.issue?.pull_request ? 'pulls' : 'issues' : payload.object_kind === 'issue' || subject.noteable_type === 'Issue' ? 'issues' : 'merge_requests', provider: type, event, title, transport: 'webhook'}}
     const seen = this.host.store.get(deliveries(id)) ?? []
     if (seen.includes(delivery)) return
     this.host.store.atomic(() => {
@@ -140,7 +144,7 @@ export class RepositoryEvents {
       const response = await fetch(url, {redirect: 'error', signal: AbortSignal.any([signal, AbortSignal.timeout(15000)]), headers: {
         accept: 'application/atom+xml, application/rss+xml, application/xml', ...(state.etag ? {'if-none-match': state.etag} : {}), ...(state.modified ? {'if-modified-since': state.modified} : {}),
       }})
-      if (response.status === 304) {this.host.store.set(cursors(id), {...state, next: Date.now() + config.intervalSeconds * 1000});return}
+      if (response.status === 304) {this.host.store.set(cursors(id), {...state, next: Date.now() + config.intervalSeconds * 1000});ctx.report(`${id}:feed`, {state: 'ready', detail: 'Subscription unchanged', at: new Date().toISOString()});return}
       if (!response.ok) throw new Error(`Subscription HTTP ${response.status}`)
       const entries = feedEntries(await bounded(response)), seen = new Set(state.seen), verified = new Set(this.host.store.get(observations(id)) ?? [])
       this.host.store.atomic(() => {
@@ -164,6 +168,25 @@ export class RepositoryEvents {
       // Subscription URLs can carry credentials. Never include raw fetch errors or addresses in diagnostics.
       ctx.report(`${id}:feed`, {state: 'error', detail: error instanceof Error && /^Subscription HTTP \d+$/.test(error.message) ? error.message : 'Subscription could not be read; check the private address and authentication'})
     }
+  }
+  private async readContext(id: string, type: EventType, trigger: Trigger, part: 'root' | 'parent' | 'thread', cursor: string | undefined, signal?: AbortSignal) {
+    const config = this.host.context(id).config<Config>(id), token = this.host.secret(id, 'token')
+    if (!config || !token || trigger.source !== id || trigger.meta.repository !== config.repository) throw new Error('Source context is unavailable for this repository')
+    const number = text(trigger.meta.number), page = cursor === undefined ? 1 : Number(cursor)
+    if (!/^\d+$/.test(number) || !Number.isInteger(page) || page < 1 || page > 10) throw new Error('Invalid Source context reference')
+    const github = type === 'github-webhook', site = origin(config, type), root = trigger.meta.resource === 'issues' ? 'issues' : github ? 'pulls' : 'merge_requests'
+    const path = part === 'thread' ? github ? `issues/${number}/comments?per_page=50&page=${page}` : `${root}/${number}/notes?per_page=50&page=${page}` : `${root}/${number}`
+    const endpoint = github ? `${site === 'https://github.com' ? 'https://api.github.com' : `${site}/api/v3`}/repos/${config.repository}/${path}` : `${site}/api/v4/projects/${encodeURIComponent(config.repository)}/${path}`
+    const response = await fetch(endpoint, {redirect: 'error', signal: AbortSignal.any([signal ?? new AbortController().signal, AbortSignal.timeout(15000)]),
+      headers: {'user-agent': 'weft-superagent', ...(github ? {authorization: `Bearer ${token}`} : {'private-token': token})}})
+    if (!response.ok) throw new Error(`Source context HTTP ${response.status}`)
+    const raw = JSON.parse(await bounded(response)), items = part === 'thread' ? list(raw) : [raw]
+    const messages = items.map(item => {const row = object(item), user = object(row.user ?? row.author);return {
+      id: text(row.id ?? row.number ?? row.iid), from: text(user.login ?? user.username), at: text(row.updated_at ?? row.created_at),
+      text: [text(row.title), text(row.body ?? row.note ?? row.description)].filter(Boolean).join('\n').slice(0, 32000),
+      ...(user.type === 'Bot' || user.bot === true ? {bot: true as const} : {}), ...(row.html_url || row.web_url ? {url: text(row.html_url ?? row.web_url)} : {}),
+    }})
+    return {messages, ...(part === 'thread' && items.length >= 50 && page < 10 ? {next: String(page + 1)} : {}), body: {messages, ...(part === 'parent' ? {notice: 'This Source provides the discussion root; a distinct reply parent is unavailable'} : {})}}
   }
   private async reply(id: string, type: EventType, messageId: string, address: Record<string, string>, body: string, signal?: AbortSignal): Promise<'sent' | 'gone'> {
     const config = this.host.context(id).config<Config>(id)

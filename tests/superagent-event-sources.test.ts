@@ -66,3 +66,39 @@ test('feed parser admits RSS and Atom, rejects other XML, and never expands exte
   const parsed=feedEntries('<!DOCTYPE rss [<!ENTITY secret SYSTEM "file:///etc/passwd">]><rss><channel><item><guid>one</guid><title>&secret;</title></item></channel></rss>')
   assert.doesNotMatch(parsed[0]!.title,/root:/)
 })
+
+test('verified mentions have account boundaries and Source context uses its own scoped credentials',async t=>{
+  const h=harness()
+  try {
+    const id=h.add('gitlab',{repository:'team/private',mention:'agent'});h.secrets[`${id}-token`]='LOCAL_SOURCE_TOKEN'
+    const payload={project:{path_with_namespace:'team/private'},user:{username:'alice'},object_kind:'note',object_attributes:{id:19,noteable_iid:7,noteable_type:'Issue',note:'@agent-extra',updated_at:'2026-11-04T01:00:00Z',url:'https://gitlab.com/team/private/-/issues/7#note_19'}}
+    await h.events.webhook(id,'gitlab',payload,'one');assert.equal(h.received[0]!.addressed,undefined)
+    await h.events.webhook(id,'gitlab',{...payload,object_attributes:{...payload.object_attributes,note:'@agent please verify',updated_at:'2026-11-04T01:00:01Z'}},'two')
+    assert.equal(h.received[1]!.addressed,'mention')
+    t.mock.method(globalThis,'fetch',async(url:unknown,init:RequestInit)=>{
+      assert.equal(String(url),'https://gitlab.com/api/v4/projects/team%2Fprivate/issues/7/notes?per_page=50&page=1')
+      assert.equal(new Headers(init.headers).get('private-token'),'LOCAL_SOURCE_TOKEN')
+      return Response.json([{id:19,body:'Discussion context',author:{username:'alice'},created_at:'2026-11-04T01:00:00Z'}])
+    })
+    const context=h.events.kind(id,'gitlab').threadContext!
+    const result=await context.read(h.received[1]!,'thread',undefined,h.sources.instance(id)!.config as never)
+    assert.equal(result.messages[0]!.text,'Discussion context')
+    await assert.rejects(context.read({...h.received[1]!,source:'other'},'thread',undefined,{} as never),/unavailable/)
+  } finally {h.sql.close()}
+})
+
+test('Source reply retry recovers an uncertain delivery without posting a duplicate',async t=>{
+  const h=harness();let posts=0
+  try {
+    const id=h.add('github-webhook',{repository:'team/private',reply:true});h.secrets[`${id}-token`]='SOURCE_TOKEN'
+    const send=h.events.kind(id,'github-webhook').channel!.send
+    const message={id:'reply-123',channel:{source:id,thread:'discussion',address:{path:'issues/7/comments',url:'https://github.com/team/private/issues/7'}},text:'Verified locally'} as Parameters<typeof send>[0]
+    t.mock.method(globalThis,'fetch',async(url:unknown,init:RequestInit)=>{
+      assert.match(String(url),/^https:\/\/api.github.com\/repos\/team\/private\/issues\/7\/comments/)
+      if(init.method==='POST'){posts++;throw new Error('Connection lost after submission')}
+      return Response.json([{body:'Verified locally\n<!-- weft:reply-123 -->'}])
+    })
+    await assert.rejects(send(message),/Connection lost/)
+    assert.equal(await send(message),'sent');assert.equal(await send(message),'sent');assert.equal(posts,1)
+  } finally {h.sql.close()}
+})

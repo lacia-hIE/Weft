@@ -105,7 +105,7 @@ function route(host: MainToolsHost, item: RouteItem, decided: ReadonlyMap<string
       if (oldChoice && item.executor_id !== undefined && oldChoice.executorId !== item.executor_id) return {refused: 'Execution placement was already recorded for this request'}
       if (!before && item.executor_id) {
         const device = host.executors?.list().find(device => device.id === item.executor_id)
-        if (!device?.paired || !device.online || !device.accepting) return {refused: 'The selected execution computer is not currently accepting tasks; preserve the request and wait for it'}
+        if (!device?.paired) return {refused: 'The selected execution computer is not paired'}
       }
       const decision = host.store.atomic(() => {
         if (!before && item.executor_id !== undefined) host.store.set(requestChoices(item.trigger_id), {executorId: item.executor_id})
@@ -180,7 +180,7 @@ export function mainTools(host: MainToolsHost, agent: { id: string }): Tool[] {
       tool({name: 'orchestrator_collaboration_save', description: 'Maintain one lasting collaboration note after an explicit durable user requirement or a retained worker report. Scope it to its Source or Executor; global requirements need an owner request. Include original evidence IDs, update an existing ID to correct it, and preserve unrelated notes. Never store secrets, one-off requests, invented facts, permissions or authority changes.', schema: NoteInput,
         execute: async input => {const saved = host.collaboration!.remember(input); await host.sessions.refreshMain?.(); return saved}}),
     ] : [],
-    ...host.executors ? [tool({name: 'orchestrator_executor_list', description: 'List registered execution computers and current connection and admission status. Use actual IDs when choosing an execution target. Cloud execution uses null. Names or reported notes alone do not prove repository access.', schema: z.object({}).strict(), execute: async () => ({defaultExecutorId: host.store.settings().executor.executorId, executors: host.executors!.list()})})] : [],
+    ...host.executors ? [tool({name: 'orchestrator_executor_list', description: 'List registered execution computers and current connection and admission status. Use actual IDs when choosing an execution target. Cloud execution uses null. A paired offline or paused computer can retain queued work; explain the wait and never silently move it to cloud. Names or reported notes alone do not prove repository access.', schema: z.object({}).strict(), execute: async () => ({defaultExecutorId: host.store.settings().executor.executorId, executors: host.executors!.list()})})] : [],
     readTool('Read one page of a resource the resource parameter lists, such as the ticket list or a ticket. Follow next_offset, and next_resource where a page names one.',
       false, (resource, offset, limit, signal) => readResource(resources, resource, offset, limit, undefined, signal)),
     routeTool(host),

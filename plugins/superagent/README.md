@@ -1,27 +1,32 @@
-## Request-driven local tasks (0.3.2)
+## Settings redesign (0.4.0)
 
-GitHub is optional and defaults off on new installations. A broken or disabled GitHub Source does not
-block the orchestrator, IM Sources or local execution. Existing configured GitHub Sources keep their settings.
-Deployment settings group GitHub credentials and webhook setup under an optional integration.
+Settings separate **Sources**, **Policy & Eval**, **Execution**, **Prompts**, and **Advanced**.
+GitHub is optional. Existing GitHub settings remain available under Sources for compatibility.
+Create independent GitHub Webhook, GitLab or RSS/Atom Sources, each with its own scope, credentials,
+Policy and transport health. Disabled or incomplete Sources can be saved; credentials can be removed explicitly.
+GitLab webhooks use its Secret token header. Subscribe using a private HTTPS feed address.
+The first feed fetch establishes a baseline without dispatching historical entries. Feeds are observations,
+never verified human requests. Matching webhook-first observations are suppressed; feed-first and later
+verified webhooks share discussion identity and retain the stronger verified event.
 
-Use **New request** to select a connected local DSH and a project, then submit the task and acceptance criteria.
-Configure project repository paths, verification, merge and deployment instructions in local DSH.
-Project summaries are advertised over the existing device protocol; private paths and instructions stay local.
-The authenticated gateway assigns the owner identity and stores placement independently of model-visible metadata.
-The normal Source → Trigger → Eval → Mandate → Ticket → Assignment flow still applies; submitting a request
-never creates an unauthorized Ticket directly. Each task's computer/project is immutable, survives default
-changes and cannot be bypassed by attaching it to another computer's Ticket. A missing or offline local
-computer never triggers cloud fallback. Follow-ups and human-action answers stay in the request conversation.
+Execution reuses connected DSH computers. Configure only task root, native Agent preset and permissions
+on that computer; concurrency is under Advanced. New requests have no structured project configuration.
+Put repository paths, verification and deployment conventions in prompts or skills. Existing project-bound
+requests and local records remain supported. Task Sessions remain attached to their native Workspaces.
+A request may fix its computer or let the main Session choose explicitly from registered executors.
+Selected offline or paused computers retain queued work without automatic cloud fallback.
 
-Workers use native local tools and credentials for local Git, GitLab and internal repositories. No event
-subscription is required. Merge/deploy each require the current request's authorization and nonempty local
-instructions. Evidence is reported through the existing worker report contract; non-GitHub tasks omit pr_number.
-Cloud-side orchestration still receives request text and worker reports; this is not an offline or local-only
-orchestrator mode. Native local Sessions are now registered in their task Workspaces, with historical backfill.
+Prompts include editable, versioned collaboration notes with global, Source or executor scope.
+The main Session may retain allowed human requirements or actual worker-report evidence during its existing
+turns. Worker context receives applicable notes only. Notes do not grant permissions or change Policy.
+The panel supports editing, deleting and restoring retained snapshots; core role prompts remain user controlled.
+
+The remaining GitHub setup instructions describe the compatible legacy GitHub Source; new Sources use
+independent credentials and leave repository checkout and delivery procedures to their executors.
 
 # @weft/dsh-superagent
 
-A proactive agent for one GitHub repository, adapted to Weft's Worker Host from the [dsh-superagent research prototype](https://github.com/deepseek-ai/dsh-superagent-prototype). When someone allowed asks it for work, it opens a Ticket, works on it in its own Session and directory, and answers in the original conversation. The panel lists what needs a person.
+A proactive agent for requests and independently configured event Sources, adapted to Weft's Worker Host from the [dsh-superagent research prototype](https://github.com/deepseek-ai/dsh-superagent-prototype). When someone allowed asks it for work, it opens a Ticket, works on it in its own Session and directory, and answers in the original conversation. The panel lists what needs a person.
 
 Upstream calls the prototype research code, and so is this adaptation at 0.x. Review it before use.
 
@@ -29,13 +34,13 @@ Upstream calls the prototype research code, and so is this adaptation at 0.x. Re
 
 1. Install it from **Plugins** and approve files, tools, timers, HTTPS, plugin state, Session management, the public route and background running.
 2. Create a dedicated GitHub account for the agent and add it only to the target repository, public or private, with Write access. Protect the default branch: Write access can otherwise merge.
-3. In the **Superagent** panel, under Settings → Deployment, fill in its classic token with the `repo` and `notifications` scopes. A fine-grained token cannot read notifications, which is how the Source learns it was addressed, and a GitHub App is no user with notifications. The token reaches every repository the account can.
+3. In the **Superagent** panel, under Settings → Sources, fill in its classic token with the `repo` and `notifications` scopes. A fine-grained token cannot read notifications, which is how the Source learns it was addressed, and a GitHub App is no user with notifications. The token reaches every repository the account can.
 4. Under Settings → Sources, name the repository, and under Eval list who may start work under Policy. The Agent acts only on them.
-5. Optional, for prompt reactions: under Settings → Deployment, generate a webhook secret and copy it, the URL and the content type into the repository's Add webhook page, which takes admin rights there. `/v1/plugin-hooks/*` needs a Cloudflare Access Bypass. A delivery reads only the Issue or PR it names, and only when that concerns the agent (a followed Thread, a Ticket's PR, or a mention of the agent's account); full rounds, which read notifications, run on the background pass at most as often as GitHub's poll interval allows, every five minutes by default. Without a webhook the Source relies on those rounds alone.
+5. Optional, for prompt reactions: under Settings → Sources, generate a webhook secret and copy it, the URL and the content type into the repository's Add webhook page, which takes admin rights there. `/v1/plugin-hooks/*` needs a Cloudflare Access Bypass. A delivery reads only the Issue or PR it names, and only when that concerns the agent (a followed Thread, a Ticket's PR, or a mention of the agent's account); full rounds, which read notifications, run on the background pass at most as often as GitHub's poll interval allows, every five minutes by default. Without a webhook the Source relies on those rounds alone.
 
 ## IM Sources
 
-Besides GitHub, requests can come from Feishu, WeChat, QQ and email bots of `@weft/dsh-im`. In dsh-im, open a bot's **More settings → General → Assign to plugin** and choose `@weft/dsh-superagent`; then, under Settings → Sources here, enable the channel's Source and enter the bot's key (`feishu` for the first Feishu bot, `feishu_0a1b2c` for an added one). List who may start work under the Source's Policy. A direct message or a mention of the bot from someone on the list is an explicit request; the Feishu Source also observes whole chats set to "All". Replies go out through the bot that received the request, in the message's topic on Feishu. Ticket work still lands in the GitHub repository, so the GitHub setup above remains required.
+Besides GitHub, requests can come from Feishu, WeChat, QQ and email bots of `@weft/dsh-im`. In dsh-im, open a bot's **More settings → General → Assign to plugin** and choose `@weft/dsh-superagent`; then, under Settings → Sources here, enable the channel's Source and enter the bot's key (`feishu` for the first Feishu bot, `feishu_0a1b2c` for an added one). List who may start work under the Source's Policy. A direct message or a mention of the bot from someone on the list is an explicit request; the Feishu Source also observes whole chats set to "All". Replies go out through the bot that received the request, in the message's topic on Feishu. Ticket work uses the selected executor; GitHub setup is optional for IM and manual requests.
 
 ## How it runs here
 
@@ -47,7 +52,7 @@ See [PARITY.md](PARITY.md) for what differs from the prototype.
 
 ## Local execution computers
 
-Connect the computer to Weft using DSH and `@laciaproject/dsh-local-host` 0.3.2. In the local plugin's
+Connect the computer to Weft using DSH and `@laciaproject/dsh-local-host` 0.4.0. In the local plugin's
 **Superagent Executor** settings, save an absolute task root, select an installed Agent preset from the dropdown
 and choose execution permissions. Task acceptance starts paused; enable it explicitly on that computer.
 Configure its model provider locally. Use a dedicated DSH profile and agent credentials; a directory or profile
@@ -73,4 +78,4 @@ drains the entire native tree and its processes before acknowledging stop, and r
 so Retry can resume its retained Session with fresh admission. Restart reconciliation preserves child history
 and requires an explicit Retry instead of replaying unfinished child prompts. Ordinary shell jobs use native DSH job delivery. Tests still follow the repository's CI policy.
 
-Existing independently paired 0.3.0 executors remain supported. Direct selection of an existing DSH connection requires connector 0.3.2.
+Existing independently paired 0.3.0 executors remain supported. Direct selection of an existing DSH connection requires connector 0.4.0.

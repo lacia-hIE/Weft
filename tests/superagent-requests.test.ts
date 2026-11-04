@@ -65,8 +65,10 @@ test('owner requests pass Eval without GitHub, retain placement and project, and
     const routeInput={kind:'accept',trigger_id:automatic.triggerId,title:'Automatic placement',worktree_name:'automatic-placement',acknowledgement:'I will verify it locally.'}
     const absent=await route.execute({decisions:[routeInput]} as never,new AbortController().signal) as {results:{refused:string}[]}
     assert.match(absent.results[0]!.refused,/Choose executor_id/)
+    remote.sync(computer.id,{protocol:EXECUTOR_PROTOCOL,accepting:false,states:[]})
     const placed=await route.execute({decisions:[{...routeInput,executor_id:computer.id}]} as never,new AbortController().signal) as {results:{ticket:{ticket_id:string}}[]}
     assert.equal(store.tickets.get(placed.results[0]!.ticket.ticket_id)!.execution?.executorId,computer.id)
+    assert.equal(remote.sync(computer.id,{protocol:EXECUTOR_PROTOCOL,accepting:false,states:[]}).commands.length,0,'automatic placement retains work on a paused computer')
     assert.throws(()=>submitRequest(host,{requestId:crypto.randomUUID(),text:'Wrong target',executorId:computer.id,placement:'auto'}),/cannot carry a fixed/)
     store.saveSettings({...store.settings(),sources:{request:{enabled:false,config:{}}}})
     assert.throws(()=>submitRequest(host,{...request,requestId:crypto.randomUUID()}),/disabled/)

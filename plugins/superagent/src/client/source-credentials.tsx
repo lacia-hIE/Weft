@@ -8,12 +8,12 @@ import {usePanel, usePanelData} from './provider.tsx'
 import {Field} from './settings-kit.tsx'
 import {Hint} from './widgets.tsx'
 
-export function SourceCredentials({id, kind, form}: {id: string; kind: string; form?: DeploymentForm}) {
+export function SourceCredentials({id, kind, form, config}: {id: string; kind: string; form?: DeploymentForm; config: Record<string, unknown>}) {
   const {t, notify, restart} = usePanel(), {state} = usePanelData()
   const [values, setValues] = useState<Record<string, string>>({}), [busy, setBusy] = useState(false), [error, setError] = useState('')
   const snapshot = form?.state, editable = snapshot?.status === 'ready' && snapshot.writable
   const flags = state?.setup.sourceSecrets[id]
-  const fields = kind === 'feed' ? ['feed'] as const : ['webhook', 'feed', 'token'] as const
+  const fields: ('webhook' | 'feed' | 'token')[] = kind === 'feed' ? ['feed'] : [...(config.webhook ? ['webhook' as const] : []), ...(config.feed ? ['feed' as const] : []), 'token']
   const labels = {webhook: t('sourceWebhookSecret'), feed: t('sourceFeedAddress'), token: t('sourceApiCredential')}
   const save = async (name: typeof fields[number], value: string) => {
     if (!form || !editable) return
@@ -25,7 +25,7 @@ export function SourceCredentials({id, kind, form}: {id: string; kind: string; f
     finally {setBusy(false)}
   }
   return <div className="dt-form">
-    {kind !== 'feed' && <div className="dt-field"><span>{t('sourceCallback')}</span><code style={{overflowWrap: 'anywhere'}}>{`${hookBase()}/source-events/${id}`}</code></div>}
+    {kind !== 'feed' && config.webhook === true && <div className="dt-field"><span>{t('sourceCallback')}</span><code style={{overflowWrap: 'anywhere'}}>{`${hookBase()}/source-events/${id}`}</code></div>}
     {fields.map(name => <div key={name} className="dt-form">
       <Field label={labels[name]} note={flags?.[name] ? t('deploymentSecretSet') : t('deploymentSecretUnset')}>
         <Input type="password" autoComplete="new-password" value={values[name] ?? ''} disabled={!editable || busy}

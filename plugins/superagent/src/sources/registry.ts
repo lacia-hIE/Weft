@@ -62,7 +62,7 @@ export class SourceRegistry implements SourceScope {
     const kind = this.kinds.get(id)
     return kind ? this.resolve(kind, settings.sources[id]) as SourceInstance<C> : undefined
   }
-  validate(id: string, value: { enabled: boolean; config: unknown; name?: string; kind?: string; archived?: boolean }): { enabled: boolean; config: Record<string, unknown> } {
+  validate(id: string, value: { enabled: boolean; config: unknown; name?: string | undefined; kind?: string | undefined; archived?: boolean | undefined }): { enabled: boolean; config: Record<string, unknown> } {
     const kind = this.kinds.get(id)
     if (!kind) throw new Error(`Source kind not installed: ${id}`)
     return { enabled: value.enabled, config: kind.schema.parse(value.config), ...(kind.type ? {kind: kind.type, name: value.name ?? '', archived: value.archived ?? false} : {}) }

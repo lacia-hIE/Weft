@@ -1,6 +1,6 @@
 # Weft local Host connector
 
-## Superagent Executor mode (0.3.2)
+## Superagent Executor mode (0.4.0)
 
 The same package accepts Assignments from a cloud Superagent while running the full Agent locally.
 Connect this DSH to Weft once using the workbench instructions below. In the local plugin's
@@ -26,21 +26,17 @@ their concurrency and depth. Only the root worker may change the cloud Ticket; s
 tree and its processes. Restart reconciliation retains child history without replaying unfinished prompts.
 Active Sessions remain on their original computer.
 
-### Local projects and visible task Sessions
+### Execution conventions and visible task Sessions
 
-Add projects in the **local** plugin settings: choose an existing repository directory, then write its
-verification, merge and deployment requirements. GitHub, GitLab and internal Git checkouts all use the
-local Agent's existing tools and credentials. The cloud receives only project IDs and names; repository
-paths and execution requirements stay in the local private configuration. Blank merge or deployment
-instructions disable that operation; the current request must authorize it too. Local policy is captured
-when a task first starts. Removing or changing that project blocks retries under the old settings;
-submit a new request to use the new policy.
+Configure task root, native Agent preset and execution permissions locally. Concurrency is under Advanced.
+Write repository paths and verification, merge and deployment procedures in Superagent prompts or skills;
+new requests no longer require structured project records. Existing project records remain visible as historical
+execution notes and existing project-bound tasks retain their original policy. No records are erased on upgrade.
 
-In Superagent select **New request**, this computer and its project. No GitHub token, webhook or event
-subscription is required. Submit the task and acceptance criteria; Eval still decides whether it can
-become a Ticket. Each request retains its selected computer and project, including while that computer
-is offline or paused. Follow-up messages and answers to worker questions remain in the same request
-conversation. The orchestrator remains in Weft; the worker Agent runs on this computer.
+In Superagent choose **New request**, select this computer or automatic placement, then enter the task and
+acceptance criteria. No GitHub token, webhook or event subscription is required. Eval still decides whether
+it becomes a Ticket. Selected computers retain work while offline or paused. The orchestrator remains in Weft;
+the Agent and its native tools, credentials and subagents run on the selected computer.
 
 Every task directory is registered as a native Workspace and the root Session is explicitly attached.
 Existing connector Sessions are backfilled on upgrade/restart, without resuming work or replaying prompts.
@@ -58,17 +54,15 @@ with its `desktop` profile on a random loopback port, so the connector works unc
 quit or restarting for an update, the Weft environment shows offline and reconnects when the Host starts.
 
 Connector 0.2.x supports both releases and adds native connection settings and
-fragmented transport. Existing pairing files can be kept. As of 2026-10-25 the
-newest published release is rc.3 (`next`); npm `latest` still resolves to rc.2.
-Install the newest explicitly with `npm install -g @deepseek-ai/dsh@0.2.1-rc.5`.
+fragmented transport. Existing pairing files can be kept. Install the supported version explicitly with `npm install -g @deepseek-ai/dsh@0.2.1-rc.5`.
 Untested releases remain rejected by both the native installer and the relay.
 
 1. In Weft, choose **连接本地 DSH**, generate a connection and copy its pairing code.
 2. Install `@laciaproject/dsh-local-host` from the native DSH Plugins page.
    Select **Enable now** when installation completes.
    The downloadable tarball remains available for offline installation by absolute path.
-   CLI: `dsh plugin --profile web add @laciaproject/dsh-local-host@0.3.2`, or for Desktop (fully quit, opened once
-   before) `dsh plugin --profile desktop add @laciaproject/dsh-local-host@0.3.2`.
+   CLI: `dsh plugin --profile web add @laciaproject/dsh-local-host@0.4.0`, or for Desktop (fully quit, opened once
+   before) `dsh plugin --profile desktop add @laciaproject/dsh-local-host@0.4.0`.
 3. Open **Plugins → Weft local connection** (`@laciaproject/dsh-local-host`) on the local DSH page, paste the code
    and select **Save and connect**. The plugin saves settings on this computer;
    no JSON download, manual file editing or restart is needed. Settings survive

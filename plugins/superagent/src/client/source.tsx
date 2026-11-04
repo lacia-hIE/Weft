@@ -62,7 +62,7 @@ function SourceCard({ source, form }: { source: SourceView; form?: DeploymentFor
     <SaveBar {...draft} status={restarts && running > 0 ? t('restartInterrupts', { count: running }) : undefined}
       onDiscard={draft.discard} />
   </form>
-    {['github-webhook', 'gitlab', 'feed'].includes(source.kind) && <SourceCredentials id={source.id} kind={source.kind} form={form}/>}
+    {['github-webhook', 'gitlab', 'feed'].includes(source.kind) && <SourceCredentials id={source.id} kind={source.kind} form={form} config={value.config}/>}
   </div>
 }
 
