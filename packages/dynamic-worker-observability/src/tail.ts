@@ -18,7 +18,7 @@ const measured = (value: unknown): number | null => typeof value === 'number' &&
 /** Metrics only: guest logs, exception messages, URLs and RPC arguments stay out of usage records. */
 export class DynamicWorkerTail extends WorkerEntrypoint<unknown, WorkerObservationProps> {
   protected record(value: DynamicWorkerUsage): void {console.log(value);}
-  tail(events: TraceItem[]): void {
+  override tail(events: TraceItem[]): void {
     for (const event of events) this.record({
       ...this.ctx.props, source: 'weft.dynamic-worker', event: 'invocation',
       eventTimestamp: measured(event.eventTimestamp), cpuTimeMs: measured(event.cpuTime), wallTimeMs: measured(event.wallTime),

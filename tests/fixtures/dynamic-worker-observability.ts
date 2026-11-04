@@ -9,7 +9,7 @@ interface Env extends BaseEnv {
   USAGE: DurableObjectNamespace<Usage>;
   OBSERVATION_BENCH: DurableObjectNamespace<ObservationBench>;
 }
-export class Usage extends DurableObject {
+export class Usage extends DurableObject<unknown> {
   constructor(ctx: DurableObjectState, env: unknown) {super(ctx, env); ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS usage(value TEXT NOT NULL)');}
   append(value: DynamicWorkerUsage): void {this.ctx.storage.sql.exec('INSERT INTO usage VALUES (?)', JSON.stringify(value));}
   list(): DynamicWorkerUsage[] {return this.ctx.storage.sql.exec<{value: string}>('SELECT value FROM usage').toArray().map(row => JSON.parse(row.value));}
