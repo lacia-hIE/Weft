@@ -20,7 +20,10 @@ type Config = z.infer<typeof EventConfig>
 interface FeedState {fingerprint?: string; initialized: boolean; seen: string[]; next: number; etag?: string; modified?: string}
 const cursors = family<FeedState>('source-feed:')
 const deliveries = family<string[]>('source-deliveries:')
+const observations = family<string[]>('source-observations:')
 const replyReceipts = family<'pending' | 'sent', [string, string]>('source-reply:')
+const resource = (raw: string) => {try {const url = new URL(raw);url.search = '';return url.href}catch {return raw}}
+const thread = (raw: string) => resource(raw).split('#')[0]!
 const list = <T>(value: T | T[] | undefined): T[] => value === undefined ? [] : Array.isArray(value) ? value : [value]
 const text = (value: unknown): string => typeof value === 'string' ? value : typeof value === 'number' ? String(value) : ''
 const object = (value: unknown): Record<string, any> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : {}
@@ -109,14 +112,17 @@ export class RepositoryEvents {
     const at = text(comment.updated_at ?? subject.updated_at ?? subject.created_at) || new Date().toISOString()
     const version = text(comment.updated_at ?? subject.updated_at ?? subject.sha ?? payload.after) || delivery
     const event = text(payload.action ?? subject.action ?? payload.object_kind) || 'activity'
-    const trigger: Trigger = {id: key(id, url, event, version), source: id, threads: [{source: id, id: `${origin(config, type)}/${repository}:${number || url}` }], actor: {source: id, id: actor}, human,
+    const trigger: Trigger = {id: key(id, url, event, version), source: id, threads: [{source: id, id: thread(url)}], actor: {source: id, id: actor}, human,
       ...(config.mention && body.includes(`@${config.mention}`) && human ? {addressed: 'mention' as const} : {}),
       at: Number.isNaN(Date.parse(at)) ? new Date().toISOString() : isoTime(at), text: `${title}\n${body}`.slice(0, 24000), url,
-      ...(config.reply && address ? {channel: {source: id, thread: `${id}:${origin(config, type)}/${repository}:${number || url}`, address: {path: address, url}}} : {}),
+      ...(config.reply && address ? {channel: {source: id, thread: `${id}:${thread(url)}`, address: {path: address, url}}} : {}),
       meta: {repository, number, provider: type, event, title, transport: 'webhook'}}
     const seen = this.host.store.get(deliveries(id)) ?? []
     if (seen.includes(delivery)) return
-    this.host.store.atomic(() => {ctx.receive(trigger);this.host.store.set(deliveries(id), [delivery, ...seen].slice(0, 500))})
+    this.host.store.atomic(() => {
+      ctx.receive(trigger);this.host.store.set(deliveries(id), [delivery, ...seen].slice(0, 500))
+      this.host.store.set(observations(id), [key(resource(url), trigger.at), ...(this.host.store.get(observations(id)) ?? [])].slice(0, 1000))
+    })
     ctx.report(`${id}:webhook`, {state: 'ready', detail: 'Webhook event received', at: new Date().toISOString()})
   }
   async poll(id: string, type: EventType, signal: AbortSignal): Promise<void> {
@@ -136,11 +142,17 @@ export class RepositoryEvents {
       }})
       if (response.status === 304) {this.host.store.set(cursors(id), {...state, next: Date.now() + config.intervalSeconds * 1000});return}
       if (!response.ok) throw new Error(`Subscription HTTP ${response.status}`)
-      const entries = feedEntries(await bounded(response)), seen = new Set(state.seen)
+      const entries = feedEntries(await bounded(response)), seen = new Set(state.seen), verified = new Set(this.host.store.get(observations(id)) ?? [])
       this.host.store.atomic(() => {
         if (state.initialized) for (const entry of [...entries].reverse()) if (!seen.has(entry.id)) {
+          if (verified.has(key(resource(entry.url), entry.at))) continue
+          if (config.repository && type !== 'feed') {
+            let link: URL
+            try {link = new URL(entry.url)} catch {continue}
+            if (link.origin !== origin(config, type) || !link.pathname.toLowerCase().startsWith(`/${config.repository.toLowerCase()}/`)) continue
+          }
           ctx.receive({id: key(id, entry.id), source: id, actor: {source: id, id: ''}, human: false, at: entry.at,
-            threads: [{source: id, id: entry.url || entry.id}], text: `${entry.title}\n${entry.body}`, ...(entry.url ? {url: entry.url} : {}), meta: {transport: 'feed', provider: type, title: entry.title}})
+            threads: [{source: id, id: entry.url ? thread(entry.url) : entry.id}], text: `${entry.title}\n${entry.body}`, ...(entry.url ? {url: entry.url} : {}), meta: {transport: 'feed', provider: type, title: entry.title, ...(config.repository ? {repository: config.repository} : {})}})
         }
         this.host.store.set(cursors(id), {fingerprint, initialized: true, seen: [...new Set([...entries.map(entry => entry.id), ...state.seen])].slice(0, 1000), next: Date.now() + config.intervalSeconds * 1000,
           ...(response.headers.get('etag') ? {etag: response.headers.get('etag')!} : {}), ...(response.headers.get('last-modified') ? {modified: response.headers.get('last-modified')!} : {})})
