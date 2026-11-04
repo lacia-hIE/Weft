@@ -1,5 +1,5 @@
 /** Repository event Sources with independent webhook and feed transports; no git execution configuration. */
-import {XMLParser, XMLValidator} from 'fast-xml-parser'
+import {XMLParser, XMLValidator} from '../vendor/xml-parser.mjs'
 import {z} from 'zod'
 import {key, isoTime, type Trigger} from '../core/index.ts'
 import {family} from '../kv.ts'

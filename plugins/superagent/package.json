@@ -24,8 +24,5 @@
     "bundle": {
       "patch": "./cordis.patch.yml"
     }
-  },
-  "dependencies": {
-    "fast-xml-parser": "5.11.1"
   }
 }

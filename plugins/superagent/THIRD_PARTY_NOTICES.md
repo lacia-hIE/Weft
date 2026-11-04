@@ -24,3 +24,6 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+
+The self-contained XML parser in `src/vendor/xml-parser.mjs` is generated from fast-xml-parser 5.11.1 and strnum. Their MIT notices are included in `src/vendor/XML-LICENSE.txt`; regenerate it with `node scripts/vendor-superagent-xml.mjs` using the pinned root dependencies.
