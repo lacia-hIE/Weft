@@ -1,7 +1,7 @@
 import {test, expect} from '@playwright/test';
 import {readFileSync} from 'node:fs';
 
-test('the Superagent panel opens from the sidebar, gets its key through Settings and shows what setup still needs', async ({page, request}) => {
+test('the Superagent panel opens from the sidebar, gets its key through Settings and shows what setup still needs', async ({page, request}, testInfo) => {
   test.skip(process.env.WEFT_BROWSER_IM !== '1', 'Requires the package builder fixture');
   const plugin = JSON.parse(readFileSync('plugins/superagent/package.json', 'utf8')) as {name: string; version: string};
   const {tenantId} = await (await request.get('/v1/me')).json();
@@ -40,5 +40,31 @@ test('the Superagent panel opens from the sidebar, gets its key through Settings
   await page.getByRole('button', {name: 'Generate secret and copy', exact: true}).click();
   await expect(page.getByText(/^[0-9a-f]{64}$/)).toBeVisible({timeout: 45_000});
   await expect(panel.getByText('Not set', {exact: true})).toHaveCount(0, {timeout: 45_000});
+
+  // The management UI uses the owner's existing Host connection and sends no local execution policy.
+  let attachment: {action: string; code: string} | undefined;
+  await page.route(`**/v1/tenants/${tenantId}/environments`, route => route.fulfill({json: {environments: [
+    {id: 'connected-computer', name: 'My connected DSH', kind: 'local', local: {online: true}},
+    {id: 'unconfigured-computer', name: 'Needs local setup', kind: 'local', local: {online: true}},
+  ]}}));
+  await page.route(`**/environments/*/local/web/api/weft-executor`, async route => {
+    if (route.request().method() === 'POST') {attachment = route.request().postDataJSON(); await route.fulfill({json: {configured: true}}); return;}
+    await route.fulfill({json: {ready: route.request().url().includes('/connected-computer/')}});
+  });
+  await page.locator('.dt-settings-nav').getByRole('button', {name: 'Execution', exact: true}).click();
+  const computer = page.getByRole('combobox', {name: 'Default execution location', exact: true});
+  await expect(computer.locator('option', {hasText: 'My connected DSH'})).toHaveCount(1);
+  await expect(computer.locator('option', {hasText: 'Needs local setup'})).toBeDisabled();
+  await expect(page.getByRole('button', {name: 'Generate pairing code', exact: true})).toHaveCount(0);
+  await computer.selectOption('local:connected-computer');
+  await expect.poll(() => attachment?.action).toBe('attach');
+  expect(Object.keys(attachment!).sort()).toEqual(['action', 'code']);
+  const credential = JSON.parse(attachment!.code);
+  expect(credential.endpoint).toContain(`/v1/plugin-hooks/${tenantId}/${environment}/%40weft%2Fdsh-superagent/executor/`);
+  const executorId = credential.endpoint.split('/').at(-1);
+  await expect(computer).toHaveValue(executorId);
+  await panel.getByRole('button', {name: 'Save', exact: true}).click();
+  await expect(panel.getByRole('button', {name: 'Save', exact: true})).toHaveCount(0, {timeout: 45_000});
+  await page.screenshot({path: testInfo.outputPath('superagent-connected-computer.png')});
   expect(errors).toEqual([]);
 });

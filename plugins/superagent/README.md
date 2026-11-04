@@ -26,16 +26,16 @@ See [PARITY.md](PARITY.md) for what differs from the prototype.
 
 ## Local execution computers
 
-Under **Settings → Execution**, register an execution computer and copy its one-time pairing code. On that computer,
-install DSH and `@laciaproject/dsh-local-host` 0.3.0, open **Superagent Executor** in the plugin's settings, paste the code,
-and choose an absolute task root and optionally a local Agent preset. Pairing starts with task acceptance paused;
-enable it explicitly on the computer. Configure its model provider locally. Use a dedicated DSH profile and agent
-credentials; a directory or profile does not isolate an OS account.
+Connect the computer to Weft using DSH and `@laciaproject/dsh-local-host` 0.3.1. In the local plugin's
+**Superagent Executor** settings, save an absolute task root, select an installed Agent preset from the dropdown
+and choose execution permissions. Task acceptance starts paused; enable it explicitly on that computer.
+Configure its model provider locally. Use a dedicated DSH profile and agent credentials; a directory or profile
+does not isolate an OS account. Under **Settings → Execution**, select this already connected DSH directly;
+no second pairing code is needed. Computers that need local configuration appear disabled.
 
 Select that computer as the default execution location and save. Only new Tickets use the new location; existing
 Tickets retain their executor. Each runs a full native DSH Agent in a persistent Session and its own directory.
-Ticket, Policy, Sources and original-conversation delivery remain in this Weft environment. There is no second
-Superagent or separately registered local environment. Local Workers get only their Assignment's executor tools,
+Ticket, Policy, Sources and original-conversation delivery remain in this Weft environment. The existing local DSH connection provides enrollment; no second Superagent is needed. Local Workers get only their Assignment's executor tools,
 including bounded source reads, acknowledgements, reports and handbacks; they never get the router tools or cloud
 model credentials. Local model and permission presets take precedence over cloud execution settings.
 
@@ -52,4 +52,4 @@ drains the entire native tree and its processes before acknowledging stop, and r
 so Retry can resume its retained Session with fresh admission. Restart reconciliation preserves child history
 and requires an explicit Retry instead of replaying unfinished child prompts. Ordinary shell jobs use native DSH job delivery. Tests still follow the repository's CI policy.
 
-The 0.3.0 sources add this mode; the previously published 0.2.7 connector supports remote workbench access only.
+Existing independently paired 0.3.0 executors remain supported. Direct selection of an existing DSH connection requires connector 0.3.1.

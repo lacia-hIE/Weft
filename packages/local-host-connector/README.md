@@ -1,15 +1,19 @@
 # Weft local Host connector
 
-## Superagent Executor mode (0.3.0)
+## Superagent Executor mode (0.3.1)
 
-The same package can accept Assignments from a cloud Superagent while running the full Agent locally. This is
-independent of remote workbench access: pairing an executor neither creates a local Weft environment nor grants
-remote browser access. Generate the pairing code in **Superagent → Settings → Execution**, paste it into this
-plugin's **Superagent Executor** settings, choose an absolute root directory and an optional installed DSH Agent
-preset and execution permission preset, then separately enable **Accept tasks**. Configure the model provider on
-this computer. Permissions inherit the local default unless explicitly selected locally; `danger-full-access`
-allows unattended execution without approval prompts. Directory selection establishes a default, not a sandbox;
-use a dedicated OS account or container for isolation.
+The same package accepts Assignments from a cloud Superagent while running the full Agent locally.
+Connect this DSH to Weft once using the workbench instructions below. In the local plugin's
+**Superagent Executor** settings, save an absolute task root, select an installed DSH Agent preset from the
+dropdown, choose execution permissions and explicitly enable **Accept tasks** when ready. Configure the model
+provider on this computer. Then select this connected DSH under **Weft → Superagent → Settings → Execution**
+and save. No second pairing code is needed. Computers without local execution settings appear disabled.
+
+The existing authenticated relay carries a one-time binding credential for the same Weft site and owner.
+It cannot change the task root, Agent preset or execution permissions; those settings are local only.
+Existing independently paired 0.3.0 executors remain supported. Permissions inherit the local default unless
+explicitly selected locally; `danger-full-access` allows unattended execution without approval prompts.
+Directory selection establishes a default, not a sandbox; use a dedicated OS account or container for isolation.
 
 Executor identity, acceptance settings and native inbox receipts are stored privately (`0600`) in
 `~/.dsh/weft-executor.json`; override with `WEFT_EXECUTOR_CONFIG` or `executorFile` for separate local profiles.
@@ -22,7 +26,7 @@ their concurrency and depth. Only the root worker may change the cloud Ticket; s
 tree and its processes. Restart reconciliation retains child history without replaying unfinished prompts.
 Active Sessions remain on their original computer.
 
-The installation instructions below also describe the existing remote-workbench mode; its pairing is separate.
+The installation instructions below establish the reusable local DSH connection.
 
 A native DSH Host plugin for **DSH 0.2.1-rc.2, 0.2.1-rc.3, 0.2.1-rc.4 and 0.2.1-rc.5**, installed through the original
 `dsh.bundle.patch` mechanism. Run `dsh web` with its loopback listener. The
@@ -42,8 +46,8 @@ Untested releases remain rejected by both the native installer and the relay.
 2. Install `@laciaproject/dsh-local-host` from the native DSH Plugins page.
    Select **Enable now** when installation completes.
    The downloadable tarball remains available for offline installation by absolute path.
-   CLI: `dsh plugin --profile web add @laciaproject/dsh-local-host@0.2.7`, or for Desktop (fully quit, opened once
-   before) `dsh plugin --profile desktop add @laciaproject/dsh-local-host@0.2.7`.
+   CLI: `dsh plugin --profile web add @laciaproject/dsh-local-host@0.3.1`, or for Desktop (fully quit, opened once
+   before) `dsh plugin --profile desktop add @laciaproject/dsh-local-host@0.3.1`.
 3. Open **Plugins → Weft local connection** (`@laciaproject/dsh-local-host`) on the local DSH page, paste the code
    and select **Save and connect**. The plugin saves settings on this computer;
    no JSON download, manual file editing or restart is needed. Settings survive

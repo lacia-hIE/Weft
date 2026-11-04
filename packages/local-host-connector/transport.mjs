@@ -74,7 +74,7 @@ export function runTunnel(socket,{origin,cookie,signal,onOpen=()=>{}}) {
     if(active.has(id)||clients.has(id)||active.size+clients.size>=MAX_ACTIVE||!allowed(path)||!['GET','HEAD','POST'].includes(method))throw new Error('Invalid request');
     const abort=new AbortController(),body=new TransformStream(),writer=body.writable.getWriter();
     const state={abort,writer,writes:0,inflight:0,timer:setTimeout(()=>release(id),30_000)};active.set(id,state);
-    const headers=new Headers();for(const [key,value] of frame.headers??[])if(headersAllowed.has(key.toLowerCase()))headers.set(key,value);headers.set('cookie',cookie);
+    const headers=new Headers();for(const [key,value] of frame.headers??[])if(headersAllowed.has(key.toLowerCase()))headers.set(key,value);headers.set('cookie',cookie);headers.set('x-weft-relayed','1');
     void (async()=>{
       try{
         const response=await fetch(new URL(path,origin),{method,headers,redirect:'manual',signal:abort.signal,...(method==='POST'?{body:body.readable,duplex:'half'}:{})});

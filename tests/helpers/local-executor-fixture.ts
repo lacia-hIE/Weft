@@ -5,7 +5,7 @@ import {Engine, key, type Policy, type Trigger} from '../../plugins/superagent/s
 import {RemoteExecutor} from '../../plugins/superagent/src/executor/remote.ts'
 import {memorySql} from './superagent-sql.ts'
 
-export async function localExecutorFixture() {
+export async function localExecutorFixture(tenant='native') {
   const sql=memorySql(),store=new Store(sql)
   let engine:Engine,deviceId='',modelCalls=0,sequence=0,currentTicketId='',released=false,retrying=false
   const pending:(()=>void)[]=[]
@@ -18,7 +18,7 @@ export async function localExecutorFixture() {
   engine=new Engine({repo:store,scope:{scope:()=>({listened:true,observed:false})},policy:()=>policy,assessor:{request(){}},executor:remote,
     outbox:{send(){},withdraw(){},status:()=> 'pending'},prepareTicket:ticket=>({...ticket,execution:{name:sequence===1?'native-proof':`native-tree-${sequence}`,directory:'/workspace/native-proof',assignment:'',executorId:deviceId}})})
   const pairing=await remote.create('Native computer');deviceId=pairing.id
-  const prefix=`/v1/plugin-hooks/native/default/%40weft%2Fdsh-superagent/executor/${deviceId}`
+  const prefix=`/v1/plugin-hooks/${tenant}/default/%40weft%2Fdsh-superagent/executor/${deviceId}`
   const event=(type:string,data:object)=>`event: ${type}\ndata: ${JSON.stringify({type,...data})}\n\n`
   const model=async(body:{system?:unknown;messages?:unknown[];tools?:{name:string}[]})=>{
     const history=JSON.stringify(body.messages),managed=JSON.stringify(body.system).includes('LOCAL_EXECUTOR_NATIVE_TEST')

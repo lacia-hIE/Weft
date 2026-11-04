@@ -63,16 +63,30 @@ test('published local DSH pairs in native settings, runs Files, Git and PTY and 
   const executor=await(await context.request.get(executorUrl)).json();
   expect(executor).toMatchObject({state:'unpaired',accepting:false,configured:false,running:0});
   expect((await context.request.post(executorUrl,{headers:{origin:'https://untrusted.invalid'},data:{action:'configure',accepting:true,maxWorkers:1}})).status()).toBe(403);
-  await page.locator('[data-weft-local-executor] summary').click();
-  await expect(page.getByLabel('Executor pairing code',{exact:true})).toBeVisible();
+  await expect(page.getByLabel('Executor pairing code',{exact:true})).toHaveCount(0);
   await expect(page.getByLabel('Task root directory (absolute path)',{exact:true})).toBeVisible();
-  await page.screenshot({path:testInfo.outputPath('local-executor-settings.png')});
-  await page.locator('[data-weft-local-executor] summary').click();
+  const presets=page.getByRole('combobox',{name:'DSH Agent preset',exact:true});
+  await expect.poll(()=>presets.locator('option').count()).toBeGreaterThan(1);
+  const installedPreset=(await(await context.request.get(executorUrl)).json()).defaultPreset as string;
+  expect(installedPreset).toBeTruthy();await presets.selectOption(installedPreset!);
+  await expect(presets).toHaveCSS('height','36px');
+  expect(await page.locator('[data-weft-local-executor]').evaluate(element=>getComputedStyle(element).fontFamily)).not.toContain('Times New Roman');
   // A full Agent runs in the published native Host, using local model credentials and native file tools.
   const broker=await(await request.get('/__test/executor')).json();
   const taskRoot=project+'/../execution';
-  expect((await context.request.post(executorUrl,{data:{action:'pair',code:broker.pairingCode,root:taskRoot,permissionPreset:'danger-full-access'}})).status()).toBe(200);
-  expect((await context.request.post(executorUrl,{data:{action:'configure',accepting:true,maxWorkers:1}})).status()).toBe(200);
+  await page.getByLabel('Task root directory (absolute path)',{exact:true}).fill(taskRoot);
+  await page.getByRole('combobox',{name:'Execution permission preset',exact:true}).selectOption('danger-full-access');
+  await page.getByRole('switch',{name:'Accept tasks',exact:true}).check();
+  await page.getByRole('button',{name:'Save execution settings',exact:true}).click();
+  await expect.poll(async()=>(await(await context.request.get(executorUrl)).json()).ready).toBe(true);
+  const configured=await(await context.request.get(executorUrl)).json();
+  expect(configured).toMatchObject({configured:false,root:taskRoot,agentPreset:installedPreset,permissionPreset:'danger-full-access',accepting:true});
+  await page.screenshot({path:testInfo.outputPath('local-executor-settings.png')});
+  await page.setViewportSize({width:390,height:844});
+  await page.screenshot({path:testInfo.outputPath('local-executor-settings-mobile.png')});
+  await page.setViewportSize({width:1280,height:720});
+  expect((await request.post(base+'/local/web/api/weft-executor',{data:{action:'configure',root:'/elsewhere',accepting:true,maxWorkers:1}})).status()).toBe(403);
+  expect((await request.post(base+'/local/web/api/weft-executor',{data:{action:'attach',code:broker.pairingCode}})).status()).toBe(200);
   expect((await context.request.post(executorUrl,{data:{action:'reconnect'}})).status()).toBe(200);
   expect((await request.post('/__test/executor',{data:{start:true}})).status()).toBe(200);
   try { await expect.poll(async()=>{

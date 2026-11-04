@@ -254,12 +254,13 @@ export function createExecutorController({ctx,agentOwner=ctx,file,request=fetch}
       return {state:typeof ctx.sessionController.state==='function'?await ctx.sessionController.state({sessionId},signal):{running:agent?.status==='running'},
         events:agent?.session.snapshotEvents().slice(-40)??[],tree:members(data.jobs[sessionId]).map(id=>({id,resident:!!ctx.agents.get(id),running:ctx.agents.get(id)?.status==='running',jobs:ctx.jobs.list(id).map(({id,status})=>({id,status}))}))};
     },
-    snapshot:()=>({state:status,configured:!!data.endpoint,endpoint:data.endpoint,accepting:data.accepting,root:data.root??'',maxWorkers:data.maxWorkers,agentPreset:data.agentPreset??'',permissionPreset:data.permissionPreset??'',
+    snapshot:()=>({state:status,configured:!!data.endpoint,ready:!!data.root&&reconciled,endpoint:data.endpoint,accepting:data.accepting,root:data.root??'',maxWorkers:data.maxWorkers,agentPreset:data.agentPreset??'',permissionPreset:data.permissionPreset??'',
       running:activeJobs().length,jobs:Object.values(data.jobs).map(({ticketId,sessionId,state,cwd,children})=>({ticketId,sessionId,state,cwd,children:Object.values(children??{}).map(({id,parentSessionId,active,stopReason})=>({id,parentSessionId,active,stopReason}))}))}),
     load:()=>serial(async()=>{
       try{
-        data=JSON.parse(await readFile(file,'utf8'));executorEndpoint(data.endpoint);
-        if(!token.test(data.token??data.pairingKey??'')||!isAbsolute(data.root)||!Number.isInteger(data.maxWorkers)||data.maxWorkers<1||data.maxWorkers>16||typeof data.accepting!=='boolean')throw new Error('Invalid Executor configuration');
+        data=JSON.parse(await readFile(file,'utf8'));
+        if(data.endpoint){executorEndpoint(data.endpoint);if(!token.test(data.token??data.pairingKey??''))throw new Error('Invalid Executor credential');}
+        if(!isAbsolute(data.root)||!Number.isInteger(data.maxWorkers)||data.maxWorkers<1||data.maxWorkers>16||typeof data.accepting!=='boolean')throw new Error('Invalid Executor configuration');
         for(const job of Object.values(data.jobs)){
           job.children??={};
           if(job.created){
@@ -284,10 +285,30 @@ export function createExecutorController({ctx,agentOwner=ctx,file,request=fetch}
       await disconnect();data={endpoint,pairingKey:code.pairingKey,root,accepting:false,maxWorkers:1,jobs:{},agentPreset:input.agentPreset?.trim()??'',permissionPreset:input.permissionPreset??''};
       await save();reconciled=true;start();
     }),
+    // The existing authenticated relay carries only a binding credential. Local execution policy is never accepted from it.
+    attach:(input,connection)=>serial(async()=>{
+      if(!reconciled||!data.root)throw new Error('Configure the task root and execution settings in local DSH first');
+      if(connection.state!=='connected'||!connection.endpoint)throw new Error('Connect this DSH to Weft first');
+      if(typeof input.code!=='string'||input.code.length>8192)throw new Error('Invalid Executor binding');
+      const code=JSON.parse(input.code),endpoint=executorEndpoint(code.endpoint),target=new URL(endpoint),source=new URL(connection.endpoint);
+      const tenant=source.pathname.split('/')[3];
+      if(code.protocol!==PROTOCOL||!token.test(code.pairingKey??'')||target.origin!==source.origin
+        ||target.pathname.split('/')[3]!==tenant)throw new Error('Executor must belong to the connected Weft site and owner');
+      if(Object.values(data.jobs).some(job=>job.state!=='stopped'))throw new Error('Stop existing Assignments before changing execution environments');
+      await disconnect();data={...data,endpoint,pairingKey:code.pairingKey,jobs:{}};delete data.token;
+      await save();start();
+    }),
     configure:input=>serial(async()=>{
-      if(!data.endpoint)throw new Error('Pair this computer first');
+      if(!reconciled)throw new Error('Repair the Executor configuration before saving');
       if(typeof input.accepting!=='boolean'||!Number.isInteger(input.maxWorkers)||input.maxWorkers<1||input.maxWorkers>16)throw new Error('Invalid execution settings');
-      data.accepting=input.accepting;data.maxWorkers=input.maxWorkers;await save();
+      const next={root:input.root??data.root,agentPreset:input.agentPreset??data.agentPreset??'',permissionPreset:input.permissionPreset??data.permissionPreset??''};
+      if(typeof next.root!=='string'||!isAbsolute(next.root))throw new Error('Choose an absolute execution directory');
+      if(typeof next.agentPreset!=='string'||next.agentPreset.length>256)throw new Error('Invalid Agent preset');
+      if(next.permissionPreset&&!['read-only','workspace-write','danger-full-access'].includes(next.permissionPreset))throw new Error('Invalid permission preset');
+      if(input.agentPreset!==undefined){const preset=await ctx.agentPresets.resolve(next.agentPreset||undefined);if(preset.broken)throw new Error(preset.broken);}
+      await mkdir(next.root,{recursive:true});next.root=await realpath(next.root);
+      if(Object.values(data.jobs).some(job=>job.state!=='stopped')&&Object.entries(next).some(([key,value])=>(data[key]??'')!==value))throw new Error('Stop existing Assignments before changing execution settings');
+      Object.assign(data,next,{accepting:input.accepting,maxWorkers:input.maxWorkers});await save();
     }),
     reconnect:()=>serial(async()=>{if(!reconciled)throw new Error('Executor configuration or child catalogs could not be reconciled; repair them before reconnecting');await disconnect();start();}),
     disconnect:()=>serial(disconnect),

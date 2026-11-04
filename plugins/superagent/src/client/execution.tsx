@@ -4,8 +4,8 @@ import { useRef, useState } from 'react'
 import { TICKET_FILTERS, type TicketFilter } from '../app/api.ts'
 import { LIMITS } from '../limits.ts'
 import { usePoll, type SettingsView, type SourceView, type StateView } from './api.ts'
-import { Button, DisclosureRow, Icon, InfoTip, Input, Pill } from './controls.tsx'
-import { hookBase } from './access.ts'
+import { DisclosureRow, Icon, InfoTip, Input, Pill } from './controls.tsx'
+import {attachComputer, connectedComputers} from './computers.ts'
 import { SaveBar } from './draft.tsx'
 import { usePanel } from './provider.tsx'
 import { TicketLine } from './rows.tsx'
@@ -77,15 +77,8 @@ function EnvironmentVariables({ groups, sources,
 export function ExecutionSettings() {
   const { t, call, notify } = usePanel()
   const devices = usePoll(() => call('GET executors'), [])
-  const [name, setName] = useState(''), [pairing, setPairing] = useState(''), [busy, setBusy] = useState(false)
-  const add = async () => {
-    setBusy(true)
-    try {
-      const result = await call('POST executors', { body: { name } })
-      setPairing(JSON.stringify({ protocol: result.protocol, endpoint: `${hookBase()}/executor/${result.id}`, pairingKey: result.pairingKey }))
-      setName(''); await devices.reload()
-    } catch (error) { notify(String(error)) } finally { setBusy(false) }
-  }
+  const computers = usePoll(connectedComputers, [])
+  const [busy, setBusy] = useState(false)
   const { blocks, environment, sources } = useSettings().settings
   // Keep raw user text (such as separators between blocked commands) in the draft and parse only on save.
   const executor = blocks.executor.value
@@ -94,6 +87,27 @@ export function ExecutionSettings() {
     value => ({ ...value, maxWorkers: numberOf(value.maxWorkers) }))
   const value = draft.value
   const edit = (next: Partial<typeof value>) => draft.edit({ ...value, ...next })
+  const selectComputer = async (selected: string) => {
+    if (busy) return
+    if (!selected.startsWith('local:')) {edit({executorId: selected || null}); return}
+    const computer = computers.data?.find(row => row.id === selected.slice(6))
+    if (!computer?.ready) return
+    const existing = devices.data?.find(row => row.id === computer.executorId && row.paired)
+    if (existing) {edit({executorId: existing.id}); return}
+    setBusy(true)
+    let created: string | undefined
+    try {
+      const credential = await call('POST executors', {body: {name: computer.name}})
+      created = credential.id
+      await attachComputer(computer.id, credential)
+      created = undefined
+      edit({executorId: credential.id})
+      await devices.reload(); await computers.reload()
+    } catch (error) {
+      if (created) await call('POST executors/:id/revoke', {id: created}).catch(() => {})
+      notify(String(error))
+    } finally {setBusy(false)}
+  }
   const prepare = useRef<HTMLTextAreaElement>(null)
   const insert = (key: string) => {
     const field = prepare.current
@@ -102,18 +116,21 @@ export function ExecutionSettings() {
     requestAnimationFrame(() => { field?.focus(); const caret = at + key.length + 3; field?.setSelectionRange(caret, caret) })
   }
   return <div className="dt-form">
-    <form className="dt-form" onSubmit={event => { void draft.submit(event) }}>
-      <Fields disabled={draft.busy}>
+    <form className="dt-form" onSubmit={event => { if(busy)event.preventDefault(); else void draft.submit(event) }}>
+      <Fields disabled={draft.busy || busy}>
         <div className="dt-form dt-block">
           <h2 className="dt-block-title">{t('term.executor')}<InfoTip text={t('executorIntro')} /></h2>
           <Field label={t('executionComputer')} hint={t('executionComputerHint')}>
-            <select className="dt-input" value={value.executorId ?? ''} onChange={event => edit({ executorId: event.target.value || null })}>
+            <select className="dt-input" disabled={busy} aria-busy={busy} value={value.executorId ?? ''} onChange={event => {void selectComputer(event.target.value)}}>
               <option value="">{t('cloudExecutor')}</option>
               {devices.data?.map(device => <option key={device.id} value={device.id}>{device.name}{!device.online ? ` · ${t('computerOffline')}` : ''}</option>)}
+              {computers.data?.filter(computer => !devices.data?.some(device => device.id === computer.executorId && device.paired)).map(computer => <option key={computer.id} value={`local:${computer.id}`} disabled={!computer.ready}>{computer.name}{!computer.ready ? ` · ${t('computerNeedsSettings')}` : ''}</option>)}
             </select>
           </Field>
-          <Section title={t('executorModel')} hint={t('executorModelHint')}><ModelField id="dt-worker-model" value={value.model}
-            onChange={model => edit({ model })} /></Section>
+          <LoadState error={computers.error} loading={!computers.data} />
+          <Hint>{t('connectedComputersHint')}</Hint>
+          {!value.executorId && <Section title={t('executorModel')} hint={t('executorModelHint')}><ModelField id="dt-worker-model" value={value.model}
+            onChange={model => edit({ model })} /></Section>}
           <Field label={t('maxWorkers')} hint={t('maxWorkersHint')}>
             <Input type="number" min={LIMITS.maxWorkers.min} max={LIMITS.maxWorkers.max} required value={value.maxWorkers}
               onChange={event => edit({ maxWorkers: event.target.value })} />
@@ -131,16 +148,16 @@ export function ExecutionSettings() {
               onChange={event => edit({ prepare: event.target.value })} />
           </Field>
           <EnvironmentVariables groups={environment.variables} sources={sources} onPick={insert} />
-          <Field label={t('executorPermission')} hint={t('executorPermissionHint')}>
+          {!value.executorId && <Field label={t('executorPermission')} hint={t('executorPermissionHint')}>
             <select className="dt-input" value={value.permission} onChange={event => edit({ permission: event.target.value as typeof value.permission })}>
               <option value="danger-full-access">danger-full-access</option>
               <option value="workspace-write">workspace-write</option>
               <option value="read-only">read-only</option>
             </select>
-          </Field>
+          </Field>}
         </div>
       </Fields>
-      <SaveBar {...draft} onDiscard={draft.discard} />
+      <SaveBar {...draft} busy={draft.busy || busy} onDiscard={draft.discard} />
     </form>
     <Section title={t('executionComputers')} hint={t('executionComputersHint')}>
       <LoadState error={devices.error} loading={!devices.data} />
@@ -150,14 +167,7 @@ export function ExecutionSettings() {
           await call('POST executors/:id/revoke', { id: device.id }); await devices.reload()
         }} />
       </div>)}
-      <form className="dt-form" onSubmit={event => { event.preventDefault(); void add() }}>
-        <Field label={t('computerName')}><Input value={name} maxLength={80} onChange={event => setName(event.target.value)} required /></Field>
-        <Button variant="outline" type="submit" disabled={busy || !name.trim()}>{t('pairComputer')}</Button>
-      </form>
-      {pairing && <Field label={t('computerPairingCode')} hint={t('computerPairingHint')}>
-        <textarea className="dt-textarea dt-mono" readOnly value={pairing} rows={4} onFocus={event => event.target.select()} />
-        <Button variant="outline" onClick={() => { void navigator.clipboard.writeText(pairing).catch(error => notify(String(error))) }}>{t('copyComputerPairing')}</Button>
-      </Field>}
+      {!computers.data?.length && <Hint>{t('noConnectedComputers')}</Hint>}
     </Section>
     <ConfigHistory blocks={['executor', 'pause']} />
   </div>

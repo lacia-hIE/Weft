@@ -82,6 +82,33 @@ test('Executor pairing rejects unrelated, plaintext and credential-bearing endpo
   for(const target of [endpoint.replace('https:','http:'),endpoint+'?token=secret',endpoint.replace('weft.example','user:pass@weft.example'),'https://weft.example/v1/local-hosts/t/e'])assert.throws(()=>executorEndpoint(target))
 })
 
+test('connected DSH saves local policy before binding, checks the site and owner, and retains settings across restart',async()=>{
+  const directory=await mkdtemp(join(tmpdir(),'weft-connected-executor-')),file=join(directory,'executor.json'),root=join(directory,'work'),host=native()
+  const request=async(address:string)=>address.endsWith('/pair')?Response.json({protocol,token}):Response.json({protocol,commands:[],retryAfterMs:1000})
+  const options={ctx:host.ctx,file,request},connection={state:'connected',endpoint:'https://weft.example/v1/local-hosts/tenant/computer'}
+  const code=JSON.stringify({protocol,endpoint,pairingKey})
+  let controller=createExecutorController(options)
+  try{
+    await assert.rejects(controller.attach({code},connection),/Configure the task root/)
+    await controller.configure({root,agentPreset:'local',permissionPreset:'read-only',accepting:false,maxWorkers:2})
+    assert.equal(controller.snapshot().ready,true);assert.equal(controller.snapshot().configured,false)
+    await controller.close();controller=createExecutorController(options);await controller.load()
+    assert.equal(controller.snapshot().ready,true);assert.equal(controller.snapshot().root,root)
+    await assert.rejects(controller.attach({code},{...connection,state:'stopped'}),/Connect this DSH/)
+    for(const target of [endpoint.replace('weft.example','other.example'),endpoint.replace('/tenant/','/another-owner/')]){
+      await assert.rejects(controller.attach({code:JSON.stringify({protocol,endpoint:target,pairingKey})},connection),/site and owner/)
+    }
+    await controller.attach({code,root:'/ignored',agentPreset:'ignored',permissionPreset:'danger-full-access',accepting:true},connection)
+    await waitFor(()=>controller.snapshot().state==='connected')
+    assert.deepEqual({root:controller.snapshot().root,permission:controller.snapshot().permissionPreset,accepting:controller.snapshot().accepting,preset:controller.snapshot().agentPreset},
+      {root,permission:'read-only',accepting:false,preset:'local'})
+    assert.equal((await stat(file)).mode&0o777,0o600)
+    assert.equal(JSON.stringify(controller.snapshot()).includes(token),false)
+    await controller.close();controller=createExecutorController(options);await controller.load()
+    await waitFor(()=>controller.snapshot().state==='connected');assert.equal(controller.snapshot().accepting,false)
+  }finally{await controller.close();await rm(directory,{recursive:true,force:true})}
+})
+
 
 test('delegated workers retain durable ancestry, inherit restrictions and cannot report the root Ticket',async()=>{
   const directory=await mkdtemp(join(tmpdir(),'weft-tree-')),file=join(directory,'executor.json'),host=native()

@@ -2,24 +2,29 @@
 
 ## 同一云端环境下的本地执行器
 
-0.3.0 源码新增独立的 Superagent 接单模式：本机安装原版 DSH 和
-`@laciaproject/dsh-local-host`，在 Superagent 的「设置 → 执行」登记电脑并生成配对码，
-在本机插件「Superagent 执行器」中输入配对码、绝对任务根目录和可选 Agent 预设，
-然后单独勾选「允许接收任务」。模型服务和执行凭据在本机配置。
+0.3.1 复用 Weft 已连接的本地 DSH。在本机安装原版 DSH 和
+`@laciaproject/dsh-local-host@0.3.1`，先按下文连接一次 Weft；随后在本机插件
+「Superagent 执行器」中配置绝对任务根目录、下拉选择已安装的 Agent 预设及执行权限，
+保存并按需开启「允许接收任务」。模型服务和执行凭据在本机配置。
+
+在云端 Superagent「设置 → 执行 → 默认执行位置」直接选择这台已连接的电脑并保存，
+无需再次生成或输入执行器配对码。未保存本机执行设置的电脑显示为不可选，并提示先在本机配置。
+旧版独立执行器连接保留；根目录与权限只能在本机修改，云端通过中继不能覆盖这些设置。
+自动绑定校验已连接的 Weft 站点与用户，凭据只用于当前执行环境。
 
 云端保留来源、授权、Ticket 和原对话回复，本机运行执行 Session、Agent 循环与工具。
-无需新建本地 Weft 环境，也无需在本机运行完整 Superagent；下文的本地工作台连接是另一项独立功能。
+无需在本机运行完整 Superagent。
 在云端选择默认执行电脑只影响新工单，已有工单不会自动换电脑。
 
 接单信息保存在本机 `~/.dsh/weft-executor.json`，可用 `WEFT_EXECUTOR_CONFIG` 或
 `executorFile` 配置独立路径。建议独立 DSH profile；目录与 profile 本身不隔离操作系统权限。
-配对码 10 分钟有效、只能交换一次，云端只保存密钥摘要。接单默认关闭，本机模型和权限预设
+自动绑定所用的一次性凭据 10 分钟有效，云端只保存密钥摘要。接单默认关闭，本机模型和权限预设
 不会被云端设置覆盖。现有 `/v1/plugin-hooks/*` 的 Access Bypass 即可供出站 HTTPS 使用。
 
 第一版每 15 秒获取派工，收到命令后缩短到 1 秒。任务断线不自动重派，恢复连接后同步持久回执。
 本机 DSH 重启打断的任务会报告失败，用户可重试以恢复原 Session 和文件；停止工单需要本机确认，
 撤销授权或断开连接不等于停止本机进程。子代理沿用本机 DSH 的并发与深度限制，继承工单工具约束；停止会等待整个子代理树及所属进程退出。
-0.2.7 已发布版本尚无接单模式；需使用通过 CI 后发布的 0.3.0 包。
+0.3.0 的独立执行器仍可使用；直接选择已连接电脑及 Agent 下拉菜单需要 0.3.1。
 
 本地模式支持 **DSH 0.2.1-rc.2、0.2.1-rc.3、0.2.1-rc.4、0.2.1-rc.5**。本机运行原版 `dsh web` 或
 DeepSeek Harness 桌面 App，安装 `@laciaproject/dsh-local-host` Host 组合包；Weft 提供环境目录、设备配对与出站连接中继。
@@ -83,8 +88,8 @@ HTTP 正文与原版 Mux 消息都按 32 KiB 分块，每条流最多 16 块未�
    `0.1.7-rc.2` 等旧版需要先升级：`npm install -g @deepseek-ai/dsh@0.2.1-rc.5`，然后重新启动 DSH。
    在 Weft 首页选择「连接本地 DSH」，输入名称并点击「生成配对码」和「复制配对码」。
 2. 在本地原版 DSH 或桌面 App 的「插件」页添加 npm 包 `@laciaproject/dsh-local-host`，
-   或执行 `dsh plugin --profile web add @laciaproject/dsh-local-host@0.2.7`。桌面 App 也可在完全退出后执行
-   `dsh plugin --profile desktop add @laciaproject/dsh-local-host@0.2.7`（需先打开过一次桌面 App 以初始化 profile）。也可下载
+   或执行 `dsh plugin --profile web add @laciaproject/dsh-local-host@0.3.1`。桌面 App 也可在完全退出后执行
+   `dsh plugin --profile desktop add @laciaproject/dsh-local-host@0.3.1`（需先打开过一次桌面 App 以初始化 profile）。也可下载
    页面提供的 `.tgz`，以其绝对路径安装。它原生声明 `dsh.bundle.patch`。
    安装完成后点击「立即启用」。已装过旧名 `@weft/dsh-local-host` 的用户，应先移除旧包再安装新包；配对文件保留。
 3. 在本机「插件」列表打开「Weft 本地连接」（`@laciaproject/dsh-local-host`）的详情页，直接填写「配对码」并点击「保存并连接」，无需重启。
