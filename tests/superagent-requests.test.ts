@@ -74,3 +74,32 @@ test('owner requests pass Eval without GitHub, retain placement and project, and
     assert.throws(()=>submitRequest(host,{...request,requestId:crypto.randomUUID()}),/disabled/)
   } finally {sql.close()}
 })
+
+test('proactive assessments preserve an explicit local placement through the real assessor and Engine',async()=>{
+  const {MasterAssessor}=await import('../plugins/superagent/src/app/assessment.ts')
+  const sql=memorySql(),store=new Store(sql)
+  let engine:Engine
+  const remote=new RemoteExecutor({store,get engine(){return engine},changed(){},configuration:()=>({instructions:'Task',allow:['read']}),tools:()=>[]})
+  const executor=new HybridExecutor({store,effects:{handle(){},enqueue(){}},paused:()=>false} as never,remote)
+  store.saveSettings({...store.settings(),eval:{...store.settings().eval,mode:'auto'}})
+  const assessor=new MasterAssessor({get engine(){return engine},settings:()=>store.settings(),effects:{handle(){},enqueue(){}},paused:()=>false,
+    threadContext:()=>undefined,deliver:async()=>{},candidateCard:async()=>({})} as never)
+  engine=new Engine({repo:store,scope:{scope:()=>({listened:true,observed:true})},policy:()=>({version:'test-policy',paused:false,evalTimeoutMs:60_000,
+    gate:()=>({admissible:true,strength:'inferred',basis:{via:'observed'}}),revalidate:()=>true,admitsInferred:()=>true}),assessor,executor,
+    outbox:{send(){},withdraw(){},status:()=> 'sent'},prepareTicket:(ticket,outcome)=>executor.prepare(ticket,outcome)})
+  try {
+    const computer=await remote.create('Private repository computer');await remote.pair(computer.id,computer.pairingKey)
+    const tools=mainTools({store,engine,assessor,executors:remote,requestPass(){}} as never,{id:'main'})
+    const decide=tools.find(tool=>tool.name==='orchestrator_eval_decide')!
+    const at=new Date().toISOString()
+    engine.receive({id:'observed-copy-fix',source:'feed',threads:[{source:'feed',id:'issue-7'}],actor:{source:'feed',id:''},human:false,at,text:'Please replace the typo with the specified text.',meta:{}})
+    engine.evaluateDue()
+    const args={trigger_id:'observed-copy-fix',executor_id:computer.id,decision:'accept',title:'Fix requested typo',worktree_name:'fix-observed-typo',scope:'Specified copy fix',intent_evidence:'Replace the typo',reason:'Settled implementation request',
+      direction:{implementation_requested:true,target_basis:'specified',requires_design_decision:false,evidence:'Exact replacement provided'},
+      rule_assessments:store.settings().policy.rules.filter(rule=>rule.enabled).map((rule,index)=>({rule_id:rule.id,matched:index===0,reason:index===0?'Copy correction':'Other rule'}))}
+    await assert.rejects(decide.execute({...args,executor_id:crypto.randomUUID()} as never,new AbortController().signal),/not paired/)
+    const result=await decide.execute(args as never,new AbortController().signal) as {ticket:{ticket_id:string}}
+    assert.equal(store.tickets.get(result.ticket.ticket_id)!.execution?.executorId,computer.id)
+    assert.equal(remote.sync(computer.id,{protocol:EXECUTOR_PROTOCOL,accepting:false,states:[]}).commands.length,0)
+  } finally {assessor.stop();sql.close()}
+})
