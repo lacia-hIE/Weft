@@ -69,13 +69,14 @@ test('real Tail events attribute cached Workers, facets, PTC, JavaScript and she
     }
     assert.doesNotMatch(JSON.stringify(values), /PTC_SECRET|observation-fixture/);
     const resourceId = values.find(row => row.kind === 'workspace-javascript')!.resourceId!;
-    const pending = await post('/_test/javascript', {scope, operation: {operation: 'start', source: 'export default () => new Promise(resolve => setTimeout(() => resolve(42), 120000))', cwd: '/workspace'}}) as {id: string; status: string};
+    const pending = await post('/_test/javascript', {scope, operation: {operation: 'start', source: 'export default () => new Promise(resolve => setTimeout(() => resolve(42), 5000))', cwd: '/workspace'}}) as {id: string; status: string};
     assert.equal(pending.status, 'running');
     await runtime.dispose(); runtime = createRuntime(directory, options);
     const before = (await rows()).filter(row => row.kind === 'workspace-javascript').length;
     await post('/_test/background', {resourceId});
-    await post('/_test/javascript', {scope, operation: {operation: 'cancel', id: pending.id}});
     const recovered = (await until(rows => rows.filter(row => row.kind === 'workspace-javascript').length > before)).filter(row => row.kind === 'workspace-javascript').at(-1)!;
     assert.equal(recovered.tenantId, scope.tenantId); assert.equal(recovered.environmentId, scope.environmentId); assert.equal(recovered.workspaceId, scope.workspaceId);
+    const finished = await post('/_test/javascript', {scope, operation: {operation: 'status', id: pending.id}}) as {status: string; value?: unknown};
+    assert.equal(finished.status, 'completed'); assert.equal(finished.value, 42);
   } finally {await runtime.dispose(); await rm(directory, {recursive: true, force: true});}
 });

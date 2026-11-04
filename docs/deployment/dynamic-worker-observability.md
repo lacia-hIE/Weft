@@ -52,6 +52,7 @@ Workspace 在自身 Durable Object 保存一次经过命名空间校验的归属
 恢复使用。这里不保存用量明细或汇总，也不需要 D1、R2 用量账本或 Weft 统计页面。
 
 日志事件数不等同于最终计费请求数；缺失、采样、保留期和 RPC 会话语义会影响分析结果。
+取消执行或运行时终止可能没有最终 Tail 事件；被调用方捕获的 RPC 错误也不一定增加 `exceptionCount`。
 Dynamic Worker 的计费创建数仍以 Cloudflare Usage / GraphQL 的 `distinctDynamicWorkerCount`
 为准。CPU 与等待 I/O 的墙钟耗时分别展示；宿主 Worker、DO、容器、Tail 自身及模型的费用另行计算。
 
