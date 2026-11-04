@@ -63,6 +63,7 @@ test('the Superagent panel opens from the sidebar, gets its key through Settings
   expect(credential.endpoint).toContain(`/v1/plugin-hooks/${tenantId}/${environment}/%40weft%2Fdsh-superagent/executor/`);
   const executorId = credential.endpoint.split('/').at(-1);
   await expect(computer).toHaveValue(executorId);
+  await expect(page.getByRole('textbox', {name: 'Ticket directory root', exact: true})).toHaveCount(0);
   await panel.getByRole('button', {name: 'Save', exact: true}).click();
   await expect(panel.getByRole('button', {name: 'Save', exact: true})).toHaveCount(0, {timeout: 45_000});
   await page.screenshot({path: testInfo.outputPath('superagent-connected-computer.png')});

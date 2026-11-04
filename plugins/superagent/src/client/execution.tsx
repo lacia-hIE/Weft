@@ -138,10 +138,10 @@ export function ExecutionSettings() {
         </div>
         <div className="dt-form dt-block">
           <h2 className="dt-block-title">{t('term.environment')}<InfoTip text={t('environmentIntro')} /></h2>
-          <Field label={t('executionDirectory')} hint={t('executionDirectoryHint')} >
+          {!value.executorId && <Field label={t('executionDirectory')} hint={t('executionDirectoryHint')} >
             <Input className="dt-mono" value={value.directory} spellCheck={false} pattern="/workspace.*"
               onChange={event => edit({ directory: event.target.value })} />
-          </Field>
+          </Field>}
           <Field label={t('prepareCommand')} hint={t('prepareCommandHint')}>
             <textarea ref={prepare} className="dt-textarea dt-mono" rows={3} maxLength={LIMITS.prepareCommand} spellCheck={false}
               placeholder={t('prepareCommandEmpty')} value={value.prepare}
