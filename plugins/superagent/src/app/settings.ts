@@ -155,6 +155,11 @@ export class Settings {
     const current = store.settings()
     const candidate = rules.merge(current, parsed, id)
     rules.guard?.(current, candidate, origin)
+    if (kind === 'source' && candidate.sources[id]?.enabled && !candidate.sources[id]?.archived) {
+      const instance = sources.instance(id, candidate)
+      const duplicate = instance?.config.bot && sources.instances(candidate).find(row => row.id !== id && row.enabled && row.kind === instance.kind && row.config.bot === instance.config.bot)
+      if (duplicate) throw new Error('This bot already has an active Source connection; edit that connection or choose another bot')
+    }
     // Saving a draft, clearing a field, or disconnecting a Source never requires a network check.
     if (stale()) throw new SettingsConflict('Settings changed during the checks. Reload before saving.')
     // Re-read current settings after async checks in case unrelated blocks were saved concurrently.

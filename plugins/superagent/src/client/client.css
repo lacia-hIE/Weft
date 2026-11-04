@@ -395,3 +395,35 @@ a.dt-btn, a.dt-btn:hover { text-decoration: none; }
 .dt-choice-option[data-active] { background: var(--dsw-alias-interactive-bg-hover); }
 .dt-choice-option[aria-disabled] { color: var(--dsw-alias-label-dimmed); cursor: default; }
 .dt-choice-empty { padding: 8px; color: var(--dsw-alias-label-tertiary); }
+/* Connected Source list and connector picker share native DSH surfaces and spacing. */
+.dt-connection-heading, .dt-connection-detail-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.dt-connection-heading > div { display: grid; gap: 6px; flex: 1; min-width: 220px; }
+.dt-connection-filters { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(140px, 180px) minmax(120px, 160px); gap: 12px; }
+.dt-connections { list-style: none; padding: 0; margin: 0; border: .5px solid var(--dsw-alias-border-l3); border-radius: 12px; overflow: hidden; }
+.dt-connections:empty { display: none; }
+.dt-connection-row { display: flex; align-items: center; gap: 12px; padding: 16px; border-bottom: .5px solid var(--dsw-alias-border-l3); }
+.dt-connection-row:last-child { border-bottom: 0; }
+.dt-connection-mark { flex: none; width: 36px; height: 36px; display: inline-flex; align-items: center; justify-content: center; background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-secondary); font-size: 12px; font-weight: 600; border-radius: 10px; }
+.dt-connection-name { flex: 1; min-width: 100px; display: grid; gap: 4px; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.dt-connection-name strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 500; }
+.dt-connection-name small { color: var(--dsw-alias-label-caption); overflow-wrap: anywhere; font-size: 12px; }
+.dt-connection-status { display: flex; align-items: center; gap: 6px; color: var(--dsw-alias-label-caption); font-size: 12px; white-space: nowrap; }
+.dt-connection-status .dt-dot { margin: 0; }
+.dt-connection-row .dt-btn { max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dt-connection-empty { display: grid; justify-items: center; gap: 8px; padding: 40px 20px; color: var(--dsw-alias-label-caption); border: .5px dashed var(--dsw-alias-border-l3); border-radius: 12px; }
+.dt-connector-modal { width: min(640px, 100%); }
+.dt-connector-catalog { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.dt-connector-app { display: flex; align-items: center; gap: 12px; padding: 16px; text-align: left; border: .5px solid var(--dsw-alias-border-l3); background: var(--dsw-alias-bg-layer-1); border-radius: 12px; color: inherit; font: inherit; cursor: pointer; }
+.dt-connector-app:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.dt-connector-app > span:nth-child(2) { flex: 1; display: grid; gap: 4px; }
+.dt-connector-app small, .dt-connector-account small { display: block; font-size: 12px; color: var(--dsw-alias-label-caption); }
+.dt-connector-account { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border: .5px solid var(--dsw-alias-border-l3); border-radius: 10px; cursor: pointer; }
+.dt-connector-account input { accent-color: var(--dsw-alias-label-primary); }
+@container (max-width: 680px) {
+  .dt-connection-filters { grid-template-columns: 1fr 1fr; }
+  .dt-connection-filters > :first-child { grid-column: 1 / -1; }
+  .dt-connection-row { flex-wrap: wrap; gap: 10px; }
+  .dt-connection-name { flex-basis: calc(100% - 60px); }
+  .dt-connection-status { margin-right: auto; }
+}
+@media (max-width: 520px) { .dt-connector-catalog { grid-template-columns: 1fr; } }

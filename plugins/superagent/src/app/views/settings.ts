@@ -5,7 +5,7 @@ import { policyVersion } from '../../policy.ts'
 import type { SourceRegistry } from '../../sources/registry.ts'
 import { declaredVariables, executionRoot } from '../execution-environment.ts'
 import type { Store } from '../store.ts'
-import { problemOf, sourceHealth, type HealthMap, type SetupState } from './sources.ts'
+import { problemOf, sourceHealth, sourceState, type HealthMap, type SetupState } from './sources.ts'
 
 function policyOf(sources: SourceRegistry, id: string, health: HealthMap) {
   const policy = sources.kind(id)?.policy
@@ -30,9 +30,9 @@ export function settingsView(store: Store, sources: SourceRegistry, health: Heal
     sources: sources.instances(settings).map(instance => {
       const kind = sources.kind(instance.id)
       const problem = problemOf(instance.id, setup)
-      const { id, title } = sourceHealth(sources, instance, health)
-      return { id, kind: instance.kind, title: instance.name ? {zh: instance.name, en: instance.name} : title, description: kind?.description ?? { zh: '', en: '' }, installed: instance.installed,
-        value: { enabled: instance.enabled, config: instance.config, ...(kind?.type ? {kind: kind.type, name: instance.name ?? '', archived: instance.archived ?? false} : {}) }, revision: store.blockRevision(`source:${instance.id}`),
+      const { id, title, health: parts } = sourceHealth(sources, instance, health)
+      return { id, state: sourceState(instance, parts, setup), kind: instance.kind, title: instance.name ? {zh: instance.name, en: instance.name} : title, description: kind?.description ?? { zh: '', en: '' }, installed: instance.installed, configured: !!settings.sources[instance.id],
+        value: { enabled: instance.enabled, config: instance.config, ...(kind?.type ? {kind: kind.type} : {}), name: instance.name ?? '', archived: instance.archived ?? false }, revision: store.blockRevision(`source:${instance.id}`),
         restarts: [] as readonly string[], fields: kind?.fields ?? [], facts: kind?.facts?.(setup.deployment) ?? {},
         labels: store.get(KV.sources.labels(instance.id)) ?? {}, ...problem ? { problem } : {}, ...policyOf(sources, instance.id, health) }
     }),

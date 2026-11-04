@@ -4,7 +4,7 @@ type Agent = { id: string }
 import { z } from 'zod'
 import { reasonText, threadKey, type Assessor, type AssessmentOutcome, type Candidate, type Decision, type EngineForMainSession,
   type Trigger } from '../core/index.ts'
-import { AdmissionDirectionSchema, RuleAssessmentSchema, assessmentOutcome, type Assessment, directionAllowed, type Settings } from '../policy.ts'
+import { AdmissionDirectionSchema, RuleAssessmentSchema, assessmentOutcome, sourceMode, type Assessment, directionAllowed, type Settings } from '../policy.ts'
 import { checkedImText } from '../infra/text.ts'
 import type { Commands } from '../infra/commands.ts'
 import type { Machine } from '../deployment.ts'
@@ -206,7 +206,7 @@ export class MasterAssessor implements Assessor {
     })() : { error: error ?? 'Call orchestrator_eval to load initial context', complete: false }
     const settings = this.host.settings()
     const others = candidate.triggers.filter(item => item.id !== trigger.id)
-    return { trigger_id: trigger.id, strength: candidate.strength, mode: settings.eval.mode,
+    return { trigger_id: trigger.id, strength: candidate.strength, mode: sourceMode(settings, trigger.source),
       source: { kind: trigger.source, actor: trigger.actor.id, thread: threadKey(trigger.threads[0]!), ...(trigger.url
         ? { url: trigger.url } : {}) },
       ...cut(trigger.text, TRIGGER_CHARS), ...imageIds(source?.messageId ?? '', trigger.text),
@@ -273,7 +273,7 @@ export class MasterAssessor implements Assessor {
   async decide(triggerId: string, result: z.infer<typeof AssessmentSchema>, signal?: AbortSignal, commit: (run: () => Decision, outcome: AssessmentOutcome) => Decision = run => run()): Promise<{ state: string; ticket_id?: string; reason: string }> {
     const { candidate } = this.evalFor(triggerId)
     signal?.throwIfAborted()
-    let outcome: AssessmentOutcome = assessmentOutcome(result as Assessment, this.host.settings(), candidate.strength)
+    let outcome: AssessmentOutcome = assessmentOutcome(result as Assessment, this.host.settings(), candidate.strength, candidate.triggers[0]!.source)
     if (outcome.kind === 'accept' && outcome.acknowledgement) outcome = { ...outcome, acknowledgement: checkedImText(outcome.acknowledgement) }
     const decision = commit(() => this.host.engine.decide(triggerId, { ...outcome, evalId: candidate.evalId }), outcome)
     return { state: decision.kind, ...(decision.ticketId ? { ticket_id: decision.ticketId } : {}), reason: reasonText(decision.reason) }

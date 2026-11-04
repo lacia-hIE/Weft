@@ -18,7 +18,7 @@ export function sourceHealth(sources: SourceRegistry, instance: SourceInstance, 
     return { name, ...(!entry || (instance.enabled && entry.code === 'sourceOff') ? starting : entry) }
   })
   const active = kind?.type ? parts.filter(part => part.name.endsWith(':webhook') ? instance.config.webhook : part.name.endsWith(':feed') ? instance.config.feed : true) : parts
-  return { id: instance.id, title: kind?.title ?? { zh: instance.id, en: instance.id }, health: active.length ? active : parts }
+  return { id: instance.id, title: instance.name ? {zh: instance.name, en: instance.name} : kind?.title ?? { zh: instance.id, en: instance.id }, health: active.length ? active : parts }
 }
 export interface SetupState {
   /** Resolved deployment facts; undefined while waiting for initial setup. */
@@ -30,9 +30,10 @@ export interface SetupState {
 export const problemOf = (id: string, setup: SetupState) => (setup.problem?.place === id ? setup.problem : undefined)
 /** Source lifecycle state in priority order: missing kind, disabled, setup/part error, blocked on global setup, starting, paused, or ready. */
 export type SourceState = 'missing' | 'off' | 'error' | 'setup' | 'starting' | 'paused' | 'ready'
-function sourceState(instance: SourceInstance & { installed: boolean }, parts: { state: string }[], setup: SetupState): SourceState {
+export function sourceState(instance: SourceInstance & { installed: boolean }, parts: { state: string }[], setup: SetupState): SourceState {
   if (!instance.installed) return 'missing'
   if (!instance.enabled) return 'off'
+  if (['repositoryUnset', 'agentTokenUnset'].includes(problemOf(instance.id, setup)?.code ?? '')) return 'setup'
   if (problemOf(instance.id, setup) || parts.some(part => part.state === 'error')) return 'error'
   if (parts.some(part => part.state === 'starting')) return 'starting'
   return parts.some(part => part.state === 'paused') ? 'paused' : 'ready'

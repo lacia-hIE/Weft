@@ -1,6 +1,8 @@
+import {Select} from './select.tsx'
+import {connectionType} from './source-types.ts'
 /** @jsxRuntime automatic */
 /** Eval status view (Decision log) and Eval settings group (Policy rules, per-Source admission, and assessor settings). */
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ADMISSION_DEFAULTS, ADMISSION_OPTIONS, type Admission, type AdmissionCell } from '../admission.ts'
 import type { AdmissionRowView } from '../sources/kind.ts'
 import { LIMITS } from '../limits.ts'
@@ -134,14 +136,15 @@ function AdmissionTable({ rows, labels, table, explicit, onChange }: {
   </Section>
 }
 
-function PolicyBlock() {
+function PolicyBlock({source: focused}: {source?: string | undefined}) {
   const { t } = usePanel()
   const { settings: { blocks, sources, policyVersion }, reload } = useSettings()
   const draft = useBlockDraft('policy', blocks.policy.value, blocks.policy.revision)
   const policy = draft.value
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
-  const parts = sources.filter(source => source.installed && source.policy)
-  const [tab, setTab] = useState<string>()
+  const parts = sources.filter(source => source.installed && source.policy && !source.value.archived && (source.configured || source.value.kind || source.value.config.bot || source.value.config.repository))
+  const [tab, setTab] = useState<string | undefined>(focused)
+  useEffect(() => {setTab(focused)}, [focused])
   const current = parts.find(source => source.id === tab) ?? parts[0]
   const edit = (next: Partial<typeof policy>) => draft.edit({ ...policy, ...next })
   const toggle = (id: string) => { const next = new Set(expanded); if (next.has(id)) next.delete(id); else next.add(id); setExpanded(next) }
@@ -173,13 +176,14 @@ function PolicyBlock() {
           onRemove={() => edit({ rules: policy.rules.filter((_, position) => position !== index) })} />)}</ul>
             : <Hint>{t('rulesEmpty')}</Hint>}
       </Section>
+      {!current && <Hint>{t('sourcePolicyEmpty')}</Hint>}
       {current && <Section title={t('policyPerSource')} hint={t('policyPerSourceHint')}>
-        {parts.length > 1 && <div className="dt-subtabs" role="tablist" aria-label={t('policyPerSource')}>
-          {parts.map(source => <button key={source.id} type="button" role="tab" aria-selected={source === current} className="dt-subtab"
-            onClick={() => setTab(source.id)}>
-            {localized(t, source.title)}
-          </button>)}
-        </div>}
+        <Field label={t('sourcePolicySelect')}><Select value={current.id} placeholder={t('sourcePolicySelect')}
+          options={parts.map(source => ({value: source.id, label: `${localized(t, source.title)} · ${connectionType(t, source.kind)}`}))} onChange={setTab}/></Field>
+        <Hint>{t('sourcePolicyHint')}</Hint>
+        <Field label={t('sourceAssessmentMode')}><Select value={String(part(current.id).mode ?? 'inherit')} placeholder={t('sourceModeInherit')}
+          options={([{value: 'inherit', label: t('sourceModeInherit')}, {value: 'off', label: t('sourceModeOff')}, {value: 'observe', label: t('sourceModeObserve')}, {value: 'auto', label: t('sourceModeAuto')}])}
+          onChange={mode => edit({sources: {...policy.sources, [current.id]: {...(policy.sources[current.id] ?? {allowed: [], admission: {}}), mode: mode as 'inherit' | 'off' | 'observe' | 'auto'}}})}/></Field>
         <SourcePart key={current.id} source={current} part={part(current.id)}
           saved={(blocks.policy.value.sources[current.id] ?? {}) as Part} dirty={draft.dirty}
           reload={reload} onChange={next => edit({ sources: { ...policy.sources,
@@ -217,9 +221,9 @@ function EvalBlock() {
   </form>
 }
 
-export function EvalSettings({ version }: { version?: string | undefined }) {
+export function EvalSettings({ version, source }: { version?: string | undefined; source?: string | undefined }) {
   return <div className="dt-form">
-    <PolicyBlock />
+    <PolicyBlock source={source}/>
     <EvalBlock />
     <ConfigHistory blocks={['policy', 'eval']} versions {...version ? { focus: version } : {}} />
   </div>

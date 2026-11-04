@@ -100,7 +100,6 @@ export class Runtime implements SourceHost {
   private readonly sourceDeps: SourceContextDeps
   private readonly toolHost: MainToolsHost & ExecutorToolsHost
   private readonly githubContext: SourceContext
-  private readonly imKinds: Record<ImChannel, Pick<SourceKind, 'kind' | 'health'>>
   private driving?: Promise<void> | undefined
   private polling?: Promise<void> | undefined
   private reading?: Promise<void> | undefined
@@ -130,7 +129,7 @@ export class Runtime implements SourceHost {
       collaboration: this.collaboration, masterId: MASTER_ID, lifetime: this.lifetime, environment: ticket => this.ticketEnvironment(ticket), mandate: ticket => mandateInstructions(ticket.mandate),
       tools: role => this.toolNames[role] })
     const policyChanged: EngineForSettings['policyChanged'] = (from, to, changes) => { this.engine.policyChanged(from, to, changes) }
-    this.settings = new Settings({ store, sources, engine: { policyChanged }, health: board, lifetime: this.lifetime, sessions, sourceHost: this, setup, requestPass: () => { this.passes.request(); this.scheduleChanged() } })
+    this.settings = new Settings({ store, sources, engine: { policyChanged }, health: board, lifetime: this.lifetime, sessions, sourceHost: this, setup, requestPass: () => { this.passes.request(); this.scheduleChanged(); this.reportIm() } })
     const remote: RemoteExecutor = new RemoteExecutor({ store, get engine() { return runtime.engine },
       configuration: ticket => sessions.configuration('worker', ticket), tools: ticket => executorTools(this.toolHost, ticket),
       usedSlots: () => this.executor.slotCount() + remote.activeCount(),
@@ -178,10 +177,10 @@ export class Runtime implements SourceHost {
     this.disposers.push(this.sources.register(requestKind))
     this.githubContext = this.context(github)
     const feishu = feishuKind(ctx.weftIm), weixin = imKind('weixin', ctx.weftIm), qq = imKind('qq', ctx.weftIm), email = imKind('email', ctx.weftIm)
-    this.imKinds = { feishu, weixin, qq, email }
     this.disposers.push(this.sources.register(feishu), this.sources.register(weixin), this.sources.register(qq), this.sources.register(email))
     this.repositoryEvents = new RepositoryEvents({store, context: id => this.context({kind: id, health: [`${id}:webhook`, `${id}:feed`]}), secret: (id, name) => config.sourceSecrets[`${id}-${name}`] ?? ''})
     for (const type of EVENT_TYPES) this.sources.registerFactory(type, id => this.repositoryEvents.kind(id, type))
+    for (const channel of IM_CHANNELS) this.sources.registerFactory(channel, id => channel === 'feishu' ? feishuKind(ctx.weftIm, id) : imKind(channel, ctx.weftIm, id))
     this.disposers.push(ctx.weftIm.consume({ message: (bot, event) => this.imMessage(bot, event) }))
     this.reportIm()
     this.ready = this.initialize()
@@ -330,35 +329,31 @@ export class Runtime implements SourceHost {
   private async imMessage(bot: string, raw: unknown): Promise<void> {
     const event = ImEventSchema.parse(raw)
     const channel = IM_CHANNELS.find(item => item === event.kind)
-    const instance = channel && this.sources.instance<{ bot: string }>(channel)
-    if (!channel || !instance?.enabled || instance.config.bot !== bot) {
-      console.warn(`dsh-superagent: no enabled Source uses the IM bot ${bot}; its message is dropped`)
-      return
-    }
-    const context = this.context(this.imKinds[channel])
-    await context.receive(imTrigger(channel, bot, event))
-    context.report(channel, { state: 'ready', detail: `Last message at ${event.at} from bot ${bot}`, at: now() })
+    const matches = channel ? this.sources.instances().filter(instance => instance.kind === channel && instance.enabled && instance.config.bot === bot) : []
+    if (matches.length !== 1) {console.warn('dsh-superagent: IM delivery needs exactly one active connection for its bot');return}
+    const instance = matches[0]!, kind = this.sources.kind(instance.id)!, context = this.context(kind)
+    await context.receive(imTrigger(instance.id, bot, event))
+    context.report(instance.id, {state: 'ready', detail: `Last message at ${event.at} from bot ${bot}`, at: now()})
     await Promise.race([this.drive(), new Promise(resolve => setTimeout(resolve, IM_WAKE_MS))])
   }
   /** Rereads the bots dsh-im assigns to dsh-superagent, which each enabled IM Source's bot field offers; the Host lists them without a network read. */
   private refreshImBots(): void {
-    for (const channel of IM_CHANNELS) if (this.sources.instance(channel)?.enabled) void this.sources.kind(channel)?.refreshLabels?.(this).catch(() => { /* A package that is not running lists its bots at the next pass. */ })
+    for (const instance of this.sources.instances()) if (IM_CHANNELS.includes(instance.kind as ImChannel) && instance.enabled) void this.sources.kind(instance.id)?.refreshLabels?.(this).catch(() => {})
   }
-  /** Each IM Source's health while no message has arrived since activation: off, without a bot, or waiting. */
   private reportIm(): void {
     this.refreshImBots()
-    for (const channel of IM_CHANNELS) {
-      const instance = this.sources.instance<{ bot: string }>(channel)
-      const context = this.context(this.imKinds[channel])
-      if (!instance?.enabled) context.report(channel, health('paused', 'sourceOff'))
-      else if (!instance.config.bot) context.report(channel, { state: 'paused', detail: 'No dsh-im bot is chosen', at: now() })
-      else context.report(channel, { state: 'ready', detail: `Waiting for messages from bot ${instance.config.bot}`, at: now() })
+    for (const instance of this.sources.instances()) if (IM_CHANNELS.includes(instance.kind as ImChannel)) {
+      const context = this.context(this.sources.kind(instance.id)!)
+      if (!instance.enabled) context.report(instance.id, health('paused', 'sourceOff'))
+      else if (!instance.config.bot) context.report(instance.id, {state: 'paused', detail: 'No dsh-im bot is chosen', at: now()})
+      else context.report(instance.id, {state: 'ready', detail: `Waiting for messages from bot ${instance.config.bot}`, at: now()})
     }
   }
   private httpHost(): HttpHost {
     const runtime = this
     const { store, sources, prompts, sessions, settings, engine, executor, machine, masterId, sourceLinks, setup, passes } = this
     return { repositoryEvents: this.repositoryEvents,
+      sourceBots: () => this.ctx.weftIm.bots(),
       sourceSecret: (id, name) => this.config.sourceSecrets[`${id}-${name}`] ?? '',
       sourceSecrets: () => Object.fromEntries(sources.instances().filter(instance => EVENT_TYPES.includes(instance.kind as never)).map(instance => [instance.id,
         {webhook: !!this.config.sourceSecrets[`${instance.id}-webhook`], token: !!this.config.sourceSecrets[`${instance.id}-token`], feed: !!this.config.sourceSecrets[`${instance.id}-feed`]}])),

@@ -24,8 +24,8 @@ export const BotKeySchema = z.string().regex(/^([a-z][a-z0-9_]{0,63})?$/)
  * Stores the bots of `channel` that dsh-im assigns to dsh-superagent as the Source's labels, which the bot field offers.
  * @returns the labels by bot key.
  */
-export async function refreshBots(im: HostIm, host: SourceHost, kind: { kind: string; health: readonly string[] }): Promise<Record<string, string>> {
-  const labels = Object.fromEntries((await im.bots()).filter(item => item.kind === kind.kind).map(item => [item.bot, item.name ? `${item.name} · ${item.bot}` : item.bot]))
+export async function refreshBots(im: HostIm, host: SourceHost, kind: { kind: string; health: readonly string[] }, channel = kind.kind): Promise<Record<string, string>> {
+  const labels = Object.fromEntries((await im.bots()).filter(item => item.kind === channel).map(item => [item.bot, item.name ? `${item.name} · ${item.bot}` : item.bot]))
   sourceContext(host, kind).state.set(KV.sources.labels(kind.kind), labels)
   return labels
 }
@@ -47,7 +47,7 @@ export function imThread(event: ImEvent): string {
 export const imTriggerId = (kind: string, messageId: string): string => key(kind, messageId)
 
 /** Converts one message of `bot` into a Trigger of the Source `kind`; a direct message addresses the agent, as does a mention of the bot. */
-export function imTrigger(kind: ImChannel, bot: string, event: ImEvent): Trigger {
+export function imTrigger(kind: string, bot: string, event: ImEvent): Trigger {
   const thread = imThread(event)
   const channel: ChannelRef = { source: kind, thread: `${kind}:${thread}`,
     address: { bot, chatId: event.chatId, messageId: event.messageId, target: JSON.stringify(event.target ?? null), ...event.direct ? { direct: 'true' } : {} } }
@@ -65,12 +65,12 @@ export function imTrigger(kind: ImChannel, bot: string, event: ImEvent): Trigger
  * message in its topic. dsh-im makes a retried message the same message where its platform supports it.
  * @throws when the bot is no longer assigned to dsh-superagent or the platform refused the message; the Outbox retries.
  */
-export async function sendIm(im: HostIm, message: OutboundMessage): Promise<'sent' | 'gone'> {
+export async function sendIm(im: HostIm, message: OutboundMessage, provider = message.channel.source): Promise<'sent' | 'gone'> {
   const { bot, target, direct } = message.channel.address
   if (!bot || !target) return 'gone'
   const parsed = JSON.parse(target) as Record<string, unknown> | null
   if (!parsed) return 'gone'
-  await im.call(bot, 'send', { target: message.channel.source === 'feishu' && direct !== 'true' ? { ...parsed, inThread: true } : parsed,
+  await im.call(bot, 'send', { target: provider === 'feishu' && direct !== 'true' ? { ...parsed, inThread: true } : parsed,
     text: message.text, deliveryId: message.id })
   return 'sent'
 }
@@ -90,10 +90,10 @@ const received = { zh: '接收', en: 'Received' }, refused = { zh: '不接收', 
  * The Source of a WeChat, QQ or email bot assigned to dsh-superagent: each chat (an email conversation) is one Thread,
  * a direct message addresses the agent, and a QQ group message reaches the bot only when it mentions it.
  */
-export function imKind(channel: Exclude<ImChannel, 'feishu'>, im: HostIm): SourceKind<GenericImConfig> {
+export function imKind(channel: Exclude<ImChannel, 'feishu'>, im: HostIm, id: string = channel): SourceKind<GenericImConfig> {
   const groups = channel === 'qq'
   return {
-    kind: channel,
+    kind: id, ...(id !== channel ? {type: channel} : {}),
     title: TITLES[channel],
     description: { zh: `接收 dsh-im 交给 dsh-superagent 的${TITLES[channel].zh}机器人收到的消息，并通过它回复。`,
       en: `Receives the messages of the ${TITLES[channel].en} bot that dsh-im assigns to dsh-superagent, and replies through it.` },
@@ -103,15 +103,15 @@ export function imKind(channel: Exclude<ImChannel, 'feishu'>, im: HostIm): Sourc
       { key: 'directMessages', type: 'switch', label: { zh: '接收私聊', en: 'Direct messages' } },
       ...groups ? [{ key: 'groupMentions', type: 'switch' as const, label: { zh: '接收群里 @ 机器人的消息', en: 'Group messages that mention the bot' } }] : [],
     ],
-    health: [channel],
-    refreshLabels: host => refreshBots(im, host, { kind: channel, health: [channel] }),
+    health: [id],
+    refreshLabels: host => refreshBots(im, host, { kind: id, health: [id] }, channel),
     scope: ({ meta }, config) => {
       const other = botScope(meta, config.bot)
       if (other) return other
       if (meta.direct === true) return config.directMessages ? { listened: true, observed: false, row: 'direct' } : { listened: false, reason: 'direct_messages_not_allowed' }
       return groups && config.groupMentions ? { listened: true, observed: false, row: 'group' } : { listened: false, reason: 'chat_not_allowed' }
     },
-    channel: { send: message => sendIm(im, message), link: () => ({ url: '', label: TITLES[channel] }) },
+    channel: { allowed: (address, config) => address.bot === config.bot && (address.direct === 'true' ? config.directMessages : groups && config.groupMentions), send: message => sendIm(im, message, channel), link: () => ({ url: '', label: TITLES[channel] }) },
     find: () => ({ threads: [], terms: [] }),
     policy: {
       schema: z.object({ allowed: z.array(z.object({ id: z.string().trim().min(1).max(200), name: z.string().trim().max(100).optional() }).strict()).default([]) }).strict(),

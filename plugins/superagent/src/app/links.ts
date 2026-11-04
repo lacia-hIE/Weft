@@ -1,3 +1,4 @@
+import {sourceMode} from '../policy.ts'
 import {requestTargets} from './requests.ts'
 /** Source message link resolution and candidate card assembly for the main Session. */
 import type { Candidate, Ticket, Trigger } from '../core/index.ts'
@@ -47,7 +48,7 @@ export async function candidateCard(host: LinkHost, candidate: Candidate) {
   const others = candidate.triggers.filter(trigger => trigger.id !== primary.id)
   return { ...triggerMessage(primary, await sourceLink(host, primary), undefined, repliedTo(host, primary)), strength: candidate.strength,
     execution_target: target ? {mode: target.placement ?? 'fixed', executor_id: target.executorId, ...(target.projectId ? {legacy_project_id: target.projectId} : {})} : {mode: 'auto', default_executor_id: settings.executor.executorId},
-    mode: settings.eval.mode, ...others.length ? { batch: others.map(trigger => triggerCard(trigger)) } : {},
+    mode: sourceMode(settings, primary.source), ...others.length ? { batch: others.map(trigger => triggerCard(trigger)) } : {},
     ...handedBack.length ? { handed_back: handedBack } : {}, ...relatedTickets(candidate.tickets),
     ...(delivered.length ? { delivered_to: delivered } : {}), ...(referenced.length ? { referenced_tickets: referenced.map(ticketCard) } : {}),
     next_action: candidate.strength === 'explicit' ? 'Route it with orchestrator_route as dispatch says: accept, attach, stop or ignore.'

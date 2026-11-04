@@ -105,3 +105,48 @@ test('Source reply retry recovers an uncertain delivery without posting a duplic
     assert.equal(await send({...message,id:'wrong-scope',channel:{...message.channel,address:{path:'issues/7/comments',url:'https://github.com/team/other/issues/7'}}}),'gone')
   } finally {h.sql.close()}
 })
+
+test('IM connections of the same type isolate identities, labels, reply targets and parent references',async()=>{
+  const {feishuKind}=await import('../plugins/superagent/src/sources/feishu.ts')
+  const {imTrigger}=await import('../plugins/superagent/src/sources/im.ts')
+  const sent:{bot:string;argument:unknown}[]=[],sql=memorySql(),store=new Store(sql),sources=new SourceRegistry(()=>store.settings())
+  const im={bots:async()=>[{bot:'feishu_a',kind:'feishu',name:'Team A'},{bot:'feishu_b',kind:'feishu',name:'Team B'}],call:async(bot:string,_operation:string,argument:unknown)=>{sent.push({bot,argument});return {messages:[]}}}
+  sources.registerFactory('feishu',id=>feishuKind(im as never,id))
+  try {
+    const a=sources.create('feishu'),b=sources.create('feishu')
+    store.saveSettings({...store.settings(),sources:{[a]:{kind:'feishu',name:'Team A',enabled:true,config:{bot:'feishu_a'}},[b]:{kind:'feishu',name:'Team B',enabled:true,config:{bot:'feishu_b'}}}})
+    const event={kind:'feishu',messageId:'om_shared',chatId:'oc_chat',direct:false,sender:{id:'ou_alice',bot:false},mentioned:true,text:'Fix it',at:new Date().toISOString(),rootId:'om_root',parentId:'om_parent',target:{chatId:'oc_chat'}}
+    const first=imTrigger(a,'feishu_a',event),second=imTrigger(b,'feishu_b',event)
+    assert.notEqual(first.id,second.id);assert.notEqual(first.threads[0]!.source,second.threads[0]!.source)
+    assert.notEqual(sources.repliesTo(first),sources.repliesTo(second))
+    await sources.kind(a)!.channel!.send({id:'reply-a',kind:'reply',channel:first.channel!,text:'A'})
+    assert.equal(sent[0]!.bot,'feishu_a');assert.equal((sent[0]!.argument as {target:{inThread:boolean}}).target.inThread,true)
+    assert.equal(sources.scope({source:b,meta:first.meta}).listened,false)
+    await assert.rejects(sources.kind(b)!.threadContext!.read(first,'thread',undefined,sources.instance(b)!.config),/no longer belongs/)
+    const labels:Record<string,unknown>={}
+    await sources.kind(a)!.refreshLabels!({sources,context:()=>({state:{set:(key:string,value:unknown)=>{labels[key]=value}}})} as never)
+    assert.equal(JSON.stringify(labels).includes('feishu_a'),true);assert.equal(Object.keys(labels)[0]!.includes(a),true)
+    const restored=new SourceRegistry(()=>store.settings());restored.registerFactory('feishu',id=>feishuKind(im as never,id));assert.equal(restored.instance(b)?.name,'Team B')
+  } finally {sql.close()}
+})
+
+test('assessment mode follows each Source and removing a Source invalidates pending policy versions',async()=>{
+  const {settingsPolicy,sourceMode,policyVersion,assessmentOutcome}=await import('../plugins/superagent/src/policy.ts')
+  const h=harness()
+  try {
+    const a=h.add('feed'),b=h.add('feed'),base=h.store.settings()
+    const settings={...base,eval:{...base.eval,mode:'off' as const},policy:{...base.policy,sources:{[a]:{allowed:[],admission:{activity:{unlistedUnaddressed:'inferred' as const}},mode:'auto' as const},[b]:{allowed:[],admission:{activity:{unlistedUnaddressed:'inferred' as const}},mode:'observe' as const}}}}
+    h.store.saveSettings(settings)
+    assert.equal(sourceMode(settings,a),'auto');assert.equal(sourceMode(settings,b),'observe');assert.equal(sourceMode(settings,'other'),'off')
+    const policy=settingsPolicy(settings,h.sources),trigger=(id:string):Trigger=>({id,source:id,threads:[{source:id,id:'discussion'}],actor:{source:id,id:''},human:false,at:new Date().toISOString(),text:'Specified task',meta:{}})
+    const thread={subscriptions:[]} as never
+    assert.equal(policy.gate(trigger(a),thread,[]).admissible,true)
+    assert.equal(policy.admitsInferred([settings.policy.rules[0]!.id],a),true);assert.equal(policy.admitsInferred([settings.policy.rules[0]!.id],b),false)
+    const result={decision:'accept' as const,title:'Typo',scope:'Fix',reason:'Requested',intent_evidence:'Exact copy',worktree_name:'fix-copy',direction:{implementation_requested:true,target_basis:'specified',requires_design_decision:false,evidence:'Settled'},rule_assessments:settings.policy.rules.map((rule,index)=>({rule_id:rule.id,matched:index===0,reason:'Copy fix'}))}
+    assert.equal(assessmentOutcome(result,settings,'inferred',a).kind,'accept');assert.equal(assessmentOutcome(result,settings,'inferred',b).kind,'ignore')
+    const removed={...settings,sources:{...settings.sources,[a]:{...settings.sources[a]!,enabled:false,archived:true}}}
+    assert.notEqual(policyVersion(settings),policyVersion(removed));assert.equal(h.sources.scope({source:a,meta:{}},removed).listened,false)
+    const renamed={...settings,sources:{...settings.sources,[a]:{...settings.sources[a]!,name:'Renamed'}}};assert.equal(policyVersion(settings),policyVersion(renamed))
+    const validated=h.sources.validatePolicy(settings.policy.sources);assert.equal(validated[a]!.mode,'auto')
+  } finally {h.sql.close()}
+})

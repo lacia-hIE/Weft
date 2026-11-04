@@ -1,3 +1,4 @@
+import {SOURCE_TYPES} from '../sources/types.ts'
 /** Management routes for the web panel, under a key its entry's configuration holds, and the verified repository webhook. */
 import type { HostContext } from './runtime.ts'
 import { z } from 'zod'
@@ -31,6 +32,7 @@ import {CollaborationConflict, type Collaboration} from './collaboration.ts'
 import { ExecutorRequestError, type RemoteExecutor } from '../executor/remote.ts'
 
 export interface HttpHost {
+  sourceBots?(): Promise<{bot: string; kind: string; name?: string}[]>
   readonly repositoryEvents?: RepositoryEvents
   sourceSecret?(id: string, name: 'webhook' | 'token' | 'feed'): string
   sourceSecrets?(): Record<string, {webhook: boolean; token: boolean; feed: boolean}>
@@ -208,11 +210,21 @@ function routes(runtime: HttpHost): Routes {
       return saved
     },
     'POST sources': async ({body}) => {
-      const input = z.object({kind: z.enum(EVENT_TYPES), name: z.string().trim().min(1).max(80)}).strict().parse(await body())
-      if (runtime.sources.instances().length >= 48) throw new RouteError(400, 'At most 48 Sources may be configured')
+      const input = z.object({kind: z.enum(SOURCE_TYPES), name: z.string().trim().min(1).max(80), config: z.record(z.string(), z.unknown()).default({})}).strict().parse(await body())
+      if (runtime.sources.instances().filter(source => !source.archived).length >= 48) throw new RouteError(400, 'At most 48 Sources may be configured')
       const id = runtime.sources.create(input.kind)
-      await runtime.settings.save(`source:${id}`, {kind: input.kind, name: input.name, enabled: false, config: {}}, 0, 'panel')
+      await runtime.settings.save(`source:${id}`, {kind: input.kind, name: input.name, enabled: false, config: input.config}, 0, 'panel')
       return {id}
+    },
+    'GET source-bots': () => runtime.sourceBots?.() ?? [],
+    'DELETE sources/:id': async ({params, body}) => {
+      if (params.id === 'request') throw new RouteError(400, 'The built-in request Source can be disabled but cannot be deleted')
+      const instance = runtime.sources.instance(params.id)
+      if (!instance) throw new RouteError(404, 'Source not found')
+      const input = z.object({revision: z.number().int().nonnegative()}).strict().parse(await body())
+      if (instance.archived) return {removed: true as const, revision: store.blockRevision(`source:${params.id}`)}
+      const saved = await runtime.settings.save(`source:${params.id}`, {...instance, enabled: false, archived: true}, input.revision, 'panel')
+      return {removed: true as const, revision: saved.revision}
     },
     'GET executors': () => runtime.remote?.list() ?? [],
     'POST executors': async ({ body }) => {
@@ -223,7 +235,7 @@ function routes(runtime: HttpHost): Routes {
     'POST executors/:id/revoke': ({ params }) => { runtime.remote?.revoke(params.id); return { revoked: true } },
     'GET state': () => stateView(runtime),
     'GET overview': () => overview(views(runtime), runtime.health, policyVersion(store.settings()),
-      executorLoad(store, runtime.executor.activeCount()), runtime.setupProblem),
+      executorLoad(store, runtime.executor.activeCount())),
     'GET search': ({ query }) => search(views(runtime), query.q ?? '', runtime.sourceLinks),
     'GET sources': () => sourcesStatus(views(runtime), runtime.health, setupState(runtime)),
     'GET settings': () => settingsView(store, runtime.sources, runtime.health, setupState(runtime)),

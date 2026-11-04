@@ -1,6 +1,7 @@
 /** Registry of installed Source kinds, their configured instances, and the Engine's SourceScope implementation. */
 import type { ChannelRef, OutboundMessage, ScopeResult, SourceScope, Trigger } from '../core/index.ts'
 import { HealthBoard, type HealthEntry } from '../infra/health.ts'
+import {z} from 'zod'
 import { AdmissionTableSchema, type Settings } from '../policy.ts'
 import type { ChannelLink, ChannelLinks, SourceInstance, SourceKind, TriggerContext, VariableSpec } from './kind.ts'
 
@@ -65,23 +66,23 @@ export class SourceRegistry implements SourceScope {
   validate(id: string, value: { enabled: boolean; config: unknown; name?: string | undefined; kind?: string | undefined; archived?: boolean | undefined }): { enabled: boolean; config: Record<string, unknown> } {
     const kind = this.kinds.get(id)
     if (!kind) throw new Error(`Source kind not installed: ${id}`)
-    return { enabled: value.enabled, config: kind.schema.parse(value.config), ...(kind.type ? {kind: kind.type, name: value.name ?? '', archived: value.archived ?? false} : {}) }
+    return { enabled: value.enabled, config: kind.schema.parse(value.config), ...(kind.type ? {kind: kind.type} : {}), ...(value.name !== undefined ? {name: value.name} : {}), ...(value.archived !== undefined ? {archived: value.archived} : {}) }
   }
   /** Validates each Source's part of a submitted Policy against its kind; policy parts for uninstalled Source kinds are kept as stored. */
   validatePolicy(parts: Record<string, Record<string, unknown>>): Record<string, Record<string, unknown> & { allowed: { id: string; name?: string | undefined }[] }> {
     return Object.fromEntries(Object.entries(parts).map(([id, part]) => {
       const policy = this.kinds.get(id)?.policy
       // `admission` is validated by the Policy's own schema (shared across all kinds), while the kind validates the rest of its part.
-      const { admission, ...rest } = part
-      return [id, policy ? { ...policy.schema.parse(rest), admission: AdmissionTableSchema.parse(admission ?? {}) } : part as Record<string, unknown> & { allowed: { id: string; name?: string | undefined }[] }]
+      const { admission, mode, ...rest } = part
+      return [id, policy ? { ...policy.schema.parse(rest), admission: AdmissionTableSchema.parse(admission ?? {}), ...(mode !== undefined ? {mode: z.enum(['inherit', 'off', 'observe', 'auto']).parse(mode)} : {}) } : part as Record<string, unknown> & { allowed: { id: string; name?: string | undefined }[] }]
     }))
   }
   policyPart(id: string, settings = this.settings()) {
     const policy = this.kinds.get(id)?.policy
     if (!policy) return undefined
-    const { admission, ...rest } = settings.policy.sources[id] ?? {}
+    const { admission, mode, ...rest } = settings.policy.sources[id] ?? {}
     const parsed = policy.schema.safeParse(rest)
-    return { ...parsed.success ? parsed.data : policy.schema.parse({}), admission: AdmissionTableSchema.safeParse(admission ?? {}).data ?? {} }
+    return { ...parsed.success ? parsed.data : policy.schema.parse({}), admission: AdmissionTableSchema.safeParse(admission ?? {}).data ?? {}, ...(mode ? {mode} : {}) }
   }
   channelAllowed(channel: { source: string; address: Record<string, string> }, settings = this.settings()): boolean {
     const kind = this.kinds.get(channel.source)

@@ -4,9 +4,9 @@ import { fill } from './infra/text.ts'
 export type SetupPlace = 'deployment' | 'github'
 export const SETUP_PROBLEMS = {
   repositoryUnset: ['github', 'The GitHub Source names no repository.'],
-  agentTokenUnset: ['deployment', 'The agent\'s GitHub token is not set; fill it in under Settings → Deployment.'],
-  agentTokenRejected: ['deployment', 'GitHub rejected the agent\'s token.'],
-  agentTokenFailed: ['deployment', 'The agent\'s token could not be checked.'],
+  agentTokenUnset: ['github', 'This GitHub connection needs an API credential; configure it under Settings → Sources.'],
+  agentTokenRejected: ['github', 'GitHub rejected the agent\'s token.'],
+  agentTokenFailed: ['github', 'The agent\'s token could not be checked.'],
   repositoryUnreadable: ['github', '@{account} cannot read {repository}.'],
   repositoryReadOnly: ['github', '@{account} cannot push to {repository}.'],
 } as const satisfies Record<string, readonly [SetupPlace, string]>

@@ -29,13 +29,13 @@ const mentions = { zh: '仅 @', en: '@ only' }
  * The Feishu Source kind. A message's Thread is its topic root, so replies in a topic join the Thread of the message
  * that opened it; assessments read the topic, or the newest page of a chat without topics, through the bot.
  */
-export function feishuKind(im: HostIm): SourceKind<FeishuConfig> {
+export function feishuKind(im: HostIm, id: string = SOURCE): SourceKind<FeishuConfig> {
   const read = async (bot: string, argument: Record<string, unknown>, signal?: AbortSignal) => {
     signal?.throwIfAborted()
     return ReadPageSchema.parse(await im.call(bot, 'read', argument))
   }
   const kind: SourceKind<FeishuConfig> = {
-    kind: SOURCE,
+    kind: id, ...(id !== SOURCE ? {type: SOURCE} : {}),
     title: { zh: '飞书', en: 'Feishu' },
     description: { zh: '接收 dsh-im 交给 dsh-superagent 的飞书机器人在下列群和私聊中收到的消息，并在话题里回复。', en: 'Receives the messages of the Feishu bot that dsh-im assigns to dsh-superagent in these chats and direct messages, and replies in their topics.' },
     schema: FeishuConfigSchema,
@@ -52,8 +52,8 @@ export function feishuKind(im: HostIm): SourceKind<FeishuConfig> {
         hint: { zh: '机器人已加入、但没列在上面的群。“仅 @”接收那里 @ 机器人的消息；谁的消息能发起工作看策略里的准入。', en: 'Chats the bot has joined that are not listed above. "@ only" receives messages there that mention the bot; whose messages may originate work is the Policy\'s admission.' } },
       { key: 'directMessages', type: 'switch', label: { zh: '接收私聊', en: 'Direct messages' } },
     ],
-    health: [SOURCE],
-    refreshLabels: host => refreshBots(im, host, { kind: SOURCE, health: [SOURCE] }),
+    health: [id],
+    refreshLabels: host => refreshBots(im, host, { kind: id, health: [id] }, SOURCE),
     scope({ meta }, config) {
       const other = botScope(meta, config.bot)
       if (other) return other
@@ -66,15 +66,15 @@ export function feishuKind(im: HostIm): SourceKind<FeishuConfig> {
     // A reply goes only to a chat the Source still receives.
     channel: {
       allowed: (address, config) => kind.scope!({ meta: { bot: address.bot, chatId: address.chatId ?? '', direct: address.direct === 'true' } }, config).listened,
-      send: message => sendIm(im, message),
+      send: message => sendIm(im, message, SOURCE),
       link: address => ({ url: feishuChatLink(address.chatId ?? ''), label: { zh: '飞书消息', en: 'Feishu message' },
-        ...address.messageId ? { triggerId: imTriggerId(SOURCE, address.messageId) } : {} }),
+        ...address.messageId ? { triggerId: imTriggerId(id, address.messageId) } : {} }),
     },
     threadContext: {
       messageId: trigger => String(trigger.meta.messageId ?? ''),
       async read(trigger, part, cursor, _config, signal): Promise<ContextPart> {
         const meta = trigger.meta as { bot?: string; chatId?: string; messageId?: string; rootId?: string; parentId?: string; threadId?: string }
-        if (!meta.bot) throw new Error('This Feishu message names no bot')
+        if (!meta.bot || meta.bot !== _config.bot || trigger.source !== id) throw new Error('This message no longer belongs to the configured Feishu connection')
         if (part === 'root' || part === 'parent') {
           const id = part === 'root' ? meta.rootId ?? meta.messageId : meta.parentId
           const messages = id ? (await read(meta.bot, { part: 'message', messageId: id }, signal)).messages.map(contextMessage) : []
@@ -93,7 +93,7 @@ export function feishuKind(im: HostIm): SourceKind<FeishuConfig> {
     },
     find: query => ({ threads: [], terms: [...new Set(query.match(/om_[A-Za-z0-9_-]+/g) ?? [])] }),
     // A message's Trigger is named after the message, so the one it answers is named after its parent.
-    repliesTo: (trigger: Trigger) => typeof trigger.meta.parentId === 'string' ? imTriggerId(SOURCE, trigger.meta.parentId) : undefined,
+    repliesTo: (trigger: Trigger) => typeof trigger.meta.parentId === 'string' ? imTriggerId(id, trigger.meta.parentId) : undefined,
     policy: {
       unnamed: { person: { zh: '飞书用户', en: 'Feishu user' }, bot: { zh: '飞书机器人', en: 'Feishu bot' } },
       schema: z.object({

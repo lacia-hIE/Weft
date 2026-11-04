@@ -60,6 +60,21 @@ test('executor selection persists without requiring GitHub setup', {timeout: 600
     const cleared=await panel(`settings/source:${sourceId}`,'PUT',{revision:sourceLatest.revision,value:{kind:'gitlab',name:'Internal GitLab',enabled:true,config:{repository:''}}});
     assert.equal(cleared.status,200,'clearing a Source does not require repository connectivity or credentials');
 
+    // An explicitly enabled, incomplete legacy GitHub connection is a draft, never a core system failure.
+    const beforeLegacy=await(await panel('settings')).json() as {sources:{id:string;revision:number}[]};
+    assert.equal((await panel('settings/source:github','PUT',{revision:beforeLegacy.sources.find(row=>row.id==='github')!.revision,value:{enabled:true,config:{repository:'team/optional'}}})).status,200);
+    const overview=await(await panel('overview')).json() as {problems:{kind:string;code?:string}[]};
+    assert.equal(overview.problems.some(problem=>problem.kind==='setup'||problem.code==='agentTokenUnset'),false);
+    const state=await(await panel('state')).json() as {setup:{problem:unknown}};assert.equal(state.setup.problem,null);
+    const afterLegacy=await(await panel('settings')).json() as {sources:{id:string;revision:number}[]};
+    await panel('settings/source:github','PUT',{revision:afterLegacy.sources.find(row=>row.id==='github')!.revision,value:{enabled:false,config:{repository:''}}});
+    const latestSources=await(await panel('settings')).json() as {sources:{id:string;revision:number}[]};
+    const deleting=latestSources.sources.find(row=>row.id===sourceId)!;
+    assert.equal((await panel(`sources/${sourceId}`,'DELETE',{revision:deleting.revision-1})).status,409);
+    assert.equal((await panel(`sources/${sourceId}`,'DELETE',{revision:deleting.revision})).status,200);
+    assert.equal((await deliver(hookSecret)).status,400,'a deleted Source refuses signed new deliveries');
+    const retained=await(await panel('search?q=UniqueSourceObservation')).json() as {items:unknown[]};assert.equal(retained.items.length,1,'deletion retains historical events');
+
     const read = async () => await (await panel('settings')).json() as {blocks: {executor: {revision: number; value: Record<string, unknown>}}};
     const current = (await read()).blocks.executor;
     const device = await panel('executors', 'POST', {name: 'Connected DSH'}); assert.equal(device.status, 200);

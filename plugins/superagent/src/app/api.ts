@@ -18,7 +18,10 @@ interface Paged { offset?: number; limit?: number }
 type Delivery = 'injected' | 'pending'
 
 export interface Api {
-  'POST sources': {body: {kind: 'github-webhook' | 'gitlab' | 'feed'; name: string}; response: {id: string}}
+  'POST sources': {body: {kind: import('../sources/types.ts').SourceType; name: string; config?: Record<string, unknown>}; response: {id: string}}
+
+  'GET source-bots': {response: {bot: string; kind: string; name?: string}[]}
+  'DELETE sources/:id': {body: {revision: number}; response: {removed: true; revision: number}}
 
   'GET collaboration': {response: ReturnType<import('./collaboration.ts').Collaboration['view']>}
   'PUT collaboration': {body: {revision: number; notes: import('./collaboration.ts').CollaborationNote[]}; response: ReturnType<import('./collaboration.ts').Collaboration['replace']>}

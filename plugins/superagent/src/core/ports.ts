@@ -21,7 +21,7 @@ export interface Policy {
   /** Re-check a mandate's gate-layer basis under this policy, such as before an ended ticket resumes. */
   revalidate(mandate: Mandate): boolean
   /** Whether an inferred candidate may be accepted on the rules its assessment matched: assessments accept, and each rule is enabled. */
-  admitsInferred(rules: readonly string[]): boolean
+  admitsInferred(rules: readonly string[], source?: string): boolean
   /** How long an assessor may take before an eval is recorded as unavailable. */
   evalTimeoutMs: number
 }
