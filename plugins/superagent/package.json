@@ -10,9 +10,22 @@
     "./client": "./src/client/index.tsx",
     "./package.json": "./package.json"
   },
-  "files": ["src", "cordis.patch.yml", "README.md", "PARITY.md", "THIRD_PARTY_NOTICES.md"],
+  "files": [
+    "src",
+    "cordis.patch.yml",
+    "README.md",
+    "PARITY.md",
+    "THIRD_PARTY_NOTICES.md"
+  ],
   "dsh": {
-    "client": {"platform": "web"},
-    "bundle": {"patch": "./cordis.patch.yml"}
+    "client": {
+      "platform": "web"
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "dependencies": {
+    "fast-xml-parser": "5.11.1"
   }
 }

@@ -10,6 +10,7 @@ import type { ChannelLink, ChannelLinks, SourceInstance, SourceKind, TriggerCont
  * Claims each registered kind's health entries on HealthBoard and mediates access to source channels, links, environment variables, and thread context readers for Runtime, Settings, Outbox, and MasterAssessor.
  */
 export class SourceRegistry implements SourceScope {
+  private readonly factories = new Map<string, (id: string) => SourceKind>()
   private readonly kinds = new Map<string, SourceKind>()
   private readonly health = new Map<string, HealthEntry>()
   constructor(private readonly settings: () => Settings, private readonly board: Pick<HealthBoard, 'claim'> = new HealthBoard(),
@@ -39,6 +40,17 @@ export class SourceRegistry implements SourceScope {
   healthEntries(names: readonly string[]): Map<string, HealthEntry> {
     return new Map(names.flatMap(name => { const entry = this.health.get(name); return entry ? [[name, entry] as const] : [] }))
   }
+  registerFactory(type: string, factory: (id: string) => SourceKind): void {
+    this.factories.set(type, factory)
+    for (const [id, row] of Object.entries(this.settings().sources)) if (row.kind === type && !this.kinds.has(id)) this.register(factory(id))
+  }
+  create(type: string): string {
+    const factory = this.factories.get(type)
+    if (!factory) throw new Error('Unsupported Source type')
+    const id = `src-${crypto.randomUUID()}`
+    this.register(factory(id))
+    return id
+  }
   kind(id: string): SourceKind | undefined { return this.kinds.get(id) }
   /** Every registered kind's instance ordered by ID, followed by stored instances whose kind is not installed (with their config kept as stored). */
   instances(settings = this.settings()): (SourceInstance & { installed: boolean })[] {
@@ -50,10 +62,10 @@ export class SourceRegistry implements SourceScope {
     const kind = this.kinds.get(id)
     return kind ? this.resolve(kind, settings.sources[id]) as SourceInstance<C> : undefined
   }
-  validate(id: string, value: { enabled: boolean; config: unknown }): { enabled: boolean; config: Record<string, unknown> } {
+  validate(id: string, value: { enabled: boolean; config: unknown; name?: string; kind?: string; archived?: boolean }): { enabled: boolean; config: Record<string, unknown> } {
     const kind = this.kinds.get(id)
     if (!kind) throw new Error(`Source kind not installed: ${id}`)
-    return { enabled: value.enabled, config: kind.schema.parse(value.config) }
+    return { enabled: value.enabled, config: kind.schema.parse(value.config), ...(kind.type ? {kind: kind.type, name: value.name ?? '', archived: value.archived ?? false} : {}) }
   }
   /** Validates each Source's part of a submitted Policy against its kind; policy parts for uninstalled Source kinds are kept as stored. */
   validatePolicy(parts: Record<string, Record<string, unknown>>): Record<string, Record<string, unknown> & { allowed: { id: string; name?: string | undefined }[] }> {
@@ -130,8 +142,8 @@ export class SourceRegistry implements SourceScope {
     return kind.scope ? kind.scope({ meta: input.meta }, instance.config) : { listened: true, observed: false }
   }
   /** Falls back to schema defaults and disables the instance when stored configuration fails validation. */
-  private resolve(kind: SourceKind, stored: { enabled: boolean; config: Record<string, unknown> } | undefined): SourceInstance {
+  private resolve(kind: SourceKind, stored: Settings['sources'][string] | undefined): SourceInstance {
     const parsed = kind.schema.safeParse(stored?.config ?? {})
-    return { id: kind.kind, kind: kind.kind, enabled: parsed.success && (stored?.enabled ?? kind.defaultEnabled ?? true), config: parsed.success ? parsed.data : kind.schema.parse({}) }
+    return { id: kind.kind, kind: kind.type ?? kind.kind, name: stored?.name, archived: stored?.archived, enabled: !stored?.archived && parsed.success && (stored?.enabled ?? kind.defaultEnabled ?? true), config: parsed.success ? parsed.data : kind.schema.parse({}) }
   }
 }

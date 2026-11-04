@@ -27,6 +27,7 @@ export function environmentOf(input: { deployment: Deployment | undefined; sourc
   const executor: Record<string, string> = ticket ? { DSH_SUPERAGENT_DIR: ticket.directory, DSH_SUPERAGENT_NAME: ticket.name, DSH_SUPERAGENT_TICKET: ticket.id } : {}
   const result: Variable[] = EXECUTOR_VARIABLES.filter(spec => !spec.ticket || ticket).map(spec => ({ key: spec.key, value: executor[spec.key] ?? '', description: spec.description, owner: 'executor' }))
   for (const { kind, environment, config } of sources.environments(settings)) {
+    if (kind.kind === 'github' && trigger?.source !== 'github') continue
     const values = environment.values({ deployment, config, ...trigger ? { trigger } : {} })
     if (!Object.keys(values).length) continue
     for (const spec of environment.variables) result.push({ key: spec.key, value: values[spec.key] ?? '', description: spec.description, owner: kind.kind })

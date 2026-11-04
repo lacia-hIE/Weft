@@ -3,17 +3,19 @@
 import { useEffect, useState } from 'react'
 import type { FieldSpec } from '../sources/kind.ts'
 import { usePoll, type DroppedReply, type SourceStatusRow, type SourceView } from './api.ts'
-import { DisclosureRow, Dot, Icon, InfoTip, Switch, Tag } from './controls.tsx'
+import {SourceCredentials} from './source-credentials.tsx'
+import {Select} from './select.tsx'
+import { Button, Input, DisclosureRow, Dot, Icon, InfoTip, Switch, Tag } from './controls.tsx'
 import {GithubIntegration, type DeploymentForm} from './deployment.tsx'
 import { SaveBar } from './draft.tsx'
 import { sourceMark } from './marks.ts'
 import { usePanel, usePanelData } from './provider.tsx'
 import { setupPage, settingsRoute, type Route } from './route.ts'
-import { ConfigHistory, Fields, SourceField, useBlockDraft, useSettings } from './settings-kit.tsx'
+import { ConfigHistory, Field, Fields, SourceField, useBlockDraft, useSettings } from './settings-kit.tsx'
 import { actorName, healthText, localized, readableMarkers, reasonLabel, valueLabel, when } from './text.ts'
 import { CheckSetupButton, Hint, LabelValue, LoadState, SetupMessage, StatusHead, When } from './widgets.tsx'
 
-function SourceCard({ source }: { source: SourceView }) {
+function SourceCard({ source, form }: { source: SourceView; form?: DeploymentForm }) {
   const { t, call } = usePanel()
   const { running } = usePanelData()
   const { reload } = useSettings()
@@ -35,6 +37,7 @@ function SourceCard({ source }: { source: SourceView }) {
   const advanced = source.fields.filter(spec => spec.advanced)
   return <form id={`dt-source-${source.id}`} className="dt-card" onSubmit={event => { void draft.submit(event) }}>
     <Fields disabled={draft.busy}>
+      {source.value.kind && <Field label={t('sourceInstanceName')}><Input value={value.name ?? ''} onChange={event => draft.edit({...value, name: event.target.value})}/></Field>}
       <div className="dt-card-head">
         <div className="dt-row-main">
           <div className="dt-row-title">
@@ -55,6 +58,8 @@ function SourceCard({ source }: { source: SourceView }) {
         <div className="dt-disclosure-body">{advanced.map(field)}</div>
       </DisclosureRow>}
     </Fields>
+    {['github-webhook', 'gitlab', 'feed'].includes(source.kind) && <SourceCredentials id={source.id} kind={source.kind} form={form}/>}
+    {source.value.kind && <div><Button variant="ghost" size="sm" onClick={() => draft.edit({...value, enabled: false, archived: true})}>{t('sourceArchive')}</Button></div>}
     <SaveBar {...draft} status={restarts && running > 0 ? t('restartInterrupts', { count: running }) : undefined}
       onDiscard={draft.discard} />
   </form>
@@ -62,9 +67,21 @@ function SourceCard({ source }: { source: SourceView }) {
 
 export function SourceSettings({ focus, form }: { focus?: string; form?: DeploymentForm }) {
   const { sources } = useSettings().settings
+  const {reload} = useSettings(), {call, t, notify} = usePanel()
+  const [kind, setKind] = useState<'github-webhook' | 'gitlab' | 'feed'>('github-webhook'), [name, setName] = useState(''), [busy, setBusy] = useState(false)
+  const add = async () => {
+    setBusy(true)
+    try {const created = await call('POST sources', {body: {kind, name: name.trim() || (kind === 'github-webhook' ? 'GitHub' : kind === 'gitlab' ? 'GitLab' : 'RSS / Atom')}});setName('');await reload();document.getElementById(`dt-source-${created.id}`)?.scrollIntoView({block: 'start'})}
+    catch (failure) {notify(String(failure))}
+    finally {setBusy(false)}
+  }
   useEffect(() => { if (focus) document.getElementById(`dt-source-${focus}`)?.scrollIntoView?.({ block: 'start' }) }, [focus])
   return <div className="dt-form">
-    {sources.map(source => <div key={source.id} className="dt-form"><SourceCard source={source} />{source.id === 'github' && <GithubIntegration form={form}/>}</div>)}
+    <div className="dt-card dt-form"><div className="dt-grid3">
+      <Field label={t('sourceType')}><Select value={kind} placeholder={t('sourceType')} options={[{value: 'github-webhook', label: 'GitHub'}, {value: 'gitlab', label: 'GitLab'}, {value: 'feed', label: 'RSS / Atom'}]} onChange={value => setKind(value as typeof kind)}/></Field>
+      <Field label={t('sourceInstanceName')}><Input value={name} onChange={event => setName(event.target.value)}/></Field>
+    </div><div><Button variant="outline" disabled={busy} onClick={() => {void add()}}>{t('sourceAdd')}</Button></div></div>
+    {sources.filter(source => !source.value.archived).map(source => <div key={source.id} className="dt-form"><SourceCard source={source} form={form} />{source.id === 'github' && <GithubIntegration form={form}/>}</div>)}
     <ConfigHistory blocks={['source:']} />
   </div>
 }

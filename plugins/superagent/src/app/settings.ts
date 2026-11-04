@@ -43,10 +43,10 @@ const BLOCKS: Record<'policy' | 'eval' | 'executor' | 'source', Block> = {
     guard: (current, candidate, origin) => { if (origin !== 'panel' && environment(current) !== environment(candidate)) throw new UserError('panelOnlyEnvironment') },
   },
   source: {
-    parse: (value, sources, id) => sources.validate(id, z.object({ enabled: z.boolean(), config: z.unknown() }).parse(value)),
+    parse: (value, sources, id) => sources.validate(id, z.object({ enabled: z.boolean(), config: z.unknown(), kind: z.string().optional(), name: z.string().trim().max(80).optional(), archived: z.boolean().optional() }).parse(value)),
     merge: (settings, value, id) => ({ ...settings, sources: { ...settings.sources, [id]: value as SettingsValue['sources'][string] } }),
     // Only the management panel may switch source accounts.
-    guard: (current, candidate, origin) => { if (origin !== 'panel' && setupChanged(current, candidate)) throw new UserError('panelOnlyAccounts') },
+    guard: (current, candidate, origin) => { if (origin !== 'panel' && JSON.stringify(current.sources) !== JSON.stringify(candidate.sources)) throw new UserError('panelOnlyAccounts') },
   },
 }
 
@@ -248,7 +248,7 @@ export class Settings {
   async refreshLabels(id: string): Promise<{ added: string[] }> {
     const { store, sources } = this.host
     const instance = sources.instance(id)
-    const kind = instance && sources.kind(instance.kind)
+    const kind = instance && sources.kind(instance.id)
     if (!kind?.refreshLabels) throw new UserError('noLabels')
     const before = store.get(KV.sources.labels(id)) ?? {}
     const after = await kind.refreshLabels(this.host.sourceHost)

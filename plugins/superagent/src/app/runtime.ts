@@ -16,6 +16,7 @@ import { feishuKind } from '../sources/feishu.ts'
 import { IM_CHANNELS, ImEventSchema, imKind, imTrigger, type ImChannel } from '../sources/im.ts'
 import type { SourceKind } from '../sources/kind.ts'
 import { health, type Health, type SourceContext, type SourceHost } from '../sources/host.ts'
+import {RepositoryEvents, EVENT_TYPES} from '../sources/repository-events.ts'
 import { requestKind } from '../sources/request.ts'
 import { submitRequest, appendRequest } from './requests.ts'
 import { SourceRegistry } from '../sources/registry.ts'
@@ -76,6 +77,7 @@ export type HostContext = Context & HostServices
 export class Runtime implements SourceHost {
   readonly store: Store
   readonly setup: Setup
+  readonly repositoryEvents: RepositoryEvents
   readonly collaboration: Collaboration
   readonly prompts: Prompts
   readonly effects: Effects
@@ -178,6 +180,8 @@ export class Runtime implements SourceHost {
     const feishu = feishuKind(ctx.weftIm), weixin = imKind('weixin', ctx.weftIm), qq = imKind('qq', ctx.weftIm), email = imKind('email', ctx.weftIm)
     this.imKinds = { feishu, weixin, qq, email }
     this.disposers.push(this.sources.register(feishu), this.sources.register(weixin), this.sources.register(qq), this.sources.register(email))
+    this.repositoryEvents = new RepositoryEvents({store, context: id => this.context({kind: id, health: [id]}), secret: (id, name) => config.sourceSecrets[`${id}-${name}`] ?? ''})
+    for (const type of EVENT_TYPES) this.sources.registerFactory(type, id => this.repositoryEvents.kind(id, type))
     this.disposers.push(ctx.weftIm.consume({ message: (bot, event) => this.imMessage(bot, event) }))
     this.reportIm()
     this.ready = this.initialize()
@@ -308,6 +312,10 @@ export class Runtime implements SourceHost {
     if (!this.setup.githubConfigured() && this.store.settings().sources.github?.enabled) await this.setup.run(this.store.settings())
     this.refreshImBots()
     await (this.polling ??= pollDue(this.githubContext, this.lifetime).finally(() => { this.polling = undefined }))
+    for (const instance of this.sources.instances()) {
+      const kind = this.sources.kind(instance.id)
+      if (kind?.poll) await kind.poll(this, this.lifetime)
+    }
     await this.executor.reconcile()
     await this.drive()
   }
@@ -346,7 +354,11 @@ export class Runtime implements SourceHost {
   private httpHost(): HttpHost {
     const runtime = this
     const { store, sources, prompts, sessions, settings, engine, executor, machine, masterId, sourceLinks, setup, passes } = this
-    return { collaboration: this.collaboration, store, sources, prompts, sessions, settings, engine, executor, remote: executor.remote, get health() { return runtime.health }, machine, masterId, get ready() { return runtime.ready }, sourceLinks,
+    return { repositoryEvents: this.repositoryEvents,
+      sourceSecret: (id, name) => this.config.sourceSecrets[`${id}-${name}`] ?? '',
+      sourceSecrets: () => Object.fromEntries(sources.instances().filter(instance => EVENT_TYPES.includes(instance.kind as never)).map(instance => [instance.id,
+        {webhook: !!this.config.sourceSecrets[`${instance.id}-webhook`], token: !!this.config.sourceSecrets[`${instance.id}-token`], feed: !!this.config.sourceSecrets[`${instance.id}-feed`]}])),
+      collaboration: this.collaboration, store, sources, prompts, sessions, settings, engine, executor, remote: executor.remote, get health() { return runtime.health }, machine, masterId, get ready() { return runtime.ready }, sourceLinks,
       secrets: () => ({ githubToken: !!this.config.githubToken, webhookSecret: !!this.config.webhookSecret }), managementKey: () => this.config.managementKey, webhookSecret: () => this.config.webhookSecret, wake: delivery => this.wake(delivery), settled: () => this.drive(),
       get deployment() { return setup.githubDeployment }, get setupProblem() { return setup.problem },
       configured: () => setup.configured(), links: () => runtime.links(), ticketEnvironment: ticket => runtime.ticketEnvironment(ticket),

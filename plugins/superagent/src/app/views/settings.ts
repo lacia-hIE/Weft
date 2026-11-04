@@ -28,11 +28,11 @@ export function settingsView(store: Store, sources: SourceRegistry, health: Heal
     blocks: { policy: block('policy', settings.policy), eval: block('eval', settings.eval), executor: block('executor',
       settings.executor) },
     sources: sources.instances(settings).map(instance => {
-      const kind = sources.kind(instance.kind)
+      const kind = sources.kind(instance.id)
       const problem = problemOf(instance.id, setup)
       const { id, title } = sourceHealth(sources, instance, health)
-      return { id, kind: instance.kind, title, description: kind?.description ?? { zh: '', en: '' }, installed: instance.installed,
-        value: { enabled: instance.enabled, config: instance.config }, revision: store.blockRevision(`source:${instance.id}`),
+      return { id, kind: instance.kind, title: instance.name ? {zh: instance.name, en: instance.name} : title, description: kind?.description ?? { zh: '', en: '' }, installed: instance.installed,
+        value: { enabled: instance.enabled, config: instance.config, ...(kind?.type ? {kind: kind.type, name: instance.name ?? '', archived: instance.archived ?? false} : {}) }, revision: store.blockRevision(`source:${instance.id}`),
         restarts: [] as readonly string[], fields: kind?.fields ?? [], facts: kind?.facts?.(setup.deployment) ?? {},
         labels: store.get(KV.sources.labels(instance.id)) ?? {}, ...problem ? { problem } : {}, ...policyOf(sources, instance.id, health) }
     }),

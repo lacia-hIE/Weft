@@ -11,7 +11,7 @@ import { preview } from './text.ts'
 export type HealthMap = Record<string, Health>
 /** Resolves health entries for a Source instance, treating stale `sourceOff` entries on an enabled Source as `starting`. */
 export function sourceHealth(sources: SourceRegistry, instance: SourceInstance, health: HealthMap) {
-  const kind = sources.kind(instance.kind)
+  const kind = sources.kind(instance.id)
   const starting: Health = { state: 'starting', detail: '' }
   const parts = (kind?.health ?? []).map(name => {
     const entry = health[name]

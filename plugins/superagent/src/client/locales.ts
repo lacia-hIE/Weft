@@ -6,6 +6,19 @@ import { SETUP_PROBLEMS } from '../setup.ts'
 import { HEALTH_TEXT } from '../sources/host.ts'
 
 const TEXT = {
+  sourceType: ['来源类型', 'Source type'],
+  sourceInstanceName: ['来源名称', 'Source name'],
+  sourceAdd: ['添加来源', 'Add Source'],
+  sourceArchive: ['移除来源，保留历史', 'Remove Source and retain history'],
+  sourceWebhookSecret: ['Webhook 共享密钥', 'Webhook shared secret'],
+  sourceFeedAddress: ['RSS / Atom 订阅地址（私密）', 'RSS / Atom address (private)'],
+  sourceApiCredential: ['API 凭据（可选）', 'API credential (optional)'],
+  sourceSaveSecret: ['保存此凭据', 'Save this credential'],
+  sourceCallback: ['Webhook 回调地址', 'Webhook callback URL'],
+  sourceGenerateSecret: ['生成密钥并复制', 'Generate and copy secret'],
+  sourceSecretCopied: ['已复制密钥，请保存后填入平台的 Webhook 设置。', 'Secret copied. Save it here, then use it in the platform webhook settings.'],
+  sourceGitlabSecretHint: ['GitLab Webhook 使用 Secret token。订阅地址中的认证信息按凭据保存，不进入来源设置历史。', 'Use the GitLab webhook Secret token field. Subscription addresses are stored as credentials, outside Source settings history.'],
+  sourceCredentialsHint: ['GitHub Webhook 使用 Secret；订阅地址中的认证信息按凭据保存，不进入来源设置历史。', 'Use the GitHub webhook Secret field. Subscription addresses are stored as credentials, outside Source settings history.'],
   automaticExecutor: ['由主 Agent 选择执行器', 'Let the main Agent choose'],
   collaborationTitle: ['协作约定', 'Collaboration notes'],
   collaborationIntro: ['主 Session 按用户明确要求和执行反馈维护约定，分派时读取相关范围。约定不增加权限；可在这里纠正、移除或恢复历史版本。', 'The main Session maintains scoped conventions from explicit requests and execution reports. Notes supply context without granting access. Edit, remove or restore them here.'],

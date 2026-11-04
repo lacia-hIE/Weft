@@ -26,10 +26,14 @@ import { settingsView } from './views/settings.ts'
 import { sourcesStatus, type SetupState } from './views/sources.ts'
 import { decisionList, search, threadDetail, threadList } from './views/threads.ts'
 import { executorLoad, ticketDetail, ticketList } from './views/tickets.ts'
+import {EVENT_TYPES, type RepositoryEvents} from '../sources/repository-events.ts'
 import {CollaborationConflict, type Collaboration} from './collaboration.ts'
 import { ExecutorRequestError, type RemoteExecutor } from '../executor/remote.ts'
 
 export interface HttpHost {
+  readonly repositoryEvents?: RepositoryEvents
+  sourceSecret?(id: string, name: 'webhook' | 'token' | 'feed'): string
+  sourceSecrets?(): Record<string, {webhook: boolean; token: boolean; feed: boolean}>
   readonly collaboration?: Collaboration
   appendRequest?(id: string, input: unknown): import('./api.ts').ApiResponse<'POST requests'>
   submitRequest?(input: unknown): import('./api.ts').ApiResponse<'POST requests'>
@@ -132,7 +136,7 @@ function machineView({ promptMaxChars, admissionContextMaxPages, admissionContex
 function setupView(runtime: HttpHost) {
   const resolved = runtime.deployment
   return {
-    machine: machineView(runtime.machine), secrets: runtime.secrets(), problem: null as SetupProblem | null, githubProblem: runtime.setupProblem ?? null,
+    machine: machineView(runtime.machine), secrets: runtime.secrets(), sourceSecrets: runtime.sourceSecrets?.() ?? {}, problem: null as SetupProblem | null, githubProblem: runtime.setupProblem ?? null,
     accounts: resolved ? { repository: resolved.repository, agent: resolved.github.login } : null,
   }
 }
@@ -202,6 +206,13 @@ function routes(runtime: HttpHost): Routes {
       const saved = runtime.collaboration.replace(await body())
       await runtime.sessions.refreshMain?.()
       return saved
+    },
+    'POST sources': async ({body}) => {
+      const input = z.object({kind: z.enum(EVENT_TYPES), name: z.string().trim().min(1).max(80)}).strict().parse(await body())
+      if (runtime.sources.instances().length >= 48) throw new RouteError(400, 'At most 48 Sources may be configured')
+      const id = runtime.sources.create(input.kind)
+      await runtime.settings.save(`source:${id}`, {kind: input.kind, name: input.name, enabled: false, config: {}}, 0, 'panel')
+      return {id}
     },
     'GET executors': () => runtime.remote?.list() ?? [],
     'POST executors': async ({ body }) => {
@@ -289,6 +300,23 @@ const WEBHOOK_SETTLE_MS = 2000, WEBHOOK_REPLY_MS = 8000
 export function registerHttp(ctx: HostContext, runtime: HttpHost): () => void {
   const table = routes(runtime)
   const disposers = [
+    ctx.webServer.register({kind: 'prefix', path: '/source-events', handler: async (req: HttpRequest, res: HttpResponse) => {
+      try {
+        if (req.method !== 'POST') {json(res, 405, {error: 'POST required'});return}
+        await runtime.ready
+        const match = /^\/source-events\/(src-[a-f0-9-]{36})$/.exec(new URL(req.url ?? '/', 'http://localhost').pathname)
+        const id = match?.[1], instance = id && runtime.sources.instance(id)
+        if (!id || !instance || !runtime.repositoryEvents || !EVENT_TYPES.includes(instance.kind as never)) {json(res, 404, {error: 'Source not found'});return}
+        const secret = runtime.sourceSecret?.(id, 'webhook') ?? '', bytes = await readBytes(req, 512 * 1024)
+        const verified = instance.kind === 'github-webhook' ? await verifiedWebhook(secret, bytes, header(req, 'x-hub-signature-256'))
+          : instance.kind === 'gitlab' && !!secret && same(secret, header(req, 'x-gitlab-token'))
+        if (!verified) {json(res, 401, {error: 'Unverified delivery'});return}
+        const delivery = header(req, 'x-github-delivery') || header(req, 'x-gitlab-event-uuid') || header(req, 'x-gitlab-webhook-uuid')
+        if (!delivery || delivery.length > 200) {json(res, 400, {error: 'Delivery identity required'});return}
+        await runtime.repositoryEvents.webhook(id, instance.kind as 'github-webhook' | 'gitlab' | 'feed', JSON.parse(new TextDecoder().decode(bytes)), delivery)
+        json(res, 202, {accepted: true});await runtime.settled()
+      } catch (error) {json(res, ...failure(error))}
+    }}),
     ctx.webServer.register({ kind: 'exact', path: '/github', handler: async (req: HttpRequest, res: HttpResponse) => {
       try {
         const body = await readBytes(req, 1 << 20)
