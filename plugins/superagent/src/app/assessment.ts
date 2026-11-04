@@ -263,6 +263,7 @@ export class MasterAssessor implements Assessor {
         body = JSON.stringify({ images: references, next_read: next, ...result.body })
       }
       else {
+        if (trigger.source.startsWith('src-')) throw new Error('Repository files for this Source belong to its selected Executor; use this Source discussion context for assessment, not the legacy GitHub integration')
         body = await readRepositoryPath(this.host.commands.withSignal(scoped), read.path!, read.resource === 'directory' ? 'directory' : 'file')
       }
       snapshots.set(cacheKey, body)

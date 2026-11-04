@@ -196,7 +196,11 @@ const ROUTES: readonly Route[] = [
     if (!models) throw new Error('Unknown model provider')
     return list(read, (offset, count) => models.slice(offset, offset + count))
   }],
-  ['github/', read => sourcePage(read, 'github', () => readGithub(read.host.commands.withSignal(read.signal), read.resource))],
+  ['github/', read => {
+    const ticket = read.ticketId && read.host.store.tickets.get(read.ticketId)
+    if (ticket && read.host.store.triggers.get(ticket.origin.triggerId)?.source.startsWith('src-')) throw new Error('This Source uses independent repository context; the legacy GitHub resource does not describe its repository')
+    return sourcePage(read, 'github', () => readGithub(read.host.commands.withSignal(read.signal), read.resource))
+  }],
   ['trigger/', async read => {
     const { host, rest, ticketId, offset, signal } = read
     if (!rest || rest.includes('/')) throw new Error('Unknown context resource')

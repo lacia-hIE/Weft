@@ -92,8 +92,9 @@ test('proactive assessments preserve an explicit local placement through the rea
     const tools=mainTools({store,engine,assessor,executors:remote,requestPass(){}} as never,{id:'main'})
     const decide=tools.find(tool=>tool.name==='orchestrator_eval_decide')!
     const at=new Date().toISOString()
-    engine.receive({id:'observed-copy-fix',source:'feed',threads:[{source:'feed',id:'issue-7'}],actor:{source:'feed',id:''},human:false,at,text:'Please replace the typo with the specified text.',meta:{}})
+    engine.receive({id:'observed-copy-fix',source:'src-private',threads:[{source:'src-private',id:'issue-7'}],actor:{source:'src-private',id:''},human:false,at,text:'Please replace the typo with the specified text.',meta:{}})
     engine.evaluateDue()
+    await assert.rejects(assessor.read({id:'main'},{trigger_id:'observed-copy-fix',resource:'file',path:'README.md',offset:0},new AbortController().signal),/selected Executor/)
     const args={trigger_id:'observed-copy-fix',executor_id:computer.id,decision:'accept',title:'Fix requested typo',worktree_name:'fix-observed-typo',scope:'Specified copy fix',intent_evidence:'Replace the typo',reason:'Settled implementation request',
       direction:{implementation_requested:true,target_basis:'specified',requires_design_decision:false,evidence:'Exact replacement provided'},
       rule_assessments:store.settings().policy.rules.filter(rule=>rule.enabled).map((rule,index)=>({rule_id:rule.id,matched:index===0,reason:index===0?'Copy correction':'Other rule'}))}
