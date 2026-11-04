@@ -140,7 +140,7 @@ export function SourceSettings({focus, form}: {focus?: string; form?: Deployment
           <span className="dt-connection-status"><Dot state={mark.dot}/>{mark.label}</span>
           <Switch checked={source.value.enabled} disabled={busy === source.id} label={t('sourceEnable', {name: localized(t, source.title)})} onChange={enabled => {void toggle(source, enabled)}}/>
           <Button size="sm" variant="outline" aria-label={`${t('sourceEdit')} ${localized(t, source.title)}`} onClick={() => setSelected(source.id)}>{t('sourceEdit')}</Button>
-          {source.id !== 'request' && <ConfirmButton label={t('sourceDeleteNamed', {name: localized(t, source.title)})} title={t('sourceDelete')} message={t('sourceDeleteHint', {name: localized(t, source.title)})} icon="trash" onConfirm={() => remove(source)}/>}
+          <span className="dt-connection-delete">{source.id !== 'request' && <ConfirmButton iconOnly label={t('sourceDeleteNamed', {name: localized(t, source.title)})} title={t('sourceDelete')} message={t('sourceDeleteHint', {name: localized(t, source.title)})} icon="trash" onConfirm={() => remove(source)}/>}</span>
         </li>})}
       </ul>
       {!matches.length && <div className="dt-connection-empty"><Icon name="plus" size={24}/><p>{t(connected.length ? 'sourceNoMatches' : 'sourceEmpty')}</p></div>}

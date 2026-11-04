@@ -407,9 +407,10 @@ a.dt-btn, a.dt-btn:hover { text-decoration: none; }
 .dt-connection-name { flex: 1; min-width: 100px; display: grid; gap: 4px; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .dt-connection-name strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 500; }
 .dt-connection-name small { color: var(--dsw-alias-label-caption); overflow-wrap: anywhere; font-size: 12px; }
-.dt-connection-status { display: flex; align-items: center; gap: 6px; color: var(--dsw-alias-label-caption); font-size: 12px; white-space: nowrap; }
+.dt-connection-status { display: flex; align-items: center; gap: 6px; width: 100px; flex: none; color: var(--dsw-alias-label-caption); font-size: 12px; white-space: nowrap; }
 .dt-connection-status .dt-dot { margin: 0; }
-.dt-connection-row .dt-btn { max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dt-connection-delete { display: inline-flex; justify-content: center; width: 32px; flex: none; }
+.dt-connection-row > .dt-btn { flex: none; }
 .dt-connection-empty { display: grid; justify-items: center; gap: 8px; padding: 40px 20px; color: var(--dsw-alias-label-caption); border: .5px dashed var(--dsw-alias-border-l3); border-radius: 12px; }
 .dt-connector-modal { width: min(640px, 100%); }
 .dt-connector-catalog { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }

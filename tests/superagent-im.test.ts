@@ -141,8 +141,12 @@ test('a Feishu bot that dsh-im assigns to dsh-superagent turns a direct message 
     configured=await readConnections();const currentPolicy=configured.blocks.policy;
     assert.equal((await panel('settings/policy',{method:'PUT',body:JSON.stringify({revision:currentPolicy.revision,value:{...currentPolicy.value,sources:{...currentPolicy.value.sources,[connection.id]:{allowed:[{id:'ou_alice'}],mode:'off'}}}})})).status,200);
     const nextEvent=JSON.parse(event);nextEvent.header.event_id=crypto.randomUUID();nextEvent.event.message.message_id='om_connected_request';nextEvent.event.message.create_time=String(Date.now());
-    await hook(im.name,'/feishu',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(nextEvent)});
-    const nextAck=await waitFor(()=>replies.find(reply=>reply.path==='/open-apis/im/v1/messages/om_connected_request/reply'&&JSON.stringify(reply.body).includes('FEISHU_ACK')),'acknowledgement through an independent Feishu connection');
+    const nextAck=await waitFor(async()=>{
+      assert.equal((await hook(im.name,'/feishu',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(nextEvent)})).status,200);
+      return replies.find(reply=>reply.path==='/open-apis/im/v1/messages/om_connected_request/reply'&&JSON.stringify(reply.body).includes('FEISHU_ACK'));
+    },'acknowledgement through an independent Feishu connection').catch(async(error:Error)=>{
+      throw new Error(`${error.message}; sources: ${await(await panel('sources')).text()}; triggers: ${await(await panel('threads?filter=all')).text()}; overview: ${await(await panel('overview')).text()}`);
+    });
     assert.equal(nextAck.authorization,'Bearer feishu-token');
     const threads=await(await panel('threads?filter=all')).text();assert.equal(threads.includes(connection.id),true,'native IM delivery is scoped to the configured Source identity');
 

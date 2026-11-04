@@ -235,7 +235,7 @@ function routes(runtime: HttpHost): Routes {
     'POST executors/:id/revoke': ({ params }) => { runtime.remote?.revoke(params.id); return { revoked: true } },
     'GET state': () => stateView(runtime),
     'GET overview': () => overview(views(runtime), runtime.health, policyVersion(store.settings()),
-      executorLoad(store, runtime.executor.activeCount())),
+      executorLoad(store, runtime.executor.activeCount()), runtime.setupProblem),
     'GET search': ({ query }) => search(views(runtime), query.q ?? '', runtime.sourceLinks),
     'GET sources': () => sourcesStatus(views(runtime), runtime.health, setupState(runtime)),
     'GET settings': () => settingsView(store, runtime.sources, runtime.health, setupState(runtime)),

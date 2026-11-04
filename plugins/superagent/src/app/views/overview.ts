@@ -46,7 +46,10 @@ export function overview(host: ViewHost, health: HealthMap, policyVersionValue: 
   // Exclude source-owned and policy-sync health entries so only core runtime errors surface as `runtime-error`.
   const sourceParts = new Set(instances.flatMap(instance => sources.kind(instance.id)?.health ?? []))
   const problems = [
-    ...(setup ? [{ kind: 'setup' as const, ...setup }] : []),
+    ...(setup && !['repositoryUnset', 'agentTokenUnset'].includes(setup.code)
+      ? setup.place === 'github' ? [{kind: 'source-error' as const, source: {
+        id: 'github', title: {zh: 'GitHub', en: 'GitHub'}, health: {state: 'error' as const, detail: setup.detail},
+      }}] : [{kind: 'setup' as const, ...setup}] : []),
     ...(running.length ? [] : [{ kind: 'no-source' as const }]),
     // Only allowed senders can originate work, so empty allowlists mean no request can ever become a ticket.
     ...(anyoneAllowed(settings) || sources.instance('request')?.enabled ? [] : [{ kind: 'no-allowed' as const }]),

@@ -144,9 +144,28 @@ test('assessment mode follows each Source and removing a Source invalidates pend
     assert.equal(policy.admitsInferred([settings.policy.rules[0]!.id],a),true);assert.equal(policy.admitsInferred([settings.policy.rules[0]!.id],b),false)
     const result={decision:'accept' as const,title:'Typo',scope:'Fix',reason:'Requested',intent_evidence:'Exact copy',worktree_name:'fix-copy',direction:{implementation_requested:true,target_basis:'specified',requires_design_decision:false,evidence:'Settled'},rule_assessments:settings.policy.rules.map((rule,index)=>({rule_id:rule.id,matched:index===0,reason:'Copy fix'}))}
     assert.equal(assessmentOutcome(result,settings,'inferred',a).kind,'accept');assert.equal(assessmentOutcome(result,settings,'inferred',b).kind,'ignore')
+    const {Engine}=await import('../plugins/superagent/src/core/index.ts')
+    const engine=new Engine({repo:h.store,scope:h.sources,policy:()=>settingsPolicy(h.store.settings(),h.sources),assessor:{request(){}},executor:{start(){},deliver(){},stop(){}},outbox:{send(){},withdraw(){},status:()=> 'sent'}})
+    const accept={kind:'accept' as const,title:'Specified copy fix',scope:'Exact text replacement',reason:'Requested',rules:[settings.policy.rules[0]!.id],name:'fix-copy'}
+    engine.receive(trigger(a));engine.evaluateDue();assert.equal(engine.decide(a,accept).kind,'accept','the Engine uses the Source override even when the global default is off')
+    engine.receive(trigger(b));engine.evaluateDue();assert.throws(()=>engine.decide(b,accept),/explicit|Explicit/,'an observed Source cannot be accepted automatically')
+
     const removed={...settings,sources:{...settings.sources,[a]:{...settings.sources[a]!,enabled:false,archived:true}}}
     assert.notEqual(policyVersion(settings),policyVersion(removed));assert.equal(h.sources.scope({source:a,meta:{}},removed).listened,false)
     const renamed={...settings,sources:{...settings.sources,[a]:{...settings.sources[a]!,name:'Renamed'}}};assert.equal(policyVersion(settings),policyVersion(renamed))
     const validated=h.sources.validatePolicy(settings.policy.sources);assert.equal(validated[a]!.mode,'auto')
+  } finally {h.sql.close()}
+})
+
+test('optional GitHub setup is not a system problem and actual authentication failures remain Source-local',async()=>{
+  const {overview}=await import('../plugins/superagent/src/app/views/overview.ts'),{SetupError}=await import('../plugins/superagent/src/setup.ts')
+  const h=harness()
+  try {
+    const view={store:h.store,sources:h.sources,links:()=>({url:'',label:{zh:'',en:''}})}
+    const pending=overview(view as never,{},'policy',{running:0,queued:0},new SetupError('agentTokenUnset').problem)
+    assert.equal(pending.problems.some(problem=>problem.kind==='setup'||problem.kind==='source-error'),false)
+    const rejected=overview(view as never,{},'policy',{running:0,queued:0},new SetupError('agentTokenRejected').problem)
+    assert.equal(rejected.problems.some(problem=>problem.kind==='setup'),false)
+    assert.equal(rejected.problems.some(problem=>problem.kind==='source-error'&&problem.source.id==='github'),true)
   } finally {h.sql.close()}
 })
