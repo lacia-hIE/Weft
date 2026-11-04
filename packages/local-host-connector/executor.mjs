@@ -17,7 +17,7 @@ async function privateWrite(file,value){
 
 /** One native DSH, one persisted mailbox; reconnects do not replay accepted prompts. */
 export function createExecutorController({ctx,agentOwner=ctx,file,request=fetch}){
-  let data={accepting:false,maxWorkers:1,jobs:{}},status='unpaired',closed=false,loop,stop;
+  let data={accepting:false,maxWorkers:1,jobs:{}},status='unpaired',closed=false,reconciled=true,loop,stop;
   let saving=Promise.resolve(),actions=Promise.resolve();const disposers=[],configured=new WeakSet(),handles=new Map();
   const save=()=>{const copy=JSON.parse(JSON.stringify(data));return saving=saving.catch(()=>{}).then(()=>privateWrite(file,copy));};
   const serial=run=>{const result=actions.then(run);actions=result.catch(()=>{});return result;};
@@ -130,11 +130,14 @@ export function createExecutorController({ctx,agentOwner=ctx,file,request=fetch}
     const draining=agent?ctx.subagents.drainDescendants([agent]):Promise.resolve();
     agent?.cancel({kind:'user'},{keepInbox:false});
     const stopProcesses=async()=>{
-      for(const owner of new Set([...owners,...members(job)]))for(const item of ctx.jobs.list(owner))if(item.owner===owner&&['running','stopping'].includes(item.status)){
+      const processes=[...new Set([...owners,...members(job)])].flatMap(owner=>ctx.jobs.list(owner).filter(item=>item.owner===owner&&['running','stopping'].includes(item.status)).map(item=>({owner,item})));
+      const results=await Promise.allSettled(processes.map(async({owner,item})=>{
         ctx.jobs.kill(item.id,owner,'Assignment ended');
         const settled=await ctx.jobs.wait(item.id,10_000,owner);
         if(['running','stopping'].includes(settled.status))throw new Error('Background process has not stopped; cancellation will be retried');
-      }
+      }));
+      const failures=results.filter(result=>result.status==='rejected').map(result=>result.reason);
+      if(failures.length)throw new AggregateError(failures,'Some Assignment processes have not stopped; cancellation will be retried');
     };
     // Observe the drain immediately, even if process cleanup fails first.
     void draining.catch(()=>{});
@@ -240,7 +243,7 @@ export function createExecutorController({ctx,agentOwner=ctx,file,request=fetch}
       await sleep(delay,signal);
     }
   }
-  const start=()=>{if(closed||!data.endpoint||stop)return;stop=new AbortController();loop=run(stop.signal);};
+  const start=()=>{if(closed||!reconciled||!data.endpoint||stop)return;stop=new AbortController();loop=run(stop.signal);};
   const disconnect=async()=>{stop?.abort();await loop;stop=undefined;status='stopped';};
   return {
     inspect:async sessionId=>{
@@ -266,7 +269,7 @@ export function createExecutorController({ctx,agentOwner=ctx,file,request=fetch}
           else if(job.state==='running'||Object.values(job.children).some(child=>child.active))await change(job,{state:'failed',error:'Local DSH restarted during execution. Retry this Ticket to resume its retained Session and files.'});
         }
         start();
-      }catch(error){if(error.code!=='ENOENT')status='configuration-error';}
+      }catch(error){if(error.code!=='ENOENT'){reconciled=false;status='configuration-error';}}
     }),
     pair:input=>serial(async()=>{
       if(Object.values(data.jobs).some(job=>job.state!=='stopped'))throw new Error('Stop or finish existing Assignments before pairing another executor');
@@ -277,14 +280,14 @@ export function createExecutorController({ctx,agentOwner=ctx,file,request=fetch}
       if(input.permissionPreset&&!['read-only','workspace-write','danger-full-access'].includes(input.permissionPreset))throw new Error('Invalid permission preset');
       await mkdir(input.root,{recursive:true});const root=await realpath(input.root);
       await disconnect();data={endpoint,pairingKey:code.pairingKey,root,accepting:false,maxWorkers:1,jobs:{},agentPreset:input.agentPreset?.trim()??'',permissionPreset:input.permissionPreset??''};
-      await save();start();
+      await save();reconciled=true;start();
     }),
     configure:input=>serial(async()=>{
       if(!data.endpoint)throw new Error('Pair this computer first');
       if(typeof input.accepting!=='boolean'||!Number.isInteger(input.maxWorkers)||input.maxWorkers<1||input.maxWorkers>16)throw new Error('Invalid execution settings');
       data.accepting=input.accepting;data.maxWorkers=input.maxWorkers;await save();
     }),
-    reconnect:()=>serial(async()=>{await disconnect();start();}),
+    reconnect:()=>serial(async()=>{if(!reconciled)throw new Error('Executor configuration or child catalogs could not be reconciled; repair them before reconnecting');await disconnect();start();}),
     disconnect:()=>serial(disconnect),
     close:()=>serial(async()=>{
       closed=true;await disconnect();

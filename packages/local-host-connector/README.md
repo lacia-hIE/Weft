@@ -17,7 +17,10 @@ The worker polls the existing plugin HTTPS endpoint every 15 seconds (one second
 device-scoped token exchanged from a ten-minute, single-use pairing code. It opens no inbound execution endpoint.
 Stopping the connection leaves native Agent work running; stop the Ticket and wait for confirmation to cancel it.
 Local DSH restarts retain Session history and files; interrupted work is reported failed for an explicit Ticket retry.
-The initial carrier disables Agent subdelegation and does not migrate active Sessions between computers.
+Native spawn/fork subagents inherit the Ticket tool limits and delegated local permissions. Local DSH controls
+their concurrency and depth. Only the root worker may change the cloud Ticket; stopping waits for the whole
+tree and its processes. Restart reconciliation retains child history without replaying unfinished prompts.
+Active Sessions remain on their original computer.
 
 The installation instructions below also describe the existing remote-workbench mode; its pairing is separate.
 

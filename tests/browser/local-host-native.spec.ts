@@ -96,6 +96,9 @@ test('published local DSH pairs in native settings, runs Files, Git and PTY and 
   const finished=await(await context.request.get(executorUrl)).json();
   expect(finished.jobs[0].children.length).toBeGreaterThan(0);
   expect(finished.jobs[0].children.every((child:any)=>!child.active)).toBe(true);
+  expect((await context.request.post(settingsUrl,{headers:{origin:'https://untrusted.invalid'},data:{action:'disconnect'}})).status()).toBe(403);
+  await page.getByRole('button',{name:'Stop connection',exact:true}).click();await expect(connectionStatus).toHaveText('Connection stopped');
+  await page.getByRole('button',{name:'Reconnect',exact:true}).click();await expect(connectionStatus).toHaveText('Connected',{timeout:30_000});
   const relayExecutor=base+'/local/web/api/weft-executor';
   const localState=async()=>await(await request.get(relayExecutor)).json();
   const inspect=async(sessionId:string)=>await(await request.post(relayExecutor,{data:{action:'inspect',sessionId}})).json();
@@ -135,7 +138,6 @@ test('published local DSH pairs in native settings, runs Files, Git and PTY and 
   expect((await localState()).jobs.find((job:any)=>job.ticketId===restarted).sessionId).toBe(retained);
   // Native session listing is independent from the cloud Ticket; it exists only on this computer.
   expect(nativeSession).toMatch(/^weft-/);
-  expect((await request.post(base+'/local/web/api/weft-local-host',{headers:{origin:'https://untrusted.invalid'},data:{action:'disconnect'}})).status()).toBe(403);
   expect((await request.get(base+'/local/web/api/weft-local-host')).status()).toBe(200);
   await rpc('workspace/create',{request:{path:project}});
   const created=await rpc('session/create',{request:{sessionId:crypto.randomUUID(),cwd:project}});const sessionId=created.sessionId;

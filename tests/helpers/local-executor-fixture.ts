@@ -31,7 +31,7 @@ export async function localExecutorFixture() {
     const report={name:'orchestrator_report',input:{state:'ready',summary:'LOCAL_EXECUTOR_READY'}}
     const retryTask=retrying&&history.includes('EXECUTOR_RESTART_ROOT')
     const marker=retryTask?'EXECUTOR_RETRY_CHILD_TASK':history.includes('EXECUTOR_CANCEL_ROOT')||history.includes('EXECUTOR_RESTART_ROOT')?'EXECUTOR_CANCEL_CHILD':'EXECUTOR_CHILD_TASK'
-    const delegate={name:'subagent',input:{description:'Local delegated proof',prompt:marker}}
+    const delegate={name:marker==='EXECUTOR_CHILD_TASK'?'subagent_fork':'subagent',input:{description:'Local delegated proof',prompt:marker}}
     const background={name:'bash',input:{command:'printf EXECUTOR_BACKGROUND_STARTED; sleep 300',description:'Run a cancellable delegated background process',run_in_background:true}}
     const call=managed?(child?(cancelChild&&!history.includes('EXECUTOR_BACKGROUND_STARTED')?background:!history.includes('LOCAL_EXECUTOR_FILE_CREATED')?write:undefined):!history.includes(marker)?delegate:history.includes('DELEGATED_WORK_DONE')?(!history.includes('LOCAL_EXECUTOR_READY')?report:undefined):undefined):undefined
     const text=child?'DELEGATED_WORK_DONE':'Waiting for the delegated worker.'

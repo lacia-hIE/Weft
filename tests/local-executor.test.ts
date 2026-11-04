@@ -134,3 +134,16 @@ test('retry resumes the same Session under a fresh native root and preserves chi
     const saved=JSON.parse(await readFile(file,'utf8'));assert.equal(saved.jobs[id].accepted.includes(attempt),true)
   }finally{await controller.close();await rm(directory,{recursive:true,force:true})}
 })
+
+test('unreadable descendant catalogs block reconnect without replaying child work',async()=>{
+  const directory=await mkdtemp(join(tmpdir(),'weft-bad-tree-')),file=join(directory,'executor.json'),host=native()
+  await import('node:fs/promises').then(fs=>fs.writeFile(file,JSON.stringify({endpoint,token,root:directory,accepting:true,maxWorkers:1,jobs:{root:{sessionId:'root',ticketId:ticket,assignmentId:assignment,state:'running',created:true,children:{},accepted:[],read:[],requested:[],revision:1}}})))
+  host.ctx.subagents.listDescendants=async()=>[{kind:'diagnostic',id:'child',parentId:'root',mode:'unknown'}]
+  let networkCalls=0
+  const controller=createExecutorController({ctx:host.ctx,file,request:async()=>{networkCalls++;throw new Error('No dispatch permitted')}})
+  try{
+    await controller.load();assert.equal(controller.snapshot().state,'configuration-error')
+    await assert.rejects(controller.reconnect(),/could not be reconciled/)
+    assert.equal(networkCalls,0);assert.equal(host.prompts.length,0)
+  }finally{await controller.close();await rm(directory,{recursive:true,force:true})}
+})
