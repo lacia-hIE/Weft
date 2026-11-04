@@ -115,7 +115,7 @@ export const POLICY_REVISION = 'mandate-v3'
  * Changes to models, concurrency, pause state, or polling intervals do not invalidate existing decisions.
  */
 export function policyVersion(settings: Settings): string {
-  return key(POLICY_REVISION, JSON.stringify({ rules: settings.policy.rules, mode: settings.eval.mode, sources: settings.policy.sources, receiving: Object.fromEntries(Object.entries(settings.sources).filter(([, row]) => row.enabled && !row.archived).map(([id, row]) => [id, row.config])) }))
+  return key(POLICY_REVISION, JSON.stringify({ rules: settings.policy.rules, mode: settings.eval.mode, sources: settings.policy.sources, receiving: Object.fromEntries(Object.entries(settings.sources).filter(([, row]) => row.enabled && !row.archived).map(([id, row]) => {const {intervalSeconds: _interval, failuresBeforeError: _failures, ...scope} = row.config;return [id, scope]})) }))
 }
 export function sourceMode(settings: Pick<Settings, 'policy' | 'eval'>, source?: string): Settings['eval']['mode'] {
   const override = source ? settings.policy.sources[source]?.mode : undefined

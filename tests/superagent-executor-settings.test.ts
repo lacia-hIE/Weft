@@ -65,7 +65,7 @@ test('executor selection persists without requiring GitHub setup', {timeout: 600
     assert.equal((await panel('settings/source:github','PUT',{revision:beforeLegacy.sources.find(row=>row.id==='github')!.revision,value:{enabled:true,config:{repository:'team/optional'}}})).status,200);
     const overview=await(await panel('overview')).json() as {problems:{kind:string;code?:string}[]};
     assert.equal(overview.problems.some(problem=>problem.kind==='setup'||problem.code==='agentTokenUnset'),false);
-    const state=await(await panel('state')).json() as {setup:{problem:unknown}};assert.equal(state.setup.problem,null);
+    const optionalGithubState=await(await panel('state')).json() as {setup:{problem:unknown}};assert.equal(optionalGithubState.setup.problem,null);
     const afterLegacy=await(await panel('settings')).json() as {sources:{id:string;revision:number}[]};
     await panel('settings/source:github','PUT',{revision:afterLegacy.sources.find(row=>row.id==='github')!.revision,value:{enabled:false,config:{repository:''}}});
     const latestSources=await(await panel('settings')).json() as {sources:{id:string;revision:number}[]};

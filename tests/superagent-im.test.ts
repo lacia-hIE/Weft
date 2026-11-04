@@ -127,5 +127,24 @@ test('a Feishu bot that dsh-im assigns to dsh-superagent turns a direct message 
     assert.equal(sources.find(row => row.id === 'feishu')?.state, 'ready');
     const sessions = (await api.call<{items: {title?: string}[]}>('session/list', {_request: {}})).items;
     assert.ok(!sessions.some(session => session.title?.startsWith('飞书 · ')), 'an assigned bot opens no IM Session');
+    // A configured connector instance uses its own Source identity through the native IM carrier.
+    const connections=await(await panel('source-bots')).json() as {bot:string;kind:string}[];assert.equal(connections.some(row=>row.bot==='feishu'),true);
+    const created=await panel('sources',{method:'POST',body:JSON.stringify({kind:'feishu',name:'Connected Feishu',config:{bot:'feishu'}})});
+    assert.equal(created.status,200,await created.clone().text());const connection=await created.json() as {id:string};
+    const readConnections=async()=>await(await panel('settings')).json() as {sources:{id:string;revision:number;value:Record<string,unknown>}[];blocks:{policy:{revision:number;value:{rules:unknown[];sources:Record<string,unknown>}}}};
+    let configured=await readConnections(),instance=configured.sources.find(row=>row.id===connection.id)!;
+    const duplicate=await panel(`settings/source:${connection.id}`,{method:'PUT',body:JSON.stringify({revision:instance.revision,value:{...instance.value,enabled:true}})});assert.equal(duplicate.status,400,'one active connection owns a bot delivery');
+    const old=configured.sources.find(row=>row.id==='feishu')!;
+    assert.equal((await panel('sources/feishu',{method:'DELETE',body:JSON.stringify({revision:old.revision})})).status,200);
+    configured=await readConnections();instance=configured.sources.find(row=>row.id===connection.id)!;
+    assert.equal((await panel(`settings/source:${connection.id}`,{method:'PUT',body:JSON.stringify({revision:instance.revision,value:{...instance.value,enabled:true}})})).status,200);
+    configured=await readConnections();const currentPolicy=configured.blocks.policy;
+    assert.equal((await panel('settings/policy',{method:'PUT',body:JSON.stringify({revision:currentPolicy.revision,value:{...currentPolicy.value,sources:{...currentPolicy.value.sources,[connection.id]:{allowed:[{id:'ou_alice'}],mode:'off'}}}})})).status,200);
+    const nextEvent=JSON.parse(event);nextEvent.header.event_id=crypto.randomUUID();nextEvent.event.message.message_id='om_connected_request';nextEvent.event.message.create_time=String(Date.now());
+    await hook(im.name,'/feishu',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(nextEvent)});
+    const nextAck=await waitFor(()=>replies.find(reply=>reply.path==='/open-apis/im/v1/messages/om_connected_request/reply'&&JSON.stringify(reply.body).includes('FEISHU_ACK')),'acknowledgement through an independent Feishu connection');
+    assert.equal(nextAck.authorization,'Bearer feishu-token');
+    const threads=await(await panel('threads?filter=all')).text();assert.equal(threads.includes(connection.id),true,'native IM delivery is scoped to the configured Source identity');
+
   } finally {await runtime.dispose();}
 });

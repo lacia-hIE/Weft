@@ -47,7 +47,7 @@ export function sourcesStatus(host: ViewHost, health: HealthMap, setup: SetupSta
     .map(trigger => ({ id: trigger.id, at: trigger.at, actor: view.actor(trigger.actor, trigger.human), preview: preview(trigger.text, 120),
       reason: store.triggers.disposition(trigger.id)?.filtered }))
   const dropped = droppedReplies(host)
-  return sources.instances().map(instance => {
+  return sources.instances().filter(instance => !instance.archived).map(instance => {
     const { health: parts, ...named } = sourceHealth(sources, instance, health)
     const problem = problemOf(instance.id, setup)
     return { ...named, installed: instance.installed, enabled: instance.enabled, state: sourceState(instance, parts, setup), health: parts,

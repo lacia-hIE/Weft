@@ -1,17 +1,11 @@
 /** @jsxRuntime automatic */
 /** Source status view (health, filtered Triggers, dropped replies) and Source settings cards. */
-import { useEffect, useState } from 'react'
-import type { FieldSpec } from '../sources/kind.ts'
-import { usePoll, type DroppedReply, type SourceStatusRow, type SourceView } from './api.ts'
-import {SourceCredentials} from './source-credentials.tsx'
-import {Select} from './select.tsx'
+import { useState } from 'react'
+import { usePoll, type DroppedReply, type SourceStatusRow } from './api.ts'
 import { Button, Input, DisclosureRow, Dot, Icon, InfoTip, Switch, Tag } from './controls.tsx'
-import {GithubIntegration, type DeploymentForm} from './deployment.tsx'
-import { SaveBar } from './draft.tsx'
 import { sourceMark } from './marks.ts'
 import { usePanel, usePanelData } from './provider.tsx'
 import { setupPage, settingsRoute, type Route } from './route.ts'
-import { ConfigHistory, Field, Fields, SourceField, useBlockDraft, useSettings } from './settings-kit.tsx'
 import { actorName, healthText, localized, readableMarkers, reasonLabel, valueLabel, when } from './text.ts'
 import { CheckSetupButton, Hint, LabelValue, LoadState, SetupMessage, StatusHead, When } from './widgets.tsx'
 

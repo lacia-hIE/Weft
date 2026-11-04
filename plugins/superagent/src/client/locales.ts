@@ -313,7 +313,7 @@ const TEXT = {
   // Eval
   policyVersionHint: ['策略版本由接单规则、各来源上的策略和评估的接单模式决定；修改任何一项都会生成新版本，并通知进行中的工单。每个工单记下接单时的版本。', 'The rules, the Policy on each Source and the accept mode of Eval make up the Policy version; any change makes a new version and notifies open Tickets. Each Ticket records the version it was accepted under.'],
   syncNeedsSave: ['请先保存或放弃修改，再同步。', 'Save or discard your changes before syncing.'],
-  acceptMode: ['接单模式', 'Accept mode'],
+  acceptMode: ['默认评估方式', 'Default assessment mode'],
   'modeOption.off': ['只处理明确的请求，不评估其他触发', 'Only explicit requests are handled; other Triggers are not evaluated'],
   'modeOption.observe': ['评估其他触发并记录研判，但不接单', 'Other Triggers are evaluated and Assessments recorded, but nothing is accepted'],
   'modeOption.auto': ['其他触发符合规则时接单', 'Other Triggers that match a rule are accepted'],
@@ -342,7 +342,7 @@ const TEXT = {
   'decisionFilter.all': ['全部', 'All'],
   lastDayOnly: ['仅过去 24 小时到达的触发 ✕', 'Triggers from the last 24 hours only ✕'],
   evalStatusIntro: ['评估按策略对触发做出的决定，每条写明理由。', 'The Decisions Eval made on Triggers under the Policy, each with its reason.'],
-  policyPerSource: ['在各来源上', 'On each Source'],
+  policyPerSource: ['来源连接的评估与准入', 'Assessment and admission by connection'],
   policyPerSourceHint: ['策略在每个来源上的部分：谁能通过这个来源发起工作，用这个来源自己的身份；不同来源之间不对应。要让智能体知道同一个人在各来源的账号，写在提示词里。', 'The Policy\'s part on each Source: who may originate work through it, in that Source\'s own identities, with no mapping between Sources. To tell the agents a person\'s account on each Source, write it in the prompts.'],
   explicitRequest: ['明确的请求', 'Explicit request'],
   admission: ['准入', 'Admission'],

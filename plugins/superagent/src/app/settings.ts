@@ -158,7 +158,7 @@ export class Settings {
     if (kind === 'source' && candidate.sources[id]?.enabled && !candidate.sources[id]?.archived) {
       const instance = sources.instance(id, candidate)
       const duplicate = instance?.config.bot && sources.instances(candidate).find(row => row.id !== id && row.enabled && row.kind === instance.kind && row.config.bot === instance.config.bot)
-      if (duplicate) throw new Error('This bot already has an active Source connection; edit that connection or choose another bot')
+      if (duplicate) throw new z.ZodError([{code: 'custom', path: ['config', 'bot'], message: 'This bot already has an active Source connection; edit that connection or choose another bot'}])
     }
     // Saving a draft, clearing a field, or disconnecting a Source never requires a network check.
     if (stale()) throw new SettingsConflict('Settings changed during the checks. Reload before saving.')
