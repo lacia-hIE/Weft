@@ -261,6 +261,8 @@ export class Runtime implements SourceHost {
   }
   /** Runs what is due now and what comes due within the window of this wake; the next wake runs the rest from the Store. */
   drive(): Promise<void> {
+    // Setup has not started the effect runners yet; retained notices cannot drain until it does.
+    if (!this.configured() || this.stopped.signal.aborted) return Promise.resolve()
     return this.driving ??= (async () => {
       const end = Date.now() + DRIVE_WINDOW_MS
       try {
