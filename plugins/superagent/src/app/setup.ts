@@ -27,7 +27,7 @@ export class Setup {
     const github = settings.sources.github
     if (!github?.enabled) { this.resolved = undefined; this.problem = undefined; return true }
     try {
-      this.resolved = await resolveDeployment(this.host.machine, github?.enabled === false ? {} : github?.config, this.host.token(), this.host.lifetime)
+      this.resolved = await resolveDeployment(this.host.machine, github.config, this.host.token(), this.host.lifetime)
       this.problem = undefined
       return true
     } catch (error) {
