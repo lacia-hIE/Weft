@@ -33,7 +33,8 @@ verification, merge and deployment requirements. GitHub, GitLab and internal Git
 local Agent's existing tools and credentials. The cloud receives only project IDs and names; repository
 paths and execution requirements stay in the local private configuration. Blank merge or deployment
 instructions disable that operation; the current request must authorize it too. Local policy is captured
-when a task first starts and retained on retries.
+when a task first starts. Removing or changing that project blocks retries under the old settings;
+submit a new request to use the new policy.
 
 In Superagent select **New request**, this computer and its project. No GitHub token, webhook or event
 subscription is required. Submit the task and acceptance criteria; Eval still decides whether it can

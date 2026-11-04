@@ -177,7 +177,7 @@ export function createExecutorController({ctx,agentOwner=ctx,file,request=fetch}
       else if(!job){data.jobs[sessionId]={ticketId:command.ticketId,assignmentId:command.assignmentId,sessionId,cwd:'',revision:0,state:'stopped',accepted:[],requested:[],read:[],tools:[],allow:[],instructions:'',created:false};await save();}
       return;
     }
-    if(command.kind!=='run'||!data.accepting)return;
+    if(command.kind!=='run'||!data.accepting||job?.assignmentId===command.assignmentId&&job.state==='failed')return;
     const capacity=data.maxWorkers+(command.byPerson===true?1:0);
     if(typeof command.name!=='string'||!/^[a-z0-9][a-z0-9-]{0,120}$/.test(command.name)||typeof command.instructions!=='string'||command.instructions.length>256*1024
       ||!Array.isArray(command.tools)||command.tools.length>10||!Array.isArray(command.allow)||command.allow.some(name=>typeof name!=='string')
@@ -189,7 +189,9 @@ export function createExecutorController({ctx,agentOwner=ctx,file,request=fetch}
       await mkdir(cwd,{recursive:true});
       const canonical=await realpath(cwd),inside=relative(data.root,canonical);
       if(inside==='..'||inside.startsWith('..'+sep)||isAbsolute(inside))throw new Error('Task directory escapes the execution root');
-      const previous=data.jobs[sessionId],project=previous?.created?previous.project:command.projectId?(data.projects??[]).find(project=>project.id===command.projectId):undefined;
+      const previous=data.jobs[sessionId],current=command.projectId?(data.projects??[]).find(project=>project.id===command.projectId):undefined;
+      if(command.projectId&&previous?.created&&JSON.stringify(previous.project)!==JSON.stringify(current))throw new Error('Local project settings changed; submit a new request to use the current settings');
+      const project=previous?.created?previous.project:current;
       if(command.projectId&&(!project||project.id!==command.projectId))throw new Error('Selected local project is unavailable; configure it on this computer before retrying');
       job={project,ticketId:command.ticketId,assignmentId:command.assignmentId,sessionId,cwd:canonical,revision:0,state:'waiting',accepted:[],requested:[],read:[],tools:command.tools,allow:command.allow,
         instructions:command.instructions.split(command.directory).join(canonical)+projectContext(project),created:data.jobs[sessionId]?.created??false,children:data.jobs[sessionId]?.children??{},preset:data.jobs[sessionId]?.preset,handoff:false};
@@ -244,8 +246,13 @@ export function createExecutorController({ctx,agentOwner=ctx,file,request=fetch}
           catch(error){
             const sessionId=`weft-${new URL(data.endpoint).pathname.split('/').at(-1)}-${command.ticketId}`;
             let job=data.jobs[sessionId];
-            if(!job&&hex.test(command.ticketId)&&hex.test(command.assignmentId)){
-              job={ticketId:command.ticketId,assignmentId:command.assignmentId,sessionId,cwd:'',revision:0,state:'failed',accepted:[],requested:[],read:[],tools:[],allow:[],instructions:'',created:false};data.jobs[sessionId]=job;
+            if(!hex.test(command.ticketId)||!hex.test(command.assignmentId))throw error;
+            if(job?.assignmentId!==command.assignmentId){
+              // A failed admission must acknowledge the new Assignment, retaining its durable Session.
+              // An invalid command cannot replace an Assignment that is still running.
+              if(job&&job.state!=='stopped')throw error;
+              job={...job,ticketId:command.ticketId,assignmentId:command.assignmentId,sessionId,cwd:job?.cwd??'',revision:0,state:'failed',accepted:[],requested:[],read:[],tools:[],allow:[],instructions:'',created:job?.created??false};
+              delete job.syncedRevision;data.jobs[sessionId]=job;
             }
             if(job)await change(job,{state:'failed',error:String(error).slice(0,4000)});else throw error;
           }
@@ -327,7 +334,7 @@ export function createExecutorController({ctx,agentOwner=ctx,file,request=fetch}
         if(!Array.isArray(input.projects)||input.projects.length>32)throw new Error('At most 32 local projects may be configured');
         const ids=new Set();next.projects=[];
         for(const project of input.projects){
-          if(!project||!projectId.test(project.id)||ids.has(project.id)||typeof project.name!=='string'||!project.name.trim()||project.name.length>80)throw new Error('Local project requires a unique ID and name');
+          if(!project||typeof project.id!=='string'||!projectId.test(project.id)||ids.has(project.id)||typeof project.name!=='string'||!project.name.trim()||project.name.length>80)throw new Error('Local project requires a unique ID and name');
           ids.add(project.id);
           if(typeof project.repository!=='string'||!isAbsolute(project.repository))throw new Error('Choose an existing absolute local repository directory');
           const repository=await realpath(project.repository);

@@ -142,12 +142,13 @@ export function ExecutionSettings() {
             <Input className="dt-mono" value={value.directory} spellCheck={false} pattern="/workspace.*"
               onChange={event => edit({ directory: event.target.value })} />
           </Field>}
-          <Field label={t('prepareCommand')} hint={t('prepareCommandHint')}>
+          {!value.executorId && <Field label={t('prepareCommand')} hint={t('prepareCommandHint')}>
             <textarea ref={prepare} className="dt-textarea dt-mono" rows={3} maxLength={LIMITS.prepareCommand} spellCheck={false}
               placeholder={t('prepareCommandEmpty')} value={value.prepare}
               onChange={event => edit({ prepare: event.target.value })} />
-          </Field>
-          <EnvironmentVariables groups={environment.variables} sources={sources} onPick={insert} />
+          </Field>}
+          {!value.executorId && <EnvironmentVariables groups={environment.variables} sources={sources} onPick={insert} />}
+          {value.executorId && <Hint>{t('requestProjectHint')}</Hint>}
           {!value.executorId && <Field label={t('executorPermission')} hint={t('executorPermissionHint')}>
             <select className="dt-select" value={value.permission} onChange={event => edit({ permission: event.target.value as typeof value.permission })}>
               <option value="danger-full-access">danger-full-access</option>

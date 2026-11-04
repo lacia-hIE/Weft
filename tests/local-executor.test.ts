@@ -88,6 +88,13 @@ test('local Executor opts in separately, retains native prompt identities, and c
     stop=true;await controller.reconnect()
     await waitFor(()=>controller.snapshot().jobs[0]?.state==='stopped')
     assert.deepEqual(host.cancelled,[sessionId])
+    // Removing a project revokes future admission, including a Retry of its retained Session.
+    await controller.configure({accepting:true,maxWorkers:1,projects:[]})
+    stop=false;command.assignmentId='e'.repeat(32);await controller.reconnect()
+    await waitFor(()=>controller.snapshot().jobs[0]?.state==='failed')
+    const rejected=JSON.parse(await readFile(file,'utf8')).jobs[sessionId]
+    assert.equal(rejected.assignmentId,command.assignmentId);assert.match(rejected.error,/project settings changed/)
+    await controller.reconnect();assert.equal(host.prompts.length,1,'failed admission is not automatically rerun')
   } finally {await controller.close();await rm(directory,{recursive:true,force:true})}
 })
 

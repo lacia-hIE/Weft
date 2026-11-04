@@ -85,7 +85,7 @@ export class RemoteExecutor implements Executor {
     if (!executorId) throw new Error('Missing execution computer')
     const source = this.host.store.triggers.get(ticket.origin.triggerId)
     const text = JSON.stringify({ ticket_id: ticket.id, title: ticket.title, assignment: ticket.execution?.assignment,
-      trigger: source, prepare_directory: this.host.store.settings().executor.prepare,
+      trigger: source, ...(ticket.execution?.projectId ? {} : {prepare_directory: this.host.store.settings().executor.prepare}),
       recovery: ticket.assignments.length > 1 ? 'Inspect the retained directory, git history and PR before repeating outside actions.' : undefined })
     this.host.store.set(jobs(ticket.id), { ticketId: ticket.id, assignmentId: assignment.id, executorId,
       messages: [{ id: `assignment:${assignment.id}`, text, inputs: [] }], accepted: [], revision: -1, state: 'queued' })

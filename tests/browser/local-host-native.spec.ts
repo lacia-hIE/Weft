@@ -124,6 +124,8 @@ test('published local DSH pairs in native settings, runs Files, Git and PTY and 
   await page.getByRole('button',{name:'Reconnect',exact:true}).click();await expect(connectionStatus).toHaveText('Connected',{timeout:30_000});
   const relayExecutor=base+'/local/web/api/weft-executor';
   const localState=async()=>await(await request.get(relayExecutor)).json();
+  expect((await localState()).projects).toEqual([{id:configured.projects[0].id,name:'Internal CI project'}]);
+  expect(JSON.stringify((await localState()).projects)).not.toContain(project);
   const inspect=async(sessionId:string)=>await(await request.post(relayExecutor,{data:{action:'inspect',sessionId}})).json();
   const startTree=async(scenario:string)=>{
     const started=await(await request.post('/__test/executor',{data:{start:true,scenario}})).json();

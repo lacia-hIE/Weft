@@ -31,10 +31,11 @@ export async function apply(ctx,config={}) {
     const reply=(status,value)=>{res.writeHead(status,{'content-type':'application/json','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(JSON.stringify(value));};
     if('rejection' in admission){reply(admission.rejection,{error:'Unauthorized'});return;}
     if(admission.peer.principal.kind!=='owner'){reply(403,{error:'Owner access required'});return;}
-    if(req.method==='GET'){reply(200,{...executor.snapshot(),presets:await ctx.agentPresets.list(),defaultPreset:ctx.agentPresets.defaultId});return;}
+    const snapshot=()=>{const value=executor.snapshot();return req.headers['x-weft-relayed']==='1'?{...value,projects:value.projects.map(({id,name})=>({id,name}))}:value;};
+    if(req.method==='GET'){reply(200,{...snapshot(),presets:await ctx.agentPresets.list(),defaultPreset:ctx.agentPresets.defaultId});return;}
     if(req.method!=='POST'){reply(405,{error:'Method not allowed'});return;}
     try{
-      let body='';for await(const chunk of req){body+=chunk.toString();if(Buffer.byteLength(body)>12000)throw new Error('Request too large');}
+      let body='';for await(const chunk of req){body+=chunk.toString();if(Buffer.byteLength(body)>2*1024*1024)throw new Error('Request too large');}
       const input=JSON.parse(body);
       if(req.headers['x-weft-relayed']==='1'&&['pair','configure'].includes(input.action)){reply(403,{error:'Configure execution settings in local DSH'});return;}
       if(input.action==='inspect'){reply(200,await executor.inspect(input.sessionId));return;}
@@ -44,7 +45,7 @@ export async function apply(ctx,config={}) {
       else if(input.action==='reconnect')await executor.reconnect();
       else if(input.action==='disconnect')await executor.disconnect();
       else throw new Error('Unknown action');
-      reply(200,executor.snapshot());
+      reply(200,snapshot());
     }catch(error){reply(400,{error:error.message});}
   }}),'weft-executor-settings');
   // Native admission keeps local authentication, Host and Origin checks intact.
