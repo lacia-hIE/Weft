@@ -161,10 +161,11 @@ export class Settings {
     const old = store.settings()
     const settings = rules.merge(old, parsed, id)
     if (JSON.stringify(SettingsSchema.parse(settings)) === JSON.stringify(old)) {
-      const delivery = await sessions.delivery(`settings:${block}`)
+      const delivery = this.host.setup.configured() ? await sessions.delivery(`settings:${block}`) : 'pending'
       return { saved: true, revision: store.blockRevision(block), policy_changed: false, restarting: false, context_delivery: delivery }
     }
-    const restarting = setupChanged(old, settings) || block !== 'executor' && !this.host.setup.configured()
+    const waitingForSetup = !this.host.setup.configured()
+    const restarting = setupChanged(old, settings) || block !== 'executor' && waitingForSetup
     const before = policyVersion(old), after = policyVersion(settings)
     const scope = (version: SettingsValue) => ({
       scope: (input: { source: string; meta: Record<string, unknown> }) => this.host.sources.scope(input, version) })
@@ -176,7 +177,8 @@ export class Settings {
       if (before !== after) engine.policyChanged(before, after, effects)
     })
     // When restarting, the notice stays pending until after the restart; `setup.restart()` defers until this call returns.
-    const delivery = restarting ? 'pending' : await sessions.delivery(`settings:${block}`)
+    // The main Session does not exist until setup succeeds; retain its notice without waiting for delivery.
+    const delivery = restarting || waitingForSetup ? 'pending' : await sessions.delivery(`settings:${block}`)
     if (restarting) this.host.setup.restart()
     else this.host.requestPass()
     return { saved: true, revision: store.blockRevision(block), policy_changed: before !== after, restarting, context_delivery: delivery }
