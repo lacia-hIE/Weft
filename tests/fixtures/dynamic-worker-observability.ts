@@ -21,7 +21,7 @@ export class DynamicWorkerTail extends BaseTail {
   }
 }
 const guest = `import {WorkerEntrypoint,DurableObject} from 'cloudflare:workers';
-export default class extends WorkerEntrypoint {ping(){console.log('GUEST_SECRET');return 42;} fail(){throw new Error('EXCEPTION_SECRET');}}
+export default class extends WorkerEntrypoint {ping(){console.log('GUEST_SECRET');return 42;} fetch(){throw new Error('EXCEPTION_SECRET');}}
 export class Facet extends DurableObject {ping(){console.log('FACET_SECRET');return 42;}}`;
 export class ObservationBench extends DurableObject<Env> {
   async run(input: {tenantId: string; environmentId: string; mode: 'get' | 'load' | 'facet'}): Promise<number> {
@@ -32,9 +32,9 @@ export class ObservationBench extends DurableObject<Env> {
       const facet = this.ctx.facets.get('observed', () => ({class: loaded.getDurableObjectClass('Facet')})) as unknown as {ping(): Promise<number>};
       return facet.ping();
     }
-    const entry = loaded.getEntrypoint() as unknown as {ping(): Promise<number>; fail(): Promise<void>};
+    const entry = loaded.getEntrypoint() as unknown as {ping(): Promise<number>; fetch(request: Request): Promise<Response>};
     const value = await entry.ping();
-    if (input.mode === 'load') try {await entry.fail();} catch {/* The Tail must retain exception metrics without its payload. */}
+    if (input.mode === 'load') try {await entry.fetch(new Request('https://guest.invalid/'));} catch {/* The Tail must retain exception metrics without its payload. */}
     return value;
   }
 }

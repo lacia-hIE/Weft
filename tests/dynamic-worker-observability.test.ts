@@ -34,7 +34,7 @@ test('real Tail events attribute cached Workers, facets, PTC, JavaScript and she
   try {
     for (const mode of ['get', 'get', 'load', 'facet'] as const) assert.equal(await post('/_test/observe', {tenantId: 'alice', environmentId: 'work', mode}), 42);
     assert.equal(await post('/_test/observe', {tenantId: 'bob', environmentId: 'personal', mode: 'get'}), 42);
-    let values = await until(values => values.filter(row => row.kind === 'plugin').length >= 6);
+    let values = await until(values => values.filter(row => row.kind === 'plugin').length >= 6 && values.some(row => row.loaderMode === 'load' && row.exceptionCount > 0));
     assert.ok(values.some(row => row.kind === 'plugin' && row.executionModel === 'durableObject'), 'facet calls must reach the collector');
     const cached = values.filter(row => row.tenantId === 'alice' && row.loaderMode === 'get');
     assert.equal(new Set(cached.map(row => row.workerId)).size, 1);
