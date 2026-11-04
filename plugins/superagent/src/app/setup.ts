@@ -10,6 +10,7 @@ export function setupChanged(before: Settings, after: Settings): boolean {
 }
 
 export class Setup {
+  private generation = 0
   private initialized = false
   private resolved?: Deployment | undefined
   problem?: SetupProblem | undefined
@@ -23,14 +24,18 @@ export class Setup {
   }
   /** Re-reads the account and repository, recording a `SetupError` in `problem`; returns whether setup succeeded. */
   async run(settings: Settings): Promise<boolean> {
+    const generation = ++this.generation
     this.initialized = true
     const github = settings.sources.github
     if (!github?.enabled) { this.resolved = undefined; this.problem = undefined; return true }
     try {
-      this.resolved = await resolveDeployment(this.host.machine, github.config, this.host.token(), this.host.lifetime)
+      const resolved = await resolveDeployment(this.host.machine, github.config, this.host.token(), this.host.lifetime)
+      if (generation !== this.generation) return true
+      this.resolved = resolved
       this.problem = undefined
       return true
     } catch (error) {
+      if (generation !== this.generation) return true
       if (!(error instanceof SetupError)) throw error
       this.resolved = undefined
       this.problem = error.problem
@@ -41,6 +46,7 @@ export class Setup {
   async checkAccounts(_block: string, candidate: Settings): Promise<void> {
     if (candidate.sources.github?.enabled) await resolveDeployment(this.host.machine, candidate.sources.github.config, this.host.token(), this.host.lifetime)
   }
+  refresh(settings: Settings): void {void this.run(settings).catch(error => console.warn('GitHub Source:', String(error)))}
   /** Saved Source settings that change the account or repository take effect by restarting the plugin. */
   restart(): void { queueMicrotask(this.host.restart) }
   check(): void { this.restart() }

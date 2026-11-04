@@ -1,7 +1,7 @@
 {
   "name": "@weft/dsh-superagent",
-  "version": "0.3.2",
-  "description": "A proactive agent for one GitHub repository: it listens to GitHub, evaluates requests under a Policy, turns authorized ones into Tickets and works on each in its own Session.",
+  "version": "0.4.0",
+  "description": "An agent coordinator for user requests and event Sources, dispatching authorized work to connected DSH environments.",
   "license": "MIT",
   "type": "module",
   "main": "./src/index.ts",

@@ -77,15 +77,15 @@ test('published local DSH pairs in native settings, runs Files, Git and PTY and 
   const taskRoot=resolve(project,'../execution');
   await page.getByLabel('Task root directory (absolute path)',{exact:true}).fill(taskRoot);
   await page.getByRole('combobox',{name:'Execution permission preset',exact:true}).selectOption('danger-full-access');
-  await page.getByRole('button',{name:'Add project',exact:true}).click();
-  await page.getByRole('textbox',{name:'Project name',exact:true}).fill('Internal CI project');
-  await page.getByRole('textbox',{name:'Local repository directory (absolute path)',exact:true}).fill(project);
-  await page.getByRole('textbox',{name:'Verification requirements',exact:true}).fill('Create and verify executor-proof.txt.');
+  await expect(page.getByRole('button',{name:'Add project',exact:true})).toHaveCount(0);
   await page.getByRole('switch',{name:'Accept tasks',exact:true}).check();
   await page.getByRole('button',{name:'Save execution settings',exact:true}).click();
   await expect.poll(async()=>(await(await context.request.get(executorUrl)).json()).ready).toBe(true);
   const configured=await(await context.request.get(executorUrl)).json();
   expect(configured).toMatchObject({configured:false,root:taskRoot,agentPreset:installedPreset,permissionPreset:'danger-full-access',accepting:true});
+  // Existing project records remain resumable after the simplified UI upgrade.
+  expect((await context.request.post(executorUrl,{data:{action:'configure',accepting:true,maxWorkers:1,projects:[{id:'legacy-ci',name:'Internal CI project',repository:project,verify:'Create and verify executor-proof.txt.',merge:'',deploy:''}]}})).status()).toBe(200);
+  configured.projects=[{id:'legacy-ci',name:'Internal CI project'}];
   await page.screenshot({path:testInfo.outputPath('local-executor-settings.png')});
   await page.setViewportSize({width:390,height:844});
   await page.screenshot({path:testInfo.outputPath('local-executor-settings-mobile.png')});

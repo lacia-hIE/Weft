@@ -64,7 +64,7 @@ export interface SettingsHost {
   /** Source host passed to source kinds' policy syncs and label refreshes. */
   readonly sourceHost: SourceHost
   /** Setup state, account/command checks, and restart trigger when setup-read fields change. */
-  readonly setup: Pick<Setup, 'configured' | 'checkAccounts' | 'restart'>
+  readonly setup: Pick<Setup, 'configured' | 'checkAccounts' | 'restart'> & {refresh?(settings: SettingsValue): void}
   /** Triggers an immediate pass so work newly allowed by a settings save runs right away. */
   requestPass(): void
 }
@@ -155,7 +155,7 @@ export class Settings {
     const current = store.settings()
     const candidate = rules.merge(current, parsed, id)
     rules.guard?.(current, candidate, origin)
-    if (setupChanged(current, candidate)) await this.host.setup.checkAccounts(block, candidate)
+    // Saving a draft, clearing a field, or disconnecting a Source never requires a network check.
     if (stale()) throw new SettingsConflict('Settings changed during the checks. Reload before saving.')
     // Re-read current settings after async checks in case unrelated blocks were saved concurrently.
     const old = store.settings()
@@ -165,7 +165,7 @@ export class Settings {
       return { saved: true, revision: store.blockRevision(block), policy_changed: false, restarting: false, context_delivery: delivery }
     }
     const waitingForSetup = !this.host.setup.configured()
-    const restarting = setupChanged(old, settings) || block !== 'executor' && waitingForSetup
+    const restarting = false
     const before = policyVersion(old), after = policyVersion(settings)
     const scope = (version: SettingsValue) => ({
       scope: (input: { source: string; meta: Record<string, unknown> }) => this.host.sources.scope(input, version) })
@@ -179,6 +179,7 @@ export class Settings {
     // When restarting, the notice stays pending until after the restart; `setup.restart()` defers until this call returns.
     // The main Session does not exist until setup succeeds; retain its notice without waiting for delivery.
     const delivery = restarting || waitingForSetup ? 'pending' : await sessions.delivery(`settings:${block}`)
+    if (setupChanged(old, settings)) this.host.setup.refresh?.(settings)
     if (restarting) this.host.setup.restart()
     else this.host.requestPass()
     return { saved: true, revision: store.blockRevision(block), policy_changed: before !== after, restarting, context_delivery: delivery }

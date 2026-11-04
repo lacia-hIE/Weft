@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import type { FieldSpec } from '../sources/kind.ts'
 import { usePoll, type DroppedReply, type SourceStatusRow, type SourceView } from './api.ts'
 import { DisclosureRow, Dot, Icon, InfoTip, Switch, Tag } from './controls.tsx'
+import {GithubIntegration, type DeploymentForm} from './deployment.tsx'
 import { SaveBar } from './draft.tsx'
 import { sourceMark } from './marks.ts'
 import { usePanel, usePanelData } from './provider.tsx'
@@ -59,11 +60,11 @@ function SourceCard({ source }: { source: SourceView }) {
   </form>
 }
 
-export function SourceSettings({ focus }: { focus?: string }) {
+export function SourceSettings({ focus, form }: { focus?: string; form?: DeploymentForm }) {
   const { sources } = useSettings().settings
   useEffect(() => { if (focus) document.getElementById(`dt-source-${focus}`)?.scrollIntoView?.({ block: 'start' }) }, [focus])
   return <div className="dt-form">
-    {sources.map(source => <SourceCard key={source.id} source={source} />)}
+    {sources.map(source => <div key={source.id} className="dt-form"><SourceCard source={source} />{source.id === 'github' && <GithubIntegration form={form}/>}</div>)}
     <ConfigHistory blocks={['source:']} />
   </div>
 }

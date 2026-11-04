@@ -53,6 +53,6 @@ export async function resolveDeployment(machine: Machine, github: unknown, token
   })
   // Use the canonical repository name returned by GitHub so renamed repositories match incoming notifications.
   const repository = access.full_name
-  if (access.permissions?.push !== true) throw new SetupError('repositoryReadOnly', { account: agent.login, repository })
+  // Event reception needs repository reads, not git push or merge permission.
   return { ...machine, repository, github: { login: agent.login, noreply: `${agent.id}+${agent.login}@users.noreply.github.com` } }
 }

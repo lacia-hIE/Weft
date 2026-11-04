@@ -38,6 +38,7 @@ export const connectionStyles=`
 [data-weft-local-connection] .weft-connection-error { font-size: 12px; line-height: 18px; color: var(--dsw-alias-state-error-primary); }
 [data-weft-local-connection] .weft-project { display: grid; gap: 12px; min-width: 0; margin: 4px 0; padding: 12px; border: .5px solid var(--dsw-alias-border-l4); border-radius: var(--dsw-radius-md, 8px); }
 [data-weft-local-connection] textarea.weft-connection-input { padding: 8px; resize: vertical; font: inherit; color: inherit; background: var(--dsw-alias-bg-layer-1); border: .5px solid var(--dsw-alias-border-l4); border-radius: var(--dsw-radius-md, 8px); }
+[data-weft-local-connection] .weft-legacy-notes { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 12px; color: var(--dsw-alias-label-secondary); }
 @media (max-width: 600px) {
   [data-weft-local-connection] { padding: 16px; gap: 16px; }
   [data-weft-local-connection] .weft-connection-actions { align-items: stretch; flex-direction: column; }

@@ -380,3 +380,18 @@ a.dt-btn, a.dt-btn:hover { text-decoration: none; }
 .dt-admission-slot { display: inline-flex; flex: none; width: 16px; }
 .dt-info-warn { color: var(--dsw-alias-state-warn-primary); }
 .dt-field-segmented { max-width: 240px; }
+
+/* Match the DSH model menus: token colors, compact rows, selected mark and focus ring. */
+.dt-choice { position: relative; min-width: 0; width: 100%; }
+.dt-choice-trigger { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px; border: .5px solid var(--dsw-alias-border-l4); border-radius: var(--dsw-radius-md, 8px); background: var(--dsw-alias-bg-layer-1); }
+.dt-choice-trigger:focus-within { outline: 2px solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary)); outline-offset: 2px; }
+.dt-choice-trigger input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--dsw-alias-label-primary); font: inherit; font-size: 14px; line-height: 22px; text-overflow: ellipsis; }
+.dt-choice-trigger input::placeholder { color: var(--dsw-alias-label-tertiary); }
+.dt-choice-trigger svg { flex: none; color: var(--dsw-alias-label-caption); pointer-events: none; }
+.dt-choice-trigger[data-open] svg { transform: rotate(180deg); }
+.dt-choice-menu { position: absolute; z-index: 20; inset: calc(100% + 6px) 0 auto; max-height: min(280px, 40vh); overflow: auto; padding: 4px; border: .5px solid var(--dsw-alias-border-l3); border-radius: var(--dsw-radius-lg, 12px); background: var(--dsw-alias-bg-layer-2); box-shadow: var(--dsw-elevation-prominent, 0 4px 24px #0003); }
+.dt-choice-option { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 32px; padding: 4px 8px; box-sizing: border-box; border-radius: var(--dsw-radius-md, 8px); cursor: pointer; color: var(--dsw-alias-label-primary); font-size: 13px; line-height: 20px; }
+.dt-choice-option > span { overflow: hidden; text-overflow: ellipsis; }
+.dt-choice-option[data-active] { background: var(--dsw-alias-interactive-bg-hover); }
+.dt-choice-option[aria-disabled] { color: var(--dsw-alias-label-dimmed); cursor: default; }
+.dt-choice-empty { padding: 8px; color: var(--dsw-alias-label-tertiary); }

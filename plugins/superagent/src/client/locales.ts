@@ -6,6 +6,8 @@ import { SETUP_PROBLEMS } from '../setup.ts'
 import { HEALTH_TEXT } from '../sources/host.ts'
 
 const TEXT = {
+  removeCredential: ['移除凭据', 'Remove credential'],
+  removeWebhook: ['移除 Webhook 密钥', 'Remove webhook secret'],
   githubIntegration: ['GitHub 集成（可选）', 'GitHub integration (optional)'],
   githubOptional: ['仅监听 GitHub 或使用云端 GitHub 工具时需要；本地项目任务不需要配置 Token 或 Webhook。', 'Needed only for GitHub subscriptions or cloud GitHub tools. Local project tasks require no GitHub token or webhook.'],
   requestFollowup: ['补充需求或回复执行器', 'Follow up or answer the executor'],
@@ -483,7 +485,7 @@ const TEXT = {
   'settingsGroup.eval': ['评估', 'Eval'],
   'settingsGroup.execution': ['执行', 'Execution'],
   'settingsGroup.prompts': ['提示词', 'Prompts'],
-  'settingsGroup.deployment': ['部署', 'Deployment'],
+  'settingsGroup.deployment': ['高级', 'Advanced'],
   unsetValue: ['未设置', 'not set'],
   // Prompts
   promptChanges: ['{count} 处修改', '{count} changes'],
@@ -589,7 +591,7 @@ const TEXT = {
   deploymentStateDir: ['状态目录', 'State directory'],
   deploymentStateDirHint: ['数据库、锁、执行器的命令和智能体的 git 配置所在目录，只能在 DSH 配置文件里修改。', 'Holds the database, locks, the Executor\'s commands and the agent\'s git configuration; change it only in the DSH configuration file.'],
   deploymentSecrets: ['GitHub 凭据', 'GitHub credentials'],
-  deploymentSecretsHint: ['只写不读，页面不会显示已保存的值。保存后插件会重新加载。', 'Write-only: this page never shows a saved value. Saving reloads the plugin.'],
+  deploymentSecretsHint: ['凭据只用于这个来源；可以替换或移除，空白输入保留原值。', 'Credentials belong to this Source. Replace or remove them; blank input keeps the saved value.'],
   deploymentToken: ['智能体的 GitHub Token', 'Agent GitHub token'],
   deploymentTokenHint: ['专用 GitHub 账号的经典 Token，勾选 repo 和 notifications。它能访问这个账号能访问的所有仓库，所以账号只加入目标仓库，并用分支保护限制合并。', 'A classic token of a dedicated GitHub account with the repo and notifications scopes. It reaches every repository the account can, so add the account only to the target repository and limit merging with branch protection.'],
   webhookTitle: ['GitHub Webhook', 'GitHub webhook'],

@@ -17,7 +17,7 @@ export function SettingsPage({ group, query, state, deploymentForm }: {
   const { t, navigate } = usePanel()
   const content = (() => {
     switch (group) {
-      case 'source': return <SettingsProvider><SourceSettings {...query.source ? { focus: query.source } : {}} /></SettingsProvider>
+      case 'source': return <SettingsProvider><SourceSettings form={deploymentForm} {...query.source ? { focus: query.source } : {}} /></SettingsProvider>
       case 'eval': return <SettingsProvider><EvalSettings version={query.version} /></SettingsProvider>
       case 'execution': return <SettingsProvider><ExecutionSettings /></SettingsProvider>
       case 'prompts': return <PromptsPage />

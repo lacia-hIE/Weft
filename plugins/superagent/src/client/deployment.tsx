@@ -44,12 +44,22 @@ function Secrets({ form, editable, revision, saved }: { form: DeploymentForm; ed
     } catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)) }
     finally { setBusy(false) }
   }
+  const clear = async (field: 'githubToken') => {
+    if (!form || revision === undefined) return
+    setBusy(true); setError('')
+    try {
+      if (!await form.mutate([{op: 'set', path: [field], value: ''}], revision)) throw new Error(t('deploymentRefused'))
+      setValues({}); notify(t('saved')); restart()
+    } catch (failure) {setError(failure instanceof Error ? failure.message : String(failure))}
+    finally {setBusy(false)}
+  }
   return <Section title={t('deploymentSecrets')} hint={t('deploymentSecretsHint')}>
     {SECRETS.map(({ field, label, hint }) => <Field key={field} label={t(label)} hint={t(hint)}
       note={saved[field] ? t('deploymentSecretSet') : t('deploymentSecretUnset')}>
       <Input type="password" autoComplete="new-password" spellCheck={false} disabled={!editable || busy} value={values[field] ?? ''}
         onChange={event => { setValues({ ...values, [field]: event.target.value }) }} />
     </Field>)}
+    {SECRETS.filter(({field}) => saved[field]).map(({field}) => <div key={field}><Button variant="outline" size="sm" disabled={!editable || busy} onClick={() => {void clear(field)}}>{t('removeCredential')}</Button></div>)}
     {error && <p className="dt-error" role="alert">{error}</p>}
     <div className="dt-row-buttons">
       <Button variant="primary" size="sm" disabled={!editable || busy || !changed.length} onClick={() => { void save() }}>{t('deploymentSecretsSave')}</Button>
@@ -85,6 +95,11 @@ function WebhookSetup({ form, editable, revision, repository, isSet }: { form: D
     await navigator.clipboard.writeText(value).then(() => { notify(t('webhookCopied', { field: t('webhookSecret') })) }, () => {})
     restart()
   }
+  const remove = async () => {
+    if (!form || revision === undefined) return
+    if (!await form.mutate([{op: 'set', path: ['webhookSecret'], value: ''}], revision)) throw new Error(t('deploymentRefused'))
+    generatedSecret = ''; setSecret(''); restart()
+  }
   const run = () => generate().catch((failure: unknown) => { setError(failure instanceof Error ? failure.message : String(failure)) })
   return <Section title={t('webhookTitle')} hint={t('webhookHint')}>
     {repository ? <Hint><a href={`https://github.com/${repository}/settings/hooks/new`} target="_blank" rel="noreferrer">{t('webhookOpen', { repository })}</a></Hint>
@@ -99,8 +114,21 @@ function WebhookSetup({ form, editable, revision, repository, isSet }: { form: D
       {isSet || secret ? <ConfirmButton variant="outline" label={t('webhookRegenerate')} title={t('webhookRegenerate')} message={t('webhookRegenerateWarning')} onConfirm={run} />
         : <Button variant="primary" size="sm" disabled={!editable} onClick={() => { void run() }}>{t('webhookGenerate')}</Button>}
     </div>
+    {isSet && <div><Button variant="outline" size="sm" disabled={!editable} onClick={() => {void remove().catch(failure => setError(String(failure)))}}>{t('removeWebhook')}</Button></div>}
     <Hint>{t('webhookEvents')}</Hint>
   </Section>
+}
+
+export function GithubIntegration({form}: {form: DeploymentForm}) {
+  const {state} = usePanelData(), {t} = usePanel()
+  if (!state) return null
+  const snapshot = form?.state, editable = snapshot?.status === 'ready' && snapshot.writable
+  const revision = editable ? snapshot.revision : undefined
+  return <div className="dt-card dt-form" data-source-credentials="github">
+    <Hint>{t('githubOptional')}</Hint>
+    <Secrets form={form} editable={!!editable} revision={revision} saved={state.setup.secrets}/>
+    <WebhookSetup form={form} editable={!!editable} revision={revision} repository={state.setup.accounts?.repository} isSet={state.setup.secrets.webhookSecret}/>
+  </div>
 }
 
 export function usePageForm(form: ConfigForm<Record<string, unknown>> | undefined): DeploymentForm {
@@ -145,11 +173,6 @@ export function DeploymentPage({ setup, form, accounts: showAccounts }: { setup:
         <Hint>{t('deploymentAccountsWhere')}</Hint>
       </Section>}
       {readOnlyHint && <Hint>{readOnlyHint}</Hint>}
-      <details open={!!accounts}><summary>{t('githubIntegration')}</summary><div className="dt-form">
-      <Hint>{t('githubOptional')}</Hint>
-      <Secrets form={form} editable={!!editable} revision={editable ? snapshot.revision : undefined} saved={setup.secrets} />
-      <WebhookSetup form={form} editable={!!editable} revision={editable ? snapshot.revision : undefined} repository={accounts?.repository} isSet={setup.secrets.webhookSecret} />
-      </div></details>
       <Section title={t('deploymentLimits')} hint={t('deploymentLimitsHint')}>
         {limit('promptMaxChars', t('deploymentPromptMaxChars'))}
         {limit('admissionContextMaxPages', t('deploymentContextPages'))}
@@ -165,7 +188,7 @@ function PluginPage({ form }: { form: DeploymentForm }) {
   const { t } = usePanel()
   const { state, error } = usePanelData()
   return <div className="dt-embedded">
-    {state ? <DeploymentPage setup={state.setup} form={form} accounts />
+    {state ? <DeploymentPage setup={state.setup} form={form} />
       : error ? <p className="dt-error" role="alert">{error.message}</p> : <p className="dt-hint">{t('loading')}</p>}
   </div>
 }

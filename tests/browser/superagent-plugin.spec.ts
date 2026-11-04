@@ -33,9 +33,8 @@ test('the Superagent panel opens from the sidebar, gets its key through Settings
 
   // The credentials are written from the panel and never shown again.
   await page.locator('#dt-tab-settings').click();
-  await page.getByRole('button', {name: 'Deployment', exact: true}).click();
+  await page.getByRole('button', {name: 'Sources', exact: true}).click();
   const panel = page.locator('#dt-page');
-  await panel.locator('summary').filter({hasText:'GitHub integration (optional)'}).click();
   await expect(panel.getByText('Not set', {exact: true})).toHaveCount(2);
   await page.getByLabel('Agent GitHub token', {exact: true}).fill('browser-token');
   await page.getByRole('button', {name: 'Save credentials', exact: true}).click();
@@ -43,11 +42,17 @@ test('the Superagent panel opens from the sidebar, gets its key through Settings
   await expect(page.getByLabel('Agent GitHub token', {exact: true})).toHaveValue('');
 
   // Webhook setup: the page shows what GitHub's form asks for, and a generated secret is saved and shown once.
-  await panel.locator('details').filter({has:page.getByText('GitHub integration (optional)',{exact:true})}).evaluate(element=>{(element as HTMLDetailsElement).open=true});
   await expect(page.getByText(new RegExp(`/v1/plugin-hooks/${tenantId}/${environment}/%40weft%2Fdsh-superagent/github$`))).toBeVisible();
   await page.getByRole('button', {name: 'Generate secret and copy', exact: true}).click();
   await expect(page.getByText(/^[0-9a-f]{64}$/)).toBeVisible({timeout: 45_000});
   await expect(panel.getByText('Not set', {exact: true})).toHaveCount(0, {timeout: 45_000});
+
+  await page.getByRole('button',{name:'Remove credential',exact:true}).click();
+  await expect(panel.getByText('Not set',{exact:true})).toHaveCount(1,{timeout:45_000});
+  await page.getByRole('button',{name:'Remove webhook secret',exact:true}).click();
+  await expect(panel.getByText('Not set',{exact:true})).toHaveCount(2,{timeout:45_000});
+  await page.locator('.dt-settings-nav').getByRole('button',{name:'Advanced',exact:true}).click();
+  await expect(page.getByLabel('Agent GitHub token',{exact:true})).toHaveCount(0);
 
   // The management UI uses the owner's existing Host connection and sends no local execution policy.
   let attachment: {action: string; code: string} | undefined;
@@ -60,6 +65,27 @@ test('the Superagent panel opens from the sidebar, gets its key through Settings
     await route.fulfill({json: {ready: route.request().url().includes('/connected-computer/')}});
   });
   await page.locator('.dt-settings-nav').getByRole('button', {name: 'Execution', exact: true}).click();
+  await page.route(`**/plugin-hooks/${tenantId}/${environment}/%40weft%2Fdsh-superagent/api/models`,route=>route.fulfill({json:{
+    default:{provider:'alpha',model:'a'},routableProviders:['alpha','beta'],failures:[],groups:[
+      {id:'alpha',name:'Provider Alpha',models:[{id:'a',name:'Model A',reasoning:{efforts:[{id:'high',name:'High'}]}}]},
+      {id:'beta',name:'Provider Beta',models:[{id:'b',name:'Model B'}]}
+    ]
+  }}));
+  // Remount the settings block so its catalog read uses the deterministic native-shaped catalog.
+  await page.locator('.dt-settings-nav').getByRole('button',{name:'Advanced',exact:true}).click();
+  await page.locator('.dt-settings-nav').getByRole('button',{name:'Execution',exact:true}).click();
+  const provider=page.getByRole('combobox',{name:'Provider',exact:true});
+  await provider.click();await page.getByRole('option',{name:'Provider Alpha',exact:true}).click();
+  await expect(page.getByRole('combobox',{name:'Model',exact:true})).toHaveValue('Model A');
+  const effort=page.getByRole('combobox',{name:'Reasoning effort (optional)',exact:true});
+  await effort.click();await page.getByRole('option',{name:'High',exact:true}).click();
+  await provider.click();await page.getByRole('option',{name:'Provider Beta',exact:true}).click();
+  await expect(page.getByRole('combobox',{name:'Model',exact:true})).toHaveValue('Model B');
+  await expect(effort).not.toHaveValue('High');
+  await provider.click();await provider.fill('Alpha');await provider.press('ArrowDown');await provider.press('Enter');
+  await expect(provider).toHaveValue('Provider Alpha');
+  await page.screenshot({path:testInfo.outputPath('superagent-model-selectors.png')});
+  await provider.click();await page.getByRole('option',{name:'Inherit the DSH default',exact:true}).click();
   const computer = page.getByRole('combobox', {name: 'Default execution location', exact: true});
   await expect(computer.locator('option', {hasText: 'My connected DSH'})).toHaveCount(1);
   await expect(computer.locator('option', {hasText: 'Needs local setup'})).toBeDisabled();

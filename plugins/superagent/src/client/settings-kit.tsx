@@ -6,6 +6,7 @@ import type { ApiResponse } from '../app/api.ts'
 import type { FieldSpec, Localized } from '../sources/kind.ts'
 import { usePoll, type HistoryView, type Settings, type SettingsView, type SourceView } from './api.ts'
 import { Button, DisclosureRow, Icon, InfoTip, Input, SegmentedControl, Switch } from './controls.tsx'
+import { Select } from './select.tsx'
 import { useDraft } from './draft.tsx'
 import { useAction, usePanel, usePanelData } from './provider.tsx'
 import { settingsRoute } from './route.ts'
@@ -75,32 +76,34 @@ export function ModelField({ id, value, onChange }: { id: string; value: RoleMod
   const [catalog, setCatalog] = useState<ApiResponse<'GET models'>>()
   const [error, setError] = useState<string>()
   useEffect(() => { call('GET models').then(setCatalog, failure => setError(errorText(failure))) }, [call])
-  const current = { provider: value?.provider ?? '', model: value?.model ?? '', effort: value?.reasoningEffort ?? '' }
-  const set = (next: Partial<typeof current>) => {
-    const { provider, model, effort } = { ...current, ...next }
-    onChange(provider.trim() || model.trim() || effort.trim() ? { provider, model, ...effort ? { reasoningEffort: effort } : {} } : null)
-  }
-  const models = catalog?.groups.find(group => group.id === current.provider.trim())?.models ?? []
+  const provider = value?.provider ?? '', model = value?.model ?? '', effort = value?.reasoningEffort ?? ''
   const fallback = catalog?.default
-  const input = (name: keyof typeof current, label: string, placeholder: string) => <Field label={label}>
-    <Input list={`${id}-${name}s`} spellCheck={false} placeholder={placeholder} value={current[name]}
-      onChange={event => set({ [name]: event.target.value })} />
-  </Field>
-  return <div className="dt-model">
-    <Hint>{fallback ? t('defaultModel', { model: `${fallback.provider} / ${fallback.model}${fallback.reasoningEffort
-      ? ` · ${fallback.reasoningEffort}` : ''}` }) : t('defaultModelUnavailable')}</Hint>
+  const effectiveProvider = provider || fallback?.provider || ''
+  const models = catalog?.groups.find(group => group.id === effectiveProvider)?.models ?? []
+  const selected = models.find(item => item.id === (model || fallback?.model))
+  const missing = (items: {value: string; label: string}[], current: string) => current && !items.some(item => item.value === current)
+    ? [...items, {value: current, label: current}] : items
+  return <div className="dt-model" data-model-field={id}>
+    <Hint>{fallback ? t('defaultModel', { model: `${fallback.provider} / ${fallback.model}${fallback.reasoningEffort ? ` · ${fallback.reasoningEffort}` : ''}` }) : t('defaultModelUnavailable')}</Hint>
     {error && <p className="dt-error">{t('modelCatalogError', { error })}</p>}
     <div className="dt-grid3">
-      {input('provider', t('modelProvider'), t('modelInherit'))}{input('model', t('modelName'), t('modelInherit'))}{input('effort',
-        t('modelEffort'), t('modelEffortDefault'))}
+      <Field label={t('modelProvider')}><Select value={provider} placeholder={t('modelInherit')}
+        options={[{value: '', label: t('modelInherit')}, ...missing(catalog?.groups.map(group => ({value: group.id, label: group.name})) ?? [], provider)]}
+        onChange={next => {
+          if (!next) {onChange(null); return}
+          const first = catalog?.groups.find(group => group.id === next)?.models[0]
+          if (first) onChange({provider: next, model: first.id})
+        }}/></Field>
+      <Field label={t('modelName')}><Select value={model} placeholder={t('modelInherit')}
+        options={[{value: '', label: t('modelInherit')}, ...missing(models.map(item => ({value: item.id, label: item.name})), model)]}
+        onChange={next => onChange(next ? {provider: effectiveProvider, model: next} : null)}/></Field>
+      <Field label={t('modelEffort')}><Select value={effort} placeholder={t('modelEffortDefault')}
+        options={[{value: '', label: t('modelEffortDefault')}, ...missing(selected?.reasoning?.efforts.map(item => ({value: item.id, label: item.name})) ?? [], effort)]}
+        onChange={next => {
+          const chosen = model || fallback?.model
+          if (effectiveProvider && chosen) onChange({provider: effectiveProvider, model: chosen, ...(next ? {reasoningEffort: next} : {})})
+        }}/></Field>
     </div>
-    <datalist id={`${id}-providers`}>{catalog?.groups.map(group => <option key={group.id}
-      value={group.id}>{group.name}</option>)}</datalist>
-    <datalist id={`${id}-models`}>{models.map(model => <option key={model.id} value={model.id}>{model.name}</option>)}</datalist>
-    <datalist id={`${id}-efforts`}>
-      {(models.find(model => model.id === current.model.trim())?.reasoning?.efforts ?? []).map(effort => <option key={effort.id}
-        value={effort.id}>{effort.name}</option>)}
-    </datalist>
   </div>
 }
 

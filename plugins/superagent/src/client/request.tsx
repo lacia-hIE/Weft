@@ -58,14 +58,7 @@ export function NewRequest() {
             {computers.data?.filter(row => !devices.data?.some(device => device.id === row.executorId)).map(row => <option key={row.id} value={`local:${row.id}`} disabled={!row.ready}>{row.name}{!row.ready ? ` · ${t('computerNeedsSettings')}` : ''}</option>)}
           </select>
         </Field>
-        {executorId && <Field label={t('requestProject')}>
-          <select className="dt-select" value={projectId ?? ''} disabled={busy} onChange={event => setProjectId(event.target.value || null)}>
-            <option value="">{t('requestNoProject')}</option>
-            {device?.projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}
-          </select>
-          <Hint>{t('requestProjectHint')}</Hint>
-          {device && (!device.online || !device.accepting) && <Hint>{t('requestWaitingComputer')}</Hint>}
-        </Field>}
+        {executorId && device && (!device.online || !device.accepting) && <Hint>{t('requestWaitingComputer')}</Hint>}
         <Field label={t('requestText')}>
           <textarea className="dt-textarea" rows={7} maxLength={32000} disabled={busy} value={text} onChange={event => setText(event.target.value)} />
         </Field>

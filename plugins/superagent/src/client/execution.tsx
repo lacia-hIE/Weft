@@ -131,10 +131,10 @@ export function ExecutionSettings() {
           <Hint>{t('connectedComputersHint')}</Hint>
           {!value.executorId && <Section title={t('executorModel')} hint={t('executorModelHint')}><ModelField id="dt-worker-model" value={value.model}
             onChange={model => edit({ model })} /></Section>}
-          <Field label={t('maxWorkers')} hint={t('maxWorkersHint')}>
+          <details><summary>{t('advanced')}</summary><Field label={t('maxWorkers')} hint={t('maxWorkersHint')}>
             <Input type="number" min={LIMITS.maxWorkers.min} max={LIMITS.maxWorkers.max} required value={value.maxWorkers}
               onChange={event => edit({ maxWorkers: event.target.value })} />
-          </Field>
+          </Field></details>
         </div>
         <div className="dt-form dt-block">
           <h2 className="dt-block-title">{t('term.environment')}<InfoTip text={t('environmentIntro')} /></h2>
