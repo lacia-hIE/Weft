@@ -100,5 +100,6 @@ test('Source reply retry recovers an uncertain delivery without posting a duplic
     })
     await assert.rejects(send(message),/Connection lost/)
     assert.equal(await send(message),'sent');assert.equal(await send(message),'sent');assert.equal(posts,1)
+    assert.equal(await send({...message,id:'wrong-scope',channel:{...message.channel,address:{path:'issues/7/comments',url:'https://github.com/team/other/issues/7'}}}),'gone')
   } finally {h.sql.close()}
 })

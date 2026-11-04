@@ -32,6 +32,9 @@ const origin = (config: Config, type: EventType) => {
   if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash || url.pathname !== '/') throw new Error('Use an HTTPS site origin')
   return url.origin
 }
+const withinRepository = (raw: string, config: Config, type: EventType) => {
+  try {const url = new URL(raw);return url.origin === origin(config, type) && url.pathname.toLowerCase().startsWith(`/${config.repository.toLowerCase()}/`)} catch {return false}
+}
 const https = (raw: string) => {
   const url = new URL(raw)
   if (url.protocol !== 'https:' || url.username || url.password) throw new Error('Use an HTTPS subscription address')
@@ -93,7 +96,7 @@ export class RepositoryEvents {
         messageId: (trigger: Trigger) => text(trigger.meta.messageId) || trigger.id,
         read: (trigger: Trigger, part: 'root' | 'parent' | 'thread', cursor: string | undefined, _config: Config, signal?: AbortSignal) => this.readContext(id, type, trigger, part, cursor, signal),
       }} : {}),
-      channel: {link: address => ({url: address.url ?? '', label: {zh: '原始讨论', en: 'Original discussion'}}), send: (message, signal) => this.reply(id, type, message.id, message.channel.address, message.text, signal)},
+      channel: {allowed: (address, config) => type !== 'feed' && withinRepository(address.url ?? '', config, type), link: address => ({url: address.url ?? '', label: {zh: '原始讨论', en: 'Original discussion'}}), send: (message, signal) => this.reply(id, type, message.id, message.channel.address, message.text, signal)},
       poll: async (_host, signal) => this.poll(id, type, signal),
     }
   }
@@ -171,7 +174,7 @@ export class RepositoryEvents {
   }
   private async readContext(id: string, type: EventType, trigger: Trigger, part: 'root' | 'parent' | 'thread', cursor: string | undefined, signal?: AbortSignal) {
     const config = this.host.context(id).config<Config>(id), token = this.host.secret(id, 'token')
-    if (!config || !token || trigger.source !== id || trigger.meta.repository !== config.repository) throw new Error('Source context is unavailable for this repository')
+    if (!config || !token || trigger.source !== id || text(trigger.meta.repository).toLowerCase() !== config.repository.toLowerCase()) throw new Error('Source context is unavailable for this repository')
     const number = text(trigger.meta.number), page = cursor === undefined ? 1 : Number(cursor)
     if (!/^\d+$/.test(number) || !Number.isInteger(page) || page < 1 || page > 10) throw new Error('Invalid Source context reference')
     const github = type === 'github-webhook', site = origin(config, type), root = trigger.meta.resource === 'issues' ? 'issues' : github ? 'pulls' : 'merge_requests'
@@ -190,7 +193,7 @@ export class RepositoryEvents {
   }
   private async reply(id: string, type: EventType, messageId: string, address: Record<string, string>, body: string, signal?: AbortSignal): Promise<'sent' | 'gone'> {
     const config = this.host.context(id).config<Config>(id)
-    if (!config?.reply || type === 'feed') return 'gone'
+    if (!config?.reply || type === 'feed' || !withinRepository(address.url ?? '', config, type)) return 'gone'
     const token = this.host.secret(id, 'token');if (!token) throw new Error('Source reply credentials are not configured')
     const site = origin(config, type), github = type === 'github-webhook'
     if (!/^(issues|merge_requests)\/\d+\/(comments|notes)$/.test(address.path ?? '')) throw new Error('Invalid Source reply address')

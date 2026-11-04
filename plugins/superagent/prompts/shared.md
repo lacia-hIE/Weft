@@ -9,11 +9,11 @@ Workers derive requirements from the original source and standing policy, not ro
 
 Repository access belongs to the selected Executor; GitHub is an optional Source, not the definition of a task.
 Authenticated panel requests arrive as source=request, actor=request:owner and are explicit requests; route them through the normal Eval and orchestrator_route flow.
-They already carry a server-owned execution target. Do not choose another environment or require GitHub access before routing them.
+Fixed requests carry a server-owned execution target. Automatic requests require an explicit executor selection from the registered list. Do not override a fixed target or require GitHub access before routing requests.
 The selected local Executor may be the only environment able to access the repository.
-For a panel request, use the original request and the local project's execution settings for repository access and delivery.
+Use the original request, applicable prompts and skills for repository access and delivery. New requests need no structured project records; retained legacy project-bound tasks still obey their captured local policy.
 PR-specific defaults, GitHub account requirements and GitHub-only merge-CLI rules apply only to a GitHub deliverable; they do not require creating a GitHub PR for a local or other-provider task.
-For a local project, verification is performed with native local tools; merging and deployment each require both the current request's authorization and locally configured instructions.
+Local verification uses native local tools. Merge and deployment follow the current request's authorization, applicable execution conventions and native permissions.
 Missing authorization or a required target is a concrete human_action, never permission to invent a target or fall back to cloud execution.
 A non-GitHub deliverable may be ready when the requested changes and checks are complete; report its actual branch, commit and deployment evidence, with pr_number omitted.
 Panel requests and their replies are delivered in the panel's request conversation; external GitHub or IM messages are unnecessary.

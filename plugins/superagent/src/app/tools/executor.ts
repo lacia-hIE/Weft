@@ -79,12 +79,13 @@ export function executorTools(host: ExecutorToolsHost, ticket: Ticket): Tool[] {
         summary: z.string().min(1),
         human_action: z.string().trim().min(1).max(1000).nullish().describe('One concrete question for a person, also with state=progress; omit to keep the pending one, null to clear it.'),
         question_for_trigger_id: z.string().optional().describe('With human_action: the human message that raised the question, which is asked where that person wrote.'),
-        pr_number: z.number().int().positive().nullish().describe("Optional GitHub Source PR, from this ticket's source or agent branch. Omit for local, GitLab or other deliverables."),
+        pr_number: z.number().int().positive().nullish().describe("Optional legacy GitHub integration PR. Independent repository Sources report actual URLs in summary and omit this field."),
         reply_to_trigger_id: z.string().optional().describe('The explicit human question this report answers; never for ordinary progress.'),
       }).strict(),
       execute: async (args, signal) => {
         const current = host.store.tickets.get(ticketId)
         if (!current || !liveTicket(current)) throw new Error('Ticket ended (PR was closed or work finished); do not resume it')
+        if (args.pr_number != null && host.resources.store.triggers.get(current.origin.triggerId)?.source.startsWith('src-')) throw new Error('pr_number binds the legacy GitHub integration only; report this Source deliverable with its actual URL in summary')
         const pull = args.pr_number != null ? await readPull(host.github, args.pr_number, signal) : undefined
         // Claim the PR, record the report, and queue the relay atomically so a rejected PR claim or invalid report leaves no partial state, and a recorded report always reaches the main Session.
         return host.store.atomic(() => {

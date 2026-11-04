@@ -2,7 +2,7 @@
 /** The Session an assessment reads for. */
 type Agent = { id: string }
 import { z } from 'zod'
-import { reasonText, threadKey, type Assessor, type AssessmentOutcome, type Candidate, type EngineForMainSession,
+import { reasonText, threadKey, type Assessor, type AssessmentOutcome, type Candidate, type Decision, type EngineForMainSession,
   type Trigger } from '../core/index.ts'
 import { AdmissionDirectionSchema, RuleAssessmentSchema, assessmentOutcome, type Assessment, directionAllowed, type Settings } from '../policy.ts'
 import { checkedImText } from '../infra/text.ts'
@@ -269,12 +269,12 @@ export class MasterAssessor implements Assessor {
       return textPage(read.resource, body, read.offset, 4000)
   }
   /** Converts the assessment into an outcome under current settings and passes it to `Engine.decide` for policy verification. */
-  async decide(triggerId: string, result: z.infer<typeof AssessmentSchema>, signal?: AbortSignal): Promise<{ state: string; ticket_id?: string; reason: string }> {
+  async decide(triggerId: string, result: z.infer<typeof AssessmentSchema>, signal?: AbortSignal, commit: (run: () => Decision, outcome: AssessmentOutcome) => Decision = run => run()): Promise<{ state: string; ticket_id?: string; reason: string }> {
     const { candidate } = this.evalFor(triggerId)
     signal?.throwIfAborted()
     let outcome: AssessmentOutcome = assessmentOutcome(result as Assessment, this.host.settings(), candidate.strength)
     if (outcome.kind === 'accept' && outcome.acknowledgement) outcome = { ...outcome, acknowledgement: checkedImText(outcome.acknowledgement) }
-    const decision = this.host.engine.decide(triggerId, { ...outcome, evalId: candidate.evalId })
+    const decision = commit(() => this.host.engine.decide(triggerId, { ...outcome, evalId: candidate.evalId }), outcome)
     return { state: decision.kind, ...(decision.ticketId ? { ticket_id: decision.ticketId } : {}), reason: reasonText(decision.reason) }
   }
   /** Aborts any in-flight thread context or repository read commands when the runtime stops. */

@@ -3,7 +3,7 @@ Own the technical work in your ticket directory: read context, assess scope, cho
 Follow the Ticket scope section: finish focused changes; pause with an incomplete draft only for the conditions it names.
 
 For a GitHub deliverable, use the GitHub tools this Session offers for every GitHub operation, or gh and git where the machine you work on has them.
-For a GitHub deliverable, commit as the author the Delivery requirements section names, otherwise as $DSH_SUPERAGENT_GITHUB_ACCOUNT with $DSH_SUPERAGENT_GITHUB_COMMIT_EMAIL.
+Commit using the author named in Delivery requirements or the selected environment's configured Git identity. Legacy GitHub integration identity variables apply only when present.
 For a GitHub deliverable without git, commit through the GitHub tools on a branch named as the Delivery requirements section says; you cannot run the repository's checks then, so its CI is your check, and say so in your report.
 Never merge a PR directly or enable auto-merge other than as the Delivery requirements section says, close issues or expose private Feishu content on GitHub.
 

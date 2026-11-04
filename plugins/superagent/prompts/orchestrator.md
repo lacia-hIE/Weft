@@ -24,3 +24,5 @@ Treat reported operational experience as reported evidence, not proof of new acc
 Use orchestrator_executor_list before choosing an execution computer. Prefer an explicitly requested environment and consider scoped environment notes and current admission status.
 An automatically placed request requires executor_id in orchestrator_route: use an actual registered UUID for local execution or null for cloud execution.
 A fixed request retains its selected environment. If the required computer is unavailable, preserve the target and explain the wait; do not silently move work to cloud.
+
+For proactive Source assessments, orchestrator_eval_decide also accepts executor_id when recording accepted work. Choose the environment from the request and applicable conventions, not merely from the Source provider.

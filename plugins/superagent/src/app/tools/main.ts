@@ -240,9 +240,18 @@ export function mainTools(host: MainToolsHost, agent: { id: string }): Tool[] {
     tool({
       name: 'orchestrator_eval_decide',
       description: 'Record the decision of an assessment, as admission describes it, after orchestrator_eval with the same trigger_id.',
-      schema: z.object({ trigger_id: z.string().min(1), ...AssessmentSchema.shape }).strict(),
-      execute: async ({ trigger_id, ...result }, signal) => {
-        const decided = await host.assessor.decide(trigger_id, AssessmentSchema.parse(result), signal)
+      schema: z.object({ trigger_id: z.string().min(1), executor_id: RouteItemSchema.shape.executor_id, ...AssessmentSchema.shape }).strict(),
+      execute: async ({ trigger_id, executor_id, ...result }, signal) => {
+        const target = host.store.get(requestTargets(trigger_id)), previous = host.store.get(requestChoices(trigger_id))
+        if (result.decision === 'accept' && executor_id !== undefined) {
+          if (target && target.placement !== 'auto' && target.executorId !== executor_id) throw new Error('The user fixed this request to another execution environment')
+          if (previous && previous.executorId !== executor_id) throw new Error('Execution placement was already recorded for this request')
+          if (executor_id && !host.executors?.list().find(device => device.id === executor_id)?.paired) throw new Error('The selected execution computer is not paired')
+        }
+        const decided = await host.assessor.decide(trigger_id, AssessmentSchema.parse(result), signal, (run, outcome) => host.store.atomic(() => {
+          if (outcome.kind === 'accept' && executor_id !== undefined) host.store.set(requestChoices(trigger_id), {executorId: executor_id})
+          return run()
+        }))
         return routed(host, { decision: decided.state as DecisionKind, reason: decided.reason, ticketId: decided.ticket_id })
       },
     }),
