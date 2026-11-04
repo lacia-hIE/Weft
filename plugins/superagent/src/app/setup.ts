@@ -14,7 +14,7 @@ export class Setup {
   private initialized = false
   private resolved?: Deployment | undefined
   problem?: SetupProblem | undefined
-  constructor(private readonly host: { machine: Machine; token: () => string; lifetime: AbortSignal; restart: () => void }) {}
+  constructor(private readonly host: { machine: Machine; token: () => string; lifetime: AbortSignal; restart: () => void; changed?: () => void }) {}
   configured(): boolean { return this.initialized }
   githubConfigured(): boolean { return this.resolved !== undefined }
   get githubDeployment(): Deployment | undefined { return this.resolved }
@@ -46,7 +46,10 @@ export class Setup {
   async checkAccounts(_block: string, candidate: Settings): Promise<void> {
     if (candidate.sources.github?.enabled) await resolveDeployment(this.host.machine, candidate.sources.github.config, this.host.token(), this.host.lifetime)
   }
-  refresh(settings: Settings): void {void this.run(settings).catch(error => console.warn('GitHub Source:', String(error)))}
+  refresh(settings: Settings): void {
+    this.resolved = undefined; this.problem = undefined
+    void this.run(settings).then(() => this.host.changed?.()).catch(error => console.warn('GitHub Source:', String(error)))
+  }
   /** Saved Source settings that change the account or repository take effect by restarting the plugin. */
   restart(): void { queueMicrotask(this.host.restart) }
   check(): void { this.restart() }

@@ -115,7 +115,7 @@ export class Runtime implements SourceHost {
     const report = (error: unknown) => { console.warn('dsh-superagent:', String(error)) }
     const store = this.store = new Store(ctx.weftSql, report)
     this.collaboration = new Collaboration(store)
-    const setup = this.setup = new Setup({ machine: this.machine, token: () => config.githubToken, lifetime: this.lifetime, restart })
+    const setup = this.setup = new Setup({ machine: this.machine, token: () => config.githubToken, lifetime: this.lifetime, restart, changed: () => {void this.tick().catch(report)} })
     const deployed = () => environmentOf({ deployment: setup.githubDeployment, sources: this.sources, settings: store.settings() })
     const prompts = this.prompts = new Prompts(store, () => config.promptMaxChars, deployed)
     const commands = this.commands = new Commands(() => setup.deployment, () => config.githubToken, this.lifetime)
