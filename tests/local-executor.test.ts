@@ -1,6 +1,6 @@
 import {test} from 'node:test'
 import assert from 'node:assert/strict'
-import {mkdtemp,readFile,rm,stat} from 'node:fs/promises'
+import {mkdtemp,readFile,writeFile,rm,stat} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 // @ts-expect-error Native published plugin is JavaScript.
@@ -24,13 +24,17 @@ function native() {
     agents.set(sessionId,agent);await input.setup?.(agent.ctx,agent);await emit('agent/created',{agent});return {agent,dispose:async()=>{for(const dispose of resources)dispose();agents.delete(sessionId)}}
   }
   const runtime={drain:async(roots:any[])=>{for(const root of roots){drained.push(root.id);for(const child of [...agents.values()])if(child.session.header.parentSession===root.id){child.cancel();agents.delete(child.id);await emit('subagent/end',{id:child.id,parentSessionId:root.id,runId:child.id,stopReason:'aborted',local:true})}}}}
-  const ctx={on,agents:{get:(id:string)=>agents.get(id),create,resume:create},agentPresets:{resolve:async()=>({id:'local'}),mount:async()=>{}},agentDefaultModel:{currentSelection:()=>({provider:'local',model:'local'})},
+  const workspaces=new Map<string,{id:string;sessionIds:Set<string>}>()
+  const ctx={on,workspaceRegistry:{create:async(path:string)=>{
+    const entry=workspaces.get(path)??{id:crypto.randomUUID(),sessionIds:new Set<string>()};workspaces.set(path,entry)
+    return {...entry,attachSession:async(id:string)=>{assert.equal(sessions.get(id)?.header.cwd,path);entry.sessionIds.add(id)}}
+  }},agents:{get:(id:string)=>agents.get(id),create,resume:create},agentPresets:{resolve:async()=>({id:'local'}),mount:async()=>{}},agentDefaultModel:{currentSelection:()=>({provider:'local',model:'local'})},
     subagents:{drainDescendants:(roots:any[])=>runtime.drain(roots),listDescendants:async(root:string)=>[...sessions.values()].filter(session=>session.header.parentSession===root).map(session=>({kind:'child',id:session.header.id,parentId:root,mode:'continuable'}))},
     permissionPresets:{set:(_session:unknown,preset:string)=>{permissions.push(preset)}},
     jobs:{list:(owner:string)=>processes.filter(item=>item.owner===owner),kill:(id:string)=>{processes.find(item=>item.id===id).status='stopped'},wait:async(id:string)=>processes.find(item=>item.id===id)},
     sessionController:{rename:async()=>{},prompt:async(input:any,signal:AbortSignal)=>{signal.throwIfAborted();prompts.push(input);agents.get(input.sessionId).status='running';await emit('session/event',{id:input.sessionId},{type:'user/message',data:{source:{rpcId:input.requestId}}});await emit('session/event',{id:input.sessionId},{type:'turn/start'})}}}
   const child=async(parentSessionId:string,id='child')=>{const handle=await create({sessionId:id,meta:{parentSession:parentSessionId}});await emit('subagent/start',{id,parentSessionId,runId:id,local:true});return handle.agent}
-  return {ctx,prompts,cancelled,tools,permissions,emit,agents,sessions,child,drained,runtime,processes}
+  return {ctx,prompts,cancelled,tools,permissions,emit,agents,sessions,child,drained,runtime,processes,workspaces}
 }
 
 test('local Executor opts in separately, retains native prompt identities, and confirms cancellation',async()=>{
@@ -64,11 +68,17 @@ test('local Executor opts in separately, retains native prompt identities, and c
     assert.equal(host.prompts.length,1,'redelivered commands never repeat accepted prompts')
     assert.equal(host.tools.has('orchestrator_report'),true)
     const sessionId=host.prompts[0].sessionId
+    assert.deepEqual([...host.workspaces.get(join(root,'fix-example'))!.sessionIds],[sessionId])
+    assert.equal(controller.snapshot().jobs[0].workspaceId,host.workspaces.get(join(root,'fix-example'))!.id)
     await host.tools.get('orchestrator_report').execute({state:'progress'},{callId:'tool-1',signal:new AbortController().signal})
     assert.equal((await stat(file)).mode&0o777,0o600)
     assert.equal(JSON.stringify(controller.snapshot()).includes(token),false)
     assert.equal(JSON.parse(await readFile(file,'utf8')).token,token)
-    await controller.close();stop=true;controller=createExecutorController({ctx:host.ctx,file,request});await controller.load()
+    await controller.close();stop=true
+    // Simulate the old release: a durable Session with no workspace membership or migration marker.
+    host.workspaces.clear();const legacy=JSON.parse(await readFile(file,'utf8'));delete legacy.jobs[sessionId].workspaceId
+    await writeFile(file,JSON.stringify(legacy));controller=createExecutorController({ctx:host.ctx,file,request});await controller.load()
+    assert.deepEqual([...host.workspaces.get(join(root,'fix-example'))!.sessionIds],[sessionId])
     await waitFor(()=>controller.snapshot().state==='connected')
     assert.equal(host.prompts.length,1,'a connector restart preserves the native inbox receipts')
     stop=true;await controller.reconnect()

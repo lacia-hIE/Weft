@@ -108,6 +108,9 @@ test('published local DSH pairs in native settings, runs Files, Git and PTY and 
   expect(worked.modelCalls).toBeGreaterThanOrEqual(2);
   await expect.poll(async()=>(await(await context.request.get(executorUrl)).json()).jobs[0]?.state,{timeout:30_000}).toBe('stopped');
   const nativeSession=(await(await context.request.get(executorUrl)).json()).jobs[0].sessionId;
+  const workspace=await rpc('workspace/create',{request:{path:taskRoot+'/native-proof'}});
+  expect(workspace.created,'Executor registers the exact task directory before prompting').toBe(false);
+  expect(workspace.workspace.sessionIds).toContain(nativeSession);
   const finished=await(await context.request.get(executorUrl)).json();
   expect(finished.jobs[0].children.length).toBeGreaterThan(0);
   expect(finished.jobs[0].children.every((child:any)=>!child.active)).toBe(true);
@@ -188,6 +191,8 @@ test('published local DSH pairs in native settings, runs Files, Git and PTY and 
   expect((await request.post('/__test/local-host/restart')).status()).toBe(204);
   await page.reload();
   await expect(page.getByText('LOCAL_CHANGED_FILE',{exact:true})).toBeVisible({timeout:45_000});
+  const retainedWorkspace=await rpc('workspace/create',{request:{path:taskRoot+'/native-proof'}});
+  expect(retainedWorkspace.created).toBe(false);expect(retainedWorkspace.workspace.sessionIds).toContain(nativeSession);
   const sessions=await rpc('session/list',{_request:{}});expect(sessions.items.some((row:{sessionId:string})=>row.sessionId===sessionId)).toBe(true);
   expect((await readFile(project+'/notes.md','utf8')).match(/LOCAL_CHANGED_FILE/g)).toHaveLength(1);
   await page.screenshot({path:testInfo.outputPath('local-dsh-native.png')});expect(errors).toEqual([]);

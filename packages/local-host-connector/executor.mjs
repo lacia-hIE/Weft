@@ -38,6 +38,15 @@ export function createExecutorController({ctx,agentOwner=ctx,file,request=fetch}
   };
   const activeJobs=()=>Object.values(data.jobs).filter(job=>job.state==='running'||job.stopping&&(ctx.agents.get(job.sessionId)?.status==='running'||busy(job)));
   const change=(job,fields)=>{Object.assign(job,fields);job.revision++;return save();};
+  // Native workspace membership is explicit and requires the Session's exact cwd.
+  // Register through the native registry so both the sidebar and its subscriptions update.
+  async function workspace(job){
+    const entry=await ctx.workspaceRegistry.create(job.cwd);
+    await entry.attachSession(job.sessionId);
+    if(job.workspaceId!==entry.id||job.workspaceError){
+      job.workspaceId=entry.id;delete job.workspaceError;await save();
+    }
+  }
   async function post(operation,body,signal){
     const response=await request(data.endpoint+'/'+operation,{method:'POST',redirect:'error',headers:{'content-type':'application/json',authorization:`Bearer ${data.token??data.pairingKey}`},
       body:JSON.stringify(body),signal:AbortSignal.any([signal??new AbortController().signal,AbortSignal.timeout(40_000)])});
@@ -195,6 +204,7 @@ export function createExecutorController({ctx,agentOwner=ctx,file,request=fetch}
       await change(job,{created:true,preset});
       await ctx.sessionController.rename({sessionId,title:command.title});
     }
+    await workspace(job);
     const live=ctx.agents.get(sessionId);if(live)await attach(live);
     for(const message of command.messages){
       if(typeof message.id!=='string'||typeof message.text!=='string'||message.text.length>256*1024)throw new Error('Invalid task input');
@@ -255,7 +265,7 @@ export function createExecutorController({ctx,agentOwner=ctx,file,request=fetch}
         events:agent?.session.snapshotEvents().slice(-40)??[],tree:members(data.jobs[sessionId]).map(id=>({id,resident:!!ctx.agents.get(id),running:ctx.agents.get(id)?.status==='running',jobs:ctx.jobs.list(id).map(({id,status})=>({id,status}))}))};
     },
     snapshot:()=>({state:status,configured:!!data.endpoint,ready:!!data.root&&reconciled,endpoint:data.endpoint,accepting:data.accepting,root:data.root??'',maxWorkers:data.maxWorkers,agentPreset:data.agentPreset??'',permissionPreset:data.permissionPreset??'',
-      running:activeJobs().length,jobs:Object.values(data.jobs).map(({ticketId,sessionId,state,cwd,children})=>({ticketId,sessionId,state,cwd,children:Object.values(children??{}).map(({id,parentSessionId,active,stopReason})=>({id,parentSessionId,active,stopReason}))}))}),
+      running:activeJobs().length,jobs:Object.values(data.jobs).map(({ticketId,sessionId,state,cwd,children,workspaceId,workspaceError})=>({ticketId,sessionId,state,cwd,workspaceId,workspaceError,children:Object.values(children??{}).map(({id,parentSessionId,active,stopReason})=>({id,parentSessionId,active,stopReason}))}))}),
     load:()=>serial(async()=>{
       try{
         data=JSON.parse(await readFile(file,'utf8'));
@@ -264,6 +274,9 @@ export function createExecutorController({ctx,agentOwner=ctx,file,request=fetch}
         for(const job of Object.values(data.jobs)){
           job.children??={};
           if(job.created){
+            // Backfill pre-workspace releases without resuming or replaying their tasks.
+            // A removed historical directory must not disable other Assignments.
+            try{await workspace(job);}catch(error){job.workspaceError=String(error).slice(0,4000);await save();}
             const rows=await ctx.subagents.listDescendants(job.sessionId,AbortSignal.timeout(10_000));
             if(rows.some(row=>row.kind==='diagnostic'))throw new Error('Cannot reconcile the persisted subagent tree');
             for(const row of rows)job.children[row.id]={...job.children[row.id],id:row.id,parentSessionId:row.parentId,local:row.mode!=='external',active:!!ctx.agents.get(row.id)};
