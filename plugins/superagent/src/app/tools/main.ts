@@ -1,4 +1,6 @@
-import { requestTargets } from '../requests.ts'
+import {NoteInput, type Collaboration} from '../collaboration.ts'
+import type {RemoteExecutor} from '../../executor/remote.ts'
+import { requestTargets, requestChoices } from '../requests.ts'
 /** Main Session tools for routing triggers, assessing candidates, sending replies, and updating settings and prompts. */
 import { z } from 'zod'
 import { UserError, followupOwners, key, reasonText, type Decision, type DecisionKind, type EngineForMainSession, type EngineForPeople }
@@ -17,11 +19,13 @@ const RoutingNoteSchema = z.string().trim()
   .refine(text => wordCount(text) <= NOTE_WORDS, `Routing note must not exceed ${NOTE_WORDS} words (Chinese uses word segmentation). Shorten it; do not split it across deliveries.`)
   .describe(`Optional routing background or explicit human constraint, at most ${NOTE_WORDS} words. Never add implementation instructions or replace the original source.`)
 export interface MainToolsHost {
+  readonly collaboration?: Collaboration
+  readonly executors?: RemoteExecutor
   readonly logger: { warn(format: string, ...args: unknown[]): void }
   readonly engine: Pick<EngineForMainSession, 'decide' | 'attach' | 'reply' | 'requestStatus' | 'note'> & EngineForPeople
-  readonly store: Pick<Store, 'tickets' | 'triggers' | 'threads' | 'atomic' | 'replyStatus' | 'settings' | 'get'>
+  readonly store: Pick<Store, 'tickets' | 'triggers' | 'threads' | 'atomic' | 'replyStatus' | 'settings' | 'get' | 'set'>
   readonly prompts: Pick<Prompts, 'preview' | 'save'>
-  readonly sessions: Pick<Sessions, 'status' | 'notify' | 'delivery' | 'modelRetry'>
+  readonly sessions: Pick<Sessions, 'status' | 'notify' | 'delivery' | 'modelRetry'> & {refreshMain?(): Promise<void>}
   readonly settings: Pick<Settings, 'view' | 'block' | 'save' | 'pause' | 'sync'>
   readonly assessor: Pick<MasterAssessor, 'context' | 'read' | 'decide'>
   readonly resources: ResourceHost
@@ -45,6 +49,7 @@ const fromDecision = (decision: Decision) => ({ decision: decision.kind, reason:
  */
 const RouteItemSchema = z.object({
   kind: z.enum(['accept', 'attach', 'ignore', 'stop']),
+  executor_id: z.string().uuid().nullable().optional().describe('accept: for automatic placement select a UUID from orchestrator_executor_list, or null for cloud. A fixed user target cannot be overridden.'),
   trigger_id: z.string().describe('The candidate card\'s trigger_id; deciding it decides its batch.'),
   ticket_id: z.string().nullish().describe('attach and stop: the ticket.'),
   title: z.string().nullish().describe('accept: a short label of at most 200 characters describing the original request; no added requirements or implementation advice.'),
@@ -58,6 +63,7 @@ type Kind = RouteItem['kind']
 type Field = Exclude<keyof RouteItem, 'kind' | 'trigger_id'>
 /** Each field's check, the kinds whose items read it and those that need it; an item of another kind leaves it unread. */
 const FIELDS: Record<Field, { check: z.ZodType; reads: readonly Kind[]; needs: readonly Kind[] }> = {
+  executor_id: {check: z.string().uuid(), reads: ['accept'], needs: []},
   ticket_id: { check: z.string(), reads: ['attach', 'stop'], needs: ['attach', 'stop'] },
   title: { check: z.string().max(200), reads: ['accept'], needs: ['accept'] },
   worktree_name: { check: WorktreeNameSchema, reads: ['accept'], needs: ['accept'] },
@@ -93,8 +99,19 @@ function route(host: MainToolsHost, item: RouteItem, decided: ReadonlyMap<string
   switch (item.kind) {
     case 'accept': {
       const before = host.store.triggers.disposition(item.trigger_id)?.decisionId
-      const decision = host.engine.decide(item.trigger_id, { kind: 'accept', title: item.title!, scope: item.title!, reason: { code: 'explicitRouted' },
+      const target = host.store.get(requestTargets(item.trigger_id)), oldChoice = host.store.get(requestChoices(item.trigger_id))
+      if (target && target.placement !== 'auto' && item.executor_id !== undefined && item.executor_id !== target.executorId) return {refused: 'The user fixed this request to another execution environment'}
+      if (target?.placement === 'auto' && item.executor_id === undefined && !oldChoice) return {refused: 'Choose executor_id from orchestrator_executor_list, or null for cloud, before accepting this automatic request'}
+      if (oldChoice && item.executor_id !== undefined && oldChoice.executorId !== item.executor_id) return {refused: 'Execution placement was already recorded for this request'}
+      if (!before && item.executor_id) {
+        const device = host.executors?.list().find(device => device.id === item.executor_id)
+        if (!device?.paired || !device.online || !device.accepting) return {refused: 'The selected execution computer is not currently accepting tasks; preserve the request and wait for it'}
+      }
+      const decision = host.store.atomic(() => {
+        if (!before && item.executor_id !== undefined) host.store.set(requestChoices(item.trigger_id), {executorId: item.executor_id})
+        return host.engine.decide(item.trigger_id, { kind: 'accept', title: item.title!, scope: item.title!, reason: { code: 'explicitRouted' },
         acknowledgement: item.acknowledgement!, name: item.worktree_name!, ...note })
+      })
       // A Decision that created no ticket is the item's refusal; one that existed before keeps what it was accepted with.
       if (decision.kind !== 'accept' || !decision.ticketId) return { refused: `Ticket was not created: ${reasonText(decision.reason)}` }
       if (decision.id === before) {
@@ -104,7 +121,7 @@ function route(host: MainToolsHost, item: RouteItem, decided: ReadonlyMap<string
     }
     case 'attach': {
       const target = host.store.get(requestTargets(item.trigger_id)), existing = host.store.tickets.get(item.ticket_id!)
-      if (target && (target.executorId !== (existing?.execution?.executorId ?? null) || target.projectId !== (existing?.execution?.projectId ?? null))) {
+      if (target && target.placement !== 'auto' && (target.executorId !== (existing?.execution?.executorId ?? null) || target.projectId !== (existing?.execution?.projectId ?? null))) {
         return {refused: 'This request is bound to a different execution computer or project; accept it as a separate Ticket'}
       }
       const ticket = host.quietly(() => host.engine.attach(item.ticket_id!, item.trigger_id, item.note ?? undefined))
@@ -158,6 +175,12 @@ function routeTool(host: MainToolsHost): Tool {
 export function mainTools(host: MainToolsHost, agent: { id: string }): Tool[] {
   const resources: MainResourceHost = { ...host.resources, sessions: host.sessions, settings: host.settings }
   return [
+    ...host.collaboration ? [
+      tool({name: 'orchestrator_collaboration_read', description: 'Read scoped collaboration requirements and operational notes, their revision, and history. Read before maintaining durable conventions.', schema: z.object({}).strict(), execute: async () => host.collaboration!.view()}),
+      tool({name: 'orchestrator_collaboration_save', description: 'Maintain one lasting collaboration note after an explicit durable user requirement or a retained worker report. Scope it to its Source or Executor; global requirements need an owner request. Include original evidence IDs, update an existing ID to correct it, and preserve unrelated notes. Never store secrets, one-off requests, invented facts, permissions or authority changes.', schema: NoteInput,
+        execute: async input => {const saved = host.collaboration!.remember(input); await host.sessions.refreshMain?.(); return saved}}),
+    ] : [],
+    ...host.executors ? [tool({name: 'orchestrator_executor_list', description: 'List registered execution computers and current connection and admission status. Use actual IDs when choosing an execution target. Cloud execution uses null. Names or reported notes alone do not prove repository access.', schema: z.object({}).strict(), execute: async () => ({defaultExecutorId: host.store.settings().executor.executorId, executors: host.executors!.list()})})] : [],
     readTool('Read one page of a resource the resource parameter lists, such as the ticket list or a ticket. Follow next_offset, and next_resource where a page names one.',
       false, (resource, offset, limit, signal) => readResource(resources, resource, offset, limit, undefined, signal)),
     routeTool(host),

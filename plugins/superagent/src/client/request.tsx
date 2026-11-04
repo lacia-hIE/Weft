@@ -39,20 +39,21 @@ export function NewRequest() {
     if (identity.current?.fingerprint !== fingerprint) identity.current = {fingerprint, id: crypto.randomUUID()}
     setBusy(true); setError('')
     try {
-      const result = await call('POST requests', {body: {requestId: identity.current!.id, text, executorId, projectId}})
+      const result = await call('POST requests', {body: {requestId: identity.current!.id, text, executorId: executorId === 'auto' ? null : executorId, projectId, placement: executorId === 'auto' ? 'auto' : 'fixed'}})
       setOpen(false); setText(''); identity.current = null
       await panel.reload(); navigate({page: 'trigger', id: result.thread, query: {trigger: result.triggerId}})
     } catch (failure) { setError(String(failure)) }
     finally { setBusy(false) }
   }
   return <>
-    <Button variant="primary" size="sm" onClick={() => {setExecutorId(panel.state?.defaultExecutorId ?? null); setProjectId(null); setOpen(true)}}>{t('requestNew')}</Button>
+    <Button variant="primary" size="sm" onClick={() => {setExecutorId(panel.state?.defaultExecutorId ?? 'auto'); setProjectId(null); setOpen(true)}}>{t('requestNew')}</Button>
     <Modal open={open} onClose={() => {if (!busy) setOpen(false)}} title={t('requestNew')} closeLabel={t('close')}
-      footer={<Button variant="primary" disabled={busy || !text.trim() || !!executorId && !device?.paired} onClick={() => {void submit()}}>{t('requestSubmit')}</Button>}>
+      footer={<Button variant="primary" disabled={busy || !text.trim() || !!executorId && executorId !== 'auto' && !device?.paired} onClick={() => {void submit()}}>{t('requestSubmit')}</Button>}>
       <div className="dt-form">
         <Hint>{t('requestIntro')}</Hint>
         <Field label={t('requestEnvironment')}>
           <select className="dt-select" value={executorId ?? ''} disabled={busy} onChange={event => {void select(event.target.value)}}>
+            <option value="auto">{t('automaticExecutor')}</option>
             <option value="">{t('cloudExecutor')}</option>
             {devices.data?.map(row => <option key={row.id} value={row.id}>{row.name}{!row.online ? ` · ${t('computerOffline')}` : ''}</option>)}
             {computers.data?.filter(row => !devices.data?.some(device => device.id === row.executorId)).map(row => <option key={row.id} value={`local:${row.id}`} disabled={!row.ready}>{row.name}{!row.ready ? ` · ${t('computerNeedsSettings')}` : ''}</option>)}

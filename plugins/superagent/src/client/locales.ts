@@ -6,6 +6,20 @@ import { SETUP_PROBLEMS } from '../setup.ts'
 import { HEALTH_TEXT } from '../sources/host.ts'
 
 const TEXT = {
+  automaticExecutor: ['由主 Agent 选择执行器', 'Let the main Agent choose'],
+  collaborationTitle: ['协作约定', 'Collaboration notes'],
+  collaborationIntro: ['主 Session 按用户明确要求和执行反馈维护约定，分派时读取相关范围。约定不增加权限；可在这里纠正、移除或恢复历史版本。', 'The main Session maintains scoped conventions from explicit requests and execution reports. Notes supply context without granting access. Edit, remove or restore them here.'],
+  collaborationAdd: ['添加约定', 'Add convention'],
+  collaborationAll: ['全部任务', 'All tasks'],
+  collaborationScope: ['适用范围', 'Applies to'],
+  collaborationKind: ['内容类型', 'Note type'],
+  'collaborationKind.requirement': ['用户要求', 'User requirement'],
+  'collaborationKind.environment': ['环境反馈', 'Environment report'],
+  'collaborationKind.experience': ['操作经验', 'Operational experience'],
+  collaborationText: ['约定内容', 'Convention'],
+  collaborationEvidence: ['依据', 'Evidence'],
+  collaborationHistory: ['变更历史', 'Change history'],
+  collaborationRestore: ['载入此版本', 'Load this version'],
   removeCredential: ['移除凭据', 'Remove credential'],
   removeWebhook: ['移除 Webhook 密钥', 'Remove webhook secret'],
   githubIntegration: ['GitHub 集成（可选）', 'GitHub integration (optional)'],

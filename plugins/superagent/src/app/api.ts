@@ -18,6 +18,9 @@ interface Paged { offset?: number; limit?: number }
 type Delivery = 'injected' | 'pending'
 
 export interface Api {
+  'GET collaboration': {response: ReturnType<import('./collaboration.ts').Collaboration['view']>}
+  'PUT collaboration': {body: {revision: number; notes: import('./collaboration.ts').CollaborationNote[]}; response: ReturnType<import('./collaboration.ts').Collaboration['replace']>}
+
   'POST requests/:id/messages': {body: {requestId: string; text: string}; response: ReturnType<typeof import('./requests.ts').submitRequest>}
   'POST requests': { body: import('./requests.ts').UserRequest; response: ReturnType<typeof import('./requests.ts').submitRequest> }
   'GET executors': { response: ReturnType<import('../executor/remote.ts').RemoteExecutor['list']> }

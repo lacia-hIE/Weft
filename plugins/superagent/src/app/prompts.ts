@@ -235,12 +235,13 @@ export class Prompts {
   }
 }
 /** Save a new prompt revision and notify the main Session when the change originated outside its own tool call. */
-export async function savePrompts(host: { store: Pick<Store, 'atomic'>; prompts: Pick<Prompts, 'save'>; sessions: Pick<Sessions, 'notify' | 'delivery'> },
+export async function savePrompts(host: { store: Pick<Store, 'atomic'>; prompts: Pick<Prompts, 'save'>; sessions: Pick<Sessions, 'notify' | 'delivery'> & {refreshMain?(): Promise<void>} },
   config: unknown, baseRevision: number, origin: SettingsOrigin) {
   const version = host.store.atomic(() => {
     const saved = host.prompts.save(config, baseRevision, origin)
     if (origin !== 'tool') host.sessions.notify(...promptsNotice(saved.revision))
     return saved
   })
+  await host.sessions.refreshMain?.()
   return { revision: version.revision, effect: 'next-request' as const, context_delivery: await host.sessions.delivery('prompts') }
 }

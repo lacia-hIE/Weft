@@ -8,6 +8,7 @@ import type { Variable } from './execution-environment.ts'
 import type { HostSessionController, HostManagedSessions, HostSessionEvents } from '../host-services.ts'
 
 export interface SessionsHost {
+  collaboration?: import('./collaboration.ts').Collaboration
   readonly controller: HostSessionController
   readonly managed: HostManagedSessions
   readonly events: HostSessionEvents
@@ -63,12 +64,13 @@ export class Sessions {
   configuration(role: Role, ticket?: Ticket): { instructions: string; tools: string[]; allow: string[] } {
     const { prompts, store } = this.host
     const version = prompts.current()
-    const text = `[dsh-superagent prompt revision ${version.revision}]\n${prompts.compose(version.config, role, ticket ? this.host.environment(ticket) : undefined)}\n${ticket ? this.host.mandate(ticket) : ''}`
+    const text = `[dsh-superagent prompt revision ${version.revision}]\n${prompts.compose(version.config, role, ticket ? this.host.environment(ticket) : undefined)}\n${ticket ? this.host.mandate(ticket) : ''}${this.host.collaboration?.context(ticket) ?? ''}`
     const skills = prompts.skills(version.config).map(([name, content]) => `## skill: dsh-superagent-${name}\n${content}`).join('\n\n')
     const current = ticket && store.tickets.get(ticket.id)
     return { instructions: skills ? `${text}\n\n${skills}` : text, tools: this.host.tools(role),
       allow: role === 'orchestrator' ? MAIN_TOOLS : current && !liveTicket(current) ? [] : WORK_TOOLS }
   }
+  refreshMain(): Promise<void> {return this.configure(this.host.masterId, 'orchestrator')}
   async configure(id: string, role: Role, ticket?: Ticket): Promise<void> {
     const { store, prompts, managed } = this.host
     const version = prompts.current()
@@ -88,6 +90,8 @@ export class Sessions {
     authorize?.()
     const { store } = this.host
     const waiting = sessionId === this.host.masterId ? this.notices() : ''
+    const ticket = sessionId === this.host.masterId ? undefined : this.host.store.tickets.get(ticketOfSessionId(sessionId) ?? '')
+    await this.configure(sessionId, sessionId === this.host.masterId ? 'orchestrator' : 'worker', ticket)
     await this.host.controller.prompt({ sessionId, requestId: key(requestId), mode, content: [{ type: 'text', text: waiting ? `${waiting}\n\n${text}` : text }] })
     if (waiting) store.delete(KV.sessions.notices)
     store.set(KV.sessions.sent(sessionId, key(requestId)), true)

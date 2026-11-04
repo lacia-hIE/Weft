@@ -21,6 +21,7 @@ import { submitRequest, appendRequest } from './requests.ts'
 import { SourceRegistry } from '../sources/registry.ts'
 import type { SetupProblem } from '../setup.ts'
 import { MasterAssessor } from './assessment.ts'
+import {Collaboration} from './collaboration.ts'
 import { TextCache } from './cache.ts'
 import { Effects } from './effects.ts'
 import { environmentOf, ticketEnvironment, type Variable } from './execution-environment.ts'
@@ -75,6 +76,7 @@ export type HostContext = Context & HostServices
 export class Runtime implements SourceHost {
   readonly store: Store
   readonly setup: Setup
+  readonly collaboration: Collaboration
   readonly prompts: Prompts
   readonly effects: Effects
   readonly sources: SourceRegistry
@@ -110,6 +112,7 @@ export class Runtime implements SourceHost {
     this.machine = machineOf(config)
     const report = (error: unknown) => { console.warn('dsh-superagent:', String(error)) }
     const store = this.store = new Store(ctx.weftSql, report)
+    this.collaboration = new Collaboration(store)
     const setup = this.setup = new Setup({ machine: this.machine, token: () => config.githubToken, lifetime: this.lifetime, restart })
     const deployed = () => environmentOf({ deployment: setup.githubDeployment, sources: this.sources, settings: store.settings() })
     const prompts = this.prompts = new Prompts(store, () => config.promptMaxChars, deployed)
@@ -122,7 +125,7 @@ export class Runtime implements SourceHost {
     const resources: ResourceHost = { store, pages: new TextCache(4_000_000), prompts, commands, masterId: MASTER_ID, controller: ctx.sessionController,
       promptVersion: id => this.sessions.promptVersion(id), mayRead: (id, revision) => this.sessions.mayRead(id, revision), sourceLink: link }
     const sessions = this.sessions = new Sessions({ controller: ctx.sessionController, managed: ctx.weftManagedSessions, events: ctx.weftSessionEvents, store, prompts, effects,
-      masterId: MASTER_ID, lifetime: this.lifetime, environment: ticket => this.ticketEnvironment(ticket), mandate: ticket => mandateInstructions(ticket.mandate),
+      collaboration: this.collaboration, masterId: MASTER_ID, lifetime: this.lifetime, environment: ticket => this.ticketEnvironment(ticket), mandate: ticket => mandateInstructions(ticket.mandate),
       tools: role => this.toolNames[role] })
     const policyChanged: EngineForSettings['policyChanged'] = (from, to, changes) => { this.engine.policyChanged(from, to, changes) }
     this.settings = new Settings({ store, sources, engine: { policyChanged }, health: board, lifetime: this.lifetime, sessions, sourceHost: this, setup, requestPass: () => { this.passes.request() } })
@@ -164,7 +167,7 @@ export class Runtime implements SourceHost {
       configured: () => setup.configured(), closing: () => this.stopped.signal.aborted })
     this.sourceDeps = { store, engine, outbox, commands, sources, get ready() { return runtime.ready }, get deployment() { return setup.deployment },
       configured: kind => kind === 'github' ? setup.githubConfigured() : setup.configured(), get setupProblem() { return setup.problem }, receive: trigger => passes.receive(trigger) }
-    this.toolHost = { logger: console, engine, store, prompts, sessions, settings: this.settings, assessor, resources,
+    this.toolHost = { collaboration: this.collaboration, executors: executor.remote, logger: console, engine, store, prompts, sessions, settings: this.settings, assessor, resources,
       get github() { return runtime.context({ kind: 'github', health: ['github'] }) },
       requestPass: () => { passes.request() }, sendReplies: () => outbox.sent(),
       quietly: run => { this.quiet++; try { return run() } finally { this.quiet-- } } }
@@ -343,7 +346,7 @@ export class Runtime implements SourceHost {
   private httpHost(): HttpHost {
     const runtime = this
     const { store, sources, prompts, sessions, settings, engine, executor, machine, masterId, sourceLinks, setup, passes } = this
-    return { store, sources, prompts, sessions, settings, engine, executor, remote: executor.remote, get health() { return runtime.health }, machine, masterId, get ready() { return runtime.ready }, sourceLinks,
+    return { collaboration: this.collaboration, store, sources, prompts, sessions, settings, engine, executor, remote: executor.remote, get health() { return runtime.health }, machine, masterId, get ready() { return runtime.ready }, sourceLinks,
       secrets: () => ({ githubToken: !!this.config.githubToken, webhookSecret: !!this.config.webhookSecret }), managementKey: () => this.config.managementKey, webhookSecret: () => this.config.webhookSecret, wake: delivery => this.wake(delivery), settled: () => this.drive(),
       get deployment() { return setup.githubDeployment }, get setupProblem() { return setup.problem },
       configured: () => setup.configured(), links: () => runtime.links(), ticketEnvironment: ticket => runtime.ticketEnvironment(ticket),

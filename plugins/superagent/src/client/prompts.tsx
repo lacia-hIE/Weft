@@ -3,6 +3,7 @@
 import { Fragment, useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import type { ApiResponse } from '../app/api.ts'
 import type { PromptConfig, PromptsView } from './api.ts'
+import {CollaborationEditor} from './collaboration.tsx'
 import { SaveBar, useDraft, type DraftWords } from './draft.tsx'
 import { changedSections, isPart, isSkill, lineDiff, partKey, partText, partWith, sectionLabel, sectionText, skillNameFree, withOverride,
   withOverrides, withSection, withoutSkill, type BuiltInPart, type DiffLine } from './prompt-config.ts'
@@ -11,7 +12,7 @@ import { errorText, valueLabel, when, type T } from './text.ts'
 import { Hint, LoadState } from './widgets.tsx'
 import { Button, Icon, Input, SegmentedControl } from './controls.tsx'
 
-type Tab = 'edit' | 'full' | 'history'
+type Tab = 'edit' | 'full' | 'history' | 'notes'
 type Origin = { revision: number } | 'defaults' | { reset: string }
 interface PromptNote { from?: Origin; selection?: string }
 const originText = (t: T, view: PromptsView, from: Origin | undefined): string | undefined => from === undefined ? undefined
@@ -53,18 +54,19 @@ function PromptsEditor({ view, reload }: { view: PromptsView; reload: () => Prom
     editing: [t('promptsDraftVersion', { revision: draft.revision }), t('promptChanges', { count: changed.length }),
       originText(t, view, draft.meta?.from)].filter(Boolean).join(' · ') }
   const tabs = [{ value: 'edit' as const, label: t('promptViewEdit') }, { value: 'full' as const, label: t('promptViewFull') },
-    { value: 'history' as const, label: t('promptViewHistory') }]
+    { value: 'history' as const, label: t('promptViewHistory') }, {value: 'notes' as const, label: t('collaborationTitle')}]
   const removed = view.defaultChanged.filter(item => item.removed).map(item => item.part)
   return <div className="dt-form">
     <div className="dt-subtabs" role="tablist" aria-label={t('promptViews')}>{tabs.map(item => <button key={item.value} type="button"
       role="tab" className="dt-subtab" aria-selected={tab === item.value} onClick={() => setTab(item.value)}>{item.label}</button>)}</div>
     {removed.length > 0 && <Hint>{t('promptRemovedParts', { parts: removed.join(t('listSeparator')) })}</Hint>}
+    {tab === 'notes' && <CollaborationEditor/>}
     {tab === 'edit' && <PromptSections config={config} view={view} changed={changed} selected={selected} onSelect={select} onEdit={edit} />}
     {tab === 'full' && <FullPrompt config={config} view={view} dirty={draft.dirty} revision={draft.revision} onEdit={open} />}
     {tab === 'history' && <PromptHistory key={view.revision} view={view} from={draft.meta?.from}
       onLoad={(next, from) => edit(withOverrides(next, view.parts), { from })} />}
-    <SaveBar {...draft} words={words} onSave={() => { void draft.submit() }}
-      onDiscard={() => { draft.discard(); reload().catch(failure => notify(errorText(failure))) }} />
+    {tab !== 'notes' && <SaveBar {...draft} words={words} onSave={() => { void draft.submit() }}
+      onDiscard={() => { draft.discard(); reload().catch(failure => notify(errorText(failure))) }} />}
   </div>
 }
 

@@ -56,10 +56,18 @@ test('owner requests pass Eval without GitHub, retain placement and project, and
     assert.equal(store.tickets.get(cloudDecision.ticketId!)!.execution?.executorId,undefined,'an explicit cloud selection overrides the saved local default')
     const other=submitRequest(host,{requestId:crypto.randomUUID(),text:'A distinct cloud request',executorId:null,projectId:null})
     engine.evaluateDue()
-    const tools=mainTools({store,engine,quietly:(run:()=>unknown)=>run(),requestPass(){},logger:console} as never,{id:'main'})
+    const tools=mainTools({store,engine,executors:remote,quietly:(run:()=>unknown)=>run(),requestPass(){},logger:console} as never,{id:'main'})
     const route=tools.find(tool=>tool.name==='orchestrator_route')!
     const result=await route.execute({decisions:[{kind:'attach',trigger_id:other.triggerId,ticket_id:ticket.id}]} as never,new AbortController().signal) as {results:{refused:string}[]}
     assert.match(result.results[0]!.refused,/different execution/)
+    const automatic=submitRequest(host,{requestId:crypto.randomUUID(),text:'Use the internal computer.',executorId:null,placement:'auto'})
+    engine.evaluateDue()
+    const routeInput={kind:'accept',trigger_id:automatic.triggerId,title:'Automatic placement',worktree_name:'automatic-placement',acknowledgement:'I will verify it locally.'}
+    const absent=await route.execute({decisions:[routeInput]} as never,new AbortController().signal) as {results:{refused:string}[]}
+    assert.match(absent.results[0]!.refused,/Choose executor_id/)
+    const placed=await route.execute({decisions:[{...routeInput,executor_id:computer.id}]} as never,new AbortController().signal) as {results:{ticket:{id:string}}[]}
+    assert.equal(store.tickets.get(placed.results[0]!.ticket.id)!.execution?.executorId,computer.id)
+    assert.throws(()=>submitRequest(host,{requestId:crypto.randomUUID(),text:'Wrong target',executorId:computer.id,placement:'auto'}),/cannot carry a fixed/)
     store.saveSettings({...store.settings(),sources:{request:{enabled:false,config:{}}}})
     assert.throws(()=>submitRequest(host,{...request,requestId:crypto.randomUUID()}),/disabled/)
   } finally {sql.close()}

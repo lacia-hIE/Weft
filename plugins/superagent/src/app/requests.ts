@@ -8,18 +8,20 @@ import type { Store } from './store.ts'
 
 export const RequestSchema = z.object({
   requestId: z.string().uuid(), text: z.string().trim().min(1).max(32000),
-  executorId: z.string().uuid().nullable(), projectId: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/).nullable().default(null),
+  executorId: z.string().uuid().nullable(), placement: z.enum(['fixed', 'auto']).default('fixed'), projectId: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/).nullable().default(null),
 }).strict()
 export type UserRequest = z.input<typeof RequestSchema>
-export interface RequestTarget { executorId: string | null; projectId: string | null }
+export interface RequestTarget { executorId: string | null; projectId: string | null; placement?: 'fixed' | 'auto' }
+export const requestChoices = family<{executorId: string | null}>('request-placement:')
 export const requestTargets = family<RequestTarget>('request-target:')
 
 export function submitRequest(host: { store: Store; remote?: RemoteExecutor; receive(trigger: Trigger): ReceiveResult }, raw: unknown, conversationId?: string) {
   const input = RequestSchema.parse(raw), id = key('panel-request', input.requestId), conversation = conversationId ?? input.requestId
-  const target = { executorId: input.executorId, projectId: input.projectId }
+  const target = { executorId: input.executorId, projectId: input.projectId, placement: input.placement }
+  if (input.placement === 'auto' && (input.executorId || input.projectId)) throw new ExecutorRequestError(400, 'Automatic placement cannot carry a fixed computer or legacy project')
   const existing = host.store.triggers.get(id)
   if (existing) {
-    if (existing.threads[0]?.id !== conversation || existing.text !== input.text || JSON.stringify(host.store.get(requestTargets(id))) !== JSON.stringify(target)) {
+    if (existing.threads[0]?.id !== conversation || existing.text !== input.text || JSON.stringify({...host.store.get(requestTargets(id)), placement: host.store.get(requestTargets(id))?.placement ?? 'fixed'}) !== JSON.stringify(target)) {
       throw new ExecutorRequestError(409, 'Request ID was already used with different contents')
     }
     return { triggerId: id, thread: `${REQUEST_SOURCE}:${conversation}`, result: 'duplicate' as const }

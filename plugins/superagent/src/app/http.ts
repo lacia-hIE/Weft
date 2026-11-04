@@ -26,9 +26,11 @@ import { settingsView } from './views/settings.ts'
 import { sourcesStatus, type SetupState } from './views/sources.ts'
 import { decisionList, search, threadDetail, threadList } from './views/threads.ts'
 import { executorLoad, ticketDetail, ticketList } from './views/tickets.ts'
+import {CollaborationConflict, type Collaboration} from './collaboration.ts'
 import { ExecutorRequestError, type RemoteExecutor } from '../executor/remote.ts'
 
 export interface HttpHost {
+  readonly collaboration?: Collaboration
   appendRequest?(id: string, input: unknown): import('./api.ts').ApiResponse<'POST requests'>
   submitRequest?(input: unknown): import('./api.ts').ApiResponse<'POST requests'>
   readonly remote?: RemoteExecutor
@@ -37,7 +39,7 @@ export interface HttpHost {
   readonly sourceLinks: Pick<TextCache, 'entries'>
   readonly sources: SourceRegistry
   readonly prompts: Pick<Prompts, 'current' | 'version' | 'history' | 'preview' | 'save' | 'defaultChanged'>
-  readonly sessions: Pick<Sessions, 'status' | 'notify' | 'delivery'>
+  readonly sessions: Pick<Sessions, 'status' | 'notify' | 'delivery'> & {refreshMain?(): Promise<void>}
   readonly settings: Pick<Settings, 'view' | 'save' | 'pause' | 'sync' | 'refreshLabels'>
   readonly engine: EngineForPeople
   readonly executor: Pick<DshExecutor, 'activeCount'>
@@ -119,7 +121,7 @@ function failure(error: unknown): [number, Record<string, unknown>] {
   if (error instanceof SetupError) return [400, { error: error.message, setup: error.problem }]
   if (error instanceof RouteError) return [error.status, { error: error.message }]
   if (error instanceof UserError) return [error.missing ? 404 : 400, { error: error.message, code: error.code, values: error.values }]
-  if (error instanceof SettingsConflict || error instanceof PromptConflict) return [409, { error: error.message }]
+  if (error instanceof CollaborationConflict || error instanceof SettingsConflict || error instanceof PromptConflict) return [409, { error: error.message }]
   return [500, { error: error instanceof Error ? error.message : String(error) }]
 }
 
@@ -193,6 +195,13 @@ function routes(runtime: HttpHost): Routes {
     'POST requests/:id/messages': async ({ params, body }) => {
       if (!runtime.appendRequest) throw new RouteError(400, 'User requests are unavailable')
       return runtime.appendRequest(params.id, await body())
+    },
+    'GET collaboration': () => runtime.collaboration?.view() ?? {revision: 0, at: '', origin: 'panel', notes: [], history: []},
+    'PUT collaboration': async ({body}) => {
+      if (!runtime.collaboration) throw new RouteError(400, 'Collaboration notes are unavailable')
+      const saved = runtime.collaboration.replace(await body())
+      await runtime.sessions.refreshMain?.()
+      return saved
     },
     'GET executors': () => runtime.remote?.list() ?? [],
     'POST executors': async ({ body }) => {
