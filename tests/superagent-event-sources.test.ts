@@ -2,6 +2,7 @@ import {test} from 'node:test'
 import assert from 'node:assert/strict'
 import {Store} from '../plugins/superagent/src/app/store.ts'
 import {RepositoryEvents, feedEntries} from '../plugins/superagent/src/sources/repository-events.ts'
+import {sourceHealth} from '../plugins/superagent/src/app/views/sources.ts'
 import {SourceRegistry} from '../plugins/superagent/src/sources/registry.ts'
 import {memorySql} from './helpers/superagent-sql.ts'
 import type {Trigger} from '../plugins/superagent/src/core/index.ts'
@@ -29,6 +30,8 @@ test('multiple repository Sources retain independent identities and verify scope
     await h.events.webhook(first,'github-webhook',payload,'delivery')
     await h.events.webhook(first,'github-webhook',payload,'delivery')
     assert.equal(h.received.length,1);assert.equal(h.received[0]!.source,first);assert.equal(h.received[0]!.addressed,'mention')
+    const health=sourceHealth(h.sources,h.sources.instance(first)!,{[`${first}:webhook`]:{state:'ready',detail:'Received'},[`${first}:feed`]:{state:'paused',detail:'Off'}})
+    assert.equal(health.health.length,1);assert.equal(health.health[0]!.state,'ready','a disabled subscription does not pause a working webhook')
     await assert.rejects(h.events.webhook(second,'github-webhook',payload,'delivery'),/does not match/)
     await h.events.webhook(gitlab,'gitlab',{project:{path_with_namespace:'team/internal'},user:{username:'alice'},object_kind:'issue',object_attributes:{iid:7,title:'Internal task',description:'Investigate',action:'open',updated_at:'2026-11-04T01:00:00Z',url:'https://gitlab.com/team/internal/-/issues/7'}},'gitlab-delivery')
     assert.notEqual(h.received[0]!.threads[0]!.source,h.received[1]!.threads[0]!.source)
