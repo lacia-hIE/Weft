@@ -92,7 +92,7 @@ test('Source reply retry recovers an uncertain delivery without posting a duplic
   try {
     const id=h.add('github-webhook',{repository:'team/private',reply:true});h.secrets[`${id}-token`]='SOURCE_TOKEN'
     const send=h.events.kind(id,'github-webhook').channel!.send
-    const message={id:'reply-123',channel:{source:id,thread:'discussion',address:{path:'issues/7/comments',url:'https://github.com/team/private/issues/7'}},text:'Verified locally'} as Parameters<typeof send>[0]
+    const message={id:'reply-123',kind:'reply',channel:{source:id,thread:'discussion',address:{path:'issues/7/comments',url:'https://github.com/team/private/issues/7'}},text:'Verified locally'} as Parameters<typeof send>[0]
     t.mock.method(globalThis,'fetch',async(url:unknown,init:RequestInit)=>{
       assert.match(String(url),/^https:\/\/api.github.com\/repos\/team\/private\/issues\/7\/comments/)
       if(init.method==='POST'){posts++;throw new Error('Connection lost after submission')}

@@ -46,6 +46,6 @@ function Notes({data, reload}: {data: {notes: Awaited<ReturnType<import('../app/
       <span>{snapshot.revision} · {snapshot.origin} · {snapshot.at}</span>
       <Button size="sm" variant="outline" onClick={() => draft.edit(snapshot.notes)}>{t('collaborationRestore')}</Button>
     </div>)}
-    <SaveBar {...draft} onDiscard={draft.discard}/>
+    <SaveBar {...draft} onDiscard={draft.discard} onSave={() => {void draft.submit()}}/>
   </div>
 }

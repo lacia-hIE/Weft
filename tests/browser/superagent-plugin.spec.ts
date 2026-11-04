@@ -51,6 +51,36 @@ test('the Superagent panel opens from the sidebar, gets its key through Settings
   await expect(panel.getByText('Not set',{exact:true})).toHaveCount(1,{timeout:45_000});
   await page.getByRole('button',{name:'Remove webhook secret',exact:true}).click();
   await expect(panel.getByText('Not set',{exact:true})).toHaveCount(2,{timeout:45_000});
+  // A second Source writes and removes its own secret through the native protected dictionary.
+  await panel.locator('[data-add-source]').getByRole('textbox',{name:'Source name',exact:true}).fill('Secondary repository');
+  await panel.getByRole('button',{name:'Add Source',exact:true}).click();
+  const extraSource=panel.locator('[id^="dt-source-src-"]');
+  await expect(extraSource).toHaveCount(1,{timeout:45_000});
+  await extraSource.getByRole('textbox',{name:'Repository scope',exact:true}).fill('team/secondary');
+  await extraSource.getByRole('button',{name:'Save',exact:true}).click();
+  await expect(extraSource.getByRole('button',{name:'Save',exact:true})).toHaveCount(0,{timeout:45_000});
+  await extraSource.getByLabel('API credential (optional)',{exact:true}).fill('secondary-private-token');
+  // The API credential is the second secret field when the subscription transport is off.
+  await extraSource.getByRole('button',{name:'Save this credential',exact:true}).last().click();
+  await expect(extraSource.getByRole('button',{name:'Remove credential',exact:true})).toHaveCount(1,{timeout:45_000});
+  await expect(extraSource.getByLabel('API credential (optional)',{exact:true})).toHaveValue('');
+  await extraSource.getByRole('button',{name:'Remove credential',exact:true}).click();
+  await expect(extraSource.getByRole('button',{name:'Remove credential',exact:true})).toHaveCount(0,{timeout:45_000});
+  await page.locator('.dt-settings-nav').getByRole('button',{name:'Prompts',exact:true}).click();
+  await panel.getByRole('tab',{name:'Collaboration notes',exact:true}).click();
+  await panel.getByRole('button',{name:'Add convention',exact:true}).click();
+  await panel.getByRole('textbox',{name:'Convention',exact:true}).fill('Verify internal repositories on the connected computer.');
+  await panel.getByRole('button',{name:'Save',exact:true}).click();
+  await expect(panel.getByRole('button',{name:'Save',exact:true})).toHaveCount(0,{timeout:45_000});
+  await panel.getByRole('button',{name:'Remove',exact:true}).click();
+  await panel.getByRole('button',{name:'Save',exact:true}).click();
+  await expect(panel.getByRole('textbox',{name:'Convention',exact:true})).toHaveCount(0,{timeout:45_000});
+  await expect(panel.getByRole('button',{name:'Save',exact:true})).toHaveCount(0,{timeout:45_000});
+  await panel.getByRole('button',{name:'Change history',exact:true}).click();
+  await panel.getByRole('button',{name:'Load this version',exact:true}).first().click();
+  await expect(panel.getByRole('textbox',{name:'Convention',exact:true})).toHaveValue('Verify internal repositories on the connected computer.');
+  await panel.getByRole('button',{name:'Save',exact:true}).click();
+  await expect(panel.getByRole('button',{name:'Save',exact:true})).toHaveCount(0,{timeout:45_000});
   await page.locator('.dt-settings-nav').getByRole('button',{name:'Advanced',exact:true}).click();
   await expect(page.getByLabel('Agent GitHub token',{exact:true})).toHaveCount(0);
 
@@ -84,7 +114,11 @@ test('the Superagent panel opens from the sidebar, gets its key through Settings
   await expect(effort).not.toHaveValue('High');
   await provider.click();await provider.fill('Alpha');await provider.press('ArrowDown');await provider.press('Enter');
   await expect(provider).toHaveValue('Provider Alpha');
+  await provider.click();
+  await expect(page.getByRole('listbox')).toBeVisible();
   await page.screenshot({path:testInfo.outputPath('superagent-model-selectors.png')});
+  await provider.press('Escape');
+  await expect(page.getByRole('listbox')).toHaveCount(0);
   await provider.click();await page.getByRole('option',{name:'Inherit the DSH default',exact:true}).click();
   const computer = page.getByRole('combobox', {name: 'Default execution location', exact: true});
   await expect(computer.locator('option', {hasText: 'My connected DSH'})).toHaveCount(1);
