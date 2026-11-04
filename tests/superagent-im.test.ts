@@ -16,13 +16,17 @@ const im = JSON.parse(readFileSync('plugins/im/package.json', 'utf8')) as {name:
 const key = 'superagent-management-key', repository = 'acme/widgets', agent = 'agent-bot';
 
 /** The main Session accepts the candidate it was given; a worker reports ready. */
-const model: V4FetchHandler = async request => {
+const fixtureModel = (): V4FetchHandler => {
+  const routed = new Set<string>();
+  return async request => {
   const event = (type: string, value: object) => `event: ${type}\ndata: ${JSON.stringify({type, ...value})}\n\n`;
   const body = await request.json() as {messages: {role: string; content: unknown}[]; tools?: {name: string}[]};
   const text = JSON.stringify(body.messages);
   const offered = new Set((body.tools ?? []).map(tool => tool.name));
-  const last = JSON.stringify(body.messages.at(-1));
-  const candidate = last.includes('tool_result') ? undefined : /trigger_id\\+":\\+"([0-9a-f]{32})/.exec(last)?.[1];
+  // Native Sessions may combine a candidate with later policy notices or tool results in one turn.
+  // Read every offered candidate and route each once, regardless of which message arrived last.
+  const candidate = [...text.matchAll(/trigger_id\\+":\\+"([0-9a-f]{32})/g)].map(match => match[1]!).findLast(id => !routed.has(id));
+  if (offered.has('orchestrator_route') && candidate) routed.add(candidate);
   const call = offered.has('orchestrator_route') && candidate
     ? {name: 'orchestrator_route', input: {decisions: [{kind: 'accept', trigger_id: candidate, title: 'Fix the Feishu typo', worktree_name: 'fix-feishu-typo', acknowledgement: 'FEISHU_ACK'}]}}
     : offered.has('orchestrator_report') && !text.includes('"name":"orchestrator_report"') ? {name: 'orchestrator_report', input: {state: 'ready', summary: 'Fixed the typo.'}} : undefined;
@@ -33,10 +37,12 @@ const model: V4FetchHandler = async request => {
     event('content_block_stop', {index: 0}) +
     event('message_delta', {delta: {stop_reason: call ? 'tool_use' : 'end_turn'}, usage: {output_tokens: 4}}) + event('message_stop', {}),
     {headers: {'content-type': 'text/event-stream'}});
+  };
 };
 
 test('a Feishu bot that dsh-im assigns to dsh-superagent turns a direct message into a Ticket and acknowledges it through the same bot', {timeout: 300000}, async () => {
   const replies: {path: string; body: Record<string, unknown>; authorization: string | null}[] = [];
+  const model = fixtureModel();
   const runtime = createRuntime(undefined, {packages: true,
     bindings: {MODEL_BACKEND: 'deepseek', DEEPSEEK_API_KEY: 'fixture', DEEPSEEK_BASE_URL: 'https://superagent-model.test/anthropic'},
     packageBuilder: async request => Response.json(await buildPackage(JSON.parse(await request.text()))),
