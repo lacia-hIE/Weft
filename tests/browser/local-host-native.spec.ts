@@ -69,7 +69,7 @@ test('published local DSH pairs in native settings, runs Files, Git and PTY and 
   await expect.poll(()=>presets.locator('option').count()).toBeGreaterThan(1);
   const installedPreset=(await(await context.request.get(executorUrl)).json()).defaultPreset as string;
   expect(installedPreset).toBeTruthy();await presets.selectOption(installedPreset!);
-  await expect(presets).toHaveCSS('height','36px');
+  await expect(presets).toHaveCSS('height','32px');
   expect(await page.locator('[data-weft-local-executor]').evaluate(element=>getComputedStyle(element).fontFamily)).not.toContain('Times New Roman');
   // A full Agent runs in the published native Host, using local model credentials and native file tools.
   const broker=await(await request.get('/__test/executor')).json();

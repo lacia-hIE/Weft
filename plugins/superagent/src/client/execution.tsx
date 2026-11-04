@@ -121,7 +121,7 @@ export function ExecutionSettings() {
         <div className="dt-form dt-block">
           <h2 className="dt-block-title">{t('term.executor')}<InfoTip text={t('executorIntro')} /></h2>
           <Field label={t('executionComputer')} hint={t('executionComputerHint')}>
-            <select className="dt-input" disabled={busy} aria-busy={busy} value={value.executorId ?? ''} onChange={event => {void selectComputer(event.target.value)}}>
+            <select className="dt-select" disabled={busy} aria-busy={busy} value={value.executorId ?? ''} onChange={event => {void selectComputer(event.target.value)}}>
               <option value="">{t('cloudExecutor')}</option>
               {devices.data?.map(device => <option key={device.id} value={device.id}>{device.name}{!device.online ? ` · ${t('computerOffline')}` : ''}</option>)}
               {computers.data?.filter(computer => !devices.data?.some(device => device.id === computer.executorId && device.paired)).map(computer => <option key={computer.id} value={`local:${computer.id}`} disabled={!computer.ready}>{computer.name}{!computer.ready ? ` · ${t('computerNeedsSettings')}` : ''}</option>)}
@@ -149,7 +149,7 @@ export function ExecutionSettings() {
           </Field>
           <EnvironmentVariables groups={environment.variables} sources={sources} onPick={insert} />
           {!value.executorId && <Field label={t('executorPermission')} hint={t('executorPermissionHint')}>
-            <select className="dt-input" value={value.permission} onChange={event => edit({ permission: event.target.value as typeof value.permission })}>
+            <select className="dt-select" value={value.permission} onChange={event => edit({ permission: event.target.value as typeof value.permission })}>
               <option value="danger-full-access">danger-full-access</option>
               <option value="workspace-write">workspace-write</option>
               <option value="read-only">read-only</option>

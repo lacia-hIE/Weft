@@ -1,4 +1,4 @@
-import worker, {DynamicWorkerTail as BaseTail, type Env as BaseEnv} from '../../apps/worker/src/index.ts';
+import worker, {DynamicWorkerTail as BaseTail, WorkspaceDO as BaseWorkspace, type Env as BaseEnv} from '../../apps/worker/src/index.ts';
 import {DurableObject} from 'cloudflare:workers';
 import type {DynamicWorkerUsage} from '../../packages/dynamic-worker-observability/src/tail.ts';
 import {observedLoader, observationScope} from '../../packages/dynamic-worker-observability/src/loader.ts';
@@ -19,6 +19,10 @@ export class DynamicWorkerTail extends BaseTail {
   protected override record(value: DynamicWorkerUsage): void {
     this.ctx.waitUntil(Promise.resolve((this.env as Env).USAGE.getByName('all').append(value)));
   }
+}
+export class WorkspaceDO extends BaseWorkspace {
+  /** Exercise an alarm after a cold start, without a scoped endpoint first refreshing the owner. */
+  async backgroundReplay(): Promise<void> {await super.alarm();}
 }
 const guest = `import {WorkerEntrypoint,DurableObject} from 'cloudflare:workers';
 export default class extends WorkerEntrypoint {ping(){console.log('GUEST_SECRET');return 42;} fetch(){throw new Error('EXCEPTION_SECRET');}}
@@ -42,6 +46,11 @@ export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const path = new URL(request.url).pathname;
     if (path === '/_test/usage') return Response.json(await env.USAGE.getByName('all').list());
+    if (path === '/_test/background') {
+      const {resourceId} = await request.json() as {resourceId: string};
+      const workspace = env.WORKSPACES.get(env.WORKSPACES.idFromString(resourceId)) as unknown as {backgroundReplay(): Promise<void>};
+      await workspace.backgroundReplay(); return Response.json({ok: true});
+    }
     if (path === '/_test/observe') {
       const input = await request.json() as {tenantId: string; environmentId: string; mode: 'get' | 'load' | 'facet'};
       return Response.json(await env.OBSERVATION_BENCH.getByName(JSON.stringify([input.tenantId, input.environmentId])).run(input));

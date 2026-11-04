@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
+import {mkdtemp, rm} from 'node:fs/promises';
+import {join} from 'node:path';
+import {tmpdir} from 'node:os';
 import {createRuntime, tenantId, url} from './helpers/miniflare.ts';
 import {nativeClient} from './helpers/native.ts';
 import type {DynamicWorkerUsage} from '../packages/dynamic-worker-observability/src/tail.ts';
@@ -16,9 +19,11 @@ test('real Tail events attribute cached Workers, facets, PTC, JavaScript and she
       + event('content_block_delta', {index: 0, delta: tool ? {type: 'input_json_delta', partial_json: JSON.stringify({description: 'Observe a native program', code: 'console.log("PTC_SECRET"); return 42;'})} : {type: 'text_delta', text: 'done'}})
       + event('content_block_stop', {index: 0}) + event('message_delta', {delta: {stop_reason: tool ? 'tool_use' : 'end_turn'}, usage: {output_tokens: 1}}) + event('message_stop', {}), {headers: {'content-type': 'text/event-stream'}});
   };
-  const runtime = createRuntime(undefined, {browser: true, scriptPath: 'dist/dynamic-worker-observability.js',
+  const directory = await mkdtemp(join(tmpdir(), 'weft-observations-'));
+  const options: Parameters<typeof createRuntime>[1] = {browser: true, scriptPath: 'dist/dynamic-worker-observability.js',
     durableObjects: {USAGE: {className: 'Usage', useSQLite: true}, OBSERVATION_BENCH: {className: 'ObservationBench', useSQLite: true}},
-    bindings: {MODEL_BACKEND: 'deepseek', DEEPSEEK_API_KEY: 'observation-fixture', DEEPSEEK_BASE_URL: 'https://observation-model.test/anthropic'}, outbound});
+    bindings: {MODEL_BACKEND: 'deepseek', DEEPSEEK_API_KEY: 'observation-fixture', DEEPSEEK_BASE_URL: 'https://observation-model.test/anthropic'}, outbound};
+  let runtime = createRuntime(directory, options);
   const api = nativeClient(() => runtime);
   const post = async (path: string, body: unknown) => {
     const response = await runtime.dispatchFetch(url('alpha', path), {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify(body)});
@@ -63,5 +68,14 @@ test('real Tail events attribute cached Workers, facets, PTC, JavaScript and she
       assert.ok(value.cpuTimeMs !== null && value.cpuTimeMs >= 0); assert.ok(value.wallTimeMs !== null && value.wallTimeMs >= 0);
     }
     assert.doesNotMatch(JSON.stringify(values), /PTC_SECRET|observation-fixture/);
-  } finally {await runtime.dispose();}
+    const resourceId = values.find(row => row.kind === 'workspace-javascript')!.resourceId!;
+    const pending = await post('/_test/javascript', {scope, operation: {operation: 'start', source: 'export default () => new Promise(resolve => setTimeout(() => resolve(42), 120000))', cwd: '/workspace'}}) as {id: string; status: string};
+    assert.equal(pending.status, 'running');
+    await runtime.dispose(); runtime = createRuntime(directory, options);
+    const before = (await rows()).filter(row => row.kind === 'workspace-javascript').length;
+    await post('/_test/background', {resourceId});
+    await post('/_test/javascript', {scope, operation: {operation: 'cancel', id: pending.id}});
+    const recovered = (await until(rows => rows.filter(row => row.kind === 'workspace-javascript').length > before)).filter(row => row.kind === 'workspace-javascript').at(-1)!;
+    assert.equal(recovered.tenantId, scope.tenantId); assert.equal(recovered.environmentId, scope.environmentId); assert.equal(recovered.workspaceId, scope.workspaceId);
+  } finally {await runtime.dispose(); await rm(directory, {recursive: true, force: true});}
 });
