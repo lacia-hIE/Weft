@@ -68,7 +68,7 @@ export function observedLoader(loader: WorkerLoader | undefined, ctx: TailContex
   const attach = (code: WorkerLoaderWorkerCode, loaderMode: 'get' | 'load', workerId: string, context: WorkerObservation): WorkerLoaderWorkerCode => {
     const digest = codeHash(code);
     const props: WorkerObservationProps = {schemaVersion: 1, ...context, loaderMode, workerId, ...(digest ? {codeHash: digest} : {})};
-    return {...code, tails: [...code.tails ?? [], tail.call(ctx.exports, {props})]};
+    return {...code, tails: [...code.tails ?? [], tail({props})]};
   };
   return {
     get(id, callback) {
