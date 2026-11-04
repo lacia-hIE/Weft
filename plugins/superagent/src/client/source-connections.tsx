@@ -22,7 +22,7 @@ function SourceEditor({source, form, onBack, onDelete}: {source: SourceView; for
   const [advanced, setAdvanced] = useState(false)
   const draft = useBlockDraft(`source:${source.id}`, source.value, source.revision), value = draft.value
   const field = (spec: FieldSpec) => <SourceField key={spec.key} field={spec} value={value.config[spec.key]} saved={source.value.config[spec.key]}
-    labels={source.labels} fact={source.facts[spec.key]} refreshLabels={async () => {const result = await call('POST sources/:id/labels', {id: source.id});await reload();return result.added}}
+    labels={source.labels} fact={spec.type === 'fact' || JSON.stringify(value.config[spec.key]) === JSON.stringify(source.value.config[spec.key]) ? source.facts[spec.key] : undefined} refreshLabels={async () => {const result = await call('POST sources/:id/labels', {id: source.id});await reload();return result.added}}
     onChange={next => draft.edit({...value, config: {...value.config, [spec.key]: next}})}/>
   return <div className="dt-form" id={`dt-source-${source.id}`}>
     <div className="dt-connection-detail-head">
@@ -78,7 +78,7 @@ function AddSources({open, onClose, onAdded, sources}: {open: boolean; onClose()
   }
   return <Modal open={open} onClose={() => {if (!busy) onClose()}} title={t('sourceAdd')} closeLabel={t('close')} className="dt-connector-modal"
     footer={kind ? <><Button disabled={busy} onClick={() => setKind(undefined)}>{t('sourceChooseType')}</Button><Button variant="primary" disabled={busy || !!im && !selected.length} onClick={() => {void add()}}>{t('sourceAdd')}</Button></> : undefined}>
-    {!kind ? <div className="dt-connector-catalog">{connectionTypes.map(type => <button type="button" key={type.id} className="dt-connector-app" onClick={() => choose(type.id)}>
+    {!kind ? <div className="dt-connector-catalog">{connectionTypes.map(type => <button type="button" key={type.id} className="dt-connector-app" aria-label={connectionType(t, type.id)} onClick={() => choose(type.id)}>
       <span className="dt-connection-mark">{type.mark}</span><span><strong>{connectionType(t, type.id)}</strong><small>{t('sourceMultiple')}</small></span><Icon name="chevron-right"/>
     </button>)}</div> : <div className="dt-form">
       <div><Tag>{connectionType(t, kind)}</Tag></div>
@@ -130,8 +130,8 @@ export function SourceSettings({focus, form}: {focus?: string; form?: Deployment
       <div className="dt-connection-heading"><div><h3 className="dt-section-title">{t('sourceConnections')}</h3><Hint>{t('sourceConnectionsHint')}</Hint></div><Button variant="primary" icon={<Icon name="plus"/>} onClick={() => setAdding(true)}>{t('sourceAdd')}</Button></div>
       <div className="dt-connection-filters">
         <Input aria-label={t('sourceSearch')} placeholder={t('sourceSearch')} value={query} onChange={event => setQuery(event.target.value)}/>
-        <Select value={type} placeholder={t('sourceAllTypes')} options={[{value: '', label: t('sourceAllTypes')}, ...connectionTypes.map(row => ({value: row.id, label: connectionType(t, row.id)}))]} onChange={setType}/>
-        <Select value={status} placeholder={t('sourceAllStates')} options={[{value: '', label: t('sourceAllStates')}, {value: 'true', label: t('sourceActive')}, {value: 'false', label: t('sourceInactive')}]} onChange={setStatus}/>
+        <Field label={t('sourceType')}><Select value={type} placeholder={t('sourceAllTypes')} options={[{value: '', label: t('sourceAllTypes')}, ...connectionTypes.map(row => ({value: row.id, label: connectionType(t, row.id)}))]} onChange={setType}/></Field>
+        <Field label={t('sourceStatus')}><Select value={status} placeholder={t('sourceAllStates')} options={[{value: '', label: t('sourceAllStates')}, {value: 'true', label: t('sourceActive')}, {value: 'false', label: t('sourceInactive')}]} onChange={setStatus}/></Field>
       </div>
       <ul className="dt-connections" aria-label={t('sourceConnections')}>
         {matches.map(source => {const mark = sourceMark(t, source.state);return <li className="dt-connection-row" data-source-id={source.id} key={source.id}>

@@ -398,7 +398,7 @@ a.dt-btn, a.dt-btn:hover { text-decoration: none; }
 /* Connected Source list and connector picker share native DSH surfaces and spacing. */
 .dt-connection-heading, .dt-connection-detail-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 .dt-connection-heading > div { display: grid; gap: 6px; flex: 1; min-width: 220px; }
-.dt-connection-filters { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(140px, 180px) minmax(120px, 160px); gap: 12px; }
+.dt-connection-filters { display: grid; align-items: end; grid-template-columns: minmax(180px, 1fr) minmax(140px, 180px) minmax(120px, 160px); gap: 12px; }
 .dt-connections { list-style: none; padding: 0; margin: 0; border: .5px solid var(--dsw-alias-border-l3); border-radius: 12px; overflow: hidden; }
 .dt-connections:empty { display: none; }
 .dt-connection-row { display: flex; align-items: center; gap: 12px; padding: 16px; border-bottom: .5px solid var(--dsw-alias-border-l3); }

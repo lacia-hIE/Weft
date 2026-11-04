@@ -11,6 +11,7 @@ const TEXT = {
   sourceChooseType: ['选择其他类型', 'Choose another type'],
   sourceConnections: ['已添加的来源', 'Connected Sources'],
   sourceConnectionsHint: ['同一类型可以添加多个连接，分别管理接收范围和评估规则。', 'Add multiple connections of the same type, each with its own scope and assessment rules.'],
+  sourceStatus: ['状态', 'Status'],
   sourceSearch: ['搜索来源', 'Search Sources'],
   sourceAllTypes: ['全部类型', 'All types'],
   sourceAllStates: ['全部状态', 'All states'],
