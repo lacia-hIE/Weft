@@ -2,7 +2,7 @@ import {test,expect} from '@playwright/test';
 import {readFile} from 'node:fs/promises';
 import localHostPackage from '../../packages/local-host-connector/package.json' with {type:'json'};
 test('published local DSH pairs in native settings, runs Files, Git and PTY and recovers through Weft',async({page,request,context},testInfo)=>{
-  test.setTimeout(240_000);
+  test.setTimeout(420_000);
   test.skip(process.env.WEFT_LOCAL_DSH_TEST!=='1','Runs in the dedicated native DSH CI job');
   const {base,project,localUrl,pairingCode,bundlePath}=await(await request.get('/__test/local-host')).json() as {base:string;project:string;localUrl:string;pairingCode:string;bundlePath:string};
   const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
@@ -93,11 +93,50 @@ test('published local DSH pairs in native settings, runs Files, Git and PTY and 
   expect(worked.modelCalls).toBeGreaterThanOrEqual(2);
   await expect.poll(async()=>(await(await context.request.get(executorUrl)).json()).jobs[0]?.state,{timeout:30_000}).toBe('stopped');
   const nativeSession=(await(await context.request.get(executorUrl)).json()).jobs[0].sessionId;
+  const finished=await(await context.request.get(executorUrl)).json();
+  expect(finished.jobs[0].children.length).toBeGreaterThan(0);
+  expect(finished.jobs[0].children.every((child:any)=>!child.active)).toBe(true);
+  const relayExecutor=base+'/local/web/api/weft-executor';
+  const localState=async()=>await(await request.get(relayExecutor)).json();
+  const inspect=async(sessionId:string)=>await(await request.post(relayExecutor,{data:{action:'inspect',sessionId}})).json();
+  const startTree=async(scenario:string)=>{
+    const started=await(await request.post('/__test/executor',{data:{start:true,scenario}})).json();
+    const id=started.currentTicketId;
+    await expect.poll(async()=>{
+      const job=(await localState()).jobs.find((job:any)=>job.ticketId===id);
+      if(!job?.children?.some((child:any)=>child.active))return false;
+      const tree=await inspect(job.sessionId);
+      return tree.tree.some((member:any)=>member.id!==job.sessionId&&member.jobs.some((process:any)=>process.status==='running'));
+    },{timeout:60_000}).toBe(true);
+    return id;
+  };
+  const cancelled=await startTree('cancel');
+  await request.post('/__test/executor',{data:{stop:cancelled}});
+  await expect.poll(async()=>(await localState()).jobs.find((job:any)=>job.ticketId===cancelled)?.state,{timeout:40_000}).toBe('stopped');
+  const cancelledJob=(await localState()).jobs.find((job:any)=>job.ticketId===cancelled);
+  const cancelledTree=await inspect(cancelledJob.sessionId);
+  expect(cancelledTree.tree.every((member:any)=>!member.resident&&!member.jobs.some((process:any)=>['running','stopping'].includes(process.status)))).toBe(true);
+  await request.post('/__test/executor',{data:{release:true}});
+  const restarted=await startTree('restart');
+  const retained=(await localState()).jobs.find((job:any)=>job.ticketId===restarted).sessionId;
+  expect((await request.post('/__test/local-host/restart')).status()).toBe(204);
+  await request.post('/__test/executor',{data:{release:true}});
+  await expect.poll(async()=>{
+    const broker=await(await request.get('/__test/executor')).json();
+    return broker.tickets.find((ticket:any)=>ticket.id===restarted)?.assignments.at(-1)?.report?.state;
+  },{timeout:60_000}).toBe('failed');
+  expect((await localState()).jobs.find((job:any)=>job.ticketId===restarted).children.every((child:any)=>!child.active)).toBe(true);
+  await request.post('/__test/executor',{data:{retry:restarted}});
+  await expect.poll(async()=>{
+    const broker=await(await request.get('/__test/executor')).json();
+    return broker.tickets.find((ticket:any)=>ticket.id===restarted)?.ended?.outcome;
+  },{timeout:60_000}).toBe('completed');
+  await expect.poll(async()=>(await localState()).jobs.find((job:any)=>job.ticketId===restarted)?.state,{timeout:40_000}).toBe('stopped');
+  expect((await localState()).jobs.find((job:any)=>job.ticketId===restarted).sessionId).toBe(retained);
   // Native session listing is independent from the cloud Ticket; it exists only on this computer.
   expect(nativeSession).toMatch(/^weft-/);
-  expect((await context.request.post(settingsUrl,{headers:{origin:'https://untrusted.invalid'},data:{action:'disconnect'}})).status()).toBe(403);
-  await page.getByRole('button',{name:'Stop connection',exact:true}).click();await expect(connectionStatus).toHaveText('Connection stopped');
-  await page.getByRole('button',{name:'Reconnect',exact:true}).click();await expect(connectionStatus).toHaveText('Connected',{timeout:30_000});
+  expect((await request.post(base+'/local/web/api/weft-local-host',{headers:{origin:'https://untrusted.invalid'},data:{action:'disconnect'}})).status()).toBe(403);
+  expect((await request.get(base+'/local/web/api/weft-local-host')).status()).toBe(200);
   await rpc('workspace/create',{request:{path:project}});
   const created=await rpc('session/create',{request:{sessionId:crypto.randomUUID(),cwd:project}});const sessionId=created.sessionId;
   await rpc('session/rename',{request:{sessionId,title:'Local browser session'}});

@@ -45,7 +45,11 @@ there is no persistent Cloudflare request waiting on a model turn. Commands, rec
 An offline computer keeps already accepted work; Weft never automatically moves it to another computer. Local DSH
 restart during work reports failure; Retry creates a new Assignment in the retained Session and directory. Stopping a
 Ticket remains pending until the computer confirms its turn and jobs stopped. Revoking a computer blocks cloud
-access but does not remotely kill disconnected processes. Native Agent subdelegation is disabled in this initial
-carrier; ordinary shell jobs use native DSH job delivery. Tests still follow the repository's CI policy.
+access but does not remotely kill disconnected processes. Native spawn/fork subagents inherit the Assignment tool limits and the native delegated permission policy.
+Only the root worker may report or change the cloud Ticket; children may read its bounded context.
+Local DSH controls delegation depth and concurrent children. The carrier tracks durable child catalogs,
+drains the entire native tree and its processes before acknowledging stop, and releases the root Agent handle
+so Retry can resume its retained Session with fresh admission. Restart reconciliation preserves child history
+and requires an explicit Retry instead of replaying unfinished child prompts. Ordinary shell jobs use native DSH job delivery. Tests still follow the repository's CI policy.
 
 The 0.3.0 sources add this mode; the previously published 0.2.7 connector supports remote workbench access only.

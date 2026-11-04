@@ -4,7 +4,7 @@ import {createController} from './controller.mjs';
 import {createExecutorController} from './executor.mjs';
 import {supportsDshVersion,SUPPORTED_DSH_VERSIONS} from './compatibility.mjs';
 export const name='weft-local-host';
-export const inject=['webServer','connection','clientModules','sessionController','agents','permissionPresets','jobs'];
+export const inject=['webServer','connection','clientModules','sessionController','agents','permissionPresets','jobs','subagents','agentPresets','agentDefaultModel'];
 /** This is a normal native Host plugin. It never implements a second Agent. */
 export async function apply(ctx,config={}) {
   const version=ctx.clientModules.graph()?.release?.version;

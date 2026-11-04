@@ -30,7 +30,7 @@ export type Role = 'orchestrator' | 'worker'
  * shows a person something, changes the environment, schedules work or starts goals outside the worker slots, or edits documents.
  */
 const WORK_TOOLS = ['read', 'write', 'edit', 'read_image', 'glob', 'grep', 'bash', 'pwsh', 'job_output', 'job_list', 'job_kill', 'web_search',
-  'web_fetch', 'skill', 'todo_write', 'subagent', 'list_subagent_models', 'send_message', 'list_agents', 'interrupt_agent', 'workspace_runtime', 'mcp__*']
+  'web_fetch', 'skill', 'todo_write', 'subagent', 'subagent_fork', 'wait_agent', 'list_subagent_models', 'send_message', 'list_agents', 'interrupt_agent', 'workspace_runtime', 'mcp__*']
 const MAIN_TOOLS = ['skill', 'bash', 'read', 'read_image', 'job_output', 'job_list', 'job_kill']
 export const ticketOfSessionId = (sessionId: string): string | undefined => sessionId.startsWith('worker-') ? sessionId.slice('worker-'.length) : undefined
 

@@ -18,11 +18,25 @@ async function privateWrite(file,value){
 /** One native DSH, one persisted mailbox; reconnects do not replay accepted prompts. */
 export function createExecutorController({ctx,file,request=fetch}){
   let data={accepting:false,maxWorkers:1,jobs:{}},status='unpaired',closed=false,loop,stop;
-  let saving=Promise.resolve(),actions=Promise.resolve();const disposers=[],configured=new WeakSet();
+  let saving=Promise.resolve(),actions=Promise.resolve();const disposers=[],configured=new WeakSet(),handles=new Map();
   const save=()=>{const copy=JSON.parse(JSON.stringify(data));return saving=saving.catch(()=>{}).then(()=>privateWrite(file,copy));};
   const serial=run=>{const result=actions.then(run);actions=result.catch(()=>{});return result;};
-  const jobOf=agent=>data.jobs[agent?.id];
-  const activeJobs=()=>Object.values(data.jobs).filter(job=>job.state==='running');
+  const jobOf=agent=>{
+    if(!agent)return;
+    const direct=data.jobs[agent.id];if(direct)return direct;
+    return Object.values(data.jobs).find(job=>job.children?.[agent.id]);
+  };
+  const belongs=id=>data.jobs[id]??Object.values(data.jobs).find(job=>job.children?.[id]);
+  const members=job=>[job.sessionId,...Object.keys(job.children??{})];
+  const background=job=>members(job).some(id=>ctx.jobs.list(id).some(item=>item.owner===id&&['running','stopping'].includes(item.status)));
+  const busy=job=>Object.values(job.children??{}).some(child=>child.active)||background(job);
+  const settle=job=>{
+    if(job.stopping||job.state==='stopped'||job.state==='failed')return;
+    const root=ctx.agents.get(job.sessionId);
+    if(root?.status==='running'||root?.inbox?.nextTurn.length||root?.inbox?.nextStep.length||busy(job))return;
+    void change(job,{state:'waiting'});
+  };
+  const activeJobs=()=>Object.values(data.jobs).filter(job=>job.state==='running'||job.stopping&&(ctx.agents.get(job.sessionId)?.status==='running'||busy(job)));
   const change=(job,fields)=>{Object.assign(job,fields);job.revision++;return save();};
   async function post(operation,body,signal){
     const response=await request(data.endpoint+'/'+operation,{method:'POST',redirect:'error',headers:{'content-type':'application/json',authorization:`Bearer ${data.token??data.pairingKey}`},
@@ -32,28 +46,43 @@ export function createExecutorController({ctx,file,request=fetch}){
     return value;
   }
   function attach(agent){
-    const job=jobOf(agent);if(!job||configured.has(agent))return;configured.add(agent);
-    if(data.permissionPreset)ctx.permissionPresets.set(agent.session,data.permissionPreset);
-    disposers.push(agent.ctx.systemPrompt.section({name:'weft-executor',order:600,interpolate:false,text:()=>jobOf(agent)?.instructions??''}));
+    let job=jobOf(agent);
+    const parent=agent.session.header?.parentSession;
+    if(!job&&parent){
+      job=belongs(parent);
+      if(job){
+        if(job.stopping||job.state==='stopped')throw new Error('Assignment ended');
+        job.children??={};job.children[agent.id]={id:agent.id,parentSessionId:parent,active:true,local:true};
+        return save().then(()=>attach(agent));
+      }
+    }
+    if(!job||configured.has(agent))return;
+    if(job.stopping||job.state==='stopped')throw new Error('Assignment ended');
+    configured.add(agent);
+    const root=agent.id===job.sessionId,assignmentId=job.assignmentId;
+    // Native delegation already pins the child's sandbox and non-interactive approval policy.
+    if(root&&data.permissionPreset)ctx.permissionPresets.set(agent.session,data.permissionPreset);
+    disposers.push(agent.ctx.systemPrompt.section({name:'weft-executor',order:600,interpolate:false,text:()=>`${jobOf(agent)?.instructions??''}${root?'':'\nYou are a delegated worker. Return results to your parent; only the root worker reports or changes the cloud Ticket.'}`}));
     const names=[...agent.ctx.tools.view(agent).restrictableNames];
-    // Agent subdelegation is disabled until its durable lifecycle is tracked by this carrier.
-    const allow=names.filter(name=>!['subagent','send_message','list_agents','interrupt_agent','list_subagent_models'].includes(name)&&job.allow.some(pattern=>pattern.endsWith('*')?name.startsWith(pattern.slice(0,-1)):name===pattern));
+    const allow=names.filter(name=>job.allow.some(pattern=>pattern.endsWith('*')?name.startsWith(pattern.slice(0,-1)):name===pattern));
+    const cloudTools=job.tools.filter(tool=>root||tool.name==='orchestrator_read');
     disposers.push(agent.ctx.tools.restrict({allow}));
     disposers.push(agent.ctx.on('tools/execute',async(execution,next)=>{
       const current=jobOf(agent);
-      if(!current||current.state==='stopped'||current.stopping)throw new Error('Assignment ended');
-      if(execution.name!=='run_code'&&!TOOL_NAMES.has(execution.name)&&(!allow.includes(execution.name)
-        && !current.allow.some(pattern=>pattern.endsWith('*')?execution.name.startsWith(pattern.slice(0,-1)):execution.name===pattern)
-        || ['subagent','send_message','list_agents','interrupt_agent','list_subagent_models'].includes(execution.name)))throw new Error('Tool is unavailable to this Executor');
+      if(execution.agent&&execution.agent!==agent)return next();
+      if(!current||current.assignmentId!==assignmentId||current.state==='stopped'||current.stopping)throw new Error('Assignment ended');
+      if(execution.name!=='run_code'&&!cloudTools.some(tool=>tool.name===execution.name)
+        &&(!allow.includes(execution.name)&&!current.allow.some(pattern=>pattern.endsWith('*')?execution.name.startsWith(pattern.slice(0,-1)):execution.name===pattern)))throw new Error('Tool is unavailable to this Executor');
+      if(!root&&TOOL_NAMES.has(execution.name)&&execution.name!=='orchestrator_read')throw new Error('Only the root Executor may change the Ticket');
       return next();
     }));
-    for(const tool of job.tools){
+    for(const tool of cloudTools){
       if(!TOOL_NAMES.has(tool.name))throw new Error('Unrecognized Executor tool');
       disposers.push(agent.ctx.tools.register({...tool,output:{schema:{type:'object',additionalProperties:true},render:(_args,value)=>[{type:'text',text:JSON.stringify(value)}]},
         execute:async(args,execution)=>{
           const current=jobOf(agent);
-          if(!current||current.state==='stopped')throw new Error('Assignment ended');
-          const payload={ticketId:current.ticketId,assignmentId:current.assignmentId,requestId:String(execution.callId),name:tool.name,args};
+          if(!current||current.assignmentId!==assignmentId||current.state==='stopped'||current.stopping)throw new Error('Assignment ended');
+          const payload={ticketId:current.ticketId,assignmentId:current.assignmentId,requestId:`${agent.id}:${execution.callId}`,name:tool.name,args};
           // Identical tool retries use the native call ID; cloud receipts prevent duplicate reports and replies.
           const result=await post('tool',payload,execution.signal);
           if(tool.name==='orchestrator_report'){
@@ -64,8 +93,20 @@ export function createExecutorController({ctx,file,request=fetch}){
     }
   }
   disposers.push(ctx.on('agent/created',({agent})=>attach(agent)));
+  disposers.push(ctx.on('subagent/start',info=>{
+    const job=belongs(info.parentSessionId);if(!job)return;
+    job.children??={};job.children[info.id]={id:info.id,parentSessionId:info.parentSessionId,runId:info.runId,active:true,local:info.local};
+    void change(job,{state:'running'});
+  }));
+  disposers.push(ctx.on('subagent/end',info=>{
+    const job=belongs(info.parentSessionId),child=job?.children?.[info.id];
+    if(!job||!child||child.runId!==info.runId)return;
+    Object.assign(child,{active:false,stopReason:info.stopReason});
+    void change(job,{}).then(()=>settle(job));
+  }));
   disposers.push(ctx.on('session/event',(session,event)=>{
-    const job=data.jobs[session.id];if(!job||job.state==='stopped')return;
+    const job=belongs(session.id);if(!job||job.state==='stopped')return;
+    if(session.id!==job.sessionId){if(event.type==='turn/start')void change(job,{state:'running'});return;}
     if(event.type==='user/message'){
       const requestId=event.data?.source?.rpcId;
       if(job.requested?.includes(requestId)&&!job.read.includes(requestId)){job.read.push(requestId);void change(job,{});}
@@ -74,27 +115,42 @@ export function createExecutorController({ctx,file,request=fetch}){
     if(event.type==='assistant/message'){
       const text=event.data?.message?.content?.filter(part=>part.type==='text').map(part=>part.text).join('\n');if(text)job.summary=text.slice(-12000);
     }
-    if(event.type==='turn/end'){
+    if(event.type==='turn/end'&&!job.stopping){
       const failed=event.data?.reason?.kind==='error';
-      const background=ctx.jobs?.list(session.id).some(item=>item.owner===session.id&&['running','stopping'].includes(item.status));
-      void change(job,{state:failed?'failed':background&&!job.handoff?'running':'waiting',...(failed?{error:event.data.reason.error?.message??'Agent turn failed'}:{})});
+      if(failed){
+        const error=event.data.reason.error?.message??'Agent turn failed';
+        void cancel(job,{state:'failed',error}).catch(failure=>change(job,{state:'failed',error:`${error}; cleanup incomplete: ${failure}`}));
+      }else void change(job,{state:busy(job)&&!job.handoff?'running':'waiting'});
     }
   }));
-  async function cancel(job){
+  async function cancel(job,finish={state:'stopped'}){
     job.stopping=true;await save();
-    const agent=ctx.agents.get(job.sessionId);
-    // SessionController.cancel intentionally retains queued messages. Assignment shutdown must drop that inbox.
-    if(agent?.cancel)agent.cancel({kind:'user'},{keepInbox:false});
-    else if(agent)await ctx.sessionController.cancel({sessionId:job.sessionId});
-    for(const item of ctx.jobs?.list(job.sessionId)??[])if(item.owner===job.sessionId&&['running','stopping'].includes(item.status)){
-      ctx.jobs.kill(item.id,job.sessionId,'Assignment ended');
-      const settled=await ctx.jobs.wait(item.id,10_000,job.sessionId);
-      if(['running','stopping'].includes(settled.status))throw new Error('Background process has not stopped; cancellation will be retried');
-    }
+    const agent=ctx.agents.get(job.sessionId),owners=members(job);
+    // Native drain closes startup admission and awaits local and external descendants.
+    const draining=agent?ctx.subagents.drainDescendants([agent]):Promise.resolve();
+    agent?.cancel({kind:'user'},{keepInbox:false});
+    const stopProcesses=async()=>{
+      for(const owner of new Set([...owners,...members(job)]))for(const item of ctx.jobs.list(owner))if(item.owner===owner&&['running','stopping'].includes(item.status)){
+        ctx.jobs.kill(item.id,owner,'Assignment ended');
+        const settled=await ctx.jobs.wait(item.id,10_000,owner);
+        if(['running','stopping'].includes(settled.status))throw new Error('Background process has not stopped; cancellation will be retried');
+      }
+    };
+    // Observe the drain immediately, even if process cleanup fails first.
+    void draining.catch(()=>{});
+    let timer;
+    try{
+      await Promise.race([Promise.all([draining,stopProcesses()]),new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('Subagent tree has not stopped; cancellation will be retried')),10_000);})]);
+    }finally{clearTimeout(timer);}
+    await stopProcesses();
     const deadline=Date.now()+10_000,signal=AbortSignal.timeout(10_000);
     while(agent?.status==='running'&&Date.now()<deadline)await sleep(25,signal);
     if(agent?.status==='running')throw new Error('Agent has not stopped; cancellation will be retried');
-    await change(job,{state:'stopped'});
+    const handle=handles.get(job.sessionId);
+    if(agent&&!handle)throw new Error('Executor Session is owned by another native caller; restart DSH before retrying');
+    await handle?.dispose();handles.delete(job.sessionId);
+    for(const child of Object.values(job.children??{}))child.active=false;
+    await change(job,finish);
   }
   async function accept(command){
     if(!hex.test(command.ticketId)||!hex.test(command.assignmentId))throw new Error('Invalid Assignment identity');
@@ -118,19 +174,23 @@ export function createExecutorController({ctx,file,request=fetch}){
       const canonical=await realpath(cwd),inside=relative(data.root,canonical);
       if(inside==='..'||inside.startsWith('..'+sep)||isAbsolute(inside))throw new Error('Task directory escapes the execution root');
       job={ticketId:command.ticketId,assignmentId:command.assignmentId,sessionId,cwd:canonical,revision:0,state:'waiting',accepted:[],requested:[],read:[],tools:command.tools,allow:command.allow,
-        instructions:command.instructions.split(command.directory).join(canonical),created:data.jobs[sessionId]?.created??false,handoff:false};
+        instructions:command.instructions.split(command.directory).join(canonical),created:data.jobs[sessionId]?.created??false,children:data.jobs[sessionId]?.children??{},preset:data.jobs[sessionId]?.preset,handoff:false};
       data.jobs[sessionId]=job;await save();
     }
     job.instructions=command.instructions.split(command.directory).join(job.cwd);
     await save();
-    // A retry uses the existing non-blank Session; only first creation calls create.
-    if(!job.created){
-      const created=await ctx.sessionController.create({sessionId,cwd:job.cwd,...data.agentPreset?{agentPreset:data.agentPreset}:{}});
-      if(created.sessionId!==sessionId)throw new Error('Session identity is already owned by other work');
-      await change(job,{created:true});
+    // Own the native Agent handle so drain can release it; Retry resumes the same durable Session.
+    if(!ctx.agents.get(sessionId)){
+      const preset=job.preset??(await ctx.agentPresets.resolve(data.agentPreset||undefined)).id;
+      const defaults=ctx.agentDefaultModel;
+      const options={agentOptions:{get provider(){return defaults.currentSelection().provider;},get model(){return defaults.currentSelection().model;},get reasoningEffort(){return defaults.currentSelection().reasoningEffort;}},
+        setup:async agentCtx=>{await ctx.agentPresets.mount(agentCtx,preset);}};
+      const handle=job.created?await ctx.agents.resume({resumeSessionId:sessionId,...options}):await ctx.agents.create({sessionId,meta:{cwd:job.cwd,agentPreset:preset},...options});
+      handles.set(sessionId,handle);
+      await change(job,{created:true,preset});
       await ctx.sessionController.rename({sessionId,title:command.title});
     }
-    const live=ctx.agents.get(sessionId);if(live)attach(live);
+    const live=ctx.agents.get(sessionId);if(live)await attach(live);
     for(const message of command.messages){
       if(typeof message.id!=='string'||typeof message.text!=='string'||message.text.length>256*1024)throw new Error('Invalid task input');
       if(job.accepted.includes(message.id))continue;
@@ -187,17 +247,23 @@ export function createExecutorController({ctx,file,request=fetch}){
       if(!data.jobs[sessionId])throw new Error('Session does not belong to this Executor');
       const signal=AbortSignal.timeout(5000),agent=ctx.agents.get(sessionId);
       return {state:typeof ctx.sessionController.state==='function'?await ctx.sessionController.state({sessionId},signal):{running:agent?.status==='running'},
-        events:agent?.session.snapshotEvents().slice(-40)??[]};
+        events:agent?.session.snapshotEvents().slice(-40)??[],tree:members(data.jobs[sessionId]).map(id=>({id,resident:!!ctx.agents.get(id),running:ctx.agents.get(id)?.status==='running',jobs:ctx.jobs.list(id).map(({id,status})=>({id,status}))}))};
     },
     snapshot:()=>({state:status,configured:!!data.endpoint,endpoint:data.endpoint,accepting:data.accepting,root:data.root??'',maxWorkers:data.maxWorkers,agentPreset:data.agentPreset??'',permissionPreset:data.permissionPreset??'',
-      running:activeJobs().length,jobs:Object.values(data.jobs).map(({ticketId,sessionId,state,cwd})=>({ticketId,sessionId,state,cwd}))}),
+      running:activeJobs().length,jobs:Object.values(data.jobs).map(({ticketId,sessionId,state,cwd,children})=>({ticketId,sessionId,state,cwd,children:Object.values(children??{}).map(({id,parentSessionId,active,stopReason})=>({id,parentSessionId,active,stopReason}))}))}),
     load:()=>serial(async()=>{
       try{
         data=JSON.parse(await readFile(file,'utf8'));executorEndpoint(data.endpoint);
         if(!token.test(data.token??data.pairingKey??'')||!isAbsolute(data.root)||!Number.isInteger(data.maxWorkers)||data.maxWorkers<1||data.maxWorkers>16||typeof data.accepting!=='boolean')throw new Error('Invalid Executor configuration');
         for(const job of Object.values(data.jobs)){
+          job.children??={};
+          if(job.created){
+            const rows=await ctx.subagents.listDescendants(job.sessionId,AbortSignal.timeout(10_000));
+            if(rows.some(row=>row.kind==='diagnostic'))throw new Error('Cannot reconcile the persisted subagent tree');
+            for(const row of rows)job.children[row.id]={...job.children[row.id],id:row.id,parentSessionId:row.parentId,local:row.mode!=='external',active:!!ctx.agents.get(row.id)};
+          }
           const live=ctx.agents.get(job.sessionId);if(live)attach(live);
-          else if(job.state==='running')await change(job,{state:'failed',error:'Local DSH restarted during execution. Retry this Ticket to resume its retained Session and files.'});
+          else if(job.state==='running'||Object.values(job.children).some(child=>child.active))await change(job,{state:'failed',error:'Local DSH restarted during execution. Retry this Ticket to resume its retained Session and files.'});
         }
         start();
       }catch(error){if(error.code!=='ENOENT')status='configuration-error';}
@@ -223,8 +289,8 @@ export function createExecutorController({ctx,file,request=fetch}){
     close:()=>serial(async()=>{
       closed=true;await disconnect();
       for(const job of Object.values(data.jobs))if(job.state!=='stopped'){
-        try{await cancel(job);}catch{/* Preserve failure, rather than claiming cancellation succeeded. */}
-        await change(job,{state:'failed',error:'Local Executor stopped. Retry the Ticket to resume its retained Session and files.'});
+        const failed={state:'failed',error:'Local Executor stopped. Retry the Ticket to resume its retained Session and files.'};
+        try{await cancel(job,failed);}catch(error){await change(job,{...failed,error:`${failed.error} Cleanup incomplete: ${error}`});}
       }
       for(const dispose of disposers.reverse())if(typeof dispose==='function')dispose();await saving;
     }),
