@@ -27,9 +27,9 @@ test('official Team bundle card installs, selects its browser module and persist
   // New session is the draft composer; the original header belongs to a real conversation.
   await sendPrompt(page, 'Verify the official Team panel');
   await page.getByRole('treeitem').filter({hasText: 'Verify the official Team panel'}).click({timeout: 45000});
-  const teamAction = page.getByRole('button', {name: 'Agent Team', exact: true});
+  const teamAction = page.getByRole('button', {name: 'Agent team', exact: true});
   await teamAction.click({timeout: 45000});
-  const teamPanel = page.getByRole('dialog', {name: 'Agent Team', exact: true});
+  const teamPanel = page.getByRole('dialog', {name: 'Agent team', exact: true});
   await expect(teamPanel.getByRole('heading', {name: /^Members/})).toBeVisible();
   await expect(teamPanel.getByText('No shared tasks yet. Create them through the conversation.', {exact: true})).toBeVisible();
   await page.keyboard.press('Escape');
@@ -42,5 +42,5 @@ test('official Team bundle card installs, selects its browser module and persist
   await page.reload();
   await page.getByRole('button', {name: 'Plugins', exact: true}).click({timeout: 45000});
   await expect(card.getByRole('switch')).not.toBeChecked();
-  await expect(page.getByRole('button', {name: 'Agent Team', exact: true})).toHaveCount(0);
+  await expect(page.getByRole('button', {name: 'Agent team', exact: true})).toHaveCount(0);
 });
