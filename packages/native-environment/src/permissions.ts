@@ -1,5 +1,6 @@
 import { Context } from '@deepseek-ai/cordis';
 import Sessions from '@deepseek-ai/dsh-session';
+import AgentRegistry from '@deepseek-ai/dsh-agent';
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection';
 import ApprovalService from '@deepseek-ai/dsh-user-approval';
 import PermissionPresetService from '@deepseek-ai/dsh-permission-presets';
@@ -36,6 +37,8 @@ export async function openPermissionWorld(defaultPreset: string | undefined): Pr
     // Record the folds this world registers; read contexts register the permission fold themselves.
     const registry = ctx.sessionProjections, register = registry.register.bind(registry);
     registry.register = ((definition: Definition) => { definitions.push(definition); return register(definition); }) as typeof registry.register;
+    // The preset service follows live Agents; this world never creates one.
+    await ctx.plugin(AgentRegistry);
     await ctx.plugin(SandboxPolicy, {workspaceRoot: '/workspace', mode: 'workspace-write'});
     await ctx.plugin(WorkspaceSubprocess, {exec: inspectOnly, kill: inspectOnly});
     await ctx.plugin(ComputerBashExecutor, {cwd: '/workspace'});

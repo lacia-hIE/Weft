@@ -8,7 +8,7 @@ import {installDurableSessionQuery} from '../../native-query/src/index.ts';
 import {teamProjectionDefinition} from '@weft/upstream/packages/experimental/agent-team/src/projection.ts';
 import type { AssistantStreamFrame, Agent } from '@deepseek-ai/dsh-agent';
 import { modelSelectionProjectionDefinition } from '@deepseek-ai/dsh-agent';
-import { turnBoundaryProjectionDefinition } from '@weft/upstream/packages/core/agent/src/projection.ts';
+import AgentRegistry from '@deepseek-ai/dsh-agent';
 import { inboxProjectionDefinition } from '@weft/upstream/packages/core/agent-loop/src/inbox.ts';
 import {agentPresetProjectionDefinition} from '@weft/upstream/packages/preset/agent-preset-registry/src/session.ts';
 import {userQuestionProjectionDefinition} from '@weft/upstream/packages/interaction/user-questions/src/projection.ts';
@@ -67,7 +67,6 @@ export async function createSessionReader(storage: DurableObjectStorage, promote
     await ctx.plugin(Tools);
     await ctx.plugin(Todo, {allowParallelInProgress: false});
     await ctx.sessionProjections.register(teamProjectionDefinition);
-    await ctx.sessionProjections.register(turnBoundaryProjectionDefinition);
     await ctx.sessionProjections.register(inboxProjectionDefinition);
     await ctx.sessionProjections.register(agentPresetProjectionDefinition);
     // Projections the native root's official services and preset plugins fold; the client reads them here.
@@ -81,6 +80,8 @@ export async function createSessionReader(storage: DurableObjectStorage, promote
     // Profile rows that only register read folds; the native root loads them from the official profile.
     await ctx.plugin(SessionStats);
     await ctx.plugin(SessionTurnOutline);
+    // The registry folds turn boundaries and lets the title service activate; this read world creates no Agent.
+    await ctx.plugin(AgentRegistry);
     await ctx.plugin(Title, {fallbackMaxWords: 5, fallbackMaxBytes: 40, maxTitleBytes: 80});
     await ctx.plugin(SqliteSessionPersistence, {storage});
     await installDurableSessionQuery(ctx, storage);

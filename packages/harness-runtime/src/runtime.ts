@@ -74,10 +74,11 @@ export async function openHarnessSession(options: RuntimeOptions): Promise<Harne
     // Root services of the official profile (llm, sessions, projections, token meter, commands,
     // questions, subagent model selection), loaded from its rows; tools, agents and goals follow the system prompt.
     await mountOfficialProfile(ctx, 'core', options.presentation === true, options.profileOverrides);
-    if (options.presentation) await ctx.plugin(SessionTitle, { fallbackMaxWords: 5, fallbackMaxBytes: 40, maxTitleBytes: 80 });
-    if (options.presentation) installImSessionTitles(ctx);
     await ctx.plugin(SystemPrompt, { personaPrefix: options.persona });
     await mountOfficialProfile(ctx, 'agents', options.presentation === true, options.profileOverrides);
+    // The title service follows the Agent registry the `agent` row provides.
+    if (options.presentation) await ctx.plugin(SessionTitle, { fallbackMaxWords: 5, fallbackMaxBytes: 40, maxTitleBytes: 80 });
+    if (options.presentation) installImSessionTitles(ctx);
     if (options.mountPersistence) await options.mountPersistence(ctx);
     await ctx.plugin(AgentLoop, { agents: [], ...options.agentLoop });
     if (options.mountModels) await options.mountModels(ctx);
