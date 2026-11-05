@@ -5,7 +5,7 @@ import {background, chunks, requestId, sleep} from './shared.js';
 import {captureContextEnhancementSource, enhanceContextContent, withSentAt} from './reference/context-enhancement.mjs';
 
 const record = {parse: value => value};
-const DOMAIN = {name: 'im_core', version: 1, tables: {conversations: {valueSchema: record}, seen: {valueSchema: record}, deliveries: {valueSchema: record}}};
+const DOMAIN = {name: 'im_core', version: 2, compatibleVersions: [1], tables: {session_routes: {valueSchema: record}, task_routes: {valueSchema: record}, conversations: {valueSchema: record}, seen: {valueSchema: record}, deliveries: {valueSchema: record}}};
 const SEEN_LIMIT = 2000;
 /** A follow stream without frames is reopened, so a missed boundary cannot pin a stream forever. */
 const FOLLOW_IDLE_MS = 600_000;
@@ -14,6 +14,9 @@ const HELP = [
   '可用命令：',
   '/new 开始一个新会话',
   '/stop 停止当前回复',
+  '/automations 查看本聊天的自动化通知',
+  '/notify <任务 ID> 将任务通知绑定到本聊天',
+  '/notify <任务 ID> off 关闭本聊天的该任务通知',
   '/steer <内容> 向当前任务补充指令',
   '/help 显示本帮助',
 ].join('\n');
@@ -22,6 +25,25 @@ const HELP = [
 function textOf(message) {
   const content = Array.isArray(message?.content) ? message.content : [];
   return content.filter(block => block?.type === 'text' && typeof block.text === 'string').map(block => block.text).join('').trim();
+}
+
+/** Only trusted schedule provenance can select a notification route. */
+function scheduleIds(message) {
+  if (message?.source?.kind !== 'schedule') return [];
+  const text = textOf(message);
+  try {
+    if (text.startsWith('[SCHEDULE REMINDER]\n')) {
+      const line = text.split('\n').find(line => line.startsWith('schedule_id_json: '));
+      const id = JSON.parse(line?.slice('schedule_id_json: '.length));
+      return typeof id === 'string' ? [id] : [];
+    }
+    if (text.startsWith('[SCHEDULE REMINDER BATCH]\n')) {
+      const line = text.split('\n').find(line => line.startsWith('reminders_json: '));
+      const reminders = JSON.parse(line?.slice('reminders_json: '.length));
+      return Array.isArray(reminders) ? reminders.flatMap(row => typeof row.schedule_id === 'string' ? [row.schedule_id] : []) : [];
+    }
+  } catch { /* Unknown framing is not a notification. */ }
+  return [];
 }
 
 /**
@@ -45,12 +67,16 @@ class ImBridge {
     this.fileSends = new Map();
     this.closed = false;
     ctx.effect(() => () => {this.closed = true;}, 'dsh-im bridge lifetime');
-    this.ready = ctx.storageDomain.open(DOMAIN).then(domain => {
+    this.ready = ctx.storageDomain.open(DOMAIN).then(async domain => {
       ctx.effect(() => () => domain.close(), 'dsh-im storage');
       this.conversations = domain.table('conversations');
+      this.taskRoutes = domain.table('task_routes');
+      this.sessionRoutes = domain.table('session_routes');
       this.seen = domain.table('seen');
       this.deliveries = domain.table('deliveries');
       ctx.effect(() => ctx.weftSessionEvents.onTurnEnded(event => this.turnEnded(event)), 'dsh-im turn notifications');
+      for (const [chatKey, row] of this.conversations.entries()) if (!row.automation && !this.sessionRoutes.get(row.sessionId)) await this.sessionRoutes.put(row.sessionId, {chatKey, channel: row.channel, target: row.target, group: row.group});
+      queueMicrotask(() => {void this.ready.then(() => this.refreshRoutes()).catch(error => console.warn('dsh-im automation routes:', String(error)));});
       // Replies interrupted by a restart are delivered from their durable cursor.
       for (const [key, row] of this.conversations.entries()) if (row.pending?.length || (row.notified ?? -1) > row.delivered) this.follow(key);
       // Bindings from before turn notifications start syncing at their first notified turn.
@@ -93,9 +119,11 @@ class ImBridge {
   }
 
   async sendFileOnce(args, exec, sessionId) {
-    const entry = [...this.conversations.entries()].find(([, row]) => row.sessionId === sessionId);
-    if (!entry) throw new Error('当前会话没有绑定 IM 聊天。');
-    const [, row] = entry, channel = this.channels.get(row.channel);
+    const destinations = new Map([...this.conversations.entries()].filter(([, row]) => row.sessionId === sessionId).map(([key, row]) => [row.chatKey ?? key, row]));
+    if (destinations.size > 1) throw new Error('此执行会话绑定了不同聊天，无法确定文件收件人。请为不同聊天选择不同执行会话。');
+    const row = [...destinations.values()][0];
+    if (!row) throw new Error('当前会话没有绑定 IM 聊天。');
+    const channel = this.channels.get(row.channel);
     if (!channel?.sendFile) throw new Error('当前渠道不支持文件回传。');
     const deliveryId = `${sessionId}:${exec.callId}`;
     const previous = this.deliveries.get(deliveryId);
@@ -175,6 +203,8 @@ class ImBridge {
       await this.conversations.delete(key);
       await this.ctx.weftSessionEvents.unwatch(row.sessionId).catch(() => {});
     }
+    for (const [sessionId, route] of this.sessionRoutes.entries()) if (route.channel === channel) {await this.sessionRoutes.delete(sessionId); await this.ctx.weftSessionEvents.unwatch(sessionId).catch(() => {});}
+    for (const [id, route] of this.taskRoutes.entries()) if (route.channel === channel) await this.taskRoutes.delete(id);
     for (const key of this.seen.keys()) if (key.startsWith(channel + ':')) await this.seen.delete(key);
   }
 
@@ -202,7 +232,7 @@ class ImBridge {
       for (const [key] of oldest) await this.seen.delete(key);
     }
     const text = message.text.trim();
-    const command = /^\/(new|stop|help|steer)\b/i.exec(text)?.[1]?.toLowerCase();
+    const command = /^\/(new|stop|help|steer|automations|notify)\b/i.exec(text)?.[1]?.toLowerCase();
     const access = channel.access?.(message, !!command);
     if (access?.allowed === false || channel.allows && !channel.allows(message.sender)) {
       await this.send(message.channel, message.target, access?.reason === 'command-not-allowed' ? '你可以与机器人对话，但没有执行命令的权限。' : `尚未授权与此机器人对话。你的 ID：${message.sender}\n请管理员在插件设置中把它加入允许列表。`);
@@ -211,6 +241,23 @@ class ImBridge {
     const key = `${message.channel}:${message.conversation}`;
     if (command === 'steer' && !text.replace(/^\/steer\b\s*/i, '').trim()) {
       await this.send(message.channel, message.target, '用法：/steer <补充内容>'); return 'command';
+    }
+    if (command === 'automations' || command === 'notify') {
+      const tasks = await this.refreshRoutes();
+      if (command === 'automations') {
+        const bound = tasks.filter(task => this.taskRoutes.get(task.id)?.chatKey === key && !this.taskRoutes.get(task.id)?.disabled);
+        await this.send(message.channel, message.target, bound.length ? bound.map(task => `${task.title || task.id}\n${task.id} · ${task.status}\n执行会话：${task.target.sessionId || '待创建'}`).join('\n\n') : '本聊天尚未绑定自动化通知。用 /notify <任务 ID> 绑定已有任务。');
+      } else {
+        const match = /^\/notify\s+(\S+)(?:\s+(off))?\s*$/i.exec(text);
+        const task = match && tasks.find(task => task.id === match[1]);
+        if (!task) {await this.send(message.channel, message.target, '请使用 /notify <任务 ID> [off]；任务必须属于当前环境。'); return 'command';}
+        const previous = this.taskRoutes.get(task.id);
+        if (match[2] && previous?.chatKey !== key) {await this.send(message.channel, message.target, '该任务没有向本聊天发送通知。'); return 'command';}
+        await this.taskRoutes.put(task.id, {chatKey: key, channel: message.channel, target: message.target, group: !!message.group, disabled: !!match[2]});
+        await this.refreshRoutes();
+        await this.send(message.channel, message.target, match[2] ? '已关闭该任务的 IM 通知；自动化继续执行。' : '已将该任务通知绑定到本聊天；更换执行会话不会改变通知目标。');
+      }
+      return 'command';
     }
     let row = this.conversations.get(key);
     if (command === 'help') {await this.send(message.channel, message.target, HELP); return 'command';}
@@ -239,21 +286,25 @@ class ImBridge {
       this.followers.delete(key);
       await this.stopActivity(key);
       if (row?.card) await this.updateCard(key, '已开始新会话。', true);
+      await this.refreshRoutes();
       const previous = row?.sessionId;
       row = {sessionId: created.sessionId, delivered: -1, pending: [], target: message.target, channel: message.channel, group: !!message.group, titlePrefix: this.config.titlePrefix !== false, syncFrom: 0};
+      await this.sessionRoutes.put(created.sessionId, {chatKey: key, channel: row.channel, target: row.target, group: row.group});
       await this.conversations.put(key, row);
       await this.watch(key, created.sessionId);
-      if (previous) await this.ctx.weftSessionEvents.unwatch(previous).catch(() => {});
+      if (previous && !this.sessionRoutes.get(previous) && ![...this.conversations.entries()].some(([, route]) => route.sessionId === previous)) await this.ctx.weftSessionEvents.unwatch(previous).catch(() => {});
       if (command === 'new') {
         await this.send(message.channel, message.target, '已开始新会话。');
         return 'command';
       }
     }
+    for (const [sessionId, route] of this.sessionRoutes.entries()) if (route.chatKey === key) await this.sessionRoutes.put(sessionId, {...route, target: message.target, group: !!message.group});
+    for (const [id, route] of this.taskRoutes.entries()) if (route.chatKey === key) await this.taskRoutes.put(id, {...route, target: message.target, group: !!message.group});
     const stableId = await requestId(seenKey);
     // Durable native prompt provenance lets the Host decorate automatic titles
     // without pinning an opaque sender id as an explicit user rename.
     const id = row.titlePrefix ? `${channel.kind}-${stableId}` : stableId;
-    row = await this.conversations.update(key, current => ({...current, target: message.target, group: !!message.group, pending: [...new Set([...(current.pending ?? []), id])].slice(-32)}));
+    row = await this.conversations.update(key, current => ({...current, target: message.target, group: !!message.group, pending: [...new Set([...(current.pending ?? []), id])].slice(-32), recent: [...new Set([...(current.recent ?? []), id])].slice(-64)}));
     const body = command === 'steer' ? text.replace(/^\/steer\b\s*/i, '') : text;
     const content = message.group && message.senderName ? `${message.senderName}：${body}` : body;
     const captured = captureContextEnhancementSource({botId: channel.botId?.(), getSettings: () => channel.contextEnhancement}, message.group ? 'group' : 'direct', withSentAt(() => ({
@@ -288,6 +339,50 @@ class ImBridge {
     return 'accepted';
   }
 
+  /** Task routes survive /new and retargeting; only explicit /notify changes their destination. */
+  async refreshRoutes() {
+    // Serialize read/modify/write against concurrent prompts and turn notifications.
+    const work = (this.routeRefresh ?? Promise.resolve()).catch(() => {}).then(() => this.refreshRoutesOnce());
+    this.routeRefresh = work;
+    return work;
+  }
+
+  async refreshRoutesOnce() {
+    const tasks = await this.ctx.sessionController.scheduleCatalog({});
+    for (const task of tasks) {
+      if (this.taskRoutes.get(task.id)) continue;
+      for (const sessionId of task.involvedSessionIds ?? []) {
+        const route = this.sessionRoutes.get(sessionId);
+        if (!route) continue;
+        await this.taskRoutes.put(task.id, {...route});
+        break;
+      }
+    }
+    const wanted = new Map();
+    for (const task of tasks) {
+      const route = this.taskRoutes.get(task.id), sessionId = task.target.sessionId;
+      if (!route || route.disabled || !sessionId) continue;
+      const key = `automation:${JSON.stringify([route.chatKey, sessionId])}`;
+      const current = wanted.get(key);
+      wanted.set(key, {...route, sessionId, taskIds: [...(current?.taskIds ?? []), task.id]});
+    }
+    for (const [key, route] of wanted) {
+      const current = this.conversations.get(key);
+      // New bindings begin at their first notification, without replaying old turns.
+      await this.conversations.put(key, {...(current ?? {delivered: -1, pending: []}), ...route, automation: true});
+      if (!current?.watched) await this.watch(key, route.sessionId);
+    }
+    const removed = new Set();
+    for (const [key, row] of [...this.conversations.entries()]) if (row.automation && !wanted.has(key)) {
+      this.followers.get(key)?.abort(); this.followers.delete(key);
+      await this.conversations.delete(key); removed.add(row.sessionId);
+    }
+    for (const sessionId of removed) if (!this.sessionRoutes.get(sessionId) && ![...this.conversations.entries()].some(([, row]) => row.sessionId === sessionId)) await this.ctx.weftSessionEvents.unwatch(sessionId);
+    const ids = new Set(tasks.map(task => task.id));
+    for (const [id] of this.taskRoutes.entries()) if (!ids.has(id)) await this.taskRoutes.delete(id);
+    return tasks;
+  }
+
   /** Subscribe to the bound Session's turn ends; a failure retries at the next activation. */
   async watch(key, sessionId) {
     try {
@@ -299,6 +394,7 @@ class ImBridge {
   /** A hint only: the cursor decides what is delivered, so repeats and losses are harmless. */
   async turnEnded({sessionId, seq}) {
     await this.ready;
+    await this.refreshRoutes();
     for (const [key, row] of [...this.conversations.entries()]) {
       if (row.sessionId !== sessionId || seq <= row.delivered) continue;
       await this.conversations.update(key, current => current?.sessionId !== sessionId ? current
@@ -315,8 +411,26 @@ class ImBridge {
     if (!messages.length || row.syncFrom === undefined || seq < row.syncFrom) return undefined;
     const mode = this.channels.get(row.channel)?.sessionSync ?? 'scheduled';
     if (mode === 'off') return undefined;
-    if (messages.some(data => data?.source?.kind === 'schedule')) return 'schedule';
+    const ids = messages.flatMap(scheduleIds);
+    if (row.automation) {
+      const chat = this.conversations.get(row.chatKey);
+      const users = messages.filter(message => message.source?.kind === 'user');
+      if (users.length) {
+        if (chat?.sessionId === row.sessionId && users.every(message => chat.recent?.includes(message.source.rpcId))) return undefined;
+        if (ids.some(id => row.taskIds.includes(id))) return 'mixed';
+      }
+      if (!ids.some(id => row.taskIds.includes(id))) return undefined;
+      // A shared execution can batch several tasks into one answer. Never copy
+      // another chat's task result into this chat.
+      return ids.every(id => {const route = this.taskRoutes.get(id); return route && !route.disabled && route.chatKey === row.chatKey;}) ? 'schedule' : 'mixed';
+    }
+    // Task notifications have their own cursor and destination.
+    if (messages.some(data => data?.source?.kind === 'schedule')) return undefined;
     return mode === 'all' && row.group === false ? 'web' : undefined;
+  }
+
+  conflicts(key, messages) {
+    return messages.flatMap(scheduleIds).some(id => {const route = this.taskRoutes.get(id); return !route || route.disabled || route.chatKey !== key;});
   }
 
   /** Deliver each finished turn of a conversation's Session once, from its durable cursor. */
@@ -341,7 +455,7 @@ class ImBridge {
               if (live.type === 'start') {draft = ''; attemptId = live.attemptId;}
               else if (live.type === 'chunk' && live.attemptId === attemptId && live.chunk?.type === 'text-delta') {
                 draft += live.chunk.text;
-                if (Date.now() - lastCardUpdate >= 800) {await this.updateCard(key, draft); lastCardUpdate = Date.now();}
+                if (!this.conflicts(key, foreign) && Date.now() - lastCardUpdate >= 800) {await this.updateCard(key, draft); lastCardUpdate = Date.now();}
               } else if (live.type === 'end' && live.outcome?.kind === 'abandoned') {draft = ''; await this.updateCard(key, '正在重新生成…');}
             }
             const events = frame?.type === 'snapshot' ? (frame.records ?? []).map(entry => entry.event) : frame?.type === 'event' ? [frame.event] : [];
@@ -357,10 +471,10 @@ class ImBridge {
                 if (current.pending.includes(id)) {consumed.add(id); if (frame.type !== 'snapshot') await this.updateCard(key, '正在思考…');} else foreign.push(event.data);
               } else if (event.type === 'assistant/message') {
                 const text = textOf(event.data?.message);
-                if (text) {reply = text; if (consumed.size && frame.type !== 'snapshot') await this.updateCard(key, text);}
+                if (text) {reply = text; if (consumed.size && frame.type !== 'snapshot' && !this.conflicts(key, foreign)) await this.updateCard(key, text);}
               } else if (event.type === 'turn/end') {
                 const reason = event.data?.reason;
-                const text = reply || (reason && reason !== 'completed' && reason !== 'end_turn' ? `（本轮未完成：${reason}）` : '');
+                const text = consumed.size && this.conflicts(key, foreign) ? '本轮包含其他聊天或未启用通知的自动化，结果未转发。请分开执行会话后重试。' : reply || (reason && reason !== 'completed' && reason !== 'end_turn' ? `（本轮未完成：${reason}）` : '');
                 const mirror = consumed.size ? undefined : this.mirrored(current, foreign, event.seq);
                 if (consumed.size) {
                   const card = await this.updateCard(key, text || '（本轮没有文本回复）', true);
@@ -370,7 +484,7 @@ class ImBridge {
                 else if (reply && mirror) {
                   const asked = mirror === 'web' ? foreign.map(data => textOf(data)).filter(Boolean).join('\n').slice(0, 500) : '';
                   // Mirrored turns are best effort: a refused send advances the cursor instead of repeating.
-                  try {await this.send(current.channel, current.target, asked ? `（Web）${asked}\n\n${reply}` : reply, `${row.sessionId}:${event.seq}`);}
+                  try {await this.send(current.channel, current.target, mirror === 'mixed' ? '本次自动化回答混合了其他对话或未启用通知的任务，结果未转发。请分开执行会话，再单独运行。' : asked ? `（Web）${asked}\n\n${reply}` : reply, `${row.sessionId}:${event.seq}`);}
                   catch (error) {console.warn(`dsh-im mirror ${key}: ${error instanceof Error ? error.message : String(error)}`);}
                 }
                 const next = await this.conversations.update(key, value => ({...value, delivered: event.seq, pending: value.pending.filter(id => !consumed.has(id)), card: undefined, cardFailed: undefined}));
@@ -383,7 +497,7 @@ class ImBridge {
               const active = frame.assistantStream.activeAttempt;
               attemptId = active.attemptId;
               draft = active.stream.filter(chunk => chunk?.type === 'text-delta').map(chunk => chunk.text).join('');
-              if (draft) {await this.updateCard(key, draft); lastCardUpdate = Date.now();}
+              if (draft && !this.conflicts(key, foreign)) {await this.updateCard(key, draft); lastCardUpdate = Date.now();}
             }
           }
         } catch (error) {

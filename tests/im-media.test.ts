@@ -70,7 +70,7 @@ async function fixture() {
         async put(key: string, value: any) {rows.set(key, structuredClone(value));}, async delete(key: string) {rows.delete(key);},
         async update(key: string, fn: (current: any) => any) {const value = fn(structuredClone(rows.get(key))); rows.set(key, structuredClone(value)); return value;}};
     }}}},
-    sessionController: {create: async () => ({sessionId: 'session-1'}), prompt: async (request: any) => {prompts.push(request);}, callerSessionId: () => caller,
+    sessionController: {scheduleCatalog: async () => [], create: async () => ({sessionId: 'session-1'}), prompt: async (request: any) => {prompts.push(request);}, callerSessionId: () => caller,
       async uploadAttachment(sessionId: string, options: any, data: Uint8Array) {uploads.push({sessionId, options, data}); return {file: {receiptId: 'file-receipt'}, ...(options.image ? {imageError: '原图已保留'} : {})};},
       async *follow() {await delay(100);}},
     weftSessionEvents: {onTurnEnded: () => () => {}, watch: async () => {}, unwatch: async () => {}},
@@ -218,4 +218,44 @@ test('a delayed old card cannot overwrite the binding after a new Session starts
     assert.equal(fx.tables.get('conversations')!.get('test:chat').sessionId, 'session-2');
     assert.equal(fx.tables.get('conversations')!.get('test:chat').card, undefined);
   } finally {release?.(); await fx.dispose();}
+});
+
+
+test('task notification routes survive conversation changes, bind explicitly, and isolate mixed-chat batches', async () => {
+  const fx = await fixture();
+  let tasks = [{id: 'task-a', title: 'A', status: 'active', target: {kind: 'session', sessionId: 'session-1'}, involvedSessionIds: ['session-1']},
+    {id: 'task-b', title: 'B', status: 'active', target: {kind: 'session', sessionId: 'session-1'}, involvedSessionIds: ['session-1']}];
+  fx.ctx.sessionController.scheduleCatalog = async () => tasks;
+  const reminder = (ids: string[], kind = 'schedule') => ({source: {kind}, content: [{type: 'text', text: '[SCHEDULE REMINDER BATCH]\nThis is a scheduled message from the user\nreminders_json: ' + JSON.stringify(ids.map(schedule_id => ({schedule_id, occurrence_at: '', reminder_prompt: ''})))}]});
+  try {
+    await fx.receive({text: 'create tasks'});
+    await fx.bridge.refreshRoutes();
+    assert.equal(fx.tables.get('task_routes')!.get('task-a').chatKey, 'test:chat');
+    fx.ctx.sessionController.create = async () => ({sessionId: 'session-2'});
+    await fx.receive({text: '/new'});
+    assert.equal(fx.tables.get('conversations')!.get('test:chat').sessionId, 'session-2');
+    assert.equal(fx.tables.get('session_routes')!.get('session-1').chatKey, 'test:chat');
+    tasks = tasks.map(task => ({...task, target: {...task.target, sessionId: 'session-2'}}));
+    await fx.bridge.refreshRoutes();
+    let route = [...fx.tables.get('conversations')!.values()].find(row => row.automation && row.taskIds.includes('task-a'));
+    assert.equal(fx.bridge.mirrored({...route, syncFrom: 0}, [reminder(['task-a'])], 10), 'schedule');
+    assert.equal(fx.bridge.mirrored({...route, syncFrom: 0}, [reminder(['task-a'], 'user')], 10), undefined, 'user text cannot select notification destinations');
+    fx.tables.get('conversations')!.get('test:chat').recent = ['owned-rpc'];
+    assert.equal(fx.bridge.mirrored({...route, syncFrom: 0}, [reminder(['task-a']), {source: {kind: 'user', rpcId: 'owned-rpc'}}], 10), undefined, 'the chat follower delivers its own combined turn once');
+    assert.equal(fx.bridge.mirrored({...route, syncFrom: 0}, [reminder(['task-a']), {source: {kind: 'user', rpcId: 'another-chat'}}], 10), 'mixed', 'other conversation input is not copied with a scheduled result');
+    await fx.receive({conversation: 'other', target: {id: 'other'}, text: '/notify task-b'});
+    assert.equal(fx.tables.get('task_routes')!.get('task-b').chatKey, 'test:other');
+    route = [...fx.tables.get('conversations')!.values()].find(row => row.automation && row.taskIds.includes('task-a'));
+    assert.equal(fx.bridge.mirrored({...route, syncFrom: 0}, [reminder(['task-a', 'task-b'])], 10), 'mixed', 'one combined answer cannot cross chat boundaries');
+    fx.setCaller('session-2');
+    await assert.rejects(fx.bridge.sendFile({path: '/workspace/result.txt'}, {callId: 'mixed', signal: new AbortController().signal}), /不同聊天/);
+    await fx.receive({conversation: 'other', target: {id: 'other'}, text: '/notify task-b off'});
+    assert.equal(fx.tables.get('task_routes')!.get('task-b').disabled, true);
+    await fx.bridge.refreshRoutes();
+    assert.equal(fx.tables.get('task_routes')!.get('task-b').disabled, true, 'discovery never reenables an explicitly disabled task');
+    await fx.bridge.clear('test');
+    assert.equal(fx.tables.get('task_routes')!.size, 0);
+    assert.equal(fx.tables.get('session_routes')!.size, 0);
+    assert.equal(fx.tables.get('conversations')!.size, 0);
+  } finally {await fx.dispose();}
 });

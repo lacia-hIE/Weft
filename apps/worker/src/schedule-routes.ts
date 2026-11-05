@@ -13,6 +13,8 @@ export interface ScheduleStores {
   catalog(sessionId: string): Promise<ScheduleCatalogEntry[]>;
   /** Run this Remote call on one Session's live Schedule service. */
   call(sessionId: string): Promise<unknown>;
+  /** Move the full task and its receipts to another executor, with crash recovery. */
+  retarget(source: string, target: string, request: unknown): Promise<unknown>;
 }
 
 const SESSION_FAN_OUT = 16;
@@ -32,7 +34,8 @@ function compareEntries(left: ScheduleCatalogEntry, right: ScheduleCatalogEntry)
 /**
  * The original Host-wide Schedule Remote over Weft's per-Session stores. Each
  * task lives in the SessionDO it delivers to: reads aggregate every store,
- * task operations run on the owning store, and creation runs on its target
+ * task operations run on the owning store; cross-Session edits move the task
+ * through the environment's journal. Creation runs on its target
  * Session. A SessionDO creates no other Session, so a target that would create
  * one is refused with the original Schedule message.
  * @returns the method's result value, validated by its wire codec.
@@ -81,6 +84,13 @@ export async function routeSchedule(endpoint: ScheduleEndpoint, raw: unknown, st
       const id = request.id;
       const owner = (await all()).find(row => row.entry.id === id)?.sessionId;
       if (owner === undefined) return result({id, code: 'schedule_not_found'});
+      if (endpoint === 'schedule/edit' && request.action === 'update') {
+        const target = (request.patch as {target?: {kind: string; sessionId?: string}})?.target;
+        if (target?.kind === 'session' && target.sessionId !== owner) {
+          if (!target.sessionId || !(await stores.sessions()).includes(target.sessionId)) throw new RemoteError('schedule/input-invalid', 'Target Session does not exist in this environment.', {code: 'invalid_rule'});
+          return result(await stores.retarget(owner, target.sessionId, request));
+        }
+      }
       return result(await stores.call(owner));
     }
     default: {

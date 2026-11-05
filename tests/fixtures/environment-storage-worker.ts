@@ -60,9 +60,14 @@ export class SessionDO extends BaseSessionDO {
   constructor(ctx:DurableObjectState,env:Env){super(ctx,env);this.fixtureRaw=ctx.storage;}
   async fixtureLifecycle(action?:string):Promise<Response>{
     if(action==='alarm')await this.fixtureRaw.setAlarm(Date.now()+3_600_000);
+    if(action==='lose-import-response')await this.fixtureRaw.put('fixture-import-response-lost',true);
     return inspectLifecycle(this.fixtureRaw);
   }
 
+  override async nativeScheduleTransferImport(scope: SessionScope, transfer: import('../../packages/native-schedule/src/transfer.ts').ScheduleTransfer): Promise<void> {
+    await super.nativeScheduleTransferImport(scope, transfer);
+    if (await this.fixtureRaw.get('fixture-import-response-lost')) {await this.fixtureRaw.delete('fixture-import-response-lost'); throw new Error('Injected import response loss');}
+  }
   fixtureRevision(commit:string):void {
     const row=this.fixtureRaw.sql.exec<{agent_document:string}>('SELECT agent_document FROM weft_session_config WHERE id=1').one();
     const profile=JSON.parse(row.agent_document);profile.upstream=commit;

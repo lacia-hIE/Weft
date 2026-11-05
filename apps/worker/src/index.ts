@@ -1,3 +1,4 @@
+import scheduleRemote from '../../../.generated/official-remotes/packages/schedule/schedule/typert.remote-client.js';
 import {initialSessionPermissionSchema} from '../../../packages/native-plugins/src/session-contracts.ts';
 import { DurableObject, WorkerEntrypoint } from 'cloudflare:workers';
 import { createSessionReader } from '../../../packages/harness-runtime/src/session-reader.ts';
@@ -24,7 +25,9 @@ import {invokeAgentRemote, openRemoteStream} from '../../../packages/harness-run
 import {UplinkQueue} from '../../../packages/harness-runtime/src/uplink.ts';
 import {LifecycleGate,guardLifecycle} from '../../../packages/environment-storage/src/lifecycle.ts';
 import {openPermissionWorld} from '../../../packages/native-environment/src/permissions.ts';
-import {readScheduleCatalog, drainDueReminders} from '../../../packages/native-schedule/src/index.ts';
+import {readScheduleCatalog, readScheduleHistory, drainDueReminders} from '../../../packages/native-schedule/src/index.ts';
+import {prepareScheduleTransfer, transferError, type ScheduleTransfer} from '../../../packages/native-schedule/src/transfer.ts';
+import type {ScheduleEditRequest} from '@deepseek-ai/dsh-schedule';
 import questionRemote from '../../../.generated/official-remotes/packages/interaction/user-questions/typert.remote-client.js';
 import {FILE_UPLOAD_PATH} from '@weft/upstream/packages/client/file-upload/src/protocol.ts';
 import {SESSION_LOG_EXPORT_PATH} from '@deepseek-ai/dsh-session-log-export';
@@ -959,6 +962,97 @@ export class SessionDO extends DurableObject<Env> {
     });
   }
 
+  /** Quiesce only the scheduler, keeping the Session's Agent and history intact. */
+  private async scheduleMaintenance<T>(work: () => Promise<T>): Promise<T> {
+    const host = this.nativeHostPromise ? await this.nativeHostPromise : undefined;
+    return host ? host.ctx.weftScheduleMaintenance.run(async () => {
+      if (host.ctx.agents.list().some(agent => agent.status !== 'idle' || agent.inbox.nextTurn.length || agent.inbox.nextStep.length)) transferError('请等待执行会话和自动化空闲后，再更换执行会话。');
+      return work();
+    }) : work();
+  }
+  async nativeScheduleTransferReady(input: SessionScope): Promise<void> {
+    this.assertScope(input);
+    const row = this.ctx.storage.sql.exec<{agent_document: string}>('SELECT agent_document FROM weft_session_config WHERE id=1 AND presentation=1').toArray()[0];
+    if (!row || !supportsAgentRuntime((JSON.parse(row.agent_document) as AgentRevision).upstream)) transferError('请选择当前运行时的新会话作为自动化执行会话。');
+    const host = this.nativeHostPromise ? await this.nativeHostPromise : undefined;
+    if (host?.ctx.agents.list().some(agent => agent.status !== 'idle' || agent.inbox.nextTurn.length || agent.inbox.nextStep.length)) transferError('目标执行会话仍在运行或有排队输入，请处理后重试。');
+  }
+  async nativeScheduleTransferPrepare(input: SessionScope, request: ScheduleEditRequest, target: string): Promise<ScheduleTransfer | {id: string; code: string}> {
+    this.assertScope(input);
+    return this.ctx.blockConcurrencyWhile(() => this.scheduleMaintenance(async () => {
+      this.ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_schedule_transfers (id TEXT PRIMARY KEY, document TEXT NOT NULL) STRICT');
+      const pending = this.ctx.storage.sql.exec<{document: string}>('SELECT document FROM weft_schedule_transfers WHERE id=?', request.id).toArray()[0];
+      if (pending) {
+        const transfer = JSON.parse(pending.document) as ScheduleTransfer;
+        if (JSON.stringify(transfer.request) !== JSON.stringify(request)) transferError('该任务正在迁移，请重试原来的更改。');
+        return transfer;
+      }
+      const exists = readScheduleCatalog(this.ctx.storage).some(task => task.id === request.id);
+      if (!exists) return {id: request.id, code: 'schedule_not_found'};
+      const row = this.ctx.storage.sql.exec<{value: string}>('SELECT value FROM weft_kv_u_schedule_tasks WHERE key=?', request.id).one();
+      const profile = JSON.parse(this.ctx.storage.sql.exec<{agent_document: string}>('SELECT agent_document FROM weft_session_config WHERE id=1').one().agent_document) as AgentRevision;
+      if (supportsAgentRuntime(profile.upstream)) {
+        const projections = sessionRemote.methods['session/projections'].result.create().parse(await (await this.nativeProjections(input)).json());
+        if (projections?.kind === 'sequenced') {
+          const inbox = projections.values.inbox;
+          const boundary = projections.values.turnBoundary;
+          const open = boundary && typeof boundary === 'object' && !Array.isArray(boundary) && boundary.openTurnStartSeq != null;
+          if (open || (inbox?.['next-turn'].length ?? 0) || (inbox?.['next-step'].length ?? 0)) transferError('此执行会话仍有未完成或排队的输入，请处理后再更换执行会话。');
+        }
+      }
+      const transfer = prepareScheduleTransfer(JSON.parse(row.value), request, target);
+      if (!('token' in transfer)) return transfer;
+      this.ctx.storage.transactionSync(() => {
+        this.ctx.storage.sql.exec('INSERT INTO weft_schedule_transfers VALUES (?,?)', request.id, JSON.stringify(transfer));
+        this.ctx.storage.sql.exec('DELETE FROM weft_kv_u_schedule_tasks WHERE key=?', request.id);
+        this.ctx.storage.sql.exec("UPDATE weft_kv_units SET version=2 WHERE name='schedule'");
+      });
+      // Other tasks retain their alarm; the transferred task can no longer fire here.
+      const due = readScheduleCatalog(this.ctx.storage).filter(task => task.status === 'active').map(task => Date.parse(task.scheduledAt));
+      if (due.length) await this.ctx.storage.setAlarm(Math.max(Date.now(), Math.min(...due))); else await this.ctx.storage.deleteAlarm();
+      await this.ctx.storage.sync();
+      return transfer;
+    }));
+  }
+  async nativeScheduleTransferImport(input: SessionScope, transfer: ScheduleTransfer): Promise<void> {
+    this.assertScope(input);
+    this.ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_schedule_imports (token TEXT PRIMARY KEY) STRICT');
+    if (this.ctx.storage.sql.exec('SELECT token FROM weft_schedule_imports WHERE token=?', transfer.token).toArray().length) return;
+    return this.ctx.blockConcurrencyWhile(() => this.scheduleMaintenance(async () => {
+      if (this.ctx.storage.sql.exec('SELECT token FROM weft_schedule_imports WHERE token=?', transfer.token).toArray().length) return;
+      await this.nativeScheduleTransferReady(input);
+      this.ctx.storage.transactionSync(() => {
+        this.ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_kv_units (name TEXT PRIMARY KEY, version INTEGER NOT NULL) STRICT');
+        this.ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_kv_u_schedule_tasks (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT');
+        if (this.ctx.storage.sql.exec('SELECT key FROM weft_kv_u_schedule_tasks WHERE key=?', transfer.task.record.id).toArray().length) transferError('目标会话中存在同 ID 的任务，迁移未覆盖它。');
+        this.ctx.storage.sql.exec("INSERT INTO weft_kv_units VALUES ('schedule',2) ON CONFLICT(name) DO UPDATE SET version=2");
+        this.ctx.storage.sql.exec('INSERT INTO weft_kv_u_schedule_tasks VALUES (?,?)', transfer.task.record.id, JSON.stringify(transfer.task));
+        this.ctx.storage.sql.exec('INSERT INTO weft_schedule_imports VALUES (?)', transfer.token);
+        this.ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_alarm_scope (id INTEGER PRIMARY KEY CHECK(id=1), scope TEXT NOT NULL) STRICT');
+        this.ctx.storage.sql.exec('INSERT INTO weft_alarm_scope VALUES (1,?) ON CONFLICT(id) DO UPDATE SET scope=excluded.scope', JSON.stringify(input));
+      });
+      const due = readScheduleCatalog(this.ctx.storage).filter(task => task.status === 'active').map(task => Date.parse(task.scheduledAt));
+      if (due.length) await this.ctx.storage.setAlarm(Math.max(Date.now(), Math.min(...due)));
+      await this.ctx.storage.sync();
+    }));
+  }
+  async nativeScheduleTransferCommit(input: SessionScope, id: string, token: string): Promise<void> {
+    this.assertScope(input);
+    const row = this.ctx.storage.sql.exec<{document: string}>('SELECT document FROM weft_schedule_transfers WHERE id=?', id).toArray()[0];
+    if (row && (JSON.parse(row.document) as ScheduleTransfer).token === token) this.ctx.storage.sql.exec('DELETE FROM weft_schedule_transfers WHERE id=?', id);
+  }
+
+  async nativeScheduleRead(input: SessionScope, endpoint: 'schedule/view' | 'schedule/history', raw: unknown): Promise<Response> {
+    this.assertScope(input);
+    const method = scheduleRemote.methods[endpoint];
+    const {request} = method.input({strict: true}).create().parse(raw);
+    if (endpoint === 'schedule/history') {const limit = (request as {limit: number}).limit; if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) transferError('Delivery history limit must be a safe integer from 1 through 100.');}
+    const live = this.nativeHost?.ctx.get('schedule');
+    const value = endpoint === 'schedule/view'
+      ? (await this.nativeScheduleCatalog(input)).find(entry => (entry as {id: string}).id === request.id) ?? {id: request.id, code: 'schedule_not_found'}
+      : live ? await live.history(request as import('@deepseek-ai/dsh-schedule').ScheduleDeliveryHistoryRequest) : readScheduleHistory(this.ctx.storage, request as import('@deepseek-ai/dsh-schedule').ScheduleDeliveryHistoryRequest);
+    return Response.json({ok: true, value: method.result.create().parse(value)});
+  }
   async nativeScheduleCatalog(input: SessionScope): Promise<unknown[]> {
     this.assertScope(input);
     const live = this.nativeHost?.ctx.get('schedule');
@@ -1225,7 +1319,7 @@ export default {
           reply.set('content-security-policy', "sandbox; default-src 'none'; frame-ancestors 'none'");
           reply.set('x-content-type-options','nosniff');reply.set('cache-control','no-store');
           return new Response(response.body,{status:response.status,headers:reply});
-        } catch {return new Response('Plugin endpoint unavailable',{status:503,headers:{'cache-control':'no-store'}});}
+        } catch (error) {console.warn('weft.plugin.endpoint.failed', error);return new Response('Plugin endpoint unavailable',{status:503,headers:{'cache-control':'no-store'}});}
       }
       const device=/^\/v1\/local-hosts\/([a-zA-Z0-9_-]{1,80})\/([a-zA-Z0-9_-]{1,80})\/(pair|connect)$/.exec(pathname);
       if(device){

@@ -334,12 +334,15 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
       return Response.json({type: 'server-response', rpcId, result: {ok: true}}, {headers: {'cache-control': 'private, no-store'}});
     }
     if (Object.hasOwn(scheduleRemote.methods, endpoint)) {
+      await control.nativeScheduleRecover(owner);
       const value = await routeSchedule(endpoint as keyof typeof scheduleRemote.methods, payload.args, {
         sessions: async () => (await control.sessionIndex(owner)).map(record => record.id),
+        retarget: (source, target, request) => control.nativeScheduleRetarget(owner, source, target, request as import('@deepseek-ai/dsh-schedule').ScheduleEditRequest),
         catalog: sessionId => {const target = session(sessionId); return target.stub.nativeScheduleCatalog(target.scope) as Promise<ScheduleCatalogEntry[]>;},
         call: async sessionId => {
           const target = session(sessionId);
-          const result = await (await target.stub.nativeAgentRemote(target.scope, endpoint, payload.args)).json() as {ok: boolean; value?: unknown; error?: unknown};
+          const response = endpoint === 'schedule/view' || endpoint === 'schedule/history' ? await target.stub.nativeScheduleRead(target.scope, endpoint, payload.args) : await target.stub.nativeAgentRemote(target.scope, endpoint, payload.args);
+          const result = await response.json() as {ok: boolean; value?: unknown; error?: unknown};
           if (!result.ok) {
             const failure = remoteErrorOf(result.error);
             throw failure ? new RemoteError(failure.code, failure.message, failure.details) : new RemoteError('gateway/internal', 'Invalid Schedule Remote response', {});

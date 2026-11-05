@@ -2,8 +2,14 @@ import type { Context } from '@deepseek-ai/cordis';
 import type { SessionId } from '@deepseek-ai/dsh-session';
 import { RemoteError } from '@deepseek-ai/dsh-typert-protocol';
 import ScheduleService, { type ScheduleCatalogEntry } from '@deepseek-ai/dsh-schedule';
+import {deliveryHistoryPage} from '@weft/upstream/packages/schedule/schedule/src/delivery-history.ts';
+import type {ScheduleDeliveryHistoryRequest} from '@deepseek-ai/dsh-schedule';
 import { scheduleTaskSchema } from '@weft/upstream/packages/schedule/schedule/src/storage.ts';
 import { mountDurableStorage } from '../../native-storage/src/index.ts';
+
+declare module '@deepseek-ai/cordis' {
+  interface Context {weftScheduleMaintenance: {run<T>(work: () => Promise<T>): Promise<T>}}
+}
 
 /**
  * Schedule delivery restores Sessions through `schedule/resolve-agent`. A
@@ -35,7 +41,22 @@ export async function mountNativeSchedule(ctx: Context, storage: DurableObjectSt
     await Promise.race([ready.promise, new Promise(resolve => setTimeout(resolve, 30_000))]);
     return true;
   });
-  await ctx.plugin(ScheduleService, {});
+  let fork = ctx.plugin(ScheduleService, {});
+  await fork;
+  let maintenance = Promise.resolve();
+  ctx.provide('weftScheduleMaintenance', {
+    run: <T>(work: () => Promise<T>): Promise<T> => {
+      const pending = maintenance.then(async () => {
+        // Stop the timer and drain accepted delivery before touching its domain.
+        // Agent history and active user turns belong to their own lifetime.
+        await fork.dispose();
+        try {return await work();}
+        finally {fork = ctx.plugin(ScheduleService, {}); await fork;}
+      });
+      maintenance = pending.then(() => {}, () => {});
+      return pending;
+    },
+  });
   const sync = async () => {
     const schedule = ctx.get('schedule');
     if (!schedule) return;
@@ -77,4 +98,12 @@ export async function drainDueReminders(ctx: Context, deadlineMs = 10_000): Prom
     if (!(await schedule.catalog()).some(entry => entry.status === 'active' && Date.parse(entry.scheduledAt) <= now)) return;
     await new Promise(resolve => setTimeout(resolve, 50));
   }
+}
+
+/** History reads remain available when the task's former Agent runtime is retired. */
+export function readScheduleHistory(storage: DurableObjectStorage, request: ScheduleDeliveryHistoryRequest): unknown {
+  if (!Number.isSafeInteger(request.limit) || request.limit < 1 || request.limit > 100) throw new RemoteError('schedule/input-invalid', 'Delivery history limit must be a safe integer from 1 through 100.', {code: 'invalid_rule'});
+  if (!readScheduleCatalog(storage).some(task => task.id === request.id)) return {id: request.id, code: 'schedule_not_found'};
+  const row = storage.sql.exec<{value: string}>('SELECT value FROM weft_kv_u_schedule_tasks WHERE key=?', request.id).one();
+  return deliveryHistoryPage(scheduleTaskSchema.parse(JSON.parse(row.value)), request, {days: 30, records: 200});
 }

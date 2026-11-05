@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { Response, type V4FetchHandler } from 'miniflare';
 import type { SessionPage } from '@deepseek-ai/dsh-api-session-controller/types';
-import { createRuntime } from './helpers/miniflare.ts';
+import { createRuntime, tenantId, url } from './helpers/miniflare.ts';
 import { nativeClient } from './helpers/native.ts';
 
 /** The 0.2.2 schedule tool takes RFC 5545 timing: one UTC occurrence `delayMs` from now. */
@@ -85,4 +85,46 @@ test('the original schedule tool arms a Durable Object alarm that delivers its r
     await runtime.dispose();
     await rm(directory, {recursive: true, force: true});
   }
+});
+
+
+test('a retained-runtime task moves to a current Session without resetting its identity, timing or history', {timeout: 120_000}, async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'weft-schedule-transfer-'));
+  const options = {browser: true, scriptPath: 'dist/environment-storage-worker.js', bindings: {MODEL_BACKEND: 'deepseek', DEEPSEEK_API_KEY: 'schedule-fixture', DEEPSEEK_BASE_URL: 'https://schedule-model.test/anthropic'}, outbound: scheduleModel().outbound};
+  let runtime = createRuntime(directory, options);
+  const api = nativeClient(() => runtime);
+  try {
+    await api.call('session/create', {request: {sessionId: 'old-scheduler'}});
+    await api.call('session/create', {request: {sessionId: 'new-scheduler'}});
+    const task = await api.call<{id: string; updatedAt: string; scheduledAt: string}>('schedule/create', {request: {title: 'Retained task', prompt: 'REMINDER_ALPHA', timing: {kind: 'rrule', rrule: oneShotRule(120_000)}, target: {kind: 'session', sessionId: 'old-scheduler'}}});
+    const scope = {tenantId: tenantId('alpha'), environmentId: 'default', sessionId: 'old-scheduler'};
+    assert.equal((await runtime.dispatchFetch(url('alpha', '/_fixture/session-revision'), {method: 'POST', body: JSON.stringify({scope, commit: 'b830ec950faba0a46dda564be3e2d854afed94f1'})})).status, 200);
+    await runtime.dispose(); runtime = createRuntime(directory, options);
+    assert.equal((await api.call<{id: string}>('schedule/view', {request: {id: task.id}})).id, task.id, 'the editor can inspect a task without activating its retired Agent');
+    assert.deepEqual((await api.call<{records: unknown[]}>('schedule/history', {request: {id: task.id, limit: 10}})).records, []);
+    assert.equal((await api.raw('schedule/history', {request: {id: task.id, limit: 0}})).result.ok, false);
+    const invalid = await api.raw('schedule/edit', {request: {id: task.id, action: 'update', patch: {timing: {kind: 'rrule', rrule: 'invalid'}, target: {kind: 'session', sessionId: 'new-scheduler'}}}});
+    assert.equal(invalid.result.ok, false, 'invalid timing cannot start a move');
+    assert.equal((await api.call<{target: {sessionId: string}}>('schedule/view', {request: {id: task.id}})).target.sessionId, 'old-scheduler', 'a rejected move never blocks later global reads');
+    const conflict = await api.call('schedule/edit', {request: {id: task.id, action: 'update', expectedUpdatedAt: '2000-01-01T00:00:00.000Z', patch: {target: {kind: 'session', sessionId: 'new-scheduler'}}}});
+    assert.deepEqual(conflict, {id: task.id, code: 'schedule_conflict'});
+    assert.equal((await runtime.dispatchFetch(url('alpha', '/_fixture/lifecycle'), {method: 'POST', body: JSON.stringify({scope: {...scope, sessionId: 'new-scheduler'}, kind: 'session', action: 'lose-import-response'})})).status, 200);
+    const interrupted = await api.raw('schedule/edit', {request: {id: task.id, action: 'update', expectedUpdatedAt: task.updatedAt, patch: {target: {kind: 'session', sessionId: 'new-scheduler'}}}});
+    assert.equal(interrupted.result.ok, false, 'the import committed but its RPC response was lost');
+    await runtime.dispose(); runtime = createRuntime(directory, options);
+    // Any global read recovers the journal and acknowledges the already imported token.
+    const catalog = await api.call<{id: string; target: {sessionId: string}; scheduledAt: string}[]>('schedule/catalog', {});
+    const moved = catalog.find(row => row.id === task.id)!;
+    assert.equal(moved.id, task.id);
+    assert.equal(moved.target.sessionId, 'new-scheduler');
+    assert.equal(moved.scheduledAt, task.scheduledAt);
+    assert.equal((await api.call<unknown[]>('schedule/catalog', {})).length, 1, 'one authoritative task remains');
+    await runtime.dispose(); runtime = createRuntime(directory, options);
+    const executed = await api.call<{lastDelivery?: unknown}>('schedule/run', {request: {id: task.id}});
+    assert.ok(executed.lastDelivery);
+    const history = await api.call<{records: {targetSessionId: string}[]}>('schedule/history', {request: {id: task.id, limit: 10}});
+    assert.equal(history.records.at(-1)?.targetSessionId, 'new-scheduler');
+    const old = await api.stream('session/follow', {request: {address: {kind: 'session', sessionId: 'old-scheduler'}, activate: false}});
+    try {assert.equal((await old.next() as {type: string}).type, 'snapshot', 'the old Session remains readable');} finally {await old.close();}
+  } finally {await runtime.dispose(); await rm(directory, {recursive: true, force: true});}
 });

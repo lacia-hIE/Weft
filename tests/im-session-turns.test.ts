@@ -2,6 +2,9 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {createPrivateKey, sign} from 'node:crypto';
 import {readFileSync} from 'node:fs';
+import {mkdtemp, rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import {setTimeout as delay} from 'node:timers/promises';
 import {Response, type V4FetchHandler} from 'miniflare';
 import type {SettingsDescribeValue} from '@deepseek-ai/dsh-settings/types';
@@ -49,7 +52,8 @@ const model: V4FetchHandler = async request => {
 
 test('IM sends schedule results and opted-in Web turns to the bound chat through Session turn notifications', {timeout: 300000}, async () => {
   const sent: {path: string; content: string}[] = [];
-  const runtime = createRuntime(undefined, {packages: true,
+  const directory = await mkdtemp(join(tmpdir(), 'weft-im-routes-'));
+  const options: Parameters<typeof createRuntime>[1] = {packages: true,
     bindings: {MODEL_BACKEND: 'deepseek', DEEPSEEK_API_KEY: 'turn-fixture', DEEPSEEK_BASE_URL: 'https://turn-model.test/anthropic'},
     packageBuilder: async request => Response.json(await buildPackage(JSON.parse(await request.text()))),
     outbound: async (request, mf) => {
@@ -59,7 +63,8 @@ test('IM sends schedule results and opted-in Web turns to the bound chat through
       if (target.hostname === 'api.sgroup.qq.com') {sent.push({path: target.pathname, content: (await request.json() as {content?: string}).content ?? ''}); return Response.json({id: 'sent'});}
       return new Response('not found', {status: 404});
     },
-  });
+  };
+  let runtime = createRuntime(directory, options);
   const api = nativeClient(() => runtime), tenant = tenantId('alpha'), base = `/v1/tenants/${tenant}/environments/default`;
   const hook = (path: string, init?: RequestInit) => runtime.dispatchFetch(url('anonymous', `/v1/plugin-hooks/${tenant}/default/${encodeURIComponent(plugin.name)}${path}`), init as never);
   const waitFor = async <T>(read: () => T | undefined | Promise<T | undefined>, label: string): Promise<T> => {
@@ -72,10 +77,12 @@ test('IM sends schedule results and opted-in Web turns to the bound chat through
     assert.ok(form, `${ns} has a native Settings form`);
     await api.call('settings/update', {ns, patch, expectedRevision: form.revision});
   };
-  const qq = (id: string, content: string) => {
+  const qq = async (id: string, content: string) => {
     const body = JSON.stringify({op: 0, id: 'event-' + id, t: 'C2C_MESSAGE_CREATE', d: {id, content, timestamp: new Date().toISOString(), author: {user_openid: 'qq-user'}}});
     const timestamp = String(Math.floor(Date.now() / 1000));
-    return hook('/qq', {method: 'POST', headers: {'content-type': 'application/json', 'x-signature-timestamp': timestamp, 'x-signature-ed25519': sign(null, Buffer.from(timestamp + body), qqKey).toString('hex')}, body});
+    const response = await hook('/qq', {method: 'POST', headers: {'content-type': 'application/json', 'x-signature-timestamp': timestamp, 'x-signature-ed25519': sign(null, Buffer.from(timestamp + body), qqKey).toString('hex')}, body});
+    assert.equal(response.status, 200, await response.text());
+    return response;
   };
   const webTurn = async (sessionId: string, text: string) => {
     const follow = await api.follow(sessionId);
@@ -117,5 +124,35 @@ test('IM sends schedule results and opted-in Web turns to the bound chat through
     await delay(3000);
     assert.equal(sent.filter(row => row.content.includes('WEB_ANSWER')).length, 1, 'each turn is mirrored once and the earlier Web turn is not replayed');
     assert.equal(sent.filter(row => row.content === 'REMINDED').length, 1, 'repeated notifications do not resend');
-  } finally {await runtime.dispose();}
+
+    // A task owns its notification destination independently of the chat's current Session.
+    const task = await api.call<{id: string; updatedAt: string}>('schedule/create', {request: {title: 'Survives new', prompt: 'REMINDER_ALPHA', timing: {kind: 'rrule', rrule: oneShotRule(120_000)}, target: {kind: 'session', sessionId}}});
+    const freshTask = await api.call<{id: string; updatedAt: string}>('schedule/create', {request: {title: 'Retarget me', prompt: 'REMINDER_ALPHA', timing: {kind: 'rrule', rrule: oneShotRule(180_000)}, target: {kind: 'session', sessionId}}});
+    await qq('qq-new-session', '/new');
+    await waitFor(() => sent.find(row => row.content === '已开始新会话。'), 'new chat Session');
+    const newSession = (await api.call<SessionListValue>('session/list', {_request: {}})).items.find(row => row.sessionId !== sessionId)!.sessionId;
+    await runtime.dispose(); runtime = createRuntime(directory, options);
+    await qq('qq-list-tasks', '/automations');
+    await waitFor(() => sent.find(row => row.content.includes(task.id)), 'old task remains bound after /new');
+    await api.call('schedule/run', {request: {id: task.id}});
+    await waitFor(() => sent.filter(row => row.content === 'REMINDED').length === 2 ? true : undefined, 'old execution Session still notifies the chat');
+    await delay(1500);
+    // The global editor can move execution across SessionDOs; the task route stays fixed.
+    const before = await api.call<{updatedAt: string; lastDelivery: unknown}>('schedule/view', {request: {id: task.id}});
+    const moved = await api.call<{id: string; target: {sessionId: string}; lastDelivery: unknown}>('schedule/edit', {request: {id: task.id, action: 'update', expectedUpdatedAt: before.updatedAt, patch: {target: {kind: 'session', sessionId: newSession}}}});
+    assert.equal(moved.id, task.id);
+    assert.equal(moved.target.sessionId, newSession);
+    assert.deepEqual(moved.lastDelivery, before.lastDelivery, 'retargeting preserves the delivery receipt');
+    assert.deepEqual(await api.call('schedule/run', {request: {id: task.id}}), {id: task.id, code: 'schedule_execution_pending'}, 'moving a task retains its delivery floor');
+    await api.call('schedule/edit', {request: {id: freshTask.id, action: 'update', expectedUpdatedAt: freshTask.updatedAt, patch: {target: {kind: 'session', sessionId: newSession}}}});
+    await api.call('schedule/run', {request: {id: freshTask.id}});
+    await waitFor(() => sent.filter(row => row.content === 'REMINDED').length === 3 ? true : undefined, 'retargeted execution notifies the original chat');
+    const silent = await api.call<{id: string}>('schedule/create', {request: {title: 'No IM', prompt: 'REMINDER_ALPHA', timing: {kind: 'rrule', rrule: oneShotRule(180_000)}, target: {kind: 'session', sessionId: newSession}}});
+    await qq('qq-disable-task', `/notify ${silent.id} off`);
+    await waitFor(() => sent.find(row => row.content.startsWith('已关闭该任务')), 'task notification disabled');
+    await api.call('schedule/run', {request: {id: silent.id}});
+    await delay(3000);
+    assert.equal(sent.filter(row => row.content === 'REMINDED').length, 3, 'off disables this task without mirroring it through the current chat');
+
+  } finally {await runtime.dispose(); await rm(directory, {recursive: true, force: true});}
 });

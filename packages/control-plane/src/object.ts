@@ -1,3 +1,5 @@
+import type {ScheduleEditRequest} from '@deepseek-ai/dsh-schedule';
+import type {ScheduleTransfer} from '../../native-schedule/src/transfer.ts';
 import {initialSessionPermissionSchema} from '../../native-plugins/src/session-contracts.ts';
 import { DurableObject } from "cloudflare:workers";
 import {LocalHostRelay,LOCAL_PROTOCOL,newKey,hashKey} from '../../local-host/src/relay.ts';
@@ -849,8 +851,71 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
     this.nativePackageAuthorize(scope, receipt, 'sessions');
     return value;
   }
+  private scheduleTransfers: Promise<unknown> = Promise.resolve();
+  private scheduleTransferQueue<T>(work: () => Promise<T>): Promise<T> {
+    const pending = this.scheduleTransfers.then(work);
+    this.scheduleTransfers = pending.catch(() => {});
+    return pending;
+  }
+  private scheduleTransferTable(): void {
+    this.ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_schedule_moves (id TEXT PRIMARY KEY, document TEXT NOT NULL) STRICT');
+  }
+  private async finishScheduleMove(scope: ControlScope, id: string): Promise<unknown> {
+    const saved = this.ctx.storage.sql.exec<{document: string}>('SELECT document FROM weft_schedule_moves WHERE id=?', id).one();
+    const move = JSON.parse(saved.document) as {source: string; target: string; request: ScheduleEditRequest; transfer?: ScheduleTransfer};
+    const sourceScope = {...scope, sessionId: move.source}, targetScope = {...scope, sessionId: move.target};
+    const source = this.env.SESSIONS.getByName(sessionAddress(sourceScope)), target = this.env.SESSIONS.getByName(sessionAddress(targetScope));
+    if (!move.transfer) {
+      let prepared;
+      try {prepared = await source.nativeScheduleTransferPrepare(sourceScope, move.request, move.target);}
+      catch (error) {
+        if ((error as {code?: string}).code === 'schedule/input-invalid') this.ctx.storage.sql.exec('DELETE FROM weft_schedule_moves WHERE id=?', id);
+        throw error;
+      }
+      if (!('token' in prepared)) {this.ctx.storage.sql.exec('DELETE FROM weft_schedule_moves WHERE id=?', id); return prepared;}
+      move.transfer = prepared;
+      this.ctx.storage.sql.exec('UPDATE weft_schedule_moves SET document=? WHERE id=?', JSON.stringify(move), id);
+    }
+    // Watches are hints, not destinations. The plugin's task route chooses the chat.
+    this.ctx.storage.sql.exec('INSERT OR IGNORE INTO weft_session_watches (package,session_id) SELECT package,? FROM weft_session_watches WHERE session_id=?', move.target, move.source);
+    await target.nativeScheduleTransferImport(targetScope, move.transfer);
+    await source.nativeScheduleTransferCommit(sourceScope, id, move.transfer.token);
+    this.ctx.storage.sql.exec('DELETE FROM weft_schedule_moves WHERE id=?', id);
+    return (await target.nativeScheduleCatalog(targetScope) as unknown as {id: string}[]).find(task => task.id === id);
+  }
+  /** Resume interrupted cross-object moves before exposing the global catalog. */
+  async nativeScheduleRecover(scope: ControlScope): Promise<void> {
+    this.scope(scope);
+    await this.scheduleTransferQueue(async () => {
+      this.scheduleTransferTable();
+      for (const row of this.ctx.storage.sql.exec<{id: string}>('SELECT id FROM weft_schedule_moves').toArray()) await this.finishScheduleMove(scope, row.id);
+    });
+  }
+  async nativeScheduleRetarget(scope: ControlScope, source: string, target: string, request: ScheduleEditRequest): Promise<unknown> {
+    this.scope(scope);
+    if (this.nativeSessionRoot(scope, source) !== source || this.nativeSessionRoot(scope, target) !== target) throw new Error('Schedule target is outside this environment');
+    return this.scheduleTransferQueue(async () => {
+      this.scheduleTransferTable();
+      if (await this.workspaces(scope).archived(target)) throw new RemoteError('schedule/input-invalid', 'Target Session is archived.', {code: 'invalid_rule'});
+      const address = {...scope, sessionId: target};
+      await this.env.SESSIONS.getByName(sessionAddress(address)).nativeScheduleTransferReady(address);
+      this.ctx.storage.sql.exec('INSERT OR IGNORE INTO weft_schedule_moves VALUES (?,?)', request.id, JSON.stringify({source, target, request}));
+      return this.finishScheduleMove(scope, request.id);
+    });
+  }
   async nativePackageSession(scope: ControlScope, receipt: {name: string; digest: string; activationId: string}, method: string, raw: unknown): Promise<unknown> {
     this.nativePackageAuthorize(scope, receipt, 'sessions');
+    if (method === 'scheduleCatalog') {
+      z.object({}).strict().parse(raw);
+      await this.nativeScheduleRecover(scope);
+      const sessions = await this.sessionIndex(scope);
+      const catalogs = await mapConcurrent(sessions, async row => {
+        const address = {...scope, sessionId: row.id};
+        return this.env.SESSIONS.getByName(sessionAddress(address)).nativeScheduleCatalog(address);
+      }, AbortSignal.timeout(30_000), 16);
+      this.nativePackageAuthorize(scope, receipt, 'sessions');
+      return catalogs.flat();
+    }
     if (method === 'modelCatalog') {
       sessionRemote.methods['session/modelCatalog'].input({strict: true}).create().parse(raw);
       const {value} = await (await this.nativeModelRemote(scope, 'session/modelCatalog', raw)).json() as {value: unknown};

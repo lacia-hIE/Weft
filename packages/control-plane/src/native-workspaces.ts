@@ -82,6 +82,7 @@ export class NativeWorkspaces {
     if (!value) throw new RemoteError('workspace/not-found', 'Select an existing Workspace', {workspaceId: WorkspaceId(id ?? 'default')});
     return value;
   }
+  async archived(sessionId: string): Promise<boolean> {return this.run(({ctx}) => ctx.workspaceRegistry.archivedSessionIds.includes(SessionId(sessionId)));}
   async owning(sessionId: string): Promise<string | undefined> {return this.run(({ctx}) => ctx.workspaceRegistry.list().find(row => row.sessionIds.includes(SessionId(sessionId)))?.id);}
   async attach(id: string, sessionId: string): Promise<void> {
     return this.run(async ({ctx}) => {
