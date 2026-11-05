@@ -439,35 +439,52 @@ test('QQ and Feishu QR creation handle expiry, cancellation, confirmation and du
 });
 
 
-test('Add plugin installs the bundled IM archive after choosing a custom registry', async ({page, request}) => {
-  test.skip(process.env.WEFT_BROWSER_IM !== '1', 'Requires the IM package builder fixture');
-  const plugin = JSON.parse(readFileSync('plugins/im/package.json', 'utf8')) as {name: string; version: string};
-  const {tenantId} = await (await request.get('/v1/me')).json();
-  const environment = 'im-custom-registry-' + crypto.randomUUID().slice(0, 8);
-  const base = `/v1/tenants/${tenantId}/environments/${environment}/native`;
-  expect((await request.post(`/v1/tenants/${tenantId}/environments`, {data: {id: environment, name: environment}})).status()).toBe(201);
-  await page.goto('/agents/' + environment);
-  await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
-  await page.getByRole('button', {name: 'Plugins', exact: true}).click({timeout: 45_000});
-  await page.getByRole('button', {name: 'Add plugin', exact: true}).click();
-  const dialog = page.getByRole('dialog', {name: 'Add plugin', exact: true});
-  await dialog.getByRole('textbox', {name: 'Package name or address', exact: true}).fill(plugin.name);
-  await dialog.getByRole('button', {name: /^Registry/}).click();
-  await page.getByRole('radio', {name: 'Custom address', exact: true}).check();
-  await page.getByRole('textbox', {name: 'Custom address', exact: true}).fill('https://custom-registry.test/');
-  // Escape folds only the registry popover, leaving the installation dialog open.
-  await page.keyboard.press('Escape');
-  const inspect = page.waitForResponse(response => response.url().endsWith('/api/pluginManager/inspect'));
-  const install = page.waitForRequest(request => request.url().endsWith('/api/pluginManager/installBundle'));
-  await dialog.getByRole('button', {name: 'Install', exact: true}).click();
-  const inspected = await inspect;
-  expect(inspected.request().postDataJSON().payload.args.options.registry).toBe('https://custom-registry.test/');
-  const answer = await inspected.json();
-  expect(answer.result.value.status).toBe('accepted');
-  expect(answer.result.value.registry).toBeNull();
-  expect((await install).postDataJSON().payload.args.options.registry).toBeNull();
-  await expect.poll(async () => {
-    const state = await (await request.get(base + '/package-installations')).json();
-    return state.installations.find((row: {name: string}) => row.name === plugin.name)?.version;
-  }, {timeout: 60_000}).toBe(plugin.version);
-});
+for (const input of ['catalog name', 'versioned spec'] as const) {
+  test(`Add plugin installs the bundled IM archive after choosing a custom registry (${input})`, async ({page, request}) => {
+    test.skip(process.env.WEFT_BROWSER_IM !== '1', 'Requires the IM package builder fixture');
+    const plugin = JSON.parse(readFileSync('plugins/im/package.json', 'utf8')) as {name: string; version: string};
+    const {tenantId} = await (await request.get('/v1/me')).json();
+    const environment = 'im-custom-registry-' + crypto.randomUUID().slice(0, 8);
+    const base = `/v1/tenants/${tenantId}/environments/${environment}/native`;
+    expect((await request.post(`/v1/tenants/${tenantId}/environments`, {data: {id: environment, name: environment}})).status()).toBe(201);
+    await page.goto('/agents/' + environment);
+    await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
+    await page.getByRole('button', {name: 'Plugins', exact: true}).click({timeout: 45_000});
+    await page.getByRole('button', {name: 'Add plugin', exact: true}).click();
+    const dialog = page.getByRole('dialog', {name: 'Add plugin', exact: true});
+    const spec = input === 'catalog name' ? plugin.name : `${plugin.name}@${plugin.version}`;
+    await dialog.getByRole('textbox', {name: 'Package name or address', exact: true}).fill(spec);
+    await dialog.getByRole('button', {name: /^Registry/}).click();
+    await page.getByRole('radio', {name: 'Custom address', exact: true}).check();
+    await page.getByRole('textbox', {name: 'Custom address', exact: true}).fill('https://custom-registry.test/');
+    // Escape folds only the registry popover, leaving the installation dialog open.
+    await page.keyboard.press('Escape');
+    // Catalog names use the advertised exact target directly; only unlisted
+    // specs are inspected, and the archive inspection clears the registry.
+    const [installed, inspected] = await Promise.all([
+      page.waitForResponse(response => response.url().endsWith(base + '/api/pluginManager/installBundle')),
+      input === 'versioned spec'
+        ? page.waitForResponse(response => response.url().endsWith(base + '/api/pluginManager/inspect'))
+        : undefined,
+      dialog.getByRole('button', {name: 'Install', exact: true}).click(),
+    ]);
+    if (inspected) {
+      expect(inspected.request().postDataJSON().payload.args.options.registry).toBe('https://custom-registry.test/');
+      const answer = await inspected.json();
+      expect(answer.result.ok).toBe(true);
+      expect(answer.result.value.status).toBe('accepted');
+      expect(answer.result.value.registry).toBeNull();
+    }
+    const args = installed.request().postDataJSON().payload.args;
+    expect(args.spec).toBe(`${plugin.name}@${plugin.version}`);
+    expect(args.options.registry).toBe(input === 'catalog name' ? 'https://custom-registry.test/' : null);
+    const result = await installed.json();
+    expect(result.result.ok).toBe(true);
+    expect(result.result.value.application).toBe('applied');
+    await expect(page.getByRole('dialog', {name: 'Installed', exact: true})).toBeVisible();
+    await expect.poll(async () => {
+      const state = await (await request.get(base + '/package-installations')).json();
+      return state.installations.find((row: {name: string}) => row.name === plugin.name)?.version;
+    }, {timeout: 60_000}).toBe(plugin.version);
+  });
+}
