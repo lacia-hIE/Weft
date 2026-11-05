@@ -9,6 +9,12 @@ import type { SessionPage } from '@deepseek-ai/dsh-api-session-controller/types'
 import { createRuntime } from './helpers/miniflare.ts';
 import { nativeClient } from './helpers/native.ts';
 
+/** The 0.2.2 schedule tool takes RFC 5545 timing: one UTC occurrence `delayMs` from now. */
+function oneShotRule(delayMs: number): string {
+  const at = new Date(Math.ceil((Date.now() + delayMs) / 1000) * 1000).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+  return `DTSTART:${at}\nRRULE:FREQ=DAILY;COUNT=1`;
+}
+
 /** Only model HTTP is scripted; the original schedule tool, service and DO alarm deliver the reminder. */
 function scheduleModel() {
   const event = (type: string, value: object) => `event: ${type}\ndata: ${JSON.stringify({type, ...value})}\n\n`;
@@ -17,7 +23,7 @@ function scheduleModel() {
     const body = JSON.stringify(await request.json());
     const reminder = body.includes('REMINDER_ALPHA') && !body.includes('SCHEDULE_TASK');
     const tool = body.includes('SCHEDULE_TASK') && !body.includes('tool_result');
-    const args = JSON.stringify({prompt: 'REMINDER_ALPHA', title: 'Alpha reminder', after_seconds: 2});
+    const args = JSON.stringify({prompt: 'REMINDER_ALPHA', title: 'Alpha reminder', rrule: oneShotRule(2_000), target: 'this_session'});
     const text = reminder || body.includes('REMINDER_ALPHA') && body.lastIndexOf('REMINDER_ALPHA') > body.lastIndexOf('tool_result') ? 'REMINDED' : 'SCHEDULED';
     return new Response(
       event('message_start', {message: {usage: {input_tokens: 10, output_tokens: 0}}}) +
@@ -48,10 +54,16 @@ test('the original schedule tool arms a Durable Object alarm that delivers its r
     for (;;) {const frame = await follow.next(); if (frame.type === 'event' && frame.event.type === 'turn/end') break;}
     await follow.close();
 
-    const listed = await api.call<{id: string; title: string}[]>('schedule/list', {request: {sessionId: 'reminded'}});
-    assert.deepEqual(listed.map(record => record.title), ['Alpha reminder']);
-    const catalog = await api.call<{id: string; sessionId: string; status: string}[]>('schedule/catalog', {});
-    assert.deepEqual(catalog.map(entry => [entry.id, entry.sessionId, entry.status]), [[listed[0]!.id, 'reminded', 'active']]);
+    // 0.2.2 manages Host tasks by id; the environment aggregates the stores of its Sessions.
+    const listed = await api.call<{items: {id: string; title: string}[]; total: number}>('schedule/list', {request: {active: true}});
+    assert.deepEqual(listed.items.map(record => record.title), ['Alpha reminder']);
+    const catalog = await api.call<{id: string; target: {kind: string; sessionId?: string}; status: string}[]>('schedule/catalog', {});
+    assert.deepEqual(catalog.map(entry => [entry.id, entry.target.sessionId, entry.status]), [[listed.items[0]!.id, 'reminded', 'active']]);
+    const viewed = await api.call<{id: string; title: string}>('schedule/view', {request: {id: listed.items[0]!.id}});
+    assert.equal(viewed.title, 'Alpha reminder');
+    assert.deepEqual(await api.call('schedule/view', {request: {id: 'schedule-missing'}}), {id: 'schedule-missing', code: 'schedule_not_found'});
+    const refused = await api.raw('schedule/create', {request: {title: 'Fresh', prompt: 'NEW_SESSION', timing: {kind: 'rrule', rrule: oneShotRule(60_000)}}});
+    assert.equal(refused.result.error?.code, 'schedule/input-invalid', 'a SessionDO creates no other Session');
 
     // Evict every object before the reminder is due; only the persisted alarm can wake the Session.
     await runtime.dispose();
@@ -65,9 +77,9 @@ test('the original schedule tool arms a Durable Object alarm that delivers its r
     const delivered = events.find(event => event.type === 'user/message' && JSON.stringify(event.data).includes('"kind":"schedule"'));
     assert.ok(delivered, 'the alarm delivered the reminder as a schedule-sourced user message');
     assert.match(JSON.stringify(delivered), /REMINDER_ALPHA/);
-    assert.deepEqual(await api.call('schedule/list', {request: {sessionId: 'reminded'}}), [], 'a one-shot reminder ends after delivery');
+    assert.equal((await api.call<{total: number}>('schedule/list', {request: {active: true}})).total, 0, 'a one-shot reminder ends after delivery');
     const ended = await api.call<{status: string; lastDelivery?: unknown}[]>('schedule/catalog', {});
-    assert.equal(ended[0]?.status, 'inactive');
+    assert.equal(ended[0]?.status, 'ended');
     assert.ok(ended[0]?.lastDelivery, 'the delivery receipt is retained');
   } finally {
     await runtime.dispose();

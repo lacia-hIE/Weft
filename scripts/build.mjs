@@ -17,6 +17,8 @@ import {nativeHarnessHomePlatform} from './native-harness-home-platform.mjs';
 import {nativeWorkflowPlatform} from './native-workflow-platform.mjs';
 import {nativeEnvironmentPlatform} from './native-environment-platform.mjs';
 import {nativeChangesPlatform} from './native-changes-platform.mjs';
+import {browserLoaderResolver} from './browser-loader-boundary.mjs';
+import {commonJsEntryPlatform} from './commonjs-entry-platform.mjs';
 import { execFileSync } from 'node:child_process';
 import {LOCAL_HOST_BUNDLE} from '../packages/local-host-connector/compatibility.mjs';
 
@@ -94,7 +96,7 @@ const web = await build({
   outdir: 'dist/web', bundle: true, splitting: true, format: 'esm', platform: 'browser', target: 'es2022',
   tsconfig: '.generated/upstream.source.tsconfig.json', jsx: 'automatic', minify: true, metafile: true,
   define: { 'process.env.NODE_ENV': '"production"', 'process.versions.node': '"0.0.0"', 'process.execArgv': '[]', 'process.env.CORDIS_SHARED': 'undefined' },
-  plugins: [browserNodeModule],
+  plugins: [browserNodeModule, browserLoaderResolver, commonJsEntryPlatform],
   loader: { '.woff2': 'dataurl', '.woff': 'dataurl', '.ttf': 'dataurl' },
 });
 // Compile the tiny DOM-only recovery entry independently. Its helper must not
@@ -179,7 +181,7 @@ const result = await build({
   target: 'es2024',
   external: ['cloudflare:workers', 'cloudflare:sockets', 'node:*'], alias: Object.fromEntries(builtinModules.filter(name => !name.startsWith('node:')).map(name => [name, 'node:' + name])),
   tsconfig: '.generated/upstream.source.tsconfig.json',
-  plugins: [staticAttribution, providerFetch, nativeCordisPlatform, nativeCompositionPlatform, nativeEnvironmentPlatform, nativeAttachmentsPlatform, nativeQueryPlatform, nativeWebPlatform, nativeMcpPlatform, nativeShellPlatform, nativeMarketPlatform, nativeHarnessHomePlatform, nativeWorkflowPlatform([staticAttribution]), nativeChangesPlatform, officialModules],
+  plugins: [commonJsEntryPlatform, staticAttribution, providerFetch, nativeCordisPlatform, nativeCompositionPlatform, nativeEnvironmentPlatform, nativeAttachmentsPlatform, nativeQueryPlatform, nativeWebPlatform, nativeMcpPlatform, nativeShellPlatform, nativeMarketPlatform, nativeHarnessHomePlatform, nativeWorkflowPlatform([staticAttribution]), nativeChangesPlatform, officialModules],
   define: {WEFT_VALIDATION_BUILD: 'false'},
   minifySyntax: true,
   sourcemap: true,
@@ -188,7 +190,7 @@ const result = await build({
 // The private assets Worker has no Node compatibility; keep its bundle independent.
 await build({entryPoints: {'assets-worker': 'apps/assets/src/index.ts'}, outdir: 'dist', bundle: true, format: 'esm', platform: 'browser', target: 'es2024', sourcemap: true, minifySyntax: true});
 // Validation-only bundle: scripted adapters and short deadlines cannot be enabled in production.
-await build({entryPoints: {'test-worker': 'apps/worker/src/index.ts', 'mail-gateway-worker': 'tests/fixtures/mail-gateway-worker.ts', 'images-worker': 'tests/fixtures/images-worker.ts', 'javascript-worker': 'tests/fixtures/javascript-worker.ts', 'documents-worker': 'tests/fixtures/documents-worker.ts', 'native-query-worker': 'tests/fixtures/native-query-worker.ts', 'contracts-worker': 'tests/fixtures/contracts-worker.ts', 'environment-storage-worker': 'tests/fixtures/environment-storage-worker.ts', 'dynamic-worker': 'tests/fixtures/dynamic-worker.ts', 'dynamic-worker-observability': 'tests/fixtures/dynamic-worker-observability.ts', 'composition-worker': 'tests/fixtures/composition-worker.ts', 'preset-worker': 'tests/fixtures/preset-worker.ts'}, outdir: 'dist', banner: workerRequire, bundle: true, format: 'esm', platform: 'browser', target: 'es2024', external: ['cloudflare:workers', 'cloudflare:sockets', 'node:*'], alias: Object.fromEntries(builtinModules.filter(name => !name.startsWith('node:')).map(name => [name, 'node:' + name])), tsconfig: '.generated/upstream.source.tsconfig.json', plugins: [staticAttribution, providerFetch, nativeCordisPlatform, nativeCompositionPlatform, nativeEnvironmentPlatform, nativeAttachmentsPlatform, nativeQueryPlatform, nativeWebPlatform, nativeMcpPlatform, nativeShellPlatform, nativeMarketPlatform, nativeHarnessHomePlatform, nativeWorkflowPlatform([staticAttribution]), nativeChangesPlatform, officialModules], define: {WEFT_VALIDATION_BUILD: 'true'}});
+await build({entryPoints: {'test-worker': 'apps/worker/src/index.ts', 'mail-gateway-worker': 'tests/fixtures/mail-gateway-worker.ts', 'images-worker': 'tests/fixtures/images-worker.ts', 'javascript-worker': 'tests/fixtures/javascript-worker.ts', 'documents-worker': 'tests/fixtures/documents-worker.ts', 'native-query-worker': 'tests/fixtures/native-query-worker.ts', 'contracts-worker': 'tests/fixtures/contracts-worker.ts', 'environment-storage-worker': 'tests/fixtures/environment-storage-worker.ts', 'dynamic-worker': 'tests/fixtures/dynamic-worker.ts', 'dynamic-worker-observability': 'tests/fixtures/dynamic-worker-observability.ts', 'composition-worker': 'tests/fixtures/composition-worker.ts', 'preset-worker': 'tests/fixtures/preset-worker.ts'}, outdir: 'dist', banner: workerRequire, bundle: true, format: 'esm', platform: 'browser', target: 'es2024', external: ['cloudflare:workers', 'cloudflare:sockets', 'node:*'], alias: Object.fromEntries(builtinModules.filter(name => !name.startsWith('node:')).map(name => [name, 'node:' + name])), tsconfig: '.generated/upstream.source.tsconfig.json', plugins: [commonJsEntryPlatform, staticAttribution, providerFetch, nativeCordisPlatform, nativeCompositionPlatform, nativeEnvironmentPlatform, nativeAttachmentsPlatform, nativeQueryPlatform, nativeWebPlatform, nativeMcpPlatform, nativeShellPlatform, nativeMarketPlatform, nativeHarnessHomePlatform, nativeWorkflowPlatform([staticAttribution]), nativeChangesPlatform, officialModules], define: {WEFT_VALIDATION_BUILD: 'true'}});
 if (Object.entries(result.metafile.outputs['dist/worker.js'].inputs).some(([path, input]) => input.bytesInOutput > 0 && path.endsWith('/scripted-adapter.ts'))) throw new Error('Validation model adapter leaked into production');
 const forbiddenWorkspaceDependencies = ['just-bash', 'guarded-fetch', 'sprintf-js'];
 const shippedInputs = Object.entries(result.metafile.outputs['dist/worker.js'].inputs)
@@ -205,7 +207,15 @@ if (shippedInputs.some(path => /node_modules\/(sharp|@img)\//.test(path))) {
 if (result.metafile.outputs['dist/worker.js'].imports.some(item => item.path === 'node:vm')) {
   throw new Error('Node VM sandbox leaked into the workerd application bundle');
 }
-if (result.metafile.outputs['dist/worker.js'].imports.some(item => item.path === 'node:sqlite')) throw new Error('Node SQLite leaked into the workerd search backend');
+/** One import path from the entry to a module importing `specifier`, for leak reports. */
+function importChain(metafile, specifier) {
+  const parents = new Map();
+  for (const [path, input] of Object.entries(metafile.inputs)) for (const item of input.imports) if (!parents.has(item.path)) parents.set(item.path, path);
+  const chain = [specifier];
+  for (let current = parents.get(specifier); current && !chain.includes(current) && chain.length < 40; current = parents.get(current)) chain.push(current);
+  return chain.join('\n  <- ');
+}
+if (result.metafile.outputs['dist/worker.js'].imports.some(item => item.path === 'node:sqlite')) throw new Error('Node SQLite leaked into the workerd search backend:\n  ' + importChain(result.metafile, 'node:sqlite'));
 for (const dependency of forbiddenWorkspaceDependencies) {
   if (shippedInputs.some(path => path.includes(`node_modules/${dependency}/`))) {
     throw new Error(`Unreviewed workspace execution dependency in application bundle: ${dependency}`);

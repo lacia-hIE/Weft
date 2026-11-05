@@ -28,14 +28,14 @@ type Definition = Parameters<SessionProjectionRegistry['register']>[0];
  */
 export async function openPermissionWorld(defaultPreset: string | undefined): Promise<{ctx: Context; catalog(): unknown; definitions: readonly Definition[]}> {
   const definitions: Definition[] = [];
-  class CapturingProjections extends SessionProjectionRegistry {
-    override register(definition: Definition): () => void { definitions.push(definition); return super.register(definition); }
-  }
   const ctx = new Context();
   try {
     const inspectOnly = () => Promise.reject(new Error('The permission catalog does not execute commands'));
     await ctx.plugin(Sessions);
-    await ctx.plugin(CapturingProjections as typeof SessionProjectionRegistry);
+    await ctx.plugin(SessionProjectionRegistry);
+    // Record the folds this world registers; read contexts register the permission fold themselves.
+    const registry = ctx.sessionProjections, register = registry.register.bind(registry);
+    registry.register = ((definition: Definition) => { definitions.push(definition); return register(definition); }) as typeof registry.register;
     await ctx.plugin(SandboxPolicy, {workspaceRoot: '/workspace', mode: 'workspace-write'});
     await ctx.plugin(WorkspaceSubprocess, {exec: inspectOnly, kill: inspectOnly});
     await ctx.plugin(ComputerBashExecutor, {cwd: '/workspace'});

@@ -10,7 +10,6 @@ import * as FileTools from '@deepseek-ai/dsh-tool-fs';
 import * as FileSearch from '@deepseek-ai/dsh-tool-fs-search';
 import * as Subagent from '@deepseek-ai/dsh-tool-subagent';
 import * as SubagentControl from '@deepseek-ai/dsh-tool-subagent-control';
-import * as ListAgents from '@deepseek-ai/dsh-tool-subagent-control/list-agents';
 import BasicCompaction from '@deepseek-ai/dsh-compaction-basic';
 import * as CommandCompact from '@deepseek-ai/dsh-command-compact';
 import ToolResultPruner from '@deepseek-ai/dsh-compaction-tool-result-pruner';
@@ -25,6 +24,7 @@ import * as ToolWeb from '@deepseek-ai/dsh-tool-web';
 import * as ToolBash from '@deepseek-ai/dsh-tool-bash';
 import * as ToolJobs from '@deepseek-ai/dsh-tool-jobs';
 import * as ToolPresentation from '@deepseek-ai/dsh-agent-tool-presentation';
+import * as PtcExecutor from '@deepseek-ai/dsh-tool-executor-ptc';
 import WorkflowPtc from '@deepseek-ai/dsh-workflow-ptc';
 import * as ToolWorkflow from '@deepseek-ai/dsh-tool-workflow';
 import Terminals from '@deepseek-ai/dsh-terminal';
@@ -79,7 +79,6 @@ async function mountSkills(ctx: Context, config: Record<string, unknown>): Promi
 const SkillCatalogBundle = {name: 'workerd-skill-filesystem', Config: z.object({}), inject: ['workingDirectory'], apply: mountSkillCatalog};
 const SubagentControlBundle = {...SubagentControl, Config: z.object({})};
 const CommandCompactBundle = {...CommandCompact, Config: z.object({})};
-const ListAgentsBundle = {...ListAgents, Config: z.object({})};
 const PlanModeConfig = z.object({section: z.string().required()});
 const CommandGoalBundle = {...CommandGoal, Config: z.object({})};
 const ToolScheduleBundle = {...ToolSchedule, Config: z.object({})};
@@ -167,6 +166,13 @@ const entries: Entry[] = [
     workspace: false, schema: ToolPresentation.Config, defaults: {mode: 'native'},
     validate: config => {ToolPresentation.Config(config as unknown as ToolPresentation.Config);},
     mount: async (ctx, config) => {await ctx.plugin(ToolPresentation, ToolPresentation.Config(config as unknown as ToolPresentation.Config));},
+  },
+  {
+    id: 'tool-executor-ptc', package: '@deepseek-ai/dsh-tool-executor-ptc', module: PtcExecutor, title: 'PTC 执行器',
+    description: '官方 PTC 工具执行器；模型只见 run_code 与生成的 SDK，程序在每次运行独立的 Dynamic Worker 中执行。',
+    workspace: false, schema: PtcExecutor.Config, defaults: {},
+    validate: config => {PtcExecutor.Config(config);},
+    mount: async (ctx, config) => {await ctx.plugin(PtcExecutor, PtcExecutor.Config(config));},
   },
   {
     id: 'workflow-ptc', module: WorkflowPtc, title: 'Workflow 引擎',
@@ -257,13 +263,6 @@ const entries: Entry[] = [
       if (value.provider !== 'fork') throw new Error('Unsupported subagent provider');
     },
     mount: async (ctx, config) => {await ctx.plugin(Subagent, Subagent.Config(config as unknown as Subagent.Config));},
-  },
-  {
-    id: 'tool-subagent-list-agents', package: '@deepseek-ai/dsh-tool-subagent-control', module: ListAgentsBundle, title: '子 Agent 列表',
-    description: '官方 list_agents 工具；列出当前会话的子 Agent。',
-    workspace: true, schema: ListAgentsBundle.Config, defaults: {},
-    validate: config => {ListAgentsBundle.Config(config);},
-    mount: async ctx => {await ctx.plugin(ListAgents);},
   },
   {
     id: 'tool-subagent-control', module: SubagentControlBundle, title: '子 Agent 控制',

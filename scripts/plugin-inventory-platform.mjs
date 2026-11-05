@@ -4,8 +4,8 @@ export const pluginInventoryPlatform = {
   transform(source, id) {
     const path = id.replaceAll('\\', '/');
     if (path.endsWith('/packages/client/ui-plugin-manager/src/client/PluginManagerPage.tsx')) {
-      const before = 'const listed = state.packages.filter(pkg => !BUILTIN_PROFILE_BUNDLES.has(pkg.name)';
-      const after = "const listed = state.packages.filter(pkg => (!BUILTIN_PROFILE_BUNDLES.has(pkg.name) || pkg.name === '@deepseek-ai/dsh-base' || pkg.name === '@deepseek-ai/dsh-web-app')";
+      const before = 'const listed = state.packages.filter(pkg => !HIDDEN_BUNDLES.has(pkg.name)';
+      const after = "const listed = state.packages.filter(pkg => (!HIDDEN_BUNDLES.has(pkg.name) || pkg.name === '@deepseek-ai/dsh-base' || pkg.name === '@deepseek-ai/dsh-web-app')";
       if (!source.includes(before)) throw new Error('Upstream plugin manager bundle visibility changed');
       return {code: source.replace(before, after), map: null};
     }

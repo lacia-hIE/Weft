@@ -5,7 +5,7 @@ import { openHarnessSession, type HarnessSessionHost } from '../../packages/harn
 import { initializeSessionStorage, SqliteSessionPersistence } from '../../packages/session-persistence-do/src/index.ts';
 import { ScriptedAdapter } from '../../packages/harness-runtime/src/scripted-adapter.ts';
 import { normalizeHandler } from '@weft/upstream/packages/extensions/cordis-host-runner/src/guard.ts';
-import { ToolCallId } from '@deepseek-ai/dsh-llm';
+import { executeToolCall } from '../../packages/harness-runtime/src/tool-call.ts';
 import type { Fiber } from '@deepseek-ai/cordis';
 import { startHostHalf } from '@weft/upstream/packages/extensions/cordis-host-runner/src/lifecycle.ts';
 interface Env {
@@ -69,7 +69,7 @@ export class NativePluginBench extends DurableObject<Env> {
     if (action === 'invoke') return this.handlers.get(input.method!)!(input.args);
     if (action === 'tool') {
       const controller = this.toolController = new AbortController();
-      try {return await host.ctx.tools.execute({agent: host.agent, callId: ToolCallId(crypto.randomUUID()), name: input.method!, arguments: input.args, signal: controller.signal});}
+      try {return await executeToolCall(host.ctx.tools, {agent: host.agent, callId: crypto.randomUUID(), name: input.method!, arguments: input.args, signal: controller.signal});}
       finally {if (this.toolController === controller) this.toolController = undefined;}
     }
     if (action === 'cancel') this.toolController?.abort(new Error('Cancelled by the test user'));

@@ -12,7 +12,7 @@ const PREBUILT_BASE = 'https://weft.invalid/prebuilt/';
 
 /** Real Loader tree over modules included in this Worker, without disk imports. */
 export class WorkerdLoader extends Loader {
-  override write(): void { /* The environment owns immutable profile snapshots. */ }
+  override commit(): void { /* The environment owns immutable profile snapshots. */ }
   override import(name: string): unknown {
     if (Object.hasOwn(this.builtins, name)) return this.builtins[name];
     if (name.startsWith('cordis:') && Object.hasOwn(this.builtins, name.slice(7))) return this.builtins[name.slice(7)];

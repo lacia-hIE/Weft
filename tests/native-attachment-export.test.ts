@@ -122,7 +122,7 @@ test('image-only export exposes the stored normalized WebP bytes without claimin
     const history = await (await runtime.dispatchFetch(url('alpha', base + '/sessions/image-export/events'))).json() as {events: {type: string; data: unknown}[]};
     const message = history.events.find(event => event.type === 'user/message')!.data as SessionEventMap['user/message'];
     const image = message.content.find(part => part.type === 'image') as {attachment: ImageAttachmentRef};
-    const stored = await api.call<{data: string}>('session/attachment', {request: {sessionId: 'image-export', attachmentId: image.attachment.attachmentId}});
+    const stored = await api.call<{data: string}>('session/attachment', {request: {sessionId: 'image-export', attachment: image.attachment}});
     const result = await bytesClient(runtime).call('/api', 'workspaceFiles/readBytes', {args: {workspaceFileScopeId: 'image-export', path: '/workspace/inputs/picture.webp', options: {}}});
     assert.ok(result.ok, JSON.stringify(result));
     assert.deepEqual(Buffer.from((result.value as WorkspaceFileBytes).data), Buffer.from(stored.data, 'base64'));

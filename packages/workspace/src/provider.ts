@@ -1,13 +1,13 @@
 import { posix } from 'node:path';
 import type { Context } from '@deepseek-ai/cordis';
-import FileSystem, { FsError, FsTargetKey, FsVersion, type FsTarget, type FsInfo, type FsPathInfo, type FsDirEntry, type FsWriteIntent, type FsWriteOutcome, type FsEditRequest, type FsEditOutcome, type FsErrorCode } from '@deepseek-ai/dsh-fs';
+import FileSystem, { FsError, FsTargetKey, FsVersion, type FsTarget, type FsInfo, type FsPathInfo, type FsDirEntry, type FsWriteIntent, type FsWriteOutcome, type FsEditRequest, type FsEditOutcome, type FsErrorCode, type FsDeleteOutcome, type FsMoveOutcome } from '@deepseek-ai/dsh-fs';
+import type { PatchHunk } from '@deepseek-ai/dsh-fs-patch';
 import WorkingDirectory from '@deepseek-ai/dsh-working-directory';
 import * as FileTools from '@deepseek-ai/dsh-tool-fs';
-import * as ObservationPolicy from '@deepseek-ai/dsh-fs-observation-policy';
 import { defineTool } from '@deepseek-ai/dsh-tools';
 import type { SandboxExecutionPolicy } from '@deepseek-ai/dsh-sandbox';
 import type {} from '@deepseek-ai/dsh-sandbox-policy';
-import { workspaceAddress, workspacePath, ROOT, MAX_BYTE_RANGE_BYTES, MAX_BINARY_FILE_BYTES, type WorkspaceScope, type WorkspaceTransport, type WorkspaceOperation, type FileInfo, type FileRead, type WriteResult, type SearchResult } from './protocol.ts';
+import { workspaceAddress, workspacePath, ROOT, MAX_BYTE_RANGE_BYTES, MAX_BINARY_FILE_BYTES, type WorkspaceScope, type WorkspaceTransport, type WorkspaceOperation, type FileInfo, type FileRead, type WriteResult, type SearchResult, type DeleteResult, type MoveResult } from './protocol.ts';
 
 interface ProviderConfig { scope: WorkspaceScope; transport: WorkspaceTransport; cwd?: string; listLimit?: number; readImage?: boolean; fileTools?: boolean }
 export class ComputerFileSystem extends FileSystem {
@@ -117,6 +117,28 @@ export class ComputerFileSystem extends FileSystem {
     const result = await this.call<WriteResult>({ type: 'edit', path: this.path(target), ...edit, ...(expected ? { expectedVersion: expected.version } : {}) }, signal);
     return { version: FsVersion(result.version), before: result.before!, after: result.after };
   }
+  override async patchText(target: FsTarget, hunks: readonly PatchHunk[], expected?: { version: FsVersion }, signal?: AbortSignal, sandboxPolicy?: SandboxExecutionPolicy): Promise<FsEditOutcome> {
+    this.confine(this.path(target), sandboxPolicy);
+    const result = await this.call<WriteResult>({ type: 'patch', path: this.path(target), hunks: [...hunks], ...(expected ? { expectedVersion: expected.version } : {}) }, signal);
+    return { version: FsVersion(result.version), before: result.before!, after: result.after };
+  }
+  override async deleteFile(target: FsTarget, expected?: { version: FsVersion }, signal?: AbortSignal, sandboxPolicy?: SandboxExecutionPolicy): Promise<FsDeleteOutcome> {
+    this.confine(this.path(target), sandboxPolicy);
+    return this.call<DeleteResult>({ type: 'delete', path: this.path(target), ...(expected ? { expectedVersion: expected.version } : {}) }, signal);
+  }
+  /** The workspace publishes the destination and removes the source in one transaction, so the source never remains. */
+  override async moveFile(source: FsTarget, destination: FsTarget, options: Parameters<FileSystem['moveFile']>[2], signal?: AbortSignal, sandboxPolicy?: SandboxExecutionPolicy): Promise<FsMoveOutcome> {
+    this.confine(this.path(source), sandboxPolicy);
+    this.confine(this.path(destination), sandboxPolicy);
+    const result = await this.call<MoveResult>({
+      type: 'move', path: this.path(source), destination: this.path(destination),
+      ...(options.hunks === undefined ? {} : { hunks: [...options.hunks] }),
+      ...(options.expectedSource ? { expectedVersion: options.expectedSource.version } : {}),
+      ...(options.expectedDestination ? { expectedDestination: options.expectedDestination } : {}),
+    }, signal);
+    const written = result.destination;
+    return { sourceBefore: result.sourceBefore, destination: { operation: written.operation, version: FsVersion(written.version), before: written.before, after: written.after }, sourceDeleted: true };
+  }
   override async watch(target: FsTarget, changed: (error?: Error) => void, signal: AbortSignal): Promise<() => Promise<void>> {
     signal.throwIfAborted();
     if (!this.config.transport.changes) throw new FsError('Workspace watching is unavailable', 'FS_IO_ERROR');
@@ -180,7 +202,6 @@ export async function mountWorkspace(ctx: Context, config: ProviderConfig): Prom
   await ctx.plugin(ComputerFileSystem, config);
   const cwd = config.cwd ?? ROOT;
   await ctx.plugin(WorkingDirectory, { defaultDirectory: cwd });
-  await ctx.plugin(ObservationPolicy);
   // Native Sessions compose the official tool-fs row from their preset instead.
   if (config.fileTools !== false) await ctx.plugin(FileTools, {readImage: config.readImage ?? false});
   ctx.tools.register(defineTool({

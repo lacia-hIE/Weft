@@ -26,7 +26,7 @@ export async function boot() {
   };
   const modules: Record<string, Plugin> = {[probe.name]: probe};
   class MemoryLoader extends Loader {
-    override write() {}
+    override commit() {}
     override import(name: string) {const plugin = modules[name]; if (!plugin) throw new Error('Unknown module'); return plugin;}
   }
   const ctx = new Context();

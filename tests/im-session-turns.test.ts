@@ -13,6 +13,12 @@ import {nativeClient} from './helpers/native.ts';
 import type {Installation} from '../packages/package-install/src/contracts.ts';
 import {entryNamespace} from '../packages/package-install/src/contracts.ts';
 
+/** The 0.2.2 schedule tool takes RFC 5545 timing: one UTC occurrence `delayMs` from now. */
+function oneShotRule(delayMs: number): string {
+  const at = new Date(Math.ceil((Date.now() + delayMs) / 1000) * 1000).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+  return `DTSTART:${at}\nRRULE:FREQ=DAILY;COUNT=1`;
+}
+
 const plugin = JSON.parse(readFileSync('plugins/im/package.json', 'utf8')) as {name: string; version: string};
 const qqSecret = 'qq-app-secret-for-turn-fixture';
 const qqKey = (() => {
@@ -30,7 +36,7 @@ const model: V4FetchHandler = async request => {
   const tool = !web && body.includes('SCHEDULE_TASK') && !body.includes('tool_result');
   const reminded = !web && framing >= 0;
   const text = web ? 'WEB_ANSWER' : reminded ? 'REMINDED' : 'SCHEDULED';
-  const args = JSON.stringify({prompt: 'REMINDER_ALPHA', title: 'Alpha reminder', after_seconds: 2});
+  const args = JSON.stringify({prompt: 'REMINDER_ALPHA', title: 'Alpha reminder', rrule: oneShotRule(2_000), target: 'this_session'});
   return new Response(
     event('message_start', {message: {usage: {input_tokens: 10, output_tokens: 0}}}) +
     event('content_block_start', {index: 0, content_block: tool ? {type: 'tool_use', id: 'schedule', name: 'schedule_create', input: {}} : {type: 'text', text: ''}}) +

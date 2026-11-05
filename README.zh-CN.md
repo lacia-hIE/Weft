@@ -16,7 +16,7 @@ Weft 将原版 Agent Loop、Web UI 与 Cordis 插件体系接入 Cloudflare Work
 
 DeepSeek Harness 提供了 Agent 的执行逻辑、交互界面和插件生态。Weft 负责把这些能力接入云端运行环境：身份认证、持久存储、工作区文件、容器进程，以及插件的构建与授权。
 
-项目优先复用原版服务和界面，平台适配集中在本仓库中。当前适配 **DSH `0.2.1-rc.5`**，由 [`upstream.lock.json`](upstream.lock.json) 固定提交，构建时获取并校验；不需要手动修改上游源码。原版前端、Remote ABI、插件与运行时从同一份源码构建，升级边界见[兼容性说明](docs/architecture/upstream-compatibility.md)。
+项目优先复用原版服务和界面，平台适配集中在本仓库中。当前适配 **DSH `0.2.2-rc.1`**，由 [`upstream.lock.json`](upstream.lock.json) 固定提交，构建时获取并校验；不需要手动修改上游源码。原版前端、Remote ABI、插件与运行时从同一份源码构建，升级边界见[兼容性说明](docs/architecture/upstream-compatibility.md)。
 
 Weft 适合希望自行托管 Web 编程助手、通过浏览器访问远程工作区，或在同一部署中维护多个独立 Agent 环境的开发者。
 
@@ -36,7 +36,7 @@ Weft 适合希望自行托管 Web 编程助手、通过浏览器访问远程工�
 | Worker 数据与文档处理 | 可恢复的 JavaScript 任务、原版审批流程，以及通过 Cloudflare Workers AI 将 Office、PDF、图片等内容提取为 Markdown |
 | Cordis 插件 | 从 npm 安装原版 bundle，或在创造模式下由 Agent 编写插件，审核后加载 |
 | 用户隔离 | 使用 Cloudflare Access 身份，将数据与运行权限限定在所属用户和环境 |
-| 本地 DSH 环境 | 安装原生 Host 连接插件，通过出站连接在 Web 使用本机的会话、插件、文件与终端；支持 DSH `0.2.1-rc.2`、`0.2.1-rc.3`、`0.2.1-rc.4`、`0.2.1-rc.5` 的 `dsh web` 和桌面 App |
+| 本地 DSH 环境 | 安装原生 Host 连接插件，通过出站连接在 Web 使用本机的会话、插件、文件与终端；支持 DSH `0.2.2-rc.1` 的 `dsh web` 和桌面 App |
 
 本地模式从首页「连接本地 DSH」开始，复制配对码，在本机 DSH 的插件页安装
 `@laciaproject/dsh-local-host`，粘贴配对码并点击「保存并连接」。配置由插件保存，无需下载 JSON。
@@ -233,7 +233,7 @@ Weft 保留原版交互与插件声明，但运行能力取决于 Cloudflare 宿
 
 ## 版本与发布
 
-Weft 使用 `vX.Y.Z` Tag；本地连接插件独立使用 `dsh-local-host-vX.Y.Z`，其 npm 版本不等于 Weft 版本。当前 Weft 为 `0.1.0`，仍处于 0.x 开发阶段，兼容变化与操作要求写入发版说明。上游 DSH 版本由 `upstream.lock.json` 单独固定。
+Weft 使用 `vX.Y.Z` Tag；本地连接插件独立使用 `dsh-local-host-vX.Y.Z`，其 npm 版本不等于 Weft 版本。当前 Weft 为 `0.2.2-rc.1`，与所适配的 DSH 版本对齐，仍处于 0.x 开发阶段，兼容变化与操作要求写入发版说明。上游 DSH 版本由 `upstream.lock.json` 单独固定。
 
 [更新记录](CHANGELOG.md) · [GitHub Releases](https://github.com/lacia-hIE/Weft/releases) · [发布流程](docs/releases.md)。项目 Release 必须指向在 `ci` 完成全部测试的同一提交，不会附带私有配置或可直接用于生产的构建产物。
 

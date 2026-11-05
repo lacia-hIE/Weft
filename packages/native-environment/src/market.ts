@@ -49,7 +49,8 @@ export class MarketWorld {
         await ctx.plugin(Typert);
         await ctx.plugin(MarketBundles, this.host);
         await ctx.plugin(MarketSettings, this.host);
-        await ctx.plugin(PluginMarket, {indexes: this.host.indexes});
+        // No dsh profile directory exists here; partial clones never run in workerd.
+        await ctx.plugin(PluginMarket, {indexes: this.host.indexes, detailCacheDir: '/weft/plugin-market/repositories'});
         const market = ctx.get('pluginMarket');
         if (!market) throw new Error('Plugin market is not mounted');
         // The Loader names the settings entry; this world mounts the reader directly.

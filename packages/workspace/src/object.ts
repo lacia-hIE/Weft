@@ -399,9 +399,10 @@ export class WorkspaceDO extends DurableObject<Env> {
     try {
       const value = this.files.execute(parsed.data);
       await this.ctx.storage.sync();
-      if (parsed.data.type === 'write' || parsed.data.type === 'edit' || parsed.data.type === 'mkdir' || (parsed.data.type === 'sweep' && (value as {removed: number}).removed > 0)) {
+      if (['write', 'edit', 'mkdir', 'patch', 'delete', 'move'].includes(parsed.data.type) || (parsed.data.type === 'sweep' && (value as {removed: number}).removed > 0)) {
         const changed = workspacePath(parsed.data.path);
         this.invalidate(changed);
+        if (parsed.data.type === 'move') this.invalidate(workspacePath(parsed.data.destination));
       }
       if (value instanceof Uint8Array) return new Response(new Uint8Array(value).buffer, { headers: { 'content-type': 'application/octet-stream', 'cache-control': 'private, no-store' } });
       return Response.json({ value }, { headers: { 'cache-control': 'private, no-store' } });

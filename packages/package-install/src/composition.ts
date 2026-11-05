@@ -78,7 +78,7 @@ export function composeInstalledBundle(rows: Record<string, unknown>[], modules:
   const parked = (name: unknown) => typeof name === 'string' && Object.keys(Inject.resolve(plugins[name]?.inject)).some(service => withheld.has(service));
   return {name: 'installed-cordis-bundle', inject, async apply(ctx: Context) {
     class BundleLoader extends Loader {
-      override write(): void {}
+      override commit(): void {}
       override import(name: string): unknown {
         if (['group', 'cordis:group', '@deepseek-ai/cordis-plugin-group'].includes(name)) return Group;
         const plugin = plugins[name];

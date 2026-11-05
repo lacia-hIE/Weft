@@ -2,7 +2,12 @@
 
 Application versions use `vX.Y.Z`; local connector versions are independent. See [release policy](docs/releases.md). Entries describe released behavior; planned work does not imply availability.
 
-## Unreleased / 未发布
+## [0.2.2-rc.1](https://github.com/lacia-hIE/Weft/releases/tag/v0.2.2-rc.1) — Unreleased / 未发布
+
+- Targets DSH `0.2.2-rc.1` and is compatible with that release only. 0.2.2 changes the Loader, tool executor, Session history, Schedule and preset contracts, so Sessions created under 0.2.1 keep their history but no longer run; the environment's own presets are migrated and republished. The project version now follows the targeted DSH release. Both container images change; publish them before deploying.
+- 适配 DSH `0.2.2-rc.1`，且仅兼容该版本。0.2.2 改变了 Loader、工具执行器、会话历史、Schedule 与预设契约，0.2.1 时期创建的会话保留历史但不能继续运行；环境自己的预设会迁移后重新发布。项目版本改为与所适配的 DSH 版本一致。两份容器镜像均有变化，部署前需发布。
+- Local connector `0.5.0` supports DSH `0.2.2-rc.1` only (Node 24.9 or newer); connector `0.4.0` and earlier accept only 0.2.1. Upgrade DSH and the connector together.
+- 本地连接插件 `0.5.0` 只支持 DSH `0.2.2-rc.1`（Node 24.9 及以上）；`0.4.0` 及更早版本只接受 0.2.1，需同时升级 DSH 与连接插件。
 
 - New built-in plugin `@weft/dsh-superagent`, adapted from the dsh-superagent research prototype: a proactive agent for one GitHub repository that works without a container. Environment plugins gain `weftSql` and `weftManagedSessions`, and may import the Host's `zod`, which changes the plugin builder image; publish the new image before deploying.
 - 新增内置插件 `@weft/dsh-superagent`，由 dsh-superagent 研究原型适配而来：面向单个 GitHub 仓库的主动 Agent，不要求容器。环境插件新增 `weftSql`、`weftManagedSessions` 服务，并可导入宿主的 `zod`，因此插件构建镜像有变化，部署前需发布新镜像。
@@ -24,6 +29,8 @@ Application versions use `vX.Y.Z`; local connector versions are independent. See
 
 - Environment-owned Worker Host plugins with native domain persistence, durable callbacks, approved HTTPS egress, scoped session operations, credential resolution and plugin-authenticated Webhook routes. Node Host is not included.
 - 环境级 Worker Host：原版 domain 持久状态、后台唤醒、受控 HTTPS、会话操作、凭据解析与插件验签的 Webhook 路由；不包含 Node Host。
+
+[Full English / 中文 release notes](docs/releases/v0.2.2-rc.1.md).
 
 ## [0.1.0](https://github.com/lacia-hIE/Weft/releases/tag/v0.1.0) — 2026-10-26
 

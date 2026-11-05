@@ -133,8 +133,8 @@ export class NativeSessionHost {
   async reconfigureBlank<T>(preset: string, operation: () => Promise<T>): Promise<T> {
     return this.serialized(async () => {
       if (this.closed) throw new NativeHostReplacedError('Native host was replaced before configuration');
-      const boundary = this.ctx.sessionProjections.stateOf(this.agent.session, 'turnBoundary');
-      if (this.agent.status === 'running' || this.agent.inbox.nextTurn.length || this.agent.inbox.nextStep.length || (boundary && (boundary.lastTurn > 0 || boundary.openTurnStartSeq !== null))) {
+      const boundary = this.ctx.agents.turnBoundaryOf(this.agent.session);
+      if (this.agent.status === 'running' || this.agent.inbox.nextTurn.length || this.agent.inbox.nextStep.length || (boundary.lastTurn > 0 || boundary.openTurnStartSeq !== null)) {
         throw new RemoteError('agent-preset/locked', 'This session has already started', {sessionId: this.agent.id, agentPreset: preset});
       }
       return operation();

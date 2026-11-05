@@ -6,7 +6,8 @@ import {ATTACHMENT_ROOT, UPLOAD_CHUNK_BYTES} from '../../native-attachments/src/
 import { posix } from 'node:path';
 import { Workspace, type WorkspaceObserver, type WorkspaceRegisteredBackend } from '@cloudflare/computer';
 import { FsError } from '@deepseek-ai/dsh-fs';
-import { ROOT, MAX_FILE_BYTES, SPILL_ROOT as SWEEP_ROOT, workspacePath, type FileInfo, type FileRead, type WriteResult, type SearchResult, type WorkspaceOperation } from './protocol.ts';
+import { applyHunks, type PatchHunk } from '@deepseek-ai/dsh-fs-patch';
+import { ROOT, MAX_FILE_BYTES, SPILL_ROOT as SWEEP_ROOT, workspacePath, type FileInfo, type FileRead, type WriteResult, type SearchResult, type WorkspaceOperation, type PatchHunkWire } from './protocol.ts';
 import {ComputerImageVariants} from '../../native-attachments/src/image-variants.ts';
 import {ComputerAttachmentFiles, ATTACHMENT_PRIVATE_ROOT} from '../../native-attachments/src/storage.ts';
 import {WorkspaceCopy} from './copy.ts';
@@ -133,6 +134,23 @@ export class WorkspaceStore {
     if (content.includes('\0')) throw new FsError('Workspace file is binary', 'FS_NOT_TEXT');
     return { ...info, content };
   }
+  /** A missing or changed file reports a stale version, as the original providers do. */
+  private requireFile(path: string, info: FileInfo | undefined, expectedVersion: string | undefined, verb: string): void {
+    if (!info) throw new FsError(`Cannot ${verb} ${path}: file changed since it was read`, 'FS_STALE_VERSION');
+    if (info.type !== 'file') throw new FsError(`Cannot ${verb} ${path}: not a regular file`, 'FS_NOT_REGULAR_FILE');
+    if (expectedVersion !== undefined && info.version !== expectedVersion) throw new FsError(`Cannot ${verb} ${path}: file changed since it was read`, 'FS_STALE_VERSION');
+  }
+  private patched(path: string, before: string, hunks: readonly PatchHunkWire[]): string {
+    // The wire schema admits exactly the PatchHunk fields; optional `context` is absent, never undefined, after JSON.
+    const result = applyHunks(before, hunks as readonly PatchHunk[]);
+    if (!result.ok) throw new FsError(`Cannot patch ${path}: hunk at patch line ${result.failure.hunkLineNumber} (${result.failure.stage}) does not match`, 'FS_PATCH_MISMATCH');
+    return result.after;
+  }
+  /** The LF-normalized removed text, or null when it is binary or over the text limit. */
+  private textBasis(path: string): string | null {
+    try { return this.read(path).content.replaceAll('\r\n', '\n'); }
+    catch (error) { if (error instanceof FsError && (error.code === 'FS_NOT_TEXT' || error.code === 'FS_TOO_LARGE')) return null; throw error; }
+  }
   private write(path: string, after: string, before: string | null): WriteResult {
     if (after.includes('\0')) throw new FsError('Only UTF-8 text is supported', 'FS_NOT_TEXT');
     if (new TextEncoder().encode(after).byteLength > MAX_FILE_BYTES) throw new FsError('Workspace file exceeds the text limit', 'FS_TOO_LARGE');
@@ -171,7 +189,8 @@ export class WorkspaceStore {
     try {
       return this.storage.transactionSync(() => {
         const path = this.guardedPath(operation.path);
-        if (['write', 'edit', 'mkdir'].includes(operation.type) && (path === ATTACHMENT_PRIVATE_ROOT || path.startsWith(ATTACHMENT_PRIVATE_ROOT+'/'))) throw new FsError('Attachment storage is immutable', 'FS_PERMISSION_DENIED');
+        const immutable = (target: string) => target === ATTACHMENT_PRIVATE_ROOT || target.startsWith(ATTACHMENT_PRIVATE_ROOT+'/');
+        if (['write', 'edit', 'mkdir', 'patch', 'delete', 'move'].includes(operation.type) && immutable(path)) throw new FsError('Attachment storage is immutable', 'FS_PERMISSION_DENIED');
         if (operation.type === 'stat') return this.metadata(path) ?? null;
         if (operation.type === 'read') return this.read(path);
         if (operation.type === 'mkdir') {
@@ -215,6 +234,36 @@ export class WorkspaceStore {
         }
         if (operation.type === 'search') return this.search(path, operation.query, operation.limit);
         const info = this.metadata(path);
+        if (operation.type === 'patch') {
+          this.requireFile(path, info, operation.expectedVersion, 'patch');
+          const before = this.read(path).content.replaceAll('\r\n', '\n');
+          return this.write(path, this.patched(path, before, operation.hunks), before);
+        }
+        if (operation.type === 'delete') {
+          this.requireFile(path, info, operation.expectedVersion, 'delete');
+          const before = this.textBasis(path);
+          this.computer.provider().unlinkSync(path);
+          this.storage.sql.exec('DELETE FROM weft_file_versions WHERE path=?', path);
+          this.storage.sql.exec('UPDATE weft_workspace_state SET revision=revision+1 WHERE id=1');
+          return {before};
+        }
+        if (operation.type === 'move') {
+          const destination = this.guardedPath(operation.destination);
+          if (immutable(destination)) throw new FsError('Attachment storage is immutable', 'FS_PERMISSION_DENIED');
+          if (destination === path) throw new FsError('Cannot move a file to itself', 'FS_SAME_TARGET');
+          this.requireFile(path, info, operation.expectedVersion, 'move');
+          const existing = this.metadata(destination);
+          if (existing && existing.type !== 'file') throw new FsError('Move destination is not a regular file', 'FS_NOT_REGULAR_FILE');
+          if (operation.expectedDestination?.kind === 'createIfAbsent' && existing) throw new FsError('Read the existing file before replacing it', 'FS_NOT_OBSERVED');
+          if (operation.expectedDestination?.kind === 'replaceIfVersion' && existing?.version !== operation.expectedDestination.version) throw new FsError('Workspace file changed since it was read', 'FS_STALE_VERSION');
+          const sourceBefore = this.read(path).content.replaceAll('\r\n', '\n');
+          const after = operation.hunks === undefined ? sourceBefore : this.patched(path, sourceBefore, operation.hunks);
+          const result = this.write(destination, after, existing ? this.read(destination).content.replaceAll('\r\n', '\n') : null);
+          // Both effects share this transaction, so the source is always removed with the published destination.
+          this.computer.provider().unlinkSync(path);
+          this.storage.sql.exec('DELETE FROM weft_file_versions WHERE path=?', path);
+          return {sourceBefore, destination: result};
+        }
         if (operation.type === 'write') {
           if (operation.expected?.kind === 'createIfAbsent' && info) throw new FsError('Read the existing file before replacing it', 'FS_NOT_OBSERVED');
           if (operation.expected?.kind === 'replaceIfVersion' && info?.version !== operation.expected.version) throw new FsError('Workspace file changed since it was read', 'FS_STALE_VERSION');

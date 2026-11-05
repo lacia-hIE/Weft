@@ -37,6 +37,8 @@ export const LOADED: Record<string, {world: 'session'; phase: ProfilePhase; nati
   'user-questions': {world: 'session', phase: 'core'},
   'subagent-model-selection-settings': {world: 'session', phase: 'core'},
   'tools': {world: 'session', phase: 'agents'},
+  // The deployment's native executor; the PTC preset scopes its own `tool-executor-ptc` row.
+  'tool-executor-native': {world: 'session', phase: 'agents'},
   'agent': {world: 'session', phase: 'agents'},
   'goal': {world: 'session', phase: 'agents'},
   'goal-round-driver': {world: 'session', phase: 'agents'},
@@ -61,6 +63,10 @@ export const LOADED: Record<string, {world: 'session'; phase: ProfilePhase; nati
   'spill-policy': {world: 'session', phase: 'late', native: true},
   // Its shared resource tools appear once an environment configures an MCP server (`mcp-servers`).
   'mcp-resources': {world: 'session', phase: 'late', native: true},
+  // Host entry of the browser quotation plugin; it registers nothing on the Host.
+  'message-quotes': {world: 'session', phase: 'late', native: true},
+  // Web file-link and delivery guidance for the system prompt.
+  'deliverable-file-references': {world: 'session', phase: 'late', native: true},
 };
 
 /** Original packages that Weft's world setup mounts today. */
@@ -73,7 +79,7 @@ export const MOUNTED_BY_WEFT: Record<string, string> = {
   'subagent': 'native-subagents', 'subagent-spawn-in-process': 'native-subagents', 'subagent-fork-in-process': 'native-subagents',
   'schedule': 'native-schedule',
   'session-reference': 'native interaction', 'file-reference-local': 'native-files', 'working-directory': 'workspace provider',
-  'workspace': 'native workspaces', 'fs-observation-policy': 'workspace provider', 'attachment-local': 'native-attachments',
+  'workspace': 'native workspaces', 'attachment-local': 'native-attachments',
   'session-query-sqlite': 'native-query', 'storage': 'native-storage', 'storage-domain': 'native-storage',
   'typert': 'Remote dispatch', 'remote-access': 'native-environment',
   // Mounted once the workspace shell exists: created as Loader rows they activate later and republish blank Session summaries.
@@ -107,6 +113,7 @@ export const NOT_APPLICABLE: Record<string, string> = {
   'otel': 'telemetry export', 'session-telemetry-otel': 'telemetry export', 'desktop-product-telemetry': 'desktop telemetry',
   'open-in-app': 'desktop applications', 'harness-dev-context': 'harness development checkout', 'pwsh-sandbox': 'Windows PowerShell',
   'tool-pwsh': 'Windows PowerShell', 'tool-plugin-manager': 'disabled in the official profile',
+  'fs-observation-policy': 'disabled in the official profile; file mutations need no prior read',
 };
 
 /** Rows waiting for a Cloudflare service (see docs/architecture/external-services.md). */
@@ -131,8 +138,9 @@ export const isBrowserRow = (name: string) => /^@deepseek-ai\/dsh-client-/.test(
  */
 export const PRESET_ROWS = new Set([
   'tool-bash', 'tool-jobs', 'tool-fs', 'tool-fs-search', 'agent-instructions', 'skill-filesystem', 'tool-skill',
-  'command-goal', 'plan-mode', 'compaction-basic', 'command-compact', 'tool-subagent-control', 'tool-subagent-list-agents',
+  'command-goal', 'plan-mode', 'compaction-basic', 'command-compact', 'tool-subagent-control',
   'tool-subagent', 'tool-subagent-fork', 'workflow-ptc', 'tool-workflow', 'tool-result-pruner', 'tool-todo', 'tool-goal', 'tool-web',
+  'tool-executor-ptc',
 ]);
 
 /**
@@ -140,9 +148,7 @@ export const PRESET_ROWS = new Set([
  * dynamic code, so each expression is replaced by the value it has in a Weft
  * deployment, with that reason.
  */
-export const RESOLVED_CONFIG: Record<string, {config: Record<string, unknown>; reason: string}> = {
-  'tools': {config: {}, reason: 'DSH_TOOLS_MODE is not set in Workers, so the tool mode keeps its default'},
-};
+export const RESOLVED_CONFIG: Record<string, {config: Record<string, unknown>; reason: string}> = {};
 
 /** The overlay patches: loaded rows take their resolved configuration; every other row is disabled. */
 export function overlayPatches(rows: readonly {id: string; name: string}[]): PatchOptions[] {

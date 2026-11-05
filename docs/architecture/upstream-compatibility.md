@@ -1,12 +1,8 @@
 # Harness 兼容性与维护
 
-当前目标为 **DSH `0.2.1-rc.5`**，提交 `b830ec950faba0a46dda564be3e2d854afed94f1`。这是固定的适配基线，不随 npm `latest` 或上游分支自动更新；云端内核、原版前端和 Remote ABI 一起升级。
+当前目标为 **DSH `0.2.2-rc.1`**，提交 `66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db`。这是固定的适配基线，不随 npm `latest` 或上游分支自动更新；云端内核、原版前端和 Remote ABI 一起升级。
 
-本地 Host 连接插件 0.2.7 支持 `0.2.1-rc.2`、`0.2.1-rc.3`、`0.2.1-rc.4` 与 `0.2.1-rc.5`。连接协议仍为 3，旧版 0.2.6 使用同一协议；rc.5 需要更新连接插件的精确版本清单。CI 对四个版本分别启动 npm 发布的原版 Web Host，并以 rc.4、rc.5 的 `desktop` profile 验证桌面 Host 启动方式、原生文件、Git、PTY 与刷新恢复。`engines.dsh` 仍是安装器、Host、中继及 UI 共用的精确清单，不接受未经审查的后续版本。
-
-rc.3（`1f81c047fc48fa190a683e469daa699857e9afe8`）→ rc.4（`504a01a9578abc2c6f1fb896b1dc322c9fe24f66`）→ rc.5 的源码审查覆盖完整 Git diff，包含 GitHub Compare API 的 300 文件截断之后的文件。所有包清单除版本号外没有变化，未增加依赖。Session V4、核心 Agent、权限、预设、WebServer、浏览器认证、Client Modules 与 Host Remote 协议实现未变。
-
-变化包括会话视图标签、DeepSeek 账号目录日志改走 stderr、MCP 服务未声明资源能力时直接返回空列表，以及 rc.5 的思考文本显示：`conversation.chat.reasoning.body` 同时提供原始 `rawText` 与显示用 `text`，原版显示层过滤开头的 `<signature>…</signature>` 元数据；思考原文仍留在原生历史。Weft 不覆写该 Slot，直接构建原版实现。浏览器回归覆盖签名隐藏、Markdown 正文显示、刷新恢复和原始历史保留。第三方思考正文扩展应使用 `text` 渲染，需原始模型输出时使用 `rawText`，参见[上游发布与升级说明](https://github.com/deepseek-ai/deepseek-harness/releases/tag/dsh-v0.2.1-rc.5)。
+0.2.2 相对 0.2.1 含破坏性变化，Weft 因此**只兼容 `0.2.2-rc.1`**：云端运行时不再执行 0.2.1 来源的修订，本地 Host 连接插件 0.5.0 只接受 `0.2.2-rc.1`。连接协议仍为 3。CI 启动 npm 发布的原版 `0.2.2-rc.1` Web Host，并以 `desktop` profile 验证桌面 Host 启动方式、原生文件、Git、PTY 与刷新恢复；该版本要求 Node 24.9 或更高。`engines.dsh` 仍是安装器、Host、中继及 UI 共用的精确清单，不接受未经审查的后续版本。
 
 upstream.lock.json 固定 commit。服务端插件、模型协议、浏览器内核、UI 控件与样式从同一份源码构建。prepare-upstream.mjs 保留用户现有 checkout，必要时使用独立固定副本；所有公共及内部导入均指向同一副本。管理的副本若版本不匹配或有 tracked 修改则停止。升级需显式审查兼容契约。
 
@@ -37,11 +33,25 @@ vendor 使用独立声明；上游 repeat-tool-reminder 的 broad-union 类型�
 
 Cordis 兼容不自动提供浏览器、Node 主机、进程或真实 Shell 能力。扩展任意生态包时先判定宿主需求，建立适配与验收后加入目录。
 
-## alpha.4 / rc.2–rc.4 → rc.5 的兼容范围
+## 0.2.1 → 0.2.2-rc.1 的兼容范围
 
-`packages/harness-runtime/src/revision.ts` 明确列出已审查的来源：`86a402200d95fecef4529d969836f1fe13c6cb0d`（本项目此前的 `0.2.1-alpha.4`）、`687f282e8625c6b8d11ff58211a90524be2e4317`（`0.2.1-rc.2`）、`1f81c047fc48fa190a683e469daa699857e9afe8`（`0.2.1-rc.3`）和 `504a01a9578abc2c6f1fb896b1dc322c9fe24f66`（`0.2.1-rc.4`）。对比中 Session V4 存储格式、核心 Agent 生命周期和预设文档契约没有源代码变化；Tools 的变化涉及 PTC 提示词与 SDK 呈现，仍使用原版 `run_code` 和现有 function-body 执行方式。
+rc.5（`b830ec950faba0a46dda564be3e2d854afed94f1`）→ rc.1 的审查覆盖完整 Git diff。Session V4 存储格式版本未变，但以下契约改变，Weft 已按原版接口适配：
 
-因此旧会话、旧自定义预设可以保留来源记录，在 rc.5 运行时继续执行，无需重写历史、清除配置或重置工作区。原版预设仍按已有的种子归属规则更新，用户修改过的预设保持原样。回归覆盖四种旧来源的历史前缀、升级后继续对话、对象重启、旧自定义预设创建会话和未知版本拒绝。这项许可不代表任意版本的本地 Host 或 Client 协议可以混用。
+| 上游变化 | Weft 适配 |
+| --- | --- |
+| Loader 的 `EntryTree.write()` 改为 `commit(change)`；浏览器 Loader 新增文件系统解析器 | workerd 与安装包 Loader 实现空 `commit`；浏览器构建与上游 Vite 一样把该解析器的 Node 导入替换为不可调用的存根 |
+| 工具执行拆为 `tool-executor-native` / `tool-executor-ptc`，`tools.execute` 变为批量接口 | 根世界加载原版 native 执行器；PTC 预设的 `tool-executor-ptc` 行使用每次运行独立的 Dynamic Worker 运行时；单次调用经 `executeToolCall` 走同一执行器 |
+| 模型选择归 Agent 所有（`agent.model`），投影由 Agent Loop 注册 | 移除 Weft 自己的选择引用，切换通知在 Agent 未发布的 setup 作用域安装 |
+| 会话历史改由 `HistoryController` / `WebController` 提供；`session/control` 投影帧改为每个事件一帧、`changes: [{key, val}]` | 读侧使用原版控制器；环境控制流按新帧格式发出摘要变化 |
+| `session/attachment` 携带完整图片引用，不再扫描会话历史 | 从环境附件存储按引用读取；仍要求目标会话存在 |
+| Schedule 改为 Host 级任务（`create/list/view/edit/history/run`，RRULE 计时，`active/paused/ended`），存储写 v2、读 v1 | 每个会话 DO 保存其投递目标的任务；入口 Worker 聚合读取并按任务 id 路由操作；DO KV 后端支持 `compatibleVersions`，首次写入时原子更新版本戳。会话 DO 不创建其他会话，`new` / `new_once` 目标按原版文案拒绝 |
+| `FileSystem` 新增 `patchText`、`deleteFile`、`moveFile`；`fs-observation-policy` 默认关闭 | 工作区存储在一个 SQL 事务内应用原版 `applyHunks`、删除与移动；跟随原版不再挂载读前写策略 |
+| 插件管理页、插件市场详情页与 Web 抓取 | 管理页仍显示 base / web-app；市场详情的局部克隆在 workerd 报告原版 `git-unavailable`；Web 抓取改用平台 `fetch`（Workers 拒绝 IP 地址主机名） |
+| `tool-subagent-control/list-agents` 合入主插件；预设改用 `modelSelection` / `modelDiscovery` | 目录随原版移除该行，预设直接取用原版配置 |
+
+`packages/harness-runtime/src/revision.ts` 因此不再列出任何旧来源。0.2.1 时期发布的修订（含 `0.2.1-alpha.4`、`rc.2`–`rc.5`）保留来源记录与可读历史，但不能在 0.2.2-rc.1 运行时继续执行或创建会话；原版预设按种子归属规则以新上游重新发布；环境自己的预设（含改过的原版预设）在激活时去掉已合并的 `tool-subagent-list-agents` 行、把 `modelSelectionSettings` 改为 `modelSelection` 与 `modelDiscovery`，校验通过后以新上游重新发布，校验失败的保持原样且不能运行。已有会话仍绑定创建时的修订。CI 覆盖旧来源拒绝、历史保留、预设迁移和未知版本拒绝。
+
+上游对 `pi-ai`、`lexical` 等依赖的补丁仍不进入 Weft 构建，与此前一致。
 
 rc.3 的插件「更多」菜单与草稿复用使用原版实现。API Key 模型目录也使用原版 `/models` 跟随逻辑；workerd 仅把该请求的 `redirect: error` 替换为 `manual`，原版非 2xx 分支继续拒绝重定向，避免转发密钥。CI 验证模型目录请求、重定向拒绝、插件入口与未发送草稿恢复。
 

@@ -35,7 +35,7 @@ const presetGroups = [
   // Weft's skill catalog service rides with the skill rows, private to the preset.
   {id: 'skills', members: ['skill-filesystem', 'tool-skill'], isolate: {skills: true}},
   {id: 'persistent-shell', members: ['pty', 'terminal-bash', 'persistent-bash'], isolate: {terminals: true}},
-  {id: 'delegation', members: ['tool-agent-team', 'tool-subagent-control', 'tool-subagent-list-agents', 'tool-subagent', 'tool-subagent-fork', 'workflow-ptc', 'tool-workflow'], isolate: {workflowEngine: true}},
+  {id: 'delegation', members: ['tool-agent-team', 'tool-subagent-control', 'tool-subagent', 'tool-subagent-fork', 'workflow-ptc', 'tool-workflow'], isolate: {workflowEngine: true}},
 ] as const;
 
 export function nativePresetDefinition(profile: {spec: {id: string; name: string; plugins: PluginSelection[]; allowClientPlugins?: boolean}}): PresetDefinition {

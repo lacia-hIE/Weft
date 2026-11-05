@@ -76,7 +76,7 @@ export function officialBundles(entries: readonly PluginInventoryEntry[]): Bundl
   return [baseManifest, webManifest].map((manifest, index): BundleInfo => ({
     name: manifest.name, version: manifest.version, description: manifest.description,
     meta: {title: {en: index ? 'Web plugins' : 'Core plugins', zh: index ? 'Web 插件' : '基础插件'}},
-    availability: 'installation', official: true, installed: true, enabled: true, optional: false, removable: false, readOnlyReason: 'management-required',
+    availability: 'installation', official: true, installed: true, enabled: true, optional: false, removable: false, updatable: false, readOnlyReason: 'management-required',
     rows: entries.filter(entry => web.has(entry.entryId) === Boolean(index)).map(entry => ({rowId: entry.entryId, moduleName: entry.moduleName, entryId: entry.entryId, ...(entry.meta ? {meta: entry.meta} : {})})), overrides: [],
   }));
 }

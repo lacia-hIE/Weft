@@ -17,8 +17,7 @@ import {supportsAgentRuntime} from '../../../packages/harness-runtime/src/revisi
 import { serveUi } from './ui-http.ts';
 import { WorkspaceDO } from '../../../packages/workspace/src/object.ts';
 import {createNativeFileHost, type NativeFileEndpoint} from '../../../packages/native-files/src/index.ts';
-import {referencedImage} from '../../../.generated/official-image-helpers.ts';
-import {AttachmentError} from '@deepseek-ai/dsh-attachment';
+import {AttachmentError, type ImageAttachmentRef} from '@deepseek-ai/dsh-attachment';
 import uploadRemote from '../../../.generated/official-remotes/packages/client/file-upload/typert.remote-client.js';
 import {agentRemoteFor} from './agent-remotes.ts';
 import {invokeAgentRemote, openRemoteStream} from '../../../packages/harness-runtime/src/remote-dispatch.ts';
@@ -217,7 +216,7 @@ export class SessionDO extends DurableObject<Env> {
     if (scope) {
       const owner = controlScope(scope.tenantId, scope.environmentId);
       const world = await openPermissionWorld(await controlFor(this.env, owner).nativePermissionDefault(owner));
-      reader.registerProjections(world.definitions);
+      await reader.registerProjections(world.definitions);
     }
     return reader;
   }
@@ -272,7 +271,7 @@ export class SessionDO extends DurableObject<Env> {
       }, beforeAssembly: async () => {
         await pluginsReady.promise; await runtime.options.beforeAssembly?.();
         const live = this.nativeHost;
-        const boundary = live?.ctx.sessionProjections.stateOf(live.agent.session, 'turnBoundary');
+        const boundary = live?.ctx.agents.turnBoundaryOf(live.agent.session);
         const turn = String(boundary?.openTurnStartSeq ?? 'idle');
         if (turn !== packageTurn) {await this.installedPackages?.reconcile(); packageTurn = turn;}
       }, mountTools: async ctx => {
@@ -726,16 +725,18 @@ export class SessionDO extends DurableObject<Env> {
       return response;
     } finally {await host.dispose();}
   }
-  async nativeImageAttachment(input: SessionScope, attachmentId: string, sessionId = input.sessionId): Promise<Response> {
+  /**
+   * Reads the supplied durable image reference from the environment's store, as the original controller does,
+   * without scanning Session history. Weft still requires the addressed Session to exist here, so a read never
+   * instantiates an unrelated Durable Object.
+   */
+  async nativeImageAttachment(input: SessionScope, attachment: ImageAttachmentRef, sessionId = input.sessionId): Promise<Response> {
     const scope = this.assertScope(input);
     await this.assertNativeLogicalOwner(scope, sessionId);
-    const snapshot = readSessionSnapshot(this.ctx.storage, SessionId(sessionId));
-    if (!snapshot) throw new RemoteError('session/not-found', 'Session not found', {sessionId: SessionId(scope.sessionId)});
-    const ref = referencedImage(snapshot.events, attachmentId);
-    if (!ref) throw new RemoteError('session/attachment-invalid', 'Image is not referenced by this session.', {reason: 'ATTACHMENT_NOT_REFERENCED'});
+    if (!readSessionSnapshot(this.ctx.storage, SessionId(sessionId))) throw new RemoteError('session/not-found', 'Session not found', {sessionId: SessionId(scope.sessionId)});
     const reader = await this.getReader();
     try {
-      const stored = await (reader.activeRuntime()?.ctx ?? reader.ctx).attachments.readImage(ref);
+      const stored = await (reader.activeRuntime()?.ctx ?? reader.ctx).attachments.readImage(attachment);
       return Response.json({value: {attachment: stored.ref, data: Buffer.from(stored.data).toString('base64')}});
     } catch (error) {
       if (error instanceof AttachmentError) throw new RemoteError('session/attachment-invalid', error.message, {reason: error.code});

@@ -12,7 +12,11 @@ const physical = (unit: string, table: string): string => `weft_kv_u_${unit}_${t
 /** One KV unit in the original SQLite layout: a JSON row per record plus an optional global slot. */
 class DurableKvUnit implements KvUnit {
   private closed = false;
-  constructor(private readonly storage: DurableObjectStorage, private readonly descriptor: KvUnitDescriptor, private readonly onClose: () => void) {}
+  /** The medium holds an accepted older version; the first changing write stamps the current one with its data. */
+  private needsVersionStamp: boolean;
+  constructor(private readonly storage: DurableObjectStorage, private readonly descriptor: KvUnitDescriptor, storedVersion: number, private readonly onClose: () => void) {
+    this.needsVersionStamp = storedVersion !== descriptor.version;
+  }
 
   async loadAll(): Promise<{tables: Record<string, Record<string, unknown>>; global: unknown}> {
     this.ensureOpen();
@@ -28,16 +32,39 @@ class DurableKvUnit implements KvUnit {
   }
   async putRecord(table: string, key: string, value: unknown): Promise<void> {
     this.ensureOpen();
-    this.storage.sql.exec(`INSERT INTO "${this.table(table)}" (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, JSON.stringify(value));
+    const physicalTable = this.table(table), text = JSON.stringify(value);
+    this.write(() => this.storage.sql.exec(`INSERT INTO "${physicalTable}" (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, text).rowsWritten);
   }
   async deleteRecord(table: string, key: string): Promise<void> {
     this.ensureOpen();
-    this.storage.sql.exec(`DELETE FROM "${this.table(table)}" WHERE key = ?`, key);
+    const physicalTable = this.table(table);
+    this.write(() => this.storage.sql.exec(`DELETE FROM "${physicalTable}" WHERE key = ?`, key).rowsWritten);
+  }
+  async deleteRecords(table: string, keys: readonly string[]): Promise<void> {
+    this.ensureOpen();
+    const physicalTable = this.table(table);
+    if (keys.length === 0) return;
+    this.write(() => {
+      let changes = 0;
+      for (const key of new Set(keys)) changes += this.storage.sql.exec(`DELETE FROM "${physicalTable}" WHERE key = ?`, key).rowsWritten;
+      return changes;
+    });
   }
   async setGlobal(value: unknown): Promise<void> {
     this.ensureOpen();
     if (!this.descriptor.hasGlobal) throw new Error(`kv unit '${this.descriptor.name}' declared no global slot`);
-    this.storage.sql.exec(`INSERT INTO ${GLOBALS} (unit, value) VALUES (?, ?) ON CONFLICT(unit) DO UPDATE SET value = excluded.value`, this.descriptor.name, JSON.stringify(value));
+    const text = JSON.stringify(value);
+    this.write(() => this.storage.sql.exec(`INSERT INTO ${GLOBALS} (unit, value) VALUES (?, ?) ON CONFLICT(unit) DO UPDATE SET value = excluded.value`, this.descriptor.name, text).rowsWritten);
+  }
+  /** Commit one mutation and, when it changed rows of an older accepted version, the current version stamp, atomically. */
+  private write(operation: () => number): void {
+    if (!this.needsVersionStamp) { operation(); return; }
+    const stamped = this.storage.transactionSync(() => {
+      if (operation() === 0) return false;
+      this.storage.sql.exec(`UPDATE ${UNITS} SET version = ? WHERE name = ?`, this.descriptor.version, this.descriptor.name);
+      return true;
+    });
+    if (stamped) this.needsVersionStamp = false;
   }
   async close(): Promise<void> { if (!this.closed) {this.closed = true; this.onClose();} }
 
@@ -69,11 +96,11 @@ export class DurableStorageBackend implements StorageBackend {
     if (this.units.has(descriptor.name)) throw new Error(`kv unit '${descriptor.name}' is already open (double-open is a caller bug)`);
     const row = this.storage.sql.exec<{version: number}>(`SELECT version FROM ${UNITS} WHERE name = ?`, descriptor.name).toArray()[0];
     if (row === undefined) this.storage.sql.exec(`INSERT INTO ${UNITS} (name, version) VALUES (?, ?)`, descriptor.name, descriptor.version);
-    else if (row.version !== descriptor.version) {
+    else if (row.version !== descriptor.version && !(descriptor.compatibleVersions ?? []).includes(row.version)) {
       throw new StorageError('version-mismatch', `kv unit '${descriptor.name}' is stamped version ${row.version} on the medium, incompatible with descriptor version ${descriptor.version}`);
     }
     for (const table of descriptor.tables) this.storage.sql.exec(`CREATE TABLE IF NOT EXISTS "${physical(descriptor.name, table)}" (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT`);
-    const unit = new DurableKvUnit(this.storage, descriptor, () => {this.units.delete(descriptor.name);});
+    const unit = new DurableKvUnit(this.storage, descriptor, row?.version ?? descriptor.version, () => {this.units.delete(descriptor.name);});
     this.units.set(descriptor.name, unit);
     return unit;
   }

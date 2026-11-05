@@ -124,7 +124,7 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
       if (presentation && world) {
         profileOverrides = await reconcileProfileOverrides(world, profileOverrides, context.profileOverrides);
         mcp = await reconcileMcpServers(world, mcp, mcpEntries(context.mcpServers ?? []));
-        const boundary = activeAgent && world.sessionProjections.stateOf(activeAgent.session, 'turnBoundary');
+        const boundary = activeAgent && world.agents.turnBoundaryOf(activeAgent.session);
         // Assembly also runs between steps and model selection can refresh while a turn is active.
         // Change policy fibers only at that turn's first assembly, or while the Agent is idle.
         if (boundary?.openTurnStartSeq == null || profileEnablementTurn !== boundary.lastTurn) {
@@ -139,7 +139,7 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
     ...(presentation ? {meta: {cwd, ...(profile ? {agentPreset: profile.spec.id} : {})}} : {}),
     ...(presentation && profile ? {setupAgent: async (ctx, agent) => {
       if (!composition) throw new Error('Native composition is not ready');
-      await composition.agentPresets.mount(ctx, composition.sessionProjections.stateOf(agent.session, 'agentPreset') ?? profile.spec.id);
+      await composition.agentPresets.mount(ctx, composition.agentPresets.presetForSession(agent.session) ?? profile.spec.id);
     }} : {}),
     onAgent: (agent, ctx) => { activeAgent = agent; runtimeRoot = ctx; ctx.get('weftNativeUploadRegistry')?.reconcile(agent); reader?.activate(agent, ctx); },
     onAgentDisposed: agent => { if (activeAgent === agent) activeAgent = undefined; reader?.dispose(agent); },

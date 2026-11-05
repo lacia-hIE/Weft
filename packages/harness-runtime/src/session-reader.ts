@@ -7,8 +7,8 @@ import Title from '@deepseek-ai/dsh-session-title';
 import {installDurableSessionQuery} from '../../native-query/src/index.ts';
 import {teamProjectionDefinition} from '@weft/upstream/packages/experimental/agent-team/src/projection.ts';
 import type { AssistantStreamFrame, Agent } from '@deepseek-ai/dsh-agent';
-import { installModelSelectionProjection } from './model-selection.ts';
-import { turnBoundaryProjectionDefinition } from '@deepseek-ai/dsh-agent-loop';
+import { modelSelectionProjectionDefinition } from '@deepseek-ai/dsh-agent';
+import { turnBoundaryProjectionDefinition } from '@weft/upstream/packages/core/agent/src/projection.ts';
 import { inboxProjectionDefinition } from '@weft/upstream/packages/core/agent-loop/src/inbox.ts';
 import {agentPresetProjectionDefinition} from '@weft/upstream/packages/preset/agent-preset-registry/src/session.ts';
 import {userQuestionProjectionDefinition} from '@weft/upstream/packages/interaction/user-questions/src/projection.ts';
@@ -19,7 +19,9 @@ import {contextBreakdownProjectionDefinition} from '@weft/upstream/packages/llm/
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt';
 import Tools from '@deepseek-ai/dsh-tools';
 import * as Todo from '@deepseek-ai/dsh-tool-todo';
-import { SessionHistoryController } from '@weft/upstream/packages/api/session-controller/src/history.ts';
+import { HistoryController } from '@weft/upstream/packages/api/session-controller/src/history/controller.ts';
+import { WebController } from '@weft/upstream/packages/api/session-controller/src/web/controller.ts';
+import type { SessionFollowRequest, SessionPageRequest } from '@deepseek-ai/dsh-api-session-controller/types';
 import Subagents from '@deepseek-ai/dsh-subagent';
 import type {} from '@weft/upstream/packages/subagent/subagent/src/projection.ts';
 import { SqliteSessionPersistence } from '../../session-persistence-do/src/index.ts';
@@ -64,35 +66,41 @@ export async function createSessionReader(storage: DurableObjectStorage, promote
     await ctx.plugin(SystemPrompt, {personaPrefix: ''});
     await ctx.plugin(Tools);
     await ctx.plugin(Todo, {allowParallelInProgress: false});
-    ctx.sessionProjections.register(teamProjectionDefinition);
-    ctx.sessionProjections.register(turnBoundaryProjectionDefinition);
-    ctx.sessionProjections.register(inboxProjectionDefinition);
-    ctx.sessionProjections.register(agentPresetProjectionDefinition);
+    await ctx.sessionProjections.register(teamProjectionDefinition);
+    await ctx.sessionProjections.register(turnBoundaryProjectionDefinition);
+    await ctx.sessionProjections.register(inboxProjectionDefinition);
+    await ctx.sessionProjections.register(agentPresetProjectionDefinition);
     // Projections the native root's official services and preset plugins fold; the client reads them here.
-    ctx.sessionProjections.register(userQuestionProjectionDefinition);
-    ctx.sessionProjections.register(goalProjectionDefinition);
-    ctx.sessionProjections.register(planProjectionDefinition);
-    ctx.sessionProjections.register(tokenUsageProjectionDefinition);
-    ctx.sessionProjections.register(contextPressureProjectionDefinition);
-    ctx.sessionProjections.register(contextBreakdownProjectionDefinition);
-    installModelSelectionProjection(ctx);
+    await ctx.sessionProjections.register(userQuestionProjectionDefinition);
+    await ctx.sessionProjections.register(goalProjectionDefinition);
+    await ctx.sessionProjections.register(planProjectionDefinition);
+    await ctx.sessionProjections.register(tokenUsageProjectionDefinition);
+    await ctx.sessionProjections.register(contextPressureProjectionDefinition);
+    await ctx.sessionProjections.register(contextBreakdownProjectionDefinition);
+    await ctx.sessionProjections.register(modelSelectionProjectionDefinition);
     // Profile rows that only register read folds; the native root loads them from the official profile.
     await ctx.plugin(SessionStats);
     await ctx.plugin(SessionTurnOutline);
     await ctx.plugin(Title, {fallbackMaxWords: 5, fallbackMaxBytes: 40, maxTitleBytes: 80});
     await ctx.plugin(SqliteSessionPersistence, {storage});
     await installDurableSessionQuery(ctx, storage);
-    const history = new SessionHistoryController(ctx, observation => {
+    const passive = new HistoryController(ctx);
+    const web = new WebController(ctx, passive, observation => {
       // The physical owner activates its one native host after the snapshot.
       // This read Context never creates an Agent or takes the durable writer.
       const id = observation.header.id;
       observation[Symbol.dispose]();
       promoteRoot?.(id);
     });
+    // The original controller's `page` and `follow` Remote methods, over the same passive reads.
+    const history = {
+      page: (request: SessionPageRequest, signal: AbortSignal) => passive.events(request, signal),
+      follow: (request: SessionFollowRequest, signal: AbortSignal) => web.follow(request, signal),
+    };
     return {
       ctx, history,
       /** Projection folds owned by services this read world must not compose (they would write Sessions). */
-      registerProjections(definitions: readonly Parameters<typeof ctx.sessionProjections.register>[0][]): void { for (const definition of definitions) ctx.sessionProjections.register(definition); },
+      async registerProjections(definitions: readonly Parameters<typeof ctx.sessionProjections.register>[0][]): Promise<void> { for (const definition of definitions) await ctx.sessionProjections.register(definition); },
       configureWorkspace(config: {scope: WorkspaceScope; transport: WorkspaceTransport; cwd: string; sessionId: string; attachmentTransport: AttachmentTransport; images?: ImagesBinding}): Promise<void> {
         return workspace ??= (async () => {
           await ctx.plugin(ComputerFileSystem, config);

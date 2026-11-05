@@ -20,6 +20,7 @@ import {
   type TenantState,
 } from "./contracts.ts";
 import { validatePlugins } from "../../plugin-runtime/src/catalog.ts";
+import { migratePresetSpec } from "./preset-migration.ts";
 import {DurableCopySnapshots,type EnvironmentCopyConfiguration} from './environment-copy.ts';
 import type {EnvironmentLifecycleJob} from './environment-lifecycle.ts';
 import { compileClientPlugin } from "../../client-plugins/src/compiler.ts";
@@ -1258,10 +1259,9 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
       const {items} = sessionRemote.methods['session/list'].result.create().parse({items: [args[0]]});
       const row = items[0]!;
       if (row.projections?.kind === 'sequenced' && row.projections.asOfSeq >= 0) {
-        for (const [key,value] of Object.entries(row.projections.values)) {
-          const frame = sessionRemote.methods['session/control'].result.create().parse({type: 'projection', sessionId: row.sessionId, key, value, seq: row.projections.asOfSeq});
-          this.nativeControl.emit(frame);
-        }
+        // One frame lists every key the summary carries at its cut, as one committed event's frame does.
+        const changes = Object.entries(row.projections.values).map(([key, val]) => ({key, val}));
+        if (changes.length) this.nativeControl.emit(sessionRemote.methods['session/control'].result.create().parse({type: 'projection', sessionId: row.sessionId, seq: row.projections.asOfSeq, changes}));
       }
     }
   }
@@ -1302,7 +1302,7 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
       const source = this.nativeControl.open(abort.signal, async () => {
         const projections: Record<string, SessionProjectionBaseline> = {};
         const value = sessionRemote.methods['session/list'].result.create().parse(await (await this.listNativeSessions(owner, abort.signal)).json());
-        for (const item of value.items) if (item.projections?.kind === 'sequenced') projections[item.sessionId] = {asOfSeq: item.projections.asOfSeq, values: item.projections.values};
+        for (const item of value.items) if (item.projections?.kind === 'sequenced') projections[item.sessionId] = {asOfSeq: item.projections.asOfSeq, values: item.projections.values as SessionProjectionBaseline['values']};
         return {type: 'baseline', value: {projections}};
       });
       const codec = sessionRemote.methods['session/control'].result.create();
@@ -1361,6 +1361,15 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
           this.ctx.storage.sql.exec('INSERT INTO official_preset_seeds VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision', definition.id, revision);
         }
       });
+    }
+    // The environment's own presets keep their rows on an upstream upgrade: a
+    // revision that still validates after the 0.2.2 row changes is republished
+    // for this runtime. Sessions keep the revision they were created with.
+    for (const latest of agents.current()) {
+      if (latest.upstream === upstream.commit) continue;
+      const spec = migratePresetSpec(latest.spec);
+      try { validatePlugins(spec.plugins, spec.workspaceId); } catch { continue; }
+      agents.publish(spec.id, {revision: latest.revision + 1, publishedAt: new Date().toISOString(), upstream: upstream.commit, spec});
     }
   }
 
@@ -2014,3 +2023,4 @@ export class EnvironmentDO extends HarnessStateDO {
   }
 }
 guardLifecycle(EnvironmentDO);
+

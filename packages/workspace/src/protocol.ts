@@ -18,6 +18,15 @@ const intent = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('createIfAbsent') }).strict(),
   z.object({ kind: z.literal('replaceIfVersion'), version }).strict(),
 ]);
+/** One parsed `apply_patch` hunk (`PatchHunk` of the original fs-patch package). */
+const hunk = z.object({
+  lineNumber: z.number().int().min(0),
+  context: z.string().max(MAX_FILE_BYTES).optional(),
+  oldLines: z.array(z.string().max(MAX_FILE_BYTES)).max(MAX_FILE_BYTES),
+  newLines: z.array(z.string().max(MAX_FILE_BYTES)).max(MAX_FILE_BYTES),
+  isEndOfFile: z.boolean(),
+}).strict();
+const hunks = z.array(hunk).max(10_000);
 export const workspaceOperationSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('stat'), path }).strict(),
   z.object({ type: z.literal('read'), path }).strict(),
@@ -26,14 +35,20 @@ export const workspaceOperationSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('bytes'), path, offset: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER), length: z.number().int().min(0).max(MAX_BINARY_FILE_BYTES), maxBytes: z.number().int().min(0).max(MAX_BINARY_FILE_BYTES).optional() }).strict(),
   z.object({ type: z.literal('write'), path, content: z.string().max(MAX_FILE_BYTES), expected: intent.optional() }).strict(),
   z.object({ type: z.literal('edit'), path, oldString: z.string().min(1).max(MAX_FILE_BYTES), newString: z.string().max(MAX_FILE_BYTES), replaceAll: z.boolean(), expectedVersion: version.optional() }).strict(),
+  z.object({ type: z.literal('patch'), path, hunks: hunks.min(1), expectedVersion: version.optional() }).strict(),
+  z.object({ type: z.literal('delete'), path, expectedVersion: version.optional() }).strict(),
+  z.object({ type: z.literal('move'), path, destination: path, hunks: hunks.optional(), expectedVersion: version.optional(), expectedDestination: intent.optional() }).strict(),
   z.object({ type: z.literal('search'), path, query: z.string().min(1).max(1000), limit: z.number().int().min(1).max(100).default(50) }).strict(),
   // Remove files last modified before `before` (epoch ms) under the spill area, then its emptied directories.
   z.object({ type: z.literal('sweep'), path, before: z.number().int().min(0) }).strict(),
 ]);
 export type WorkspaceOperation = z.infer<typeof workspaceOperationSchema>;
+export type PatchHunkWire = z.infer<typeof hunk>;
 export interface FileInfo { path: string; type: 'file' | 'directory'; size: number; version: string }
 export interface FileRead extends FileInfo { content: string }
 export interface WriteResult { operation: 'create' | 'update'; version: string; before: string | null; after: string; revision: number }
+export interface DeleteResult { before: string | null }
+export interface MoveResult { sourceBefore: string | null; destination: WriteResult }
 export interface SearchResult { matches: { path: string; line: number; text: string }[]; truncated: boolean }
 export interface WorkspaceTransport {
   call(scope: WorkspaceScope, operation: WorkspaceOperation): Promise<Response>;

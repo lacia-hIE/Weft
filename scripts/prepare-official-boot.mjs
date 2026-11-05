@@ -4,6 +4,7 @@ import { cpSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync, ex
 import { relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {nativeCompositionPlatform} from './native-composition-platform.mjs';
+import {browserLoaderResolver} from './browser-loader-boundary.mjs';
 import { officialPlatformModules, officialUiRoster } from './official-ui-roster.mjs';
 
 const root = resolve(import.meta.dirname, '..');
@@ -23,7 +24,7 @@ for (const row of roster) for (const request of [...row.inject ?? [], ...row.ext
 const unsorted = [];
 // Weft contributes an ordinary native module, never a replacement workbench.
 const environmentId = '@weft/harness-environment';
-const environmentModule = await build({entryPoints: [resolve(root, 'apps/web/src/official/environment-plugin.ts')], bundle: true, platform: 'browser', format: 'cjs', target: 'es2022', minify: true, write: false, external: ['react', '@deepseek-ai/cordis', '@deepseek-ai/dsh-client-ui-primitives'], define: {'process.env.CORDIS_SHARED': 'undefined'}, tsconfig: resolve(root, '.generated/upstream.source.tsconfig.json'), plugins: [nativeCompositionPlatform]});
+const environmentModule = await build({entryPoints: [resolve(root, 'apps/web/src/official/environment-plugin.ts')], bundle: true, platform: 'browser', format: 'cjs', target: 'es2022', minify: true, write: false, external: ['react', '@deepseek-ai/cordis', '@deepseek-ai/dsh-client-ui-primitives'], define: {'process.env.CORDIS_SHARED': 'undefined'}, tsconfig: resolve(root, '.generated/upstream.source.tsconfig.json'), plugins: [nativeCompositionPlatform, browserLoaderResolver]});
 const environmentFactory = `globalThis.__ModuleLoader__.load({id:${JSON.stringify(environmentId)},factory(require){const module={exports:{}};const exports=module.exports;${environmentModule.outputFiles[0].text}\nconst published={...module.exports};Object.defineProperty(published,Symbol.toStringTag,{value:'Module'});return published;}});`;
 const environmentDirectory = resolve(output, 'harness', environmentId);
 mkdirSync(environmentDirectory, {recursive: true});

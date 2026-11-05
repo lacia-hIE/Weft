@@ -70,7 +70,7 @@ See [PARITY.md](PARITY.md) for what differs from the prototype.
 
 ## Local execution computers
 
-Connect the computer to Weft using DSH and `@laciaproject/dsh-local-host` 0.4.0. In the local plugin's
+Connect the computer to Weft using DSH 0.2.2-rc.1 and `@laciaproject/dsh-local-host` 0.5.0. In the local plugin's
 **Superagent Executor** settings, save an absolute task root, select an installed Agent preset from the dropdown
 and choose execution permissions. Task acceptance starts paused; enable it explicitly on that computer.
 Configure its model provider locally. Use a dedicated DSH profile and agent credentials; a directory or profile
@@ -96,4 +96,4 @@ drains the entire native tree and its processes before acknowledging stop, and r
 so Retry can resume its retained Session with fresh admission. Restart reconciliation preserves child history
 and requires an explicit Retry instead of replaying unfinished child prompts. Ordinary shell jobs use native DSH job delivery. Tests still follow the repository's CI policy.
 
-Existing independently paired 0.3.0 executors remain supported. Direct selection of an existing DSH connection requires connector 0.4.0.
+Existing independently paired 0.3.0 executors remain supported. Direct selection of an existing DSH connection requires connector 0.4.0 or newer; DSH 0.2.2-rc.1 requires connector 0.5.0.

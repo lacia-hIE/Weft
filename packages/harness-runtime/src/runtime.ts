@@ -7,7 +7,7 @@ import { SessionId, SessionLogOffset, type Session, type SessionEvent } from '@d
 import SessionTitle, {SessionTitleInvalidError, normalizeSessionTitle} from '@deepseek-ai/dsh-session-title';
 import { RemoteError } from '@deepseek-ai/dsh-typert-protocol';
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt';
-import { installModelSelectionProjection, mountModelSelection, selectLiveHarnessModel } from './model-selection.ts';
+import { mountModelSelection, selectLiveHarnessModel, setupModelSelection } from './model-selection.ts';
 import type { ModelSelection } from '@deepseek-ai/dsh-api-session-controller/types';
 import {installImSessionTitles} from './im-session-titles.ts';
 
@@ -74,7 +74,6 @@ export async function openHarnessSession(options: RuntimeOptions): Promise<Harne
     // Root services of the official profile (llm, sessions, projections, token meter, commands,
     // questions, subagent model selection), loaded from its rows; tools, agents and goals follow the system prompt.
     await mountOfficialProfile(ctx, 'core', options.presentation === true, options.profileOverrides);
-    if (options.presentation) installModelSelectionProjection(ctx);
     if (options.presentation) await ctx.plugin(SessionTitle, { fallbackMaxWords: 5, fallbackMaxBytes: 40, maxTitleBytes: 80 });
     if (options.presentation) installImSessionTitles(ctx);
     await ctx.plugin(SystemPrompt, { personaPrefix: options.persona });
@@ -94,14 +93,17 @@ export async function openHarnessSession(options: RuntimeOptions): Promise<Harne
     }, {prepend: true});
     const sessionId = SessionId(options.sessionId);
     const agentOptions = options.model;
+    const setup: AgentSetup | undefined = options.presentation
+      ? (agentCtx, agent) => {setupModelSelection(agentCtx); return options.setupAgent?.(agentCtx, agent);}
+      : options.setupAgent;
     const stored = await ctx.get('sessionPersistence')?.stat(sessionId);
     const handle = stored
-      ? await ctx.agents.resume({ resumeSessionId: sessionId, agentOptions, ...(options.setupAgent ? {setup: options.setupAgent} : {}) })
-      : await ctx.agents.create({ sessionId, agentOptions, ...(options.setupAgent ? {setup: options.setupAgent} : {}),
+      ? await ctx.agents.resume({ resumeSessionId: sessionId, agentOptions, ...(setup ? {setup} : {}) })
+      : await ctx.agents.create({ sessionId, agentOptions, ...(setup ? {setup} : {}),
         ...(options.meta ? { meta: (({parentSession, ...meta}) => ({...meta, ...(parentSession ? {parentSession: SessionId(parentSession)} : {})}))(options.meta) } : {}),
         ...(options.seed ? {seed: options.seed.events, inheritedEventCount: SessionLogOffset(options.seed.inherited)} : {}) });
     owned = handle.agent;
-    if (options.presentation) mountModelSelection(ctx, handle.agent, options.defaultModel, options.beforeAssembly);
+    if (options.presentation) mountModelSelection(handle.agent, options.beforeAssembly);
     options.signal?.throwIfAborted();
     options.onAgent?.(handle.agent, ctx);
     return {ctx, agent: handle.agent, dispose};

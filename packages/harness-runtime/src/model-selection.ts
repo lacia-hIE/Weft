@@ -1,33 +1,28 @@
-import { installModelSelection, type Agent, type ModelSelectionRef } from '@deepseek-ai/dsh-agent';
+import { installModelSelection, type Agent } from '@deepseek-ai/dsh-agent';
 import { ReasoningEffortId } from '@deepseek-ai/dsh-llm';
 import type { Context } from '@deepseek-ai/cordis';
 import type { ModelSelection } from '@deepseek-ai/dsh-api-session-controller/types';
 import { RemoteError } from '@deepseek-ai/dsh-typert-protocol';
-export { installModelSelectionProjection } from '@weft/upstream/packages/api/session-controller/src/model-selection-projection.ts';
 
-const selections = new WeakMap<Agent, {ref: ModelSelectionRef; refresh?: () => Promise<void>; tail: Promise<void>}>();
+const selections = new WeakMap<Agent, {refresh?: () => Promise<void>; tail: Promise<void>}>();
 
-/** Native durable intent and native assembly hooks, without the Node host controller. */
-export function mountModelSelection(ctx: Context, agent: Agent, defaultModel?: () => import('@deepseek-ai/dsh-agent').ModelSelection, refresh?: () => Promise<void>): void {
-  const state = ctx.sessionProjections.stateOf(agent.session, 'modelSelection');
-  const last = agent.session.requestHeader();
-  let selected = state?.pending ?? (last ? {
-    provider: last.config.provider, model: last.config.model,
-    ...(last.config.reasoningEffort === undefined || last.adapterDefaults?.reasoningEffort
-      ? {} : {reasoningEffort: String(last.config.reasoningEffort)}),
-  } : undefined);
-  const ref: ModelSelectionRef = {
-    get current() { return selected ? {provider: selected.provider, model: selected.model, ...(selected.reasoningEffort === undefined ? {} : {reasoningEffort: ReasoningEffortId(selected.reasoningEffort)})} : defaultModel?.(); },
-    set current(value) {selected = value;},
-    assembled: undefined,
-  };
-  selections.set(agent, {ref, ...(refresh ? {refresh} : {}), tail: Promise.resolve()});
-  agent.ctx.effect(() => installModelSelection(agent.ctx, ref), 'weft.native-model-selection');
+/**
+ * The original Agent owns its durable selection (`agent.model`) and the Agent
+ * loop registers its projection. Installs the original switch notice in the
+ * Agent's unpublished setup scope, as the session controller's composition does.
+ */
+export function setupModelSelection(agentCtx: Context): void {
+  installModelSelection(agentCtx);
 }
 
-/** The route an Agent's next request uses: its Session selection, else the default. */
+/** Serializes selection requests for one presentation Agent; `refresh` reloads environment model settings first. */
+export function mountModelSelection(agent: Agent, refresh?: () => Promise<void>): void {
+  selections.set(agent, {...(refresh ? {refresh} : {}), tail: Promise.resolve()});
+}
+
+/** The route an Agent's next request uses: its Session selection, else its creation options. */
 export function currentModelSelection(agent: Agent): import('@deepseek-ai/dsh-agent').ModelSelection | undefined {
-  return selections.get(agent)?.ref.current;
+  return agent.model.current();
 }
 
 export async function selectLiveHarnessModel(ctx: Context, agent: Agent, request: ModelSelection): Promise<{selected: ModelSelection}> {
@@ -45,8 +40,7 @@ export async function selectLiveHarnessModel(ctx: Context, agent: Agent, request
     const selected = {provider: resolved.provider, model: resolved.model,
       ...(resolved.reasoningEffort === undefined ? {} : {reasoningEffort: resolved.reasoningEffort})};
     agent.ctx.fiber.assertActive();
-    agent.session.append('model/selection', selected);
-    owner.ref.current = selected;
+    agent.model.select(selected);
     await ctx.get('sessionPersistence')?.flush();
     return {selected};
   } catch (error) {

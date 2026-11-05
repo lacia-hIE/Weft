@@ -79,7 +79,7 @@ export async function readNativePresets(profiles: AgentRevision[], defaultId: st
         : {...entry, patchId: entry.entryId})] satisfies PluginInfo[];
       else value = [...officialBundles(globals), {name: profileManifest.name, version: profileManifest.version, description: profileManifest.description,
         meta: {title: {en: 'Agent presets', zh: 'Agent 预设'}},
-        availability: 'installation', official: false, installed: Object.hasOwn(profileDescriptor.dependencies, profileManifest.name), enabled: profileDescriptor.dsh.profile.bundles.includes(profileManifest.name), optional: false, removable: false, readOnlyReason: 'management-required',
+        availability: 'installation', official: false, installed: Object.hasOwn(profileDescriptor.dependencies, profileManifest.name), enabled: profileDescriptor.dsh.profile.bundles.includes(profileManifest.name), optional: false, removable: false, updatable: false, readOnlyReason: 'management-required',
         rows: profileEntries.map(entry => {
           const actual = entries.find(row => row.entryId === entry.id);
           return {rowId: entry.id, moduleName: entry.name, ...(actual ? {entryId: actual.entryId, ...(actual.meta ? {meta: actual.meta} : {})} : {})};

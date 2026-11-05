@@ -69,7 +69,7 @@ export const nativeWorkflowPlatform = guestPlugins => ({
     }));
     builder.onLoad({filter: /packages\/workflow\/workflow-ptc\/src\/host\.ts$/}, ({path}) => patch(path, [
       ['const PROGRAM = `const { runWorkflowGuest } = await import(${JSON.stringify(GUEST_URL)}); return await runWorkflowGuest(workflowHost);`', PROGRAM],
-      ["program: this.runtime.programFormat === 'repl' ? `await (async () => {\\n${PROGRAM}\\n})()` : PROGRAM,", 'program: weftWorkflowProgram(this.init.body),'],
+      ["program: {\n          'function-body': PROGRAM,\n          repl: `await (async () => {\\n${PROGRAM}\\n})()`,\n          script: `(async () => {\\n${PROGRAM}\\n})()`,\n        }[this.runtime.programFormat],", 'program: weftWorkflowProgram(this.init.body),'],
     ]));
     builder.onLoad({filter: /packages\/workflow\/workflow-ptc\/src\/index\.ts$/}, ({path}) => patch(path, [
       ["import * as vm from 'node:vm'", "import { parse as weftParse } from 'acorn'\nconst vm = { Script: class { constructor(source: string, _options?: unknown) { weftParse(source, { ecmaVersion: 'latest', sourceType: 'script' }) } } }"],

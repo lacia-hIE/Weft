@@ -47,12 +47,16 @@ test('the original read_image tool reads actual Computer bytes, publishes author
     assert.ok(settled.includes('"type":"image"'));
     const attachmentId = /"attachmentId":"(sha256:[a-f0-9]{64})"/.exec(settled)?.[1];
     assert.ok(attachmentId);
-    const value = await api.call<{attachment: ImageAttachmentRef; data: string}>('session/attachment', {request: {sessionId: 'read-image', attachmentId}});
+    const references = (value: unknown): ImageAttachmentRef[] => !value || typeof value !== 'object' ? [] : 'attachmentId' in value && (value as {attachmentId: unknown}).attachmentId === attachmentId ? [value as ImageAttachmentRef] : Object.values(value).flatMap(references);
+    const reference = events.filter(event => event.type === 'tool/result').flatMap(event => references(event.data))[0];
+    assert.ok(reference);
+    const value = await api.call<{attachment: ImageAttachmentRef; data: string}>('session/attachment', {request: {sessionId: 'read-image', attachment: reference}});
     const data = Buffer.from(value.data, 'base64');
     assert.equal('sha256:' + createHash('sha256').update(data).digest('hex'), attachmentId);
     assert.equal(value.attachment.name, 'source.png');
     await api.call('session/create', {request: {sessionId: 'unrelated'}});
-    assert.equal((await api.raw('session/attachment', {request: {sessionId: 'unrelated', attachmentId}})).result.error?.code, 'session/attachment-invalid');
+    // 0.2.2 reads a complete reference from the environment's store, whichever Session of the environment asks.
+    assert.equal((await api.call<{data: string}>('session/attachment', {request: {sessionId: 'unrelated', attachment: reference}})).data, value.data);
   } finally {await runtime.dispose();}
 });
 

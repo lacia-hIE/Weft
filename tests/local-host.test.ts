@@ -27,9 +27,9 @@ test('local pairing is single-use, tenant-bound, revocable and survives catalogu
     assert.equal((await call(base+'/native/api/session/list')).status,409);
     assert.equal((await call(base+'/copy','POST',{name:'Copy',requestId:crypto.randomUUID()})).status,409);
     assert.equal((await call(base+'/local/web/')).status,503);
-    const connect=(key:string,version:string|null='0.2.1-rc.2',protocol='weft-local-host/3')=>runtime.dispatchFetch(url('anonymous',`/v1/local-hosts/${tenant}/laptop/connect`),{headers:{upgrade:'websocket',authorization:'Bearer '+key,'x-weft-protocol':protocol,...(version===null?{}:{'x-dsh-version':version})}});
-    for(const version of [null,'0.2.1-rc.1','0.2.1-rc.6','0.2.1','latest','0.2.1-rc.3+unreviewed'])assert.equal((await connect(token,version)).status,409);
-    for(const protocol of ['weft-local-host/1','weft-local-host/2','weft-local-host/4'])assert.equal((await connect(token,'0.2.1-rc.3',protocol)).status,409);
+    const connect=(key:string,version:string|null='0.2.2-rc.1',protocol='weft-local-host/3')=>runtime.dispatchFetch(url('anonymous',`/v1/local-hosts/${tenant}/laptop/connect`),{headers:{upgrade:'websocket',authorization:'Bearer '+key,'x-weft-protocol':protocol,...(version===null?{}:{'x-dsh-version':version})}});
+    for(const version of [null,'0.2.1-rc.2','0.2.1-rc.5','0.2.2-alpha.3','0.2.2-rc.2','0.2.2','latest','0.2.2-rc.1+unreviewed'])assert.equal((await connect(token,version)).status,409);
+    for(const protocol of ['weft-local-host/1','weft-local-host/2','weft-local-host/4'])assert.equal((await connect(token,'0.2.2-rc.1',protocol)).status,409);
     for(const version of SUPPORTED_DSH_VERSIONS){const peer=await connect(token,version);assert.equal(peer.status,101);peer.webSocket!.accept();peer.webSocket!.close();}
     const attached=await connect(token);assert.equal(attached.status,101,attached.status===101?'':await attached.text());attached.webSocket!.accept();
     assert.equal((await(await call(base)).json() as {local:{online:boolean}}).local.online,true);
@@ -39,7 +39,7 @@ test('local pairing is single-use, tenant-bound, revocable and survives catalogu
     const current=await(await device(replacement)).json() as {token:string};
     await runtime.dispose();runtime=createRuntime(directory);
     const retained=await(await call(base)).json() as {local:{online:boolean;paired:boolean}};assert.deepEqual(retained.local,{online:false,paired:true});
-    const resumed=await connect(current.token,'0.2.1-rc.3');assert.equal(resumed.status,101);resumed.webSocket!.accept();resumed.webSocket!.close();
+    const resumed=await connect(current.token,'0.2.2-rc.1');assert.equal(resumed.status,101);resumed.webSocket!.accept();resumed.webSocket!.close();
     assert.equal((await call(base,'PATCH',{name:'Renamed laptop'})).status,200);
     assert.equal((await call(base,'DELETE')).status,200);
     await runtime.dispose();runtime=createRuntime(directory);
@@ -72,7 +72,7 @@ test('the carrier windows binary uploads and downloads, compresses plugin text, 
     assert.equal((await post(`/v1/tenants/${tenant}/environments`,{id:'local-wire',name:'Local',kind:'local'})).status,201);
     const {pairingKey}=await(await post(base+'/local/pairing',{})).json() as {pairingKey:string};
     const {token}=await(await runtime.dispatchFetch(url('anonymous',`/v1/local-hosts/${tenant}/local-wire/pair`),{method:'POST',headers:{authorization:'Bearer '+pairingKey}})).json() as {token:string};
-    const response=await runtime.dispatchFetch(url('anonymous',`/v1/local-hosts/${tenant}/local-wire/connect`),{headers:{upgrade:'websocket',authorization:'Bearer '+token,'x-weft-protocol':'weft-local-host/3','x-dsh-version':'0.2.1-rc.2'}});
+    const response=await runtime.dispatchFetch(url('anonymous',`/v1/local-hosts/${tenant}/local-wire/connect`),{headers:{upgrade:'websocket',authorization:'Bearer '+token,'x-weft-protocol':'weft-local-host/3','x-dsh-version':'0.2.2-rc.1'}});
     assert.equal(response.status,101,response.status===101?'':await response.text());const ws=response.webSocket!;ws.accept();
     const pong=new Promise<string>(resolve=>ws.addEventListener('message',event=>resolve(String(event.data)),{once:true}));ws.send('weft:ping');assert.equal(await pong,'weft:pong');
     let chunks=0;

@@ -28,7 +28,7 @@ test('native settings can pair a fresh plugin, retain its private token and reco
     assert.equal(++active,1);onStatus('connected');
     const saved=save({endpoint,token});return async()=>{await saved;active--;};
   };
-  const options={file,origin:'http://127.0.0.1:1234',authorize:async()=>'',version:'0.2.1-rc.3',connect};
+  const options={file,origin:'http://127.0.0.1:1234',authorize:async()=>'',version:'0.2.2-rc.1',connect};
   let controller=createController(options);
   try{
     await controller.load();assert.equal(controller.snapshot().state,'unpaired');

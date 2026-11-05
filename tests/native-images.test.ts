@@ -34,16 +34,18 @@ test('native image admission normalizes actual PNG bytes and authorizes original
     assert.ok(ref);
     assert.equal(ref.name, 'red.png'); assert.equal(ref.mediaType, 'image/webp');
     assert.deepEqual([ref.width, ref.height], [64, 32]);
-    const stored = await api.call<{attachment: ImageAttachmentRef; data: string}>('session/attachment', {request: {sessionId: 'images', attachmentId: ref.attachmentId}});
+    const stored = await api.call<{attachment: ImageAttachmentRef; data: string}>('session/attachment', {request: {sessionId: 'images', attachment: ref}});
     const bytes = Buffer.from(stored.data, 'base64');
     assert.equal(ref.attachmentId, 'sha256:' + createHash('sha256').update(bytes).digest('hex'));
     const decoded = await sharp(bytes).metadata();
     assert.equal(decoded.depth, 'uchar'); assert.equal(decoded.space, 'srgb'); assert.equal(decoded.hasAlpha, true); assert.equal(decoded.exif, undefined); assert.equal(decoded.icc, undefined);
     await runtime.dispose(); runtime = createRuntime(directory, {browser: true, images: true});
-    assert.deepEqual(await api.call('session/attachment', {request: {sessionId: 'images', attachmentId: ref.attachmentId}}), stored);
+    assert.deepEqual(await api.call('session/attachment', {request: {sessionId: 'images', attachment: ref}}), stored);
     await api.call('session/create', {request: {sessionId: 'other'}});
-    assert.equal((await api.raw('session/attachment', {request: {sessionId: 'other', attachmentId: ref.attachmentId}})).result.error?.code, 'session/attachment-invalid');
-    assert.equal((await api.raw('session/attachment', {request: {sessionId: 'missing', attachmentId: ref.attachmentId}})).result.error?.code, 'session/not-found');
+    // 0.2.2 reads a complete reference from the environment's store without scanning the Session's history.
+    assert.deepEqual(await api.call('session/attachment', {request: {sessionId: 'other', attachment: ref}}), stored);
+    assert.equal((await api.raw('session/attachment', {request: {sessionId: 'missing', attachment: ref}})).result.error?.code, 'session/not-found');
+    assert.equal((await api.raw('session/attachment', {request: {sessionId: 'images', attachment: {...ref, bytes: ref.bytes + 1}}})).result.error?.code, 'session/attachment-invalid');
   } finally {await runtime.dispose(); await rm(directory, {recursive: true, force: true});}
 });
 
@@ -77,7 +79,7 @@ test('PNG, JPEG, WebP and animated GIF inputs become single-frame durable images
       const {events} = await (await runtime.dispatchFetch(url('alpha', `/v1/tenants/${tenantId('alpha')}/environments/default/sessions/${sessionId}/events`))).json() as {events: Array<{type: string; data: {content?: Array<{type: string; attachment?: ImageAttachmentRef}>}}>};
       const ref = events.filter(event => event.type === 'user/message').flatMap(event => event.data.content ?? []).find(block => block.type === 'image')?.attachment;
       assert.ok(ref);
-      const stored = await api.call<{data: string}>('session/attachment', {request: {sessionId, attachmentId: ref.attachmentId}});
+      const stored = await api.call<{data: string}>('session/attachment', {request: {sessionId, attachment: ref}});
       const pixels = sharp(Buffer.from(stored.data, 'base64'));
       const info = await pixels.metadata();
       assert.equal(info.format, 'webp'); assert.equal(info.depth, 'uchar'); assert.equal(info.space, 'srgb'); assert.equal(info.pages ?? 1, 1);

@@ -17,6 +17,8 @@ import {IMAGE_PROMPT_BODY_BYTES} from '../../../packages/native-attachments/src/
 import uploadRemote from '../../../.generated/official-remotes/packages/client/file-upload/typert.remote-client.js';
 import {agentRemoteFor} from './agent-remotes.ts';
 import scheduleRemote from '../../../.generated/official-remotes/packages/schedule/schedule/typert.remote-client.js';
+import {routeSchedule} from './schedule-routes.ts';
+import type {ScheduleCatalogEntry} from '@deepseek-ai/dsh-schedule';
 import {environmentRemoteFor} from '../../../packages/native-environment/src/index.ts';
 import {isMarketEndpoint} from '../../../packages/native-environment/src/market.ts';
 import {openPermissionWorld} from '../../../packages/native-environment/src/permissions.ts';
@@ -331,15 +333,20 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
       await control.nativeEventResult(owner, payload.args);
       return Response.json({type: 'server-response', rpcId, result: {ok: true}}, {headers: {'cache-control': 'private, no-store'}});
     }
-    if (endpoint === 'schedule/catalog') {
-      const method = scheduleRemote.methods[endpoint];
-      method.input({strict: true}).create().parse(payload.args);
-      const records = await control.sessionIndex(owner);
-      const groups = await mapConcurrent(records, async record => {const target = session(record.id); return target.stub.nativeScheduleCatalog(target.scope);}, request.signal, SESSION_FAN_OUT);
-      const value = method.result.create().parse(groups.flat().sort((a, b) => {
-        const left = a as {scheduledAt: string; id: string}, right = b as {scheduledAt: string; id: string};
-        return left.scheduledAt.localeCompare(right.scheduledAt) || left.id.localeCompare(right.id);
-      }));
+    if (Object.hasOwn(scheduleRemote.methods, endpoint)) {
+      const value = await routeSchedule(endpoint as keyof typeof scheduleRemote.methods, payload.args, {
+        sessions: async () => (await control.sessionIndex(owner)).map(record => record.id),
+        catalog: sessionId => {const target = session(sessionId); return target.stub.nativeScheduleCatalog(target.scope) as Promise<ScheduleCatalogEntry[]>;},
+        call: async sessionId => {
+          const target = session(sessionId);
+          const result = await (await target.stub.nativeAgentRemote(target.scope, endpoint, payload.args)).json() as {ok: boolean; value?: unknown; error?: unknown};
+          if (!result.ok) {
+            const failure = remoteErrorOf(result.error);
+            throw failure ? new RemoteError(failure.code, failure.message, failure.details) : new RemoteError('gateway/internal', 'Invalid Schedule Remote response', {});
+          }
+          return result.value;
+        },
+      }, request.signal);
       return Response.json({type: 'server-response', rpcId, result: {ok: true, value}}, {headers: {'cache-control': 'private, no-store'}});
     }
     const agentRemote = agentRemoteFor(endpoint);
@@ -510,7 +517,7 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
       case 'session/attachment': {
         const {request: input} = sessionRemote.methods[endpoint].input({strict: true}).create().parse(payload.args);
         const target = session(await sessionRoot(input.sessionId) ?? input.sessionId);
-        const response = await target.stub.nativeImageAttachment(target.scope, input.attachmentId, input.sessionId);
+        const response = await target.stub.nativeImageAttachment(target.scope, input.attachment, input.sessionId);
         value = (await response.json() as {value: unknown}).value;
         break;
       }

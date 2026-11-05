@@ -26,7 +26,7 @@ export class PackageRegistry {
   bundles(): BundleInfo[] {return this.list().map(row => ({
     name: row.name, version: row.version, description: row.description, official: false,
     availability: 'profile', source: `${row.name}@${row.version}`, installed: true,
-    enabled: row.enabled && row.approved, optional: false, removable: true,
+    enabled: row.enabled && row.approved, optional: false, removable: true, updatable: false,
     rows: row.rows.filter(item => !item.group).map(item => ({rowId: entryNamespace(row.name, String(item.id)), moduleName: String(item.name), entryId: entryId(row.name)})), overrides: row.patch.filter(item => item.id && !item.insert).map(item => String(item.id)),
     ...(!row.approved ? {error: {code: 'stale-approval' as const, diagnostic: row.needsReinstall ? 'Remove and reinstall this package using its native dsh.bundle.patch declaration.' : 'Built and installed; review this bundle’s patch, exact artifact and capabilities on its detail page before enabling.'}} : {}),
   }));}

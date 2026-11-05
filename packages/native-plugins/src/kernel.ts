@@ -14,7 +14,8 @@ import { Context, Inject, type Fiber, type Plugin } from '@deepseek-ai/cordis';
 import Timer from '@deepseek-ai/cordis-plugin-timer';
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt';
 import Tools from '@deepseek-ai/dsh-tools';
-import { ToolCallId } from '@deepseek-ai/dsh-llm';
+import * as NativeToolExecutor from '@deepseek-ai/dsh-tool-executor-native';
+import { executeToolCall } from '../../harness-runtime/src/tool-call.ts';
 import { guardedPlugin, isPlugin, normalizeHandler, sandboxDefineTool, sandboxRegisterTool } from '@weft/upstream/packages/extensions/cordis-host-runner/src/guard.ts';
 // This module is supplied by WorkerLoader, never evaluated in the supervisor.
 import factory from 'weft:plugin-factory';
@@ -102,6 +103,7 @@ export class PluginFacet extends DurableObject<KernelEnv, KernelProps> {
             const root = this.root = new Context();
             await root.plugin(SystemPrompt);
             await root.plugin(Tools);
+            await root.plugin(NativeToolExecutor);
             await root.plugin(Timer);
             if (this.ctx.props.BACKGROUND && this.ctx.props.ALLOWED?.includes('timer')) this.durableTimers = new DurablePluginTimers(this.ctx.storage, this.ctx.props.ACTIVATION ?? 'initial');
             if (this.ctx.props.ALLOWED?.includes('weftConnections')) {this.connections = new WorkerConnections(this.host!); root.provide('weftConnections', this.connections.service);}
@@ -235,7 +237,7 @@ export class PluginFacet extends DurableObject<KernelEnv, KernelProps> {
         if (this.cancelled.delete(operationId))
             controller.abort(new Error('Dynamic tool was cancelled'));
         try {
-            const execute = () => this.root!.tools.execute({ callId: ToolCallId(callId), name, arguments: args, signal: controller.signal });
+            const execute = () => executeToolCall(this.root!.tools, { callId, name, arguments: args, signal: controller.signal });
             return wire(await (callerSessionId ? this.toolCaller.run(callerSessionId, execute) : execute()));
         }
         finally {

@@ -58,7 +58,7 @@ export class PluginRegistry {
   bundles(read: ReadConfig): BundleInfo[] {
     return this.registrations.map(bundle => ({name: bundle.manifest.name, version: bundle.manifest.version,
       ...(bundle.manifest.description ? {description: bundle.manifest.description} : {}), ...(bundle.meta ? {meta: bundle.meta} : {}),
-      official: false, availability: 'installation', installed: true, enabled: this.enabled(bundle.enablement, read), optional: Boolean(bundle.enablement), removable: false,
+      official: false, availability: 'installation', installed: true, enabled: this.enabled(bundle.enablement, read), optional: Boolean(bundle.enablement), removable: false, updatable: false,
       ...(!bundle.enablement ? {readOnlyReason: 'management-required' as const} : {}),
       rows: bundle.plugins.map(plugin => ({rowId: plugin.id, moduleName: plugin.name, entryId: plugin.id as PluginEntryId, ...(plugin.meta ? {meta: plugin.meta} : {})})), overrides: [],
     }));

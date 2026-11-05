@@ -77,9 +77,10 @@ test('native Workspace commands, real directories, membership, pins, archival an
       for (let index = 0; index < 8 && !titleSeen; index++) {
         const frame = await control.next();
         assert.equal(frame.type, 'projection');
-        if (frame.type === 'projection' && frame.key === 'title') {
+        const title = frame.type === 'projection' ? frame.changes.find(change => change.key === 'title') : undefined;
+        if (frame.type === 'projection' && title) {
           assert.equal(frame.sessionId, session.sessionId);
-          assert.equal(frame.value, 'control stream title');
+          assert.equal(title.val, 'control stream title');
           titleSeen = true;
         }
       }

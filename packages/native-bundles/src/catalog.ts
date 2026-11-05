@@ -53,7 +53,7 @@ export function optionalBundleInfo(states: readonly BundleState[]): BundleInfo[]
     return {name: bundle.name, version: state?.version ?? bundle.version, description: bundle.description,
       ...(metaOf(bundle.name) ? {meta: metaOf(bundle.name)!} : {}), official: true,
       availability: state ? 'profile' : 'missing', installed: Boolean(state), enabled: compatible && (state?.enabled ?? false),
-      installTarget: {spec: `${bundle.name}@${bundle.version}`, version: bundle.version}, optional: false, removable: Boolean(state),
+      installTarget: {spec: `${bundle.name}@${bundle.version}`, version: bundle.version}, optional: false, removable: Boolean(state), updatable: false,
       rows: inserts.map(row => ({rowId: row.id, moduleName: row.name,
         ...(metaOf(row.name) ? {meta: metaOf(row.name)!} : {}),
         ...(state ? {entryId: entryId(bundle.name, row.id)} : {})})),

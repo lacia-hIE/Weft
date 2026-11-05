@@ -35,6 +35,8 @@ export class ComputerAttachmentStore extends AttachmentStore {
     if (images.length > this.imageLimits.maxImagesPerMessage) throw new AttachmentError('Too many images.', 'TOO_MANY_IMAGES');
     let total = 0;
     for (const image of images) {
+      // An image this store already saved for a staged upload carries the byte length of that upload.
+      if ('attachment' in image) { total += image.encodedBytes; continue; }
       if (!this.imageLimits.mediaTypes.includes(image.mediaType)) throw new AttachmentError('Image input is not configured for this type.', 'UNSUPPORTED_IMAGE_TYPE');
       const bytes = Math.floor(image.data.length / 4) * 3 - (image.data.endsWith('==') ? 2 : image.data.endsWith('=') ? 1 : 0);
       if (bytes > this.imageLimits.maxImageBytes) throw new AttachmentError('Image exceeds its byte limit.', 'IMAGE_TOO_LARGE');
