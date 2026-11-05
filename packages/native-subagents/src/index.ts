@@ -16,10 +16,11 @@ export async function mountNativeSubagents(ctx: Context, storage: DurableObjectS
 /** Inspection also composes real providers, without creating an Agent or log. */
 export async function mountNativeSubagentProviders(ctx: Context, limits: SubagentLimits) {
   const fiber = await ctx.plugin(Subagents, limits);
-  const config = fiber.config as ReturnType<typeof Subagents.Config>;
   await ctx.plugin(Spawn, {providerName: 'spawn'});
   await ctx.plugin(Fork, {providerName: 'fork'});
   return (limits: SubagentLimits) => {
+    // The parsed configuration the running service holds; `fiber.config` keeps the raw input.
+    const config = fiber.effectiveConfig as ReturnType<typeof Subagents.Config>;
     const next = Subagents.Config(limits);
     updateVolatile(config.maxDepth, next.maxDepth);
     updateVolatile(config.maxActiveSubagents, next.maxActiveSubagents);
