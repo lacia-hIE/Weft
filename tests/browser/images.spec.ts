@@ -1,5 +1,5 @@
 import {test, expect} from '@playwright/test';
-import {compose} from './compose.ts';
+import {compose, workbenchReady} from './compose.ts';
 import {imageFixtures} from '../helpers/images.ts';
 
 test('the original composer admits an image and reloads its authorized native gallery and lightbox', async ({page, request}) => {
@@ -8,7 +8,7 @@ test('the original composer admits an image and reloads its authorized native ga
   expect((await request.post(`/v1/tenants/${me.tenantId}/environments`, {data: {id, name: id}})).status()).toBe(201);
   const created = page.waitForResponse(response => response.url().endsWith('/native/api/session/create'), {timeout: 45_000});
   await page.goto('/agents/' + id);
-  await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
+  await workbenchReady(page);
   await created;
   await expect(page.getByRole('button', {name: 'Select model, current scripted', exact: true})).toBeVisible({timeout: 45_000});
   await compose(page, 'Inspect this red image');

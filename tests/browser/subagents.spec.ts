@@ -1,12 +1,12 @@
 import {test, expect, type Page, type APIRequestContext} from '@playwright/test';
-import {compose} from './compose.ts';
+import {compose, workbenchReady} from './compose.ts';
 
 async function openDelegator(page: Page, request: APIRequestContext) {
   const {tenantId} = await (await request.get('/v1/me')).json();
   const environment = 'subagents-'+crypto.randomUUID().slice(0, 8);
   expect((await request.post(`/v1/tenants/${tenantId}/environments`, {data: {id: environment, name: environment}})).status()).toBe(201);
   await page.goto('/agents/'+environment);
-  await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45000});
+  await workbenchReady(page);
   // The official standard preset, the default, carries the delegation rows.
   await expect(page.getByRole('button', {name: 'Standard mode', exact: true})).toBeVisible({timeout: 45000});
   return {environment, tenantId};

@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import {compose} from './compose.ts';
+import {compose, workbenchReady} from './compose.ts';
 
 test('real DeepSeek asks through the original question card and continues with the answer chosen in the page', async ({page, request}) => {
   test.skip(process.env.WEFT_BROWSER_LIVE !== '1', 'Requires the configured live provider');
@@ -9,7 +9,7 @@ test('real DeepSeek asks through the original question card and continues with t
   const id = 'ask-live-'+crypto.randomUUID().slice(0, 8);
   expect((await request.post(`/v1/tenants/${me.tenantId}/environments`, {data: {id, name: id}})).status()).toBe(201);
   await page.goto(`/agents/${id}`);
-  await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
+  await workbenchReady(page);
   await compose(page, 'Call the ask_user_question tool exactly once with one question (id "pick", question "Which codename?") offering exactly two options labeled "Saffron" and "Cobalt". After my answer arrives, reply with only the codename I chose.');
   await page.getByRole('button', {name: 'Send message', exact: true}).click();
   const option = page.getByText('Cobalt', {exact: true}).first();
@@ -29,7 +29,7 @@ test('real DeepSeek runs the original bash tool in the environment shell and rep
   const id = 'bash-live-'+crypto.randomUUID().slice(0, 8);
   expect((await request.post(`/v1/tenants/${me.tenantId}/environments`, {data: {id, name: id}})).status()).toBe(201);
   await page.goto(`/agents/${id}`);
-  await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
+  await workbenchReady(page);
   await compose(page, 'Use the bash tool exactly once to run `echo $((1234*5678)) > product.txt && cat product.txt`, then reply with only the number it printed.');
   await page.getByRole('button', {name: 'Send message', exact: true}).click();
   await expect(page.getByText(/^7006652\.?$/).last()).toBeVisible({timeout: 120_000});

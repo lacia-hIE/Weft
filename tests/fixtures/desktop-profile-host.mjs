@@ -5,7 +5,9 @@
 // Usage: node desktop-profile-host.mjs <runtimeDir> <profileDir>
 import {existsSync, mkdirSync} from 'node:fs';
 import {join} from 'node:path';
-import {initProfile, loadLayeredEnv, loadProfileDirectory, PROFILE_TEMPLATES, reportSkippedBundles} from '@deepseek-ai/dsh-app-boot';
+import {initProfile, loadLayeredEnv, loadProfileDirectory, reportSkippedBundles} from '@deepseek-ai/dsh-app-boot';
+// 0.2.2 moved the profile templates into the official bundle catalog.
+import {PROFILE_TEMPLATES} from '@deepseek-ai/dsh-official-bundles';
 import {runProfile} from '@deepseek-ai/dsh/profile-boot';
 
 const [runtimeDir, profileDir] = process.argv.slice(2);

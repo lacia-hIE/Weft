@@ -1,5 +1,5 @@
 import {test, expect} from '@playwright/test';
-import {compose} from './compose.ts';
+import {compose, workbenchReady} from './compose.ts';
 import sharp from 'sharp';
 import type {FileUploadValue} from '@deepseek-ai/dsh-client-file-upload/types';
 
@@ -11,7 +11,7 @@ test('real DeepSeek reads a workspace image with the original read_image tool an
   expect((await request.post(`/v1/tenants/${me.tenantId}/environments`, {data: {id, name: id}})).status()).toBe(201);
   const created = page.waitForResponse(response => response.url().endsWith('/native/api/session/create'), {timeout: 45_000});
   await page.goto('/agents/' + id);
-  await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
+  await workbenchReady(page);
   const session = await (await created).json() as {result: {value: {sessionId: string}}};
   const sessionId = session.result.value.sessionId;
   const checksum = 'FS-' + crypto.randomUUID().replaceAll('-', '').slice(0, 6).toUpperCase();

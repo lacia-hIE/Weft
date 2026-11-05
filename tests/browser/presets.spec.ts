@@ -1,5 +1,5 @@
 import {test, expect} from '@playwright/test';
-import {compose} from './compose.ts';
+import {compose, workbenchReady} from './compose.ts';
 
 test('official preset settings view real compositions, persist defaults and keep existing sessions on their selected preset', async ({page, request}) => {
   const me = await (await request.get('/v1/me')).json() as {tenantId: string};
@@ -16,7 +16,7 @@ test('official preset settings view real compositions, persist defaults and keep
     await page.getByRole('button', {name: 'Agent presets', exact: true}).click();
   };
   await page.goto(`/agents/${id}`);
-  await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
+  await workbenchReady(page);
   await settings();
   const creator = page.locator('[data-agent-preset-id="cordis"]');
   await expect(creator).toContainText('Creator');

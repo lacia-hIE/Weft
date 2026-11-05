@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import {compose} from './compose.ts';
+import {compose, workbenchReady} from './compose.ts';
 
 test('the official Harness entry sends native turns, restores history and scopes browser state per environment', async ({page, request}) => {
   const failures: string[] = [];
@@ -20,7 +20,7 @@ test('the official Harness entry sends native turns, restores history and scopes
   };
   const loaded = await page.goto(`/agents/${first}`);
   expect(loaded!.headers()['content-security-policy']).toContain("base-uri 'self'");
-  await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
+  await workbenchReady(page);
   await expect(page.getByRole('button', {name: 'Select model, current scripted', exact: true})).toBeVisible({timeout: 45_000});
   await page.evaluate(() => {
     localStorage.setItem('same-native-key', 'first environment');
@@ -43,7 +43,7 @@ test('the official Harness entry sends native turns, restores history and scopes
   await native(second, 'session/create', {request: {sessionId: commonId}});
   await native(second, 'session/rename', {request: {sessionId: commonId, title: 'Second environment session'}});
   await page.goto(`/agents/${second}`);
-  await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
+  await workbenchReady(page);
   await expect(page.getByRole('button', {name: 'Select model, current scripted', exact: true})).toBeVisible({timeout: 45_000});
   await expect(page.getByText(message, {exact: true})).toHaveCount(0);
   expect(await page.evaluate(() => [localStorage.getItem('same-native-key'), sessionStorage.getItem('same-native-key')])).toEqual([null, null]);
@@ -65,7 +65,7 @@ test('the official entry uses real DeepSeek and restores its native history', as
   const created = await request.post(`/v1/tenants/${me.tenantId}/environments`, {data: {id: environment, name: environment}});
   expect(created.status()).toBe(201);
   await page.goto(`/agents/${environment}`);
-  await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
+  await workbenchReady(page);
   await expect(page.getByRole('button', {name: /Select model, current DeepSeek/})).toBeVisible({timeout: 45_000});
   await compose(page, '只回复这一行，不调用工具：WEFT_OFFICIAL_UI_OK');
   await page.getByRole('button', {name: 'Send message', exact: true}).click();
@@ -96,7 +96,7 @@ test('official Models settings save real scoped credentials and configuration wi
     if (await edit.isVisible()) await edit.click();
   };
   await page.goto(`/agents/${id}`);
-  await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
+  await workbenchReady(page);
   await openSettings();
   if (process.env.WEFT_BROWSER_PRODUCTION === '1') {
     await expect(page.getByText('No API key saved for this environment. Enter your API key here.', {exact: true})).toBeVisible();

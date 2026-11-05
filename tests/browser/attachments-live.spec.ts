@@ -1,5 +1,5 @@
 import {test, expect} from '@playwright/test';
-import {compose} from './compose.ts';
+import {compose, workbenchReady} from './compose.ts';
 import type {SessionEvent} from '@deepseek-ai/dsh-session';
 
 test('real DeepSeek reads an uploaded file through the original composer and native filesystem tool', async ({page, request}) => {
@@ -10,7 +10,7 @@ test('real DeepSeek reads an uploaded file through the original composer and nat
   expect((await request.post(`/v1/tenants/${me.tenantId}/environments`, {data: {id, name: id}})).status()).toBe(201);
   const created = page.waitForResponse(response => response.url().endsWith('/native/api/session/create'), {timeout: 45_000});
   await page.goto('/agents/'+id);
-  await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
+  await workbenchReady(page);
   await created;
   await expect(page.getByRole('button', {name: /Select model, current DeepSeek/})).toBeVisible({timeout: 45_000});
   await compose(page, '使用 read 工具读取我上传的 live-upload.txt，最终只回复文件中的完整校验码这一行。');

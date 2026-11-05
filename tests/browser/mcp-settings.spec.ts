@@ -1,4 +1,5 @@
 import {test, expect} from '@playwright/test';
+import {workbenchReady} from './compose.ts';
 
 test('Settings adds, edits and removes a remote MCP server without reading header values back', async ({page, request}) => {
   const me = await (await request.get('/v1/me')).json() as {tenantId: string};
@@ -10,7 +11,7 @@ test('Settings adds, edits and removes a remote MCP server without reading heade
     return response.result.value.namespaces.find((row: {ns: string}) => row.ns === 'mcp-servers') as {value: {servers: {name: string; url: string; enabled: boolean; headers?: Record<string, string>}[]}; secrets: {path: string[]; set: boolean}[]};
   };
   await page.goto('/agents/'+id);
-  await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
+  await workbenchReady(page);
   await expect(page.getByRole('treeitem', {name: /New Session/}).first()).toBeVisible({timeout: 45_000});
   await page.getByRole('button', {name: 'Settings', exact: true}).click({timeout: 45_000});
   await page.getByRole('button', {name: 'MCP servers', exact: true}).click();

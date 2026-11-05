@@ -1,4 +1,5 @@
 import {test, expect} from '@playwright/test';
+import {workbenchReady} from './compose.ts';
 
 test('global plugins show deployment wiring and policy switches persist through the official UI', async ({page, request}) => {
   const me = await (await request.get('/v1/me')).json() as {tenantId: string};
@@ -11,7 +12,7 @@ test('global plugins show deployment wiring and policy switches persist through 
     return response.result.value;
   };
   await page.goto('/agents/'+id);
-  await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
+  await workbenchReady(page);
   await page.getByRole('button', {name: 'Plugins', exact: true}).click({timeout: 45_000});
   await page.getByRole('button', {name: 'View Core plugins', exact: true}).click();
   const policy = page.locator('[data-plugin-row="command-feedback"]');
@@ -57,7 +58,7 @@ test('the official Plugins page renders actual profile entries, persists preset 
     await expect(page.locator('[data-plugin-panel]')).toBeVisible();
   };
   await page.goto('/agents/'+id);
-  await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
+  await workbenchReady(page);
   await plugins();
   await page.getByRole('button', {name: 'View Agent presets', exact: true}).click({timeout: 45_000});
   const creator = page.locator('[data-plugin-row="preset-cordis"]');

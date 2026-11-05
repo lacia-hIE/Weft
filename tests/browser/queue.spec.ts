@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import {workbenchReady} from './compose.ts';
 
 test('official Inbox controls edit, remove and steer durable queued messages across refresh', async ({page, request}) => {
   test.skip(process.env.WEFT_BROWSER_QUEUE !== '1', 'Requires the controlled streaming model transport');
@@ -7,7 +8,7 @@ test('official Inbox controls edit, remove and steer durable queued messages acr
   const base = `/v1/tenants/${me.tenantId}/environments/${environment}`;
   expect((await request.post(`/v1/tenants/${me.tenantId}/environments`, {data: {id: environment, name: environment}})).status()).toBe(201);
   await page.goto(`/agents/${environment}`);
-  await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
+  await workbenchReady(page);
   const input = page.locator('[contenteditable=true]');
   await input.fill('active request');
   await page.getByRole('button', {name: 'Send message', exact: true}).click();

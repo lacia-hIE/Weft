@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import {compose} from './compose.ts';
+import {compose, workbenchReady} from './compose.ts';
 import type { Page, APIRequestContext } from '@playwright/test';
 
 async function openEnvironment(page: Page, request: APIRequestContext) {
@@ -8,7 +8,7 @@ async function openEnvironment(page: Page, request: APIRequestContext) {
   const base = `/v1/tenants/${me.tenantId}/environments/${environment}`;
   expect((await request.post(`/v1/tenants/${me.tenantId}/environments`, {data: {id: environment, name: environment}})).status()).toBe(201);
   await page.goto(`/agents/${environment}`);
-  await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
+  await workbenchReady(page);
   await page.getByRole('button', {name: 'Settings', exact: true}).click({timeout: 45_000});
   await page.getByRole('button', {name: 'Agent presets', exact: true}).click();
   await page.getByRole('button', {name: 'Set as new task default: Creator mode', exact: true}).click();

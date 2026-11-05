@@ -1,5 +1,5 @@
 import {test, expect} from '@playwright/test';
-import {sendPrompt} from './compose.ts';
+import {sendPrompt, workbenchReady} from './compose.ts';
 
 test('official Team bundle card installs, selects its browser module and persists enablement', async ({page, request}) => {
   const {tenantId} = await (await request.get('/v1/me')).json();
@@ -12,7 +12,7 @@ test('official Team bundle card installs, selects its browser module and persist
     return answer.result.value;
   };
   await page.goto('/agents/'+environment);
-  await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45000});
+  await workbenchReady(page);
   await page.getByRole('button', {name: 'Plugins', exact: true}).click({timeout: 45000});
   const card = page.locator('[data-plugin-package="@deepseek-ai/dsh-experimental-agent-team-profile"]');
   await expect(card).toBeVisible();
