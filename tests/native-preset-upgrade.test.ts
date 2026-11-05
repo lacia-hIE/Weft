@@ -4,6 +4,7 @@ import {mkdtemp, rm} from 'node:fs/promises';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import { createRuntime, tenantId, url } from './helpers/miniflare.ts';
+import upstream from '../upstream.lock.json';
 
 const base = `/v1/tenants/${tenantId('alpha')}`;
 const revision = (id: string, number: number, plugins: unknown[]) => ({
@@ -11,7 +12,7 @@ const revision = (id: string, number: number, plugins: unknown[]) => ({
   spec: {id, name: id, persona: '', workspaceId: 'default', allowClientPlugins: id === 'cordis', plugins},
 });
 
-test('official presets Weft published follow the official definition; presets the environment published stay', {timeout: 120_000}, async () => {
+test('official presets Weft published follow the official definition; presets the environment published keep their rows on the current runtime', {timeout: 120_000}, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'weft-preset-upgrade-'));
   const options = {browser: true, configureModel: false, scriptPath: 'dist/environment-storage-worker.js'};
   let runtime = createRuntime(directory, options);
@@ -29,14 +30,16 @@ test('official presets Weft published follow the official definition; presets th
     const latest = async (id: string) => {
       const response = await runtime.dispatchFetch(url('alpha', `${base}/agents/${id}`));
       assert.equal(response.status, 200, await response.clone().text());
-      return await response.json() as {revision: number; spec: {plugins: {id: string; disabled?: boolean}[]}};
+      return await response.json() as {revision: number; upstream: string; spec: {plugins: {id: string; disabled?: boolean}[]}};
     };
     const standard = await latest('standard');
     assert.equal(standard.revision, 2, 'the seeded revision is followed by the current official definition');
     assert.ok(standard.spec.plugins.some(row => row.id === 'tool-fs' && !row.disabled));
     assert.ok(standard.spec.plugins.some(row => row.id === 'tool-pwsh' && row.disabled === true), 'disabled official rows stay listed');
     const cordis = await latest('cordis');
-    assert.equal(cordis.revision, 2);
+    // The environment's revision keeps its rows and is republished once for the current runtime.
+    assert.equal(cordis.revision, 3);
+    assert.equal(cordis.upstream, upstream.commit);
     assert.deepEqual(cordis.spec.plugins.map(row => row.id), ['persona'], 'a revision the environment published is kept');
   } finally {
     await runtime.dispose();

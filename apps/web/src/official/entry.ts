@@ -131,8 +131,11 @@ export async function startOfficialHarness(environmentId: string): Promise<void>
     __ModuleLoader__?: ClientModuleLoaderTarget;
     __DSH_BOOT__?: unknown;
     __DSH_TRANSPORT__?: ClientTransportHooks;
+    __DSH_REMOTE_ACCESS__?: unknown;
   };
   page.__ModuleLoader__ = target;
+  // The original webServer injects each page's access baseline; every Weft workbench page belongs to the environment's owner.
+  page.__DSH_REMOTE_ACCESS__ = {type: 'baseline', owner: true};
   page.__DSH_BOOT__ = graph;
   page.__DSH_TRANSPORT__ = transport(`${base}/native`);
   const container = document.getElementById('root')!;

@@ -31,7 +31,8 @@ const model: V4FetchHandler = async request => {
   const event = (type: string, value: object) => `event: ${type}\ndata: ${JSON.stringify({type, ...value})}\n\n`;
   const body = JSON.stringify(await request.json());
   // The schedule tool's own result echoes the prompt; only the delivered reminder carries the framing.
-  const framing = body.lastIndexOf('[SCHEDULE REMINDER]');
+  // RRULE tasks deliver through the 0.2.2 batch framing.
+  const framing = Math.max(body.lastIndexOf('[SCHEDULE REMINDER]'), body.lastIndexOf('[SCHEDULE REMINDER BATCH]'));
   const web = body.lastIndexOf('WEB_QUESTION') > Math.max(framing, body.lastIndexOf('SCHEDULE_TASK'));
   const tool = !web && body.includes('SCHEDULE_TASK') && !body.includes('tool_result');
   const reminded = !web && framing >= 0;

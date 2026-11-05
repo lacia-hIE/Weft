@@ -65,7 +65,8 @@ export function nativeClient(runtime: () => Runtime, environment = 'default', us
       };
     },
     follow(sessionId: string) {
-      return this.stream<SessionFollowFrame>('session/follow', {request: {address: {kind: 'session', sessionId}, assistantStream: true}});
+      // The official client asks the opening follow to activate the Session.
+      return this.stream<SessionFollowFrame>('session/follow', {request: {address: {kind: 'session', sessionId}, activate: true, assistantStream: true}});
     },
     events() { return this.stream<RemoteEventDownlinkFrame>('$events', {}); },
   };
