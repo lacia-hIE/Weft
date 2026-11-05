@@ -1046,7 +1046,10 @@ export class SessionDO extends DurableObject<Env> {
     this.assertScope(input);
     const method = scheduleRemote.methods[endpoint];
     const {request} = method.input({strict: true}).create().parse(raw);
-    if (endpoint === 'schedule/history') {const limit = (request as {limit: number}).limit; if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) transferError('Delivery history limit must be a safe integer from 1 through 100.');}
+    if (endpoint === 'schedule/history') {
+      const {limit} = z.object({limit: z.number()}).parse(request);
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) transferError('Delivery history limit must be a safe integer from 1 through 100.');
+    }
     const live = this.nativeHost?.ctx.get('schedule');
     const value = endpoint === 'schedule/view'
       ? (await this.nativeScheduleCatalog(input)).find(entry => (entry as {id: string}).id === request.id) ?? {id: request.id, code: 'schedule_not_found'}
