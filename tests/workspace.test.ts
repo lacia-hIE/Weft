@@ -146,15 +146,16 @@ test('native Harness write/read/edit and observation policy operate against the 
   } finally { await runtime.dispose(); }
 });
 
-test('a re-issued mutation whose effect already committed is refused instead of applied twice', async () => {
+test('a re-issued literal edit whose effect already committed finds nothing to replace instead of applying twice', async () => {
   // Crash recovery closes a started call as outcome-unknown and never replays it. A model that
-  // retries anyway sends the same mutation again, which the read-observation guards must refuse.
+  // retries anyway sends the same edit again; its search text is gone, so the edit fails.
+  // DSH 0.2.2 ships the read-before-write observation policy disabled, so a blind write succeeds.
   const script: [string | undefined, object][] = [
     ['read', { file_path: 'notes/once.txt' }],
     ['edit', { file_path: 'notes/once.txt', old_string: 'count: 0', new_string: 'count: 1' }],
     ['edit', { file_path: 'notes/once.txt', old_string: 'count: 0', new_string: 'count: 1' }],
     [undefined, {}],
-    // A recovered Session holds no observation of the file, so a blind rewrite is refused too.
+    // A recovered Session holds no observation of the file; without the policy its rewrite is applied.
     ['write', { file_path: 'notes/once.txt', content: 'count: 1' }],
     [undefined, {}],
   ];
@@ -170,10 +171,10 @@ test('a re-issued mutation whose effect already committed is refused instead of 
   try {
     await value(await write(runtime, 'alpha', 'once', 'notes/once.txt', 'count: 0'));
     assert.deepEqual(await failures(await message(runtime, 'replayed', 'once')), [false, false, true]);
-    assert.deepEqual(await failures(await message(runtime, 'recovered', 'once')), [true]);
+    assert.deepEqual(await failures(await message(runtime, 'recovered', 'once')), [false]);
     const file = await value<{ content: string; version: string }>(await read(runtime, 'alpha', 'once', 'notes/once.txt'));
     assert.equal(file.content, 'count: 1');
-    assert.equal(file.version, '2');
+    assert.equal(file.version, '3');
   } finally { await runtime.dispose(); }
 });
 
@@ -205,7 +206,7 @@ test('Computer files, revisions and session bindings survive a fresh workerd pro
   } finally { await runtime.dispose(); await rm(persist, { recursive: true, force: true }); }
 });
 
-test('native observation policy reports an external concurrent edit and requires a fresh read', async () => {
+test('an external concurrent edit makes a stale literal edit fail without overwriting it', async () => {
   let count = 0;
   const runtime = createRuntime(undefined, { bindings: realAdapter, outbound: async request => {
     const body = await request.text();
@@ -227,7 +228,7 @@ test('native observation policy reports an external concurrent edit and requires
     await value(await write(runtime, 'alpha', 'conflicts', 'note.txt', 'original'));
     const response = await message(runtime, 'conflicted', 'conflicts');
     assert.equal(response.status, 200, await response.clone().text());
-    assert.match(await response.text(), /FS_STALE_VERSION/);
+    assert.match(await response.text(), /FS_EDIT_NOT_FOUND/);
     const result = await value<{ content: string; version: string }>(await read(runtime, 'alpha', 'conflicts', 'note.txt'));
     assert.equal(result.content, 'merged');
     assert.equal(result.version, '3');

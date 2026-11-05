@@ -1,19 +1,24 @@
 import type {Agent} from '@deepseek-ai/dsh-agent';
 import type {Session} from '@deepseek-ai/dsh-session';
 import type {FileAttachmentRef} from '@deepseek-ai/dsh-attachment';
-import type {FileUploadReceiptId} from '@deepseek-ai/dsh-client-file-upload/types';
+import type {FileUploadReceiptId, StagedAttachment} from '@deepseek-ai/dsh-client-file-upload/types';
 
-interface Staged {readonly file: FileAttachmentRef; requestId?: string}
+interface Staged {readonly attachment: StagedAttachment; requestId?: string}
+/** Rows written before 0.2.2 hold a bare file reference. */
+function stagedAttachment(json: string): StagedAttachment {
+  const value = JSON.parse(json) as StagedAttachment | FileAttachmentRef;
+  return 'type' in value && (value.type === 'file' || value.type === 'image') ? value : {type: 'file', attachment: value as FileAttachmentRef};
+}
 type Row = {receipt_id: string; file_json: string; request_id: string | null};
 class ReceiptMap extends Map<FileUploadReceiptId, Staged> {
   constructor(private readonly storage: DurableObjectStorage, private readonly sessionId: string) {
     super();
     for (const row of storage.sql.exec<Row>('SELECT receipt_id,file_json,request_id FROM weft_upload_receipts WHERE session_id=?', sessionId).toArray()) {
-      super.set(row.receipt_id as FileUploadReceiptId, this.track(row.receipt_id, {file: JSON.parse(row.file_json), ...(row.request_id === null ? {} : {requestId: row.request_id})}));
+      super.set(row.receipt_id as FileUploadReceiptId, this.track(row.receipt_id, {attachment: stagedAttachment(row.file_json), ...(row.request_id === null ? {} : {requestId: row.request_id})}));
     }
   }
   private track(id: string, value: Staged): Staged {
-    const record = {...value, file: Object.freeze({...value.file})};
+    const record = {...value, attachment: Object.freeze({...value.attachment, attachment: Object.freeze({...value.attachment.attachment})}) as StagedAttachment};
     const binding = (requestId: unknown) => {
       if (requestId !== undefined && typeof requestId !== 'string') throw new Error('Invalid receipt binding');
       this.storage.sql.exec('UPDATE weft_upload_receipts SET request_id=? WHERE receipt_id=? AND session_id=?', requestId ?? null, id, this.sessionId);
@@ -30,7 +35,7 @@ class ReceiptMap extends Map<FileUploadReceiptId, Staged> {
     });
   }
   override set(id: FileUploadReceiptId, value: Staged): this {
-    this.storage.sql.exec('INSERT INTO weft_upload_receipts VALUES (?,?,?,?) ON CONFLICT(receipt_id) DO UPDATE SET file_json=excluded.file_json,request_id=excluded.request_id', id, this.sessionId, JSON.stringify(value.file), value.requestId ?? null);
+    this.storage.sql.exec('INSERT INTO weft_upload_receipts VALUES (?,?,?,?) ON CONFLICT(receipt_id) DO UPDATE SET file_json=excluded.file_json,request_id=excluded.request_id', id, this.sessionId, JSON.stringify(value.attachment), value.requestId ?? null);
     return super.set(id, this.track(id, value));
   }
   override delete(id: FileUploadReceiptId): boolean {

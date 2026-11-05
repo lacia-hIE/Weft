@@ -19,6 +19,6 @@ export async function mountNativeAttachments(ctx: Context, config: {storage: Dur
   await ctx.plugin(AuthenticatedFetchRoutes);
   ctx.provide('weftNativeUploadRegistry', new DurableUploadRegistry(config.storage, config.sessionId));
   await ctx.plugin(FileUploads);
-  nativeSessionList(ctx);
+  await nativeSessionList(ctx);
   mountAttachmentExport(ctx, config);
 }

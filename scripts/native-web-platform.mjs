@@ -7,8 +7,8 @@ const require = createRequire(import.meta.url);
 /**
  * Keep the original web fetch provider (URL policy, same-origin redirects, size,
  * charset and timeout limits) and replace only its Undici transport: workerd
- * fetches through the platform, which resolves names at the edge and refuses
- * IP-address hostnames.
+ * fetches through the platform, which resolves names at the edge. Workers refuse
+ * IP-address hostnames, so the provider rejects them before any request.
  */
 export const nativeWebPlatform = {
   name: 'harness-native-web-platform',
@@ -17,7 +17,10 @@ export const nativeWebPlatform = {
       const source = readFileSync(path, 'utf8');
       const before = "const { fetch } = await import('undici')\n      return await fetch(url, { method: 'GET', redirect: 'manual', headers, signal })";
       if (!source.includes(before)) throw new Error('Upstream web-fetch-http transport changed; review the workerd fetch');
-      return {contents: source.replace(before, "return await globalThis.fetch(url, { method: 'GET', redirect: 'manual', headers, signal }) as never"), loader: 'ts', resolveDir: resolve(path, '..')};
+      // Each hop, including a same-origin redirect target, passes this check before any request.
+      const guarded = "const weftHost = url.hostname.replace(/^\\[|\\]$/g, '')\n      if (weftIpaddr.isValid(weftHost)) throw new WebError(weftNonPublic(weftHost) ? `URL hostname \"${url.hostname}\" is a non-public IP address` : `URL hostname \"${url.hostname}\" is an IP address; this deployment fetches by host name only`, 'WEB_BLOCKED_URL')\n      return await globalThis.fetch(url, { method: 'GET', redirect: 'manual', headers, signal }) as never";
+      const prelude = "import weftIpaddr from 'ipaddr.js'\nconst weftNonPublic = (host: string): boolean => { const address = weftIpaddr.process(host); return address.range() !== 'unicast' }\n";
+      return {contents: prelude + source.replace(before, guarded), loader: 'ts', resolveDir: resolve(path, '..')};
     });
     // Workers reject `redirect: 'error'`; with `manual`, the provider's own `!response.ok` branch reports a 3xx as an endpoint error.
     builder.onLoad({filter: /packages\/web\/web-search-deepseek\/src\/provider\.ts$/}, ({path}) => {

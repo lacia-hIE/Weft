@@ -352,7 +352,7 @@ export class SessionDO extends DurableObject<Env> {
     const projections = sessionRemote.methods['session/projections'].result.create().parse(raw);
     const row = {...status, ...(projections?.kind === 'sequenced' ? {projections: {kind: 'sequenced' as const, asOfSeq: projections.asOfSeq, values: projections.values}} : {})};
     const reader = await this.getReader();
-    const children = (await nativeSessionList(reader.activeRuntime()?.ctx ?? reader.ctx).list()).filter(item => item.origin === 'subagent');
+    const children = (await (await nativeSessionList(reader.activeRuntime()?.ctx ?? reader.ctx)).list()).filter(item => item.origin === 'subagent');
     return Response.json(sessionRemote.methods['session/list'].result.create().parse({items: [row, ...children]}));
   }
   async nativeWorkspaceActivity(input: SessionScope): Promise<Response> {
@@ -361,7 +361,7 @@ export class SessionDO extends DurableObject<Env> {
     const ctx = this.nativeHost?.ctx ?? reader.activeRuntime()?.ctx ?? reader.ctx;
     const rest = await ctx.waterfall('workspace/session-activity', {sessionId: SessionId(scope.sessionId)}, () => Promise.resolve([]));
     const volume = {tenantId: scope.tenantId, ...(scope.environmentId ? {environmentId: scope.environmentId} : {}), workspaceId: 'default'};
-    const owners = [scope.sessionId, ...(await nativeSessionList(ctx).list()).filter(row => row.origin === 'subagent').map(row => row.sessionId)];
+    const owners = [scope.sessionId, ...(await (await nativeSessionList(ctx)).list()).filter(row => row.origin === 'subagent').map(row => row.sessionId)];
     const tasks = (await Promise.all([...new Set(owners)].map(async owner => {
       const value = await (await this.env.WORKSPACES.getByName(workspaceAddress(volume)).javascript(volume, owner, {operation: 'list'})).json() as JavaScriptList;
       return value.tasks.filter(task => task.status === 'running' || task.status === 'waiting');
@@ -374,7 +374,7 @@ export class SessionDO extends DurableObject<Env> {
     const ctx = this.nativeHost?.ctx ?? reader.activeRuntime()?.ctx ?? reader.ctx;
     await ctx.parallel('workspace/session-stop', {sessionId: SessionId(scope.sessionId)});
     const volume = {tenantId: scope.tenantId, ...(scope.environmentId ? {environmentId: scope.environmentId} : {}), workspaceId: 'default'};
-    const owners = [scope.sessionId, ...(await nativeSessionList(ctx).list()).filter(row => row.origin === 'subagent').map(row => row.sessionId)];
+    const owners = [scope.sessionId, ...(await (await nativeSessionList(ctx)).list()).filter(row => row.origin === 'subagent').map(row => row.sessionId)];
     await Promise.all([...new Set(owners)].map(owner => this.env.WORKSPACES.getByName(workspaceAddress(volume)).javascript(volume, owner, {operation: 'cancelAll'})));
     await ctx.sessionPersistence.flush();
   }

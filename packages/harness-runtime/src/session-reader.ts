@@ -111,7 +111,7 @@ export async function createSessionReader(storage: DurableObjectStorage, promote
           await ctx.plugin(Commands);
           await ctx.plugin(AuthenticatedFetchRoutes);
           await mountSessionExport(ctx);
-          nativeSessionList(ctx);
+          await nativeSessionList(ctx);
         })();
       },
       activeRuntime: () => active,
