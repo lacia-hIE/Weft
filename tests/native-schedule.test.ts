@@ -128,3 +128,29 @@ test('a retained-runtime task moves to a current Session without resetting its i
     try {assert.equal((await old.next() as {type: string}).type, 'snapshot', 'the old Session remains readable');} finally {await old.close();}
   } finally {await runtime.dispose(); await rm(directory, {recursive: true, force: true});}
 });
+
+
+test('retargeting refuses a busy executor without interrupting its user turn or losing the task', {timeout: 120_000}, async () => {
+  let started!: () => void, release!: () => void;
+  const requestStarted = new Promise<void>(resolve => {started = resolve;}), released = new Promise<void>(resolve => {release = resolve;});
+  const original = scheduleModel().outbound;
+  const runtime = createRuntime(undefined, {browser: true, bindings: {MODEL_BACKEND: 'deepseek', DEEPSEEK_API_KEY: 'schedule-fixture', DEEPSEEK_BASE_URL: 'https://schedule-model.test/anthropic'},
+    outbound: async (request, mf) => {started(); await released; return original(request, mf);}});
+  const api = nativeClient(() => runtime);
+  let follow: Awaited<ReturnType<typeof api.follow>> | undefined;
+  try {
+    await api.call('session/create', {request: {sessionId: 'busy-executor'}});
+    await api.call('session/create', {request: {sessionId: 'idle-executor'}});
+    const task = await api.call<{id: string}>('schedule/create', {request: {title: 'Keep running', prompt: 'REMINDER_ALPHA', timing: {kind: 'rrule', rrule: oneShotRule(120_000)}, target: {kind: 'session', sessionId: 'busy-executor'}}});
+    follow = await api.follow('busy-executor'); await follow.next();
+    await api.call('session/prompt', {request: {sessionId: 'busy-executor', requestId: crypto.randomUUID(), mode: 'queue', content: [{type: 'text', text: 'BUSY_USER_TURN'}]}});
+    await requestStarted;
+    const rejected = await api.raw('schedule/edit', {request: {id: task.id, action: 'update', patch: {target: {kind: 'session', sessionId: 'idle-executor'}}}});
+    assert.equal(rejected.result.ok, false);
+    assert.equal((await api.call<{target: {sessionId: string}}>('schedule/view', {request: {id: task.id}})).target.sessionId, 'busy-executor');
+    release();
+    for (;;) {const frame = await follow.next(); if (frame.type === 'event' && frame.event.type === 'turn/end') {assert.equal((frame.event.data as {reason: {kind: string}}).reason.kind, 'completed'); break;}}
+    const run = await api.call<{lastDelivery: {targetSessionId: string}}>('schedule/run', {request: {id: task.id}});
+    assert.equal(run.lastDelivery.targetSessionId, 'busy-executor', 'the original scheduler remains usable');
+  } finally {release(); await follow?.close(); await runtime.dispose();}
+});

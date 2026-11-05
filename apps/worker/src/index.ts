@@ -965,10 +965,21 @@ export class SessionDO extends DurableObject<Env> {
   /** Quiesce only the scheduler, keeping the Session's Agent and history intact. */
   private async scheduleMaintenance<T>(work: () => Promise<T>): Promise<T> {
     const host = this.nativeHostPromise ? await this.nativeHostPromise : undefined;
+    if (host?.ctx.agents.list().some(agent => agent.status !== 'idle' || agent.inbox.nextTurn.length || agent.inbox.nextStep.length)) transferError('请等待执行会话和自动化空闲后，再更换执行会话。');
     return host ? host.ctx.weftScheduleMaintenance.run(async () => {
       if (host.ctx.agents.list().some(agent => agent.status !== 'idle' || agent.inbox.nextTurn.length || agent.inbox.nextStep.length)) transferError('请等待执行会话和自动化空闲后，再更换执行会话。');
       return work();
     }) : work();
+  }
+  private async scheduleTransferGate<T>(work: () => Promise<T>): Promise<T> {
+    // Throwing inside blockConcurrencyWhile resets the DO and interrupts active
+    // streams. Refusals must leave the gate as values and be thrown afterwards.
+    const outcome = await this.ctx.blockConcurrencyWhile(async () => {
+      try {return {ok: true as const, value: await this.scheduleMaintenance(work)};}
+      catch (error) {return {ok: false as const, error};}
+    });
+    if (!outcome.ok) throw outcome.error;
+    return outcome.value;
   }
   async nativeScheduleTransferReady(input: SessionScope): Promise<void> {
     this.assertScope(input);
@@ -979,7 +990,7 @@ export class SessionDO extends DurableObject<Env> {
   }
   async nativeScheduleTransferPrepare(input: SessionScope, request: ScheduleEditRequest, target: string): Promise<ScheduleTransfer | {id: string; code: string}> {
     this.assertScope(input);
-    return this.ctx.blockConcurrencyWhile(() => this.scheduleMaintenance(async () => {
+    return this.scheduleTransferGate(async () => {
       this.ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_schedule_transfers (id TEXT PRIMARY KEY, document TEXT NOT NULL) STRICT');
       const pending = this.ctx.storage.sql.exec<{document: string}>('SELECT document FROM weft_schedule_transfers WHERE id=?', request.id).toArray()[0];
       if (pending) {
@@ -1012,13 +1023,13 @@ export class SessionDO extends DurableObject<Env> {
       if (due.length) await this.ctx.storage.setAlarm(Math.max(Date.now(), Math.min(...due))); else await this.ctx.storage.deleteAlarm();
       await this.ctx.storage.sync();
       return transfer;
-    }));
+    });
   }
   async nativeScheduleTransferImport(input: SessionScope, transfer: ScheduleTransfer): Promise<void> {
     this.assertScope(input);
     this.ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_schedule_imports (token TEXT PRIMARY KEY) STRICT');
     if (this.ctx.storage.sql.exec('SELECT token FROM weft_schedule_imports WHERE token=?', transfer.token).toArray().length) return;
-    return this.ctx.blockConcurrencyWhile(() => this.scheduleMaintenance(async () => {
+    return this.scheduleTransferGate(async () => {
       if (this.ctx.storage.sql.exec('SELECT token FROM weft_schedule_imports WHERE token=?', transfer.token).toArray().length) return;
       await this.nativeScheduleTransferReady(input);
       this.ctx.storage.transactionSync(() => {
@@ -1034,7 +1045,7 @@ export class SessionDO extends DurableObject<Env> {
       const due = readScheduleCatalog(this.ctx.storage).filter(task => task.status === 'active').map(task => Date.parse(task.scheduledAt));
       if (due.length) await this.ctx.storage.setAlarm(Math.max(Date.now(), Math.min(...due)));
       await this.ctx.storage.sync();
-    }));
+    });
   }
   async nativeScheduleTransferCommit(input: SessionScope, id: string, token: string): Promise<void> {
     this.assertScope(input);
