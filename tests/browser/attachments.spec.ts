@@ -1,5 +1,5 @@
 import {test, expect} from '@playwright/test';
-import {compose, workbenchReady} from './compose.ts';
+import {compose} from './compose.ts';
 import {createHash} from 'node:crypto';
 import {writeFile, readFile} from 'node:fs/promises';
 import {unzipSync, strFromU8} from 'fflate';
@@ -13,7 +13,7 @@ test('the original composer uploads a file before the first prompt and restores 
   expect((await request.post(`/v1/tenants/${me.tenantId}/environments`, {data: {id, name: id}})).status()).toBe(201);
   const created = page.waitForResponse(response => response.url().endsWith('/native/api/session/create'), {timeout: 45_000});
   await page.goto('/agents/'+id);
-  await workbenchReady(page);
+  await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
   await created;
   await expect(page.getByRole('button', {name: 'Select model, current scripted', exact: true})).toBeVisible({timeout: 45_000});
   await compose(page, 'Use this uploaded invoice');

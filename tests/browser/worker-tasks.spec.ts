@@ -1,5 +1,5 @@
 import {test, expect} from '@playwright/test';
-import {compose, workbenchReady} from './compose.ts';
+import {compose} from './compose.ts';
 
 test('native Worker task cards and catalog recover after reload and cancel the real waiting task', async ({page, request}, testInfo) => {
   const me = await (await request.get('/v1/me')).json() as {tenantId: string};
@@ -14,7 +14,7 @@ test('native Worker task cards and catalog recover after reload and cancel the r
     expect((await response.json()).result.ok).toBe(true);
   };
   await page.goto('/agents/'+environment);
-  await workbenchReady(page);
+  await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
   await expect(page.getByRole('button', {name: 'Select model, current scripted', exact: true})).toBeVisible({timeout: 45_000});
   await compose(page, 'WEFT_DURABLE_TASK_FIXTURE');
   await page.getByRole('button', {name: 'Send message', exact: true}).click();

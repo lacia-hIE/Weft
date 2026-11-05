@@ -1,5 +1,4 @@
 import {test, expect} from '@playwright/test';
-import {workbenchReady} from './compose.ts';
 
 test('the @ menu shows current conversation titles and excludes persisted empty Sessions after reload', async ({page, request}) => {
   const me = await (await request.get('/v1/me')).json() as {tenantId: string};
@@ -13,7 +12,7 @@ test('the @ menu shows current conversation titles and excludes persisted empty 
     return body.result.value;
   };
   await page.goto(`/agents/${id}`);
-  await workbenchReady(page);
+  await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
   const composer = page.locator('[contenteditable=true]');
   await expect(composer).toBeVisible({timeout: 45_000});
   const source = crypto.randomUUID();

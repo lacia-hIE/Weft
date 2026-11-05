@@ -1,7 +1,6 @@
 import {test, expect} from '@playwright/test';
 import {buildPackage} from '../../apps/plugin-builder/server.mjs';
 import {styledPackageFixture} from '../helpers/package-fixture.ts';
-import {workbenchReady} from './compose.ts';
 
 test('native bundle detail reviews the original patch and artifact without a second installation page', async ({page,request})=>{
   const me=await(await request.get('/v1/me')).json() as {tenantId:string};
@@ -18,7 +17,7 @@ test('native bundle detail reviews the original patch and artifact without a sec
     if(body?.operation==='approve'){expect(body.digest).toBe(digest);approved=true;}
     await route.fulfill({json:body?.operation==='review'?{...row(),lock:[{name:row().name,version:'1.2.3',integrity:'sha512-fixture',tarball:'https://registry.npmjs.org/fixture.tgz'}],host:'export default runtime=>runtime.compose([],{});'}:{available:true,installations:[row()],jobs:[]}});
   });
-  await page.goto('/agents/'+environment);await workbenchReady(page);
+  await page.goto('/agents/'+environment);await page.getByRole('button',{name:'Continue',exact:true}).click({timeout:45000});
   await page.getByRole('button',{name:'Plugins',exact:true}).click({timeout:45000});
   await expect(page.getByRole('button',{name:'View Package installations',exact:true})).toHaveCount(0);
   await page.getByRole('button',{name:'View @fixture/review',exact:true}).click();
@@ -43,7 +42,7 @@ test('standard Client CSS, inline CSS, static URLs and native controls restore a
     const asset=artifact.assets?.['assets/'+path.split('/assets/')[1]];
     return asset?route.fulfill({contentType:'image/svg+xml',body:Buffer.from(asset,'base64')}):route.fulfill({status:404});
   });
-  await page.goto('/agents/'+environment);await workbenchReady(page);
+  await page.goto('/agents/'+environment);await page.getByRole('button',{name:'Continue',exact:true}).click({timeout:45000});
   const styled=page.locator('[data-styled-fixture]');
   await expect(styled).toBeVisible({timeout:45000});
   await expect(styled).toHaveCSS('color','rgb(17, 34, 51)');
@@ -102,7 +101,7 @@ test('native bundle details stage updates, approve exact versions and restore Cl
     }
     return route.fulfill({json:{available:true,installations:[row],jobs:[]}});
   });
-  await page.goto('/agents/'+environment);await workbenchReady(page);
+  await page.goto('/agents/'+environment);await page.getByRole('button',{name:'Continue',exact:true}).click({timeout:45000});
   const styled=page.locator('[data-styled-fixture]');await expect(styled).toContainText('1.2.3',{timeout:45000});
   await page.getByRole('button',{name:'Plugins',exact:true}).click();await page.getByRole('button',{name:`View ${row.name}`,exact:true}).click();
   async function update(version:string){

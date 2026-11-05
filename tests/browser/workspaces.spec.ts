@@ -1,5 +1,5 @@
 import {test, expect, type APIRequestContext, type Locator, type Page} from '@playwright/test';
-import {compose, workbenchReady} from './compose.ts';
+import {compose} from './compose.ts';
 
 async function environment(page: Page, request: APIRequestContext) {
   const me = await (await request.get('/v1/me')).json() as {tenantId: string};
@@ -15,7 +15,7 @@ async function environment(page: Page, request: APIRequestContext) {
     expect((await request.put(base+'/workspaces/default/files', {data: {path, content, expectedVersion: null}})).status()).toBe(200);
   };
   await page.goto('/agents/'+id);
-  await workbenchReady(page);
+  await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
   await expect(page.getByRole('button', {name: 'Select model, current scripted', exact: true})).toBeVisible({timeout: 45_000});
   return {me, base, rpc, write};
 }

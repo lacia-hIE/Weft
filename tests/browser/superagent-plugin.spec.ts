@@ -1,6 +1,5 @@
 import {test, expect} from '@playwright/test';
 import {readFileSync} from 'node:fs';
-import {workbenchReady} from './compose.ts';
 
 test('the Superagent panel opens from the sidebar, gets its key through Settings and shows what setup still needs', async ({page, request}, testInfo) => {
   test.setTimeout(300_000);
@@ -23,7 +22,7 @@ test('the Superagent panel opens from the sidebar, gets its key through Settings
   page.on('pageerror', error => errors.push(error.message));
   await page.setViewportSize({width: 1440, height: 1000});
   await page.goto('/agents/' + environment);
-  await workbenchReady(page);
+  await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
   await page.getByRole('button', {name: 'Superagent', exact: true}).click({timeout: 45_000});
   await expect(page.getByRole('button',{name:'New request',exact:true})).toBeVisible({timeout:60_000});
   await expect(page.getByText('The GitHub Source names no repository.',{exact:true})).toHaveCount(0);

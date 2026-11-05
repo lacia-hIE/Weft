@@ -1,5 +1,5 @@
 import {test, expect} from '@playwright/test';
-import {compose, workbenchReady} from './compose.ts';
+import {compose} from './compose.ts';
 import sharp from 'sharp';
 import type {SessionEvent} from '@deepseek-ai/dsh-session';
 
@@ -10,7 +10,7 @@ test('real DeepSeek recognizes a checksum present only in an image through the o
   expect((await request.post(`/v1/tenants/${me.tenantId}/environments`, {data: {id, name: id}})).status()).toBe(201);
   const created = page.waitForResponse(response => response.url().endsWith('/native/api/session/create'), {timeout: 45_000});
   await page.goto('/agents/' + id);
-  await workbenchReady(page);
+  await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
   await created;
   await expect(page.getByRole('button', {name: /Select model, current DeepSeek/})).toBeVisible({timeout: 45_000});
   await compose(page, '只回复图片中显示的完整校验码，不要添加解释。');

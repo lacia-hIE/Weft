@@ -1,5 +1,4 @@
 import {test, expect} from '@playwright/test';
-import {workbenchReady} from './compose.ts';
 
 test('the Plugins page chooses auto, worker only or always container and the container size', async ({page, request}) => {
   const me = await (await request.get('/v1/me')).json() as {tenantId: string};
@@ -15,7 +14,7 @@ test('the Plugins page chooses auto, worker only or always container and the con
     await page.getByRole('button', {name: 'View Workspace runtime', exact: true}).click({timeout: 45_000});
   };
   await page.goto('/agents/'+id);
-  await workbenchReady(page);
+  await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
   await open();
   await expect(page.getByText('Source and .git persist.', {exact: false})).toBeVisible();
   await expect(page.getByText('This deployment has no container.', {exact: true})).toBeVisible();
@@ -50,7 +49,7 @@ test('the workspace settings stop control waits for completion and displays a st
     await route.fulfill({json: {available: true, status: stopped ? 'stopped' : 'running'}});
   });
   await page.goto('/agents/'+id);
-  await workbenchReady(page);
+  await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
   await page.getByRole('button', {name: 'Plugins', exact: true}).click({timeout: 45_000});
   await page.getByRole('button', {name: 'View Workspace runtime', exact: true}).click({timeout: 45_000});
   await expect(page.getByText('Container is running', {exact: true})).toBeVisible();

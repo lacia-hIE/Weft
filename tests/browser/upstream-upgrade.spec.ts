@@ -1,5 +1,5 @@
 import {test,expect} from '@playwright/test';
-import {compose, workbenchReady} from './compose.ts';
+import {compose} from './compose.ts';
 
 test('rc.5 reasoning renders display text while preserving raw signature metadata in native history', async ({page, request}) => {
   const {tenantId} = await (await request.get('/v1/me')).json();
@@ -11,7 +11,7 @@ test('rc.5 reasoning renders display text while preserving raw signature metadat
     return answer.result.value;
   };
   await page.goto('/agents/' + id);
-  await workbenchReady(page);
+  await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
   await compose(page, 'WEFT_REASONING_SIGNATURE_FIXTURE');
   await page.getByRole('button', {name: 'Send message', exact: true}).click();
   await expect(page.getByText('Tenant: ' + tenantId, {exact: true})).toBeVisible({timeout: 30_000});
@@ -44,7 +44,7 @@ test('rc.3 native More menu creates an unsent plugin draft and New Session resto
   const {tenantId}=await(await request.get('/v1/me')).json();
   const id='rc3-draft-'+crypto.randomUUID().slice(0,8),base=`/v1/tenants/${tenantId}/environments/${id}/native/api/`;
   expect((await request.post(`/v1/tenants/${tenantId}/environments`,{data:{id,name:id}})).status()).toBe(201);
-  await page.goto('/agents/'+id);await workbenchReady(page);
+  await page.goto('/agents/'+id);await page.getByRole('button',{name:'Continue',exact:true}).click({timeout:45_000});
   await expect(page.getByRole('button',{name:'Select model, current scripted',exact:true})).toBeVisible({timeout:45_000});
   await compose(page,'COMPLETED_CONTEXT');await page.getByRole('button',{name:'Send message',exact:true}).click();
   await expect(page.getByText('Tenant: '+tenantId,{exact:true})).toBeVisible({timeout:30_000});
@@ -73,7 +73,7 @@ test('rc.2 native Web search form persists Search and Fetch selection and keeps 
   const id='rc2-web-'+crypto.randomUUID().slice(0,8),base=`/v1/tenants/${tenantId}/environments/${id}/native/api/`;
   expect((await request.post(`/v1/tenants/${tenantId}/environments`,{data:{id,name:id}})).status()).toBe(201);
   const rpc=async(method:string,args:unknown)=>{const value=await(await request.post(base+method,{data:{type:'client-request',rpcId:crypto.randomUUID(),method,payload:{args}}})).json();expect(value.result.ok,JSON.stringify(value)).toBe(true);return value.result.value;};
-  await page.goto('/agents/'+id);await workbenchReady(page);
+  await page.goto('/agents/'+id);await page.getByRole('button',{name:'Continue',exact:true}).click({timeout:45_000});
   await page.getByRole('button',{name:'Plugins',exact:true}).click({timeout:45_000});
   await page.getByRole('button',{name:'View Web search',exact:true}).click();
   const toggle=page.getByRole('switch',{name:'Use the new Web Search API',exact:true});

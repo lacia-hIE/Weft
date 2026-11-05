@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import {compose, workbenchReady} from './compose.ts';
+import {compose} from './compose.ts';
 
 test('the official Terminal sidebar runs commands in the environment shell', async ({page, request}) => {
   const errors: string[] = [];
@@ -8,7 +8,7 @@ test('the official Terminal sidebar runs commands in the environment shell', asy
   const id = 'terminal-'+crypto.randomUUID().slice(0, 8);
   expect((await request.post(`/v1/tenants/${me.tenantId}/environments`, {data: {id, name: id}})).status()).toBe(201);
   await page.goto(`/agents/${id}`);
-  await workbenchReady(page);
+  await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
   await compose(page, 'hello terminal');
   await page.getByRole('button', {name: 'Send message', exact: true}).click();
   await expect(page.getByText('Tenant: '+me.tenantId, {exact: true})).toBeVisible({timeout: 30_000});

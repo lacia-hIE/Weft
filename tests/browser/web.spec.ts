@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import {compose, workbenchReady} from './compose.ts';
+import {compose} from './compose.ts';
 
 test("Agent catalogue opens the official Harness by default and keeps environment sessions isolated", async ({ page }) => {
   const errors: string[] = [];
@@ -10,7 +10,7 @@ test("Agent catalogue opens the official Harness by default and keeps environmen
   await page.getByRole("textbox", {name: "环境名称"}).fill("Research environment");
   await page.getByRole("dialog", {name: "创建环境", exact: true}).getByRole("button", {name: "创建环境", exact: true}).click();
   await page.getByRole("link", {name: "进入 Research environment", exact: true}).click();
-  await workbenchReady(page);
+  await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
   await expect(page.getByRole('button', {name: 'Select model, current scripted', exact: true})).toBeVisible({timeout: 45_000});
   await compose(page, 'Research environment only');
   await page.getByRole('button', {name: 'Send message', exact: true}).click();
@@ -18,7 +18,7 @@ test("Agent catalogue opens the official Harness by default and keeps environmen
   await page.getByRole('button', {name: 'My environments', exact: true}).click();
   await expect(page).toHaveURL('/');
   await page.getByRole("link", {name: "进入 我的 Harness", exact: true}).click();
-  await workbenchReady(page);
+  await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
   await expect(page.getByRole('button', {name: 'Select model, current scripted', exact: true})).toBeVisible({timeout: 45_000});
   await expect(page.getByText('Research environment only', {exact: true})).toHaveCount(0);
   await page.getByRole('button', {name: 'My environments', exact: true}).click();

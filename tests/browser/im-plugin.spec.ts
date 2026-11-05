@@ -1,6 +1,5 @@
 import {test, expect} from '@playwright/test';
 import {readFileSync} from 'node:fs';
-import {workbenchReady} from './compose.ts';
 
 test('IM setup follows the channel rail, binding, QR and bot card flow with durable settings', async ({page, request}, testInfo) => {
   test.skip(process.env.WEFT_BROWSER_IM !== '1', 'Requires the IM transport and package builder fixture');
@@ -27,7 +26,7 @@ test('IM setup follows the channel rail, binding, QR and bot card flow with dura
   };
   await page.setViewportSize({width: 1440, height: 1000});
   await page.goto('/agents/' + environment);
-  await workbenchReady(page);
+  await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
   await open();
   const panel = page.getByRole('region', {name: 'IM bots', exact: true});
   const navigation = panel.getByRole('tablist', {name: 'IM settings navigation', exact: true});
@@ -318,7 +317,7 @@ test('IM conversations show channel logos and readable native titles in the tree
   await rpc('session/prompt', {request: {sessionId: ordinary, requestId: crypto.randomUUID(), mode: 'queue', content: [{type: 'text', text: 'Discuss 微信 · ordinary Web session'}]}});
   await page.setViewportSize({width: 1440, height: 1000});
   await page.goto('/agents/' + environment);
-  await workbenchReady(page);
+  await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
   const marked = '[data-weft-im-session-channel]';
   for (const session of sessions) {
     const row = page.locator(`[data-row-key="session:${session.id}"]`);
@@ -374,7 +373,7 @@ test('QQ and Feishu QR creation handle expiry, cancellation, confirmation and du
   expect((await request.post(base + '/native/package-installations', {data: {operation: 'approve', name: installation.name, digest: installation.digest, permissions: installation.permissions}})).status()).toBe(200);
   await page.setViewportSize({width: 1440, height: 1000});
   await page.goto('/agents/' + environment);
-  await workbenchReady(page);
+  await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
   await expect(page.getByRole('treeitem', {name: /New Session/}).first()).toBeVisible({timeout: 45_000});
   await page.getByRole('button', {name: 'Settings', exact: true}).click();
   await page.getByRole('button', {name: 'IM bots', exact: true}).click();
@@ -448,7 +447,7 @@ test('Add plugin installs the bundled IM archive after choosing a custom registr
   const base = `/v1/tenants/${tenantId}/environments/${environment}/native`;
   expect((await request.post(`/v1/tenants/${tenantId}/environments`, {data: {id: environment, name: environment}})).status()).toBe(201);
   await page.goto('/agents/' + environment);
-  await workbenchReady(page);
+  await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45_000});
   await page.getByRole('button', {name: 'Plugins', exact: true}).click({timeout: 45_000});
   await page.getByRole('button', {name: 'Add plugin', exact: true}).click();
   const dialog = page.getByRole('dialog', {name: 'Add plugin', exact: true});
