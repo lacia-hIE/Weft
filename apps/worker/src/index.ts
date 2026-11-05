@@ -599,6 +599,9 @@ export class SessionDO extends DurableObject<Env> {
     if (known && existing) {
       if (known.presentation !== 1 || existing.events.some(event => event.type === 'turn/start') || (workspaceId && workspaceId !== known.workspace_id) || (cwd && workspacePath(cwd) !== (existing.header.cwd ?? '/workspace'))) return false;
       const profile = JSON.parse(known.agent_document) as AgentRevision;
+      // The client can offer a blank from before an incompatible upgrade.
+      // Keep its history and let creation allocate a current-runtime Session.
+      if (!supportsAgentRuntime(profile.upstream)) return false;
       try {await this.nativeSelectPreset(scope, binding?.id ?? profile.spec.id, binding?.revision ?? (binding ? undefined : profile.revision));}
       catch (error) {if (error instanceof RemoteError && error.code === 'agent-preset/locked') return false; throw error;}
       return true;

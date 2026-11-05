@@ -8,6 +8,7 @@ import {nativeClient} from './helpers/native.ts';
 import {supportsAgentRuntime} from '../packages/harness-runtime/src/revision.ts';
 import {migratePresetSpec} from '../packages/control-plane/src/preset-migration.ts';
 import upstream from '../upstream.lock.json';
+import type {SessionCreateValue,SessionFollowFrame} from '@deepseek-ai/dsh-api-session-controller/types';
 
 /** Sources of DSH 0.2.1-alpha.4 and 0.2.1-rc.2 through rc.5, which 0.2.2-rc.1 no longer runs. */
 const retired=['86a402200d95fecef4529d969836f1fe13c6cb0d','687f282e8625c6b8d11ff58211a90524be2e4317','1f81c047fc48fa190a683e469daa699857e9afe8','504a01a9578abc2c6f1fb896b1dc322c9fe24f66','b830ec950faba0a46dda564be3e2d854afed94f1'];
@@ -16,6 +17,39 @@ test('only the pinned 0.2.2-rc.1 runtime is admitted',()=>{
   assert.ok(supportsAgentRuntime(upstream.commit));
   for(const source of retired)assert.equal(supportsAgentRuntime(source),false,source);
   assert.equal(supportsAgentRuntime('an-earlier-upstream'),false);assert.equal(supportsAgentRuntime('future-unreviewed-runtime'),false);
+});
+
+test('new Sessions skip blank Sessions retained from an incompatible runtime and keep their history', {timeout:120_000},async()=>{
+  const directory=await mkdtemp(join(tmpdir(),'weft-upstream-blank-'));
+  const options={browser:true,configureModel:false,scriptPath:'dist/environment-storage-worker.js'};
+  let runtime=createRuntime(directory,options);const api=nativeClient(()=>runtime);
+  const scenarios=[{sessionId:'old-default-blank',agentPreset:undefined},{sessionId:'old-explicit-blank',agentPreset:'minimal'}];
+  const snapshot=async(sessionId:string,activate=false)=>{
+    const stream=await api.stream<SessionFollowFrame>('session/follow',{request:{address:{kind:'session',sessionId},activate}});
+    try{const frame=await stream.next();if(frame.type!=='snapshot')throw new Error('Missing snapshot');return frame;}
+    finally{await stream.close();}
+  };
+  const before=new Map<string,Awaited<ReturnType<typeof snapshot>>>();
+  try{
+    for(const scenario of scenarios){
+      await api.call('session/create',{request:{sessionId:scenario.sessionId}});
+      before.set(scenario.sessionId,await snapshot(scenario.sessionId));
+      const seeded=await runtime.dispatchFetch(url('alpha','/_fixture/session-revision'),{method:'POST',body:JSON.stringify({scope:{tenantId:tenantId('alpha'),environmentId:'default',sessionId:scenario.sessionId},commit:'b830ec950faba0a46dda564be3e2d854afed94f1'})});
+      assert.equal(seeded.status,200);
+    }
+    await runtime.dispose();runtime=createRuntime(directory,options);
+    for(const scenario of scenarios){
+      const request={sessionId:scenario.sessionId,...scenario.agentPreset?{agentPreset:scenario.agentPreset}:{}};
+      const created=await api.call<SessionCreateValue>('session/create',{request});
+      assert.notEqual(created.sessionId,scenario.sessionId,'the client can offer an old blank, but creation must return a new Session');
+      assert.equal(created.agentPreset,scenario.agentPreset??'standard');
+      await snapshot(created.sessionId,true);
+      assert.deepEqual(await api.call('session/create',{request:{...request,sessionId:created.sessionId}}),created,'a blank on the current runtime is still reusable');
+      const retained=await snapshot(scenario.sessionId);
+      assert.deepEqual(retained.header,before.get(scenario.sessionId)!.header);
+      assert.deepEqual(retained.records,before.get(scenario.sessionId)!.records);
+    }
+  }finally{await runtime.dispose();await rm(directory,{recursive:true,force:true});}
 });
 
 test('a Session retained from 0.2.1-rc.5 keeps its history but no longer runs, while its custom preset moves to rc.1',{timeout:120_000},async()=>{
