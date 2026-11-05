@@ -258,7 +258,10 @@ export class Runtime implements SourceHost {
     await this.sessions.ensure(MASTER_ID, this.store.settings().executor.directory, 'dsh-superagent orchestrator', 'orchestrator').catch(async (error: unknown) => {
       // The root directory is created on first use, as a Session opens only in a directory that exists.
       await this.ctx.fs.writeText(await this.ctx.fs.resolve(`${this.store.settings().executor.directory}/.superagent`), 'dsh-superagent\n')
-      await this.sessions.ensure(MASTER_ID, this.store.settings().executor.directory, 'dsh-superagent orchestrator', 'orchestrator').catch(() => { throw error })
+      // Once the directory exists, a second failure has its own cause; report both.
+      await this.sessions.ensure(MASTER_ID, this.store.settings().executor.directory, 'dsh-superagent orchestrator', 'orchestrator').catch((retry: unknown) => {
+        throw new Error(`${retry instanceof Error ? retry.message : String(retry)} (after: ${error instanceof Error ? error.message : String(error)})`, {cause: retry})
+      })
     })
     if (this.stopped.signal.aborted) return
     this.executor.resume()
