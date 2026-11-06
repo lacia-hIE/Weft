@@ -39,7 +39,7 @@ test('a real Worker IM conversation answers the native question without a Web cl
     for(const end=Date.now()+45_000;Date.now()<end;await delay(100)){const value=await read();if(value!==undefined)return value;}
     const sessions=await api.call<{items:{sessionId:string}[]}>('session/list',{_request:{}});
     const pages=await Promise.all(sessions.items.map(row=>api.call('session/page',{request:{address:{kind:'session',sessionId:row.sessionId},maxMessages:10}})));
-    const records=pages.map(page=>(page as {records:{event:{type:string;data:any}}[]}).records.map(({event})=>({type:event.type,...(['user/message','tool/call','tool/result','turn/end'].includes(event.type)?{data:event.type==='user/message'?{source:event.data.source}:event.data}:{})})));
+    const records=pages.map(page=>(page as {records:{event:{type:string;data:any}}[]}).records.map(({event})=>({type:event.type,...(['user/message','tool/call','tool/result','turn/end'].includes(event.type)?{data:event.type==='user/message'?{source:{kind:event.data.source.kind,rpcId:event.data.source.rpcId}}:event.data}:{})})));
     throw new Error(`${label}: ${JSON.stringify({sent,sessions,records,modelCalls:modelBodies.length})}`);
   };
   const configure=async(entry:string,patch:Record<string,unknown>)=>{
@@ -67,8 +67,8 @@ test('a real Worker IM conversation answers the native question without a Web cl
     const code=question.match(/· ([a-f0-9]{12})/)![1];
     await qq('2');await wait(()=>sent.includes('ANSWER_SEEN')?true:undefined,'native tool answer resumes the same turn');
     assert.match(modelBodies.at(-1)!,/Blue/);
-    const calls=modelBodies.length;await qq(`/answer ${code} 1`);await delay(500);assert.equal(modelBodies.length,calls,'duplicate answers never start another prompt');
-    assert.match(sent.at(-1)!,/已处理或已取消/);
+    const calls=modelBodies.length,staleStart=sent.length;await qq(`/answer ${code} 1`);await delay(500);assert.equal(modelBodies.length,calls,'duplicate answers never start another prompt');
+    assert.ok(sent.slice(staleStart).some(text=>text.includes('已处理或已取消')));
     // Web and IM answer the same native request; the first accepted answer wins.
     events=await api.events();const ready=await events.next();assert.equal(ready.type,'ready');if(ready.type!=='ready')throw new Error('ready');
     await qq('/new');await qq('ASK_SECOND_QUESTION');
@@ -77,6 +77,6 @@ test('a real Worker IM conversation answers the native question without a Web cl
     const secondCode=second.match(/· ([a-f0-9]{12})/)![1];
     await api.call('$events/result',{clientId:ready.clientId,eventId:invocation.eventId,outcome:{kind:'result',value:{answers:[{id:'color',selected:['Red']}]}}});
     await wait(()=>sent.filter(text=>text==='ANSWER_SEEN').length===2?true:undefined,'Web answer resumes IM turn');
-    await qq(`/answer ${secondCode} 2`);assert.match(sent.at(-1)!,/已处理或已取消/);
+    const beforeStaleWeb=sent.length;await qq(`/answer ${secondCode} 2`);assert.ok(sent.slice(beforeStaleWeb).some(text=>text.includes('已处理或已取消')));
   }finally{await events?.close();await runtime.dispose();}
 });

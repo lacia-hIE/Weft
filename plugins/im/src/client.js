@@ -394,7 +394,7 @@ function GeneralSettings({scope, presets, t}) {
       h('label', {className: 'im-checkbox'}, h('input', {type: 'checkbox', disabled: form.busy, checked: form.value.titlePrefix !== false, onChange: event => form.edit('titlePrefix', event.target.checked)}), t('titlePrefix')),
       h(Field,{label:t('questionWebUrl'),value:form.value.webUrl||'',placeholder:new URL('.',document.baseURI).href,disabled:form.busy,onChange:value=>form.edit('webUrl',value)}),
       h('p',{className:'im-description'},t('questionWebUrlHint')),
-      h('p', {className: 'im-description'}, t('newSessionsHint')), h('button', {type: 'submit', className: 'im-button', 'data-kind': 'primary', disabled: form.busy || !form.dirty}, t('save'))),
+      h('p', {className: 'im-description'}, t('newSessionsHint')), h('button', {type: 'submit', className: 'im-button', 'data-kind': 'primary', disabled: form.busy || !form.dirty && !!form.value.webUrl}, t('save'))),
     h('details', {className: 'im-about'}, h('summary', null, t('setupHelp')), h('p', {className: 'im-description'}, t('permissions')), h('p', {className: 'im-description'}, t('botsHint'))),
     h(Notice, {error: true}, form.error), h(Notice, null, form.message));
 }

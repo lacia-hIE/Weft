@@ -22,7 +22,7 @@ export function questionText(row, webUrl) {
     question.header, question.question, question.detail,
     ...(question.options ?? []).map((option, index) => `${index + 1}. ${option.label}${option.description ? ` — ${option.description}` : ''}`),
     question.multiSelect ? '可多选，用逗号分隔编号，也可直接填写答案。' : '回复选项编号或直接填写答案。',
-    `回复本消息，或发送 /answer ${row.code} <答案>。`,
+    `回复本消息，或发送 /answer ${row.code} <答案>。发送 /answer ${row.code} /skip 跳过当前题。`,
     row.state === 'continued' ? 'Agent 已继续执行，此问题仍可补答。' : undefined];
   if (webUrl) {
     try {const url = new URL(webUrl); if (['https:', 'http:'].includes(url.protocol) && !url.username && !url.password) {url.searchParams.set('weft-session', row.sessionId); lines.push(`在 Weft 回答：${url.href}`);}} catch { /* A missing or invalid configured URL must not block channel replies. */ }
@@ -32,7 +32,7 @@ export function questionText(row, webUrl) {
 
 export class ImQuestions {
   constructor(bridge, table) {this.bridge = bridge; this.table = table; this.syncs = new Map();}
-  waiting(chatKey) {return [...this.table.entries()].some(([,row])=>row.chatKey===chatKey&&!row.closed);}
+  waiting(chatKey) {return [...this.table.entries()].some(([,row])=>row.chatKey===chatKey&&!row.closed&&row.available!==false);}
   matches(chatKey,sender,replyTo) {return [...this.table.entries()].some(([,row])=>row.chatKey===chatKey&&row.sender===sender&&row.receipts?.includes(replyTo));}
   async clear(channel) {for(const [key,row] of this.table.entries())if(row.channel===channel)await this.table.delete(key);}
   sync(sessionId) {
@@ -79,11 +79,11 @@ export class ImQuestions {
       if (!row) {
         const route = this.route(sessionId, events); if (!route) continue;
         const nativeCallId = question.callId ?? events.findLast(event => event.type === 'tool/call' && event.data?.name === 'ask_user_question')?.data.callId;
-        row = {...question, ...route, sessionId, nativeCallId, answers: [], code: (await requestId(key)).replaceAll('-', '').slice(0, 12)};
+        row = {...question, ...route, sessionId, nativeCallId, available:true, answers: [], code: (await requestId(key)).replaceAll('-', '').slice(0, 12)};
         await this.table.put(key, row);
       } else if (!row.closed) {
         const continued=row.state!=='continued'&&question.state==='continued'&&row.announced;
-        row = {...row, requestId: question.requestId, state: question.state}; await this.table.put(key, row);
+        row = {...row, requestId: question.requestId, state: question.state, available:true}; await this.table.put(key, row);
         if(continued&&bridge.channels.has(row.channel))await bridge.send(row.channel,row.target,`提问 ${row.code} 的等待时间已结束，Agent 已继续执行。仍可用 /answer ${row.code} <答案> 补答。`,`question:${key}:continued`);
       }
       if (!row.closed && !row.announced && bridge.channels.has(row.channel)) await this.announce(key, row);
@@ -93,12 +93,12 @@ export class ImQuestions {
       // The waterfall can settle before its tool result is committed. Wait for durable evidence.
       const result = events.findLast(event => event.type === 'tool/result' && event.data?.message?.toolCallId === row.nativeCallId);
       const reply = events.some(event => event.type === 'user/message' && event.data?.source?.kind === 'user-question-reply' && event.data.source.callId === row.nativeCallId);
-      if (!result && !reply && events.at(-1)?.type !== 'turn/end') continue;
+      if (!result && !reply && events.at(-1)?.type !== 'turn/end') {await this.table.put(key,{...row,available:false});continue;}
       await this.table.put(key, {...row, closed: true});
       if (row.announced && bridge.channels.has(row.channel)) await bridge.send(row.channel, row.target, `提问 ${row.code} 已结束，可在 Weft 查看处理结果。`, `question:${key}:closed`);
     }
     // Retain a bounded set of closed identities to reject stale quoted replies.
-    const ended = [...this.table.entries()].filter(([, row]) => row.closed);
+    const ended = [...this.table.entries()].filter(([, row]) => row.closed||row.available===false);
     for (const [key] of ended.slice(0, Math.max(0, ended.length - 500))) await this.table.delete(key);
   }
   async announce(key, row) {
@@ -121,7 +121,7 @@ export class ImQuestions {
     const candidates = [...this.table.entries()].filter(([, row]) => row.chatKey === chatKey);
     let selected = explicit ? candidates.find(([, row]) => row.code === explicit[1].toLowerCase())
       : message.replyTo ? candidates.find(([, row]) => row.receipts?.includes(message.replyTo)) : undefined;
-    const own = candidates.filter(([, row]) => !row.closed && row.sender === message.sender);
+    const own = candidates.filter(([, row]) => !row.closed && row.available!==false && row.sender === message.sender);
     if (listing) {
       if (!own.length) await bridge.send(message.channel, message.target, '当前没有等待你回答的问题。');
       for (const [key, row] of own) await this.announce(key, row);

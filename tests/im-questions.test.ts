@@ -95,3 +95,15 @@ test('multi-question and multi-select answers retain native ids and option label
   const mixed=fixture();mixed.setEvents([{type:'turn/start'},{type:'user/message',data:{source:{kind:'user',rpcId:'prompt-1'}}},{type:'user/message',data:{source:{kind:'user',rpcId:'web-only'}}}]);
   await mixed.service.sync('session-a');assert.equal(mixed.sent.length,0);
 });
+
+test('plugin reload preserves a partial batch without resending, and a vanished foreground wait is not advertised as answerable',async()=>{
+  const f=fixture();f.setPending([{requestId:'batch',callId:'call-1',state:'open',questions:[...questions,{id:'notes',question:'Any notes?'}]}]);
+  await f.service.sync('session-a');await f.service.receive(f.message('1'));
+  const count=f.sent.length,reloaded=new ImQuestions(f.bridge,f.records);
+  await reloaded.sync('session-a');assert.equal(f.sent.length,count);
+  await reloaded.receive(f.message('Keep it small'));assert.equal(f.answers[0].answer.answers[1].custom,'Keep it small');
+  const stopped=fixture();await stopped.service.sync('session-a');stopped.setPending([]);
+  const afterRestart=new ImQuestions(stopped.bridge,stopped.records);await afterRestart.receive(stopped.message('/questions'));
+  assert.match(stopped.sent.at(-1)!.text,/没有等待/);assert.equal(afterRestart.waiting('bot:group-a'),false);
+  assert.equal(await afterRestart.receive(stopped.message('A new task')),false);
+});
