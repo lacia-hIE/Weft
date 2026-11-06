@@ -31,11 +31,15 @@ export function questionText(row, webUrl) {
 }
 
 export class ImQuestions {
-  constructor(bridge, table) {this.bridge = bridge; this.table = table; this.syncs = new Map();}
-  waiting(chatKey) {return [...this.table.entries()].some(([,row])=>row.chatKey===chatKey&&!row.closed&&row.available!==false);}
-  matches(chatKey,sender,replyTo) {return [...this.table.entries()].some(([,row])=>row.chatKey===chatKey&&row.sender===sender&&row.receipts?.includes(replyTo));}
+  constructor(bridge, table) {
+    this.bridge = bridge; this.table = table; this.syncs = new Map();
+    this.enabled=typeof bridge.ctx.sessionController.questions==='function'&&typeof bridge.ctx.sessionController.answerQuestion==='function';
+  }
+  waiting(chatKey) {return this.enabled&&[...this.table.entries()].some(([,row])=>row.chatKey===chatKey&&!row.closed&&row.available!==false);}
+  matches(chatKey,sender,replyTo) {return this.enabled&&[...this.table.entries()].some(([,row])=>row.chatKey===chatKey&&row.sender===sender&&row.receipts?.includes(replyTo));}
   async clear(channel) {for(const [key,row] of this.table.entries())if(row.channel===channel)await this.table.delete(key);}
   sync(sessionId) {
+    if(!this.enabled)return Promise.resolve();
     const current=this.syncs.get(sessionId);if(current){current.again=true;return current.pending;}
     const work={again:false,pending:undefined};
     work.pending=Promise.resolve().then(async()=>{do{work.again=false;await this.refresh(sessionId);}while(work.again&&!this.bridge.closed);})
@@ -113,6 +117,10 @@ export class ImQuestions {
   }
   async receive(message) {
     const bridge = this.bridge, chatKey = `${message.channel}:${message.conversation}`, text = message.text.trim();
+    if(!this.enabled){
+      if(/^\/(answer|questions)\b/i.test(text)){await bridge.send(message.channel,message.target,'当前宿主尚未提供 IM 原生提问接口，请更新 Weft 后使用。');return true;}
+      return false;
+    }
     const explicit = /^\/answer\s+([a-f0-9]{12})\s+([\s\S]+)$/i.exec(text), listing = /^\/questions\s*$/i.test(text);
     if (/^\/answer\b/i.test(text) && !explicit) {await bridge.send(message.channel, message.target, '用法：/answer <提问编号> <答案>'); return true;}
     // Refresh authority before accepting an answer; a Web reply may have won since the last hint.

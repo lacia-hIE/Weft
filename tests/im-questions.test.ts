@@ -107,3 +107,10 @@ test('plugin reload preserves a partial batch without resending, and a vanished 
   assert.match(stopped.sent.at(-1)!.text,/没有等待/);assert.equal(afterRestart.waiting('bot:group-a'),false);
   assert.equal(await afterRestart.receive(stopped.message('A new task')),false);
 });
+
+test('a Host without the question capability keeps ordinary IM messages available',async()=>{
+  const f=fixture();delete f.bridge.ctx.sessionController.questions;
+  const service=new ImQuestions(f.bridge,f.records);await service.sync('session-a');
+  assert.equal(await service.receive(f.message('An ordinary message')),false);
+  assert.equal(await service.receive(f.message('/questions')),true);assert.match(f.sent.at(-1)!.text,/更新 Weft/);
+});

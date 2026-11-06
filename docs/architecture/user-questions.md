@@ -33,6 +33,8 @@ Web replies end the IM question; IM replies cancel outstanding Web deliveries. T
 
 A bot assigned through `weftIm` retains its consumer's routing. This bridge does not claim other packages' conversations or forward local Executor questions. Consumers can use the same generic Host interfaces for cloud Sessions; local question transport needs a separate connector extension.
 
+Capability detection preserves existing chat, media and streaming behavior on a Host without the new interfaces; explicit question commands explain that the Host needs updating.
+
 ## Validation
 
 `tests/im-question-flow.test.ts` installs the actual bundled plugin and drives signed QQ webhooks through Worker Host, the native ask-user tool, Session notifications, IM replies and Web answers. `tests/im-questions.test.ts` covers Web/plugin arbitration, delegated Web listeners, approval exclusion, cross-Session and cross-chat replies, requester checks, batches, multi-select answers, continued questions, `/new` and duplicate submissions. Both run in CI, including a build-stage smoke check.

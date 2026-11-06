@@ -79,7 +79,7 @@ class ImBridge {
       this.deliveries = domain.table('deliveries');
       this.questions = new ImQuestions(this, domain.table('questions'));
       ctx.effect(() => ctx.weftSessionEvents.onTurnEnded(event => this.turnEnded(event)), 'dsh-im turn notifications');
-      ctx.effect(() => ctx.weftSessionEvents.onQuestionChanged(({sessionId}) => this.questions.sync(sessionId)), 'dsh-im question notifications');
+      if(this.questions.enabled&&typeof ctx.weftSessionEvents.onQuestionChanged==='function')ctx.effect(() => ctx.weftSessionEvents.onQuestionChanged(({sessionId}) => this.questions.sync(sessionId)), 'dsh-im question notifications');
       for (const [chatKey, row] of this.conversations.entries()) if (!row.automation && !this.sessionRoutes.get(row.sessionId)) await this.sessionRoutes.put(row.sessionId, {chatKey, channel: row.channel, target: row.target, group: row.group});
       queueMicrotask(() => {void this.ready.then(() => this.refreshRoutes()).catch(error => console.warn('dsh-im automation routes:', String(error)));});
       // Replies interrupted by a restart are delivered from their durable cursor.
@@ -398,7 +398,8 @@ class ImBridge {
   /** Subscribe to the bound Session's turn ends; a failure retries at the next activation. */
   async watch(key, sessionId) {
     try {
-      await this.ctx.weftSessionEvents.watchQuestions(sessionId);
+      if(this.questions.enabled&&typeof this.ctx.weftSessionEvents.watchQuestions==='function')await this.ctx.weftSessionEvents.watchQuestions(sessionId);
+      else await this.ctx.weftSessionEvents.watch(sessionId);
       await this.conversations.update(key, current => current?.sessionId === sessionId ? {...current, watched: true} : current);
     } catch (error) {console.warn(`dsh-im watch ${key}: ${error instanceof Error ? error.message : String(error)}`);}
   }
