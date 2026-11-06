@@ -9,6 +9,7 @@ import type {SettingsDescribeValue} from '@deepseek-ai/dsh-settings/types';
 import type {RemoteEventDownlinkFrame} from '@weft/upstream/packages/api/gateway/src/stream-protocol.ts';
 import {buildPackage} from '../apps/plugin-builder/server.mjs';
 import {entryNamespace,type Installation} from '../packages/package-install/src/contracts.ts';
+import type {AgentRevision} from '../packages/control-plane/src/contracts.ts';
 import {createRuntime,tenantId,url} from './helpers/miniflare.ts';
 import {nativeClient} from './helpers/native.ts';
 
@@ -78,5 +79,18 @@ test('a real Worker IM conversation answers the native question without a Web cl
     await api.call('$events/result',{clientId:ready.clientId,eventId:invocation.eventId,outcome:{kind:'result',value:{answers:[{id:'color',selected:['Red']}]}}});
     await wait(()=>sent.filter(text=>text==='ANSWER_SEEN').length===2?true:undefined,'Web answer resumes IM turn');
     const beforeStaleWeb=sent.length;await qq(`/answer ${secondCode} 2`);assert.ok(sent.slice(beforeStaleWeb).some(text=>text.includes('已处理或已取消')));
+    await events.close();events=undefined;
+    // Exercise the actual native timed definition and late-answer service, with no Web timer claim.
+    const standard=await(await runtime.dispatchFetch(url('alpha',base+'/agents/standard'))).json() as AgentRevision;
+    const timed={...standard.spec,id:'im-timed',name:'IM timed',plugins:standard.spec.plugins.map(row=>row.id==='tool-ask-user'?{...row,config:{mode:'timed',timeout:1}}:row)};
+    const published=await runtime.dispatchFetch(url('alpha',base+'/agents'),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({spec:timed,expectedRevision:0})});
+    assert.equal(published.status,200,await published.text());
+    await configure('im-qq',{agentPreset:'im-timed'});await qq('/new');await qq('ASK_TIMED_QUESTION');
+    const timedQuestion=await wait(()=>sent.find(text=>text.includes('Which color should I use?')&&!text.includes(code!)&&!text.includes(secondCode!)),'native timed question');
+    const timedCode=timedQuestion.match(/· ([a-f0-9]{12})/)![1];
+    await wait(()=>sent.filter(text=>text==='ANSWER_SEEN').length===3?true:undefined,'native timeout continues without an IM answer');
+    await qq(`/answer ${timedCode} 2`);
+    await wait(()=>sent.filter(text=>text==='ANSWER_SEEN').length===4?true:undefined,'native late answer resumes through IM response delivery');
+    assert.match(modelBodies.at(-1)!,/answer_to_pending_question/);assert.match(modelBodies.at(-1)!,/Blue/);
   }finally{await events?.close();await runtime.dispose();}
 });
