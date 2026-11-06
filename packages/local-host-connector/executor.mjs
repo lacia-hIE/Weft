@@ -20,7 +20,7 @@ async function privateWrite(file,value){
 /** One native DSH, one persisted mailbox; reconnects do not replay accepted prompts. */
 export function createExecutorController({ctx,agentOwner=ctx,file,request=fetch}){
   let data={accepting:false,maxWorkers:1,jobs:{}},status='unpaired',closed=false,reconciled=true,loop,stop;
-  let saving=Promise.resolve(),actions=Promise.resolve();const disposers=[],configured=new WeakSet(),handles=new Map();
+  let saving=Promise.resolve(),actions=Promise.resolve();const disposers=[],configured=new WeakMap(),handles=new Map();
   const save=()=>{const copy=JSON.parse(JSON.stringify(data));return saving=saving.catch(()=>{}).then(()=>privateWrite(file,copy));};
   const serial=run=>{const result=actions.then(run);actions=result.catch(()=>{});return result;};
   const jobOf=agent=>{
@@ -68,19 +68,28 @@ export function createExecutorController({ctx,agentOwner=ctx,file,request=fetch}
       }
     }
     if(!job||configured.has(agent))return;
-    if(job.stopping||job.state==='stopped')throw new Error('Assignment ended');
-    configured.add(agent);
+    // Web opening promotes a retained root Session to a native Agent. An ended
+    // Assignment must not veto that promotion: rollback emits session/removed,
+    // losing the sidebar's cwd even though the history and Workspace still exist.
+    // Opening history grants no cloud tools or execution policy. New descendants
+    // of an ended worker are still rejected by the parent admission above.
+    if(job.stopping||job.state==='stopped'){
+      if(agent.id!==job.sessionId)throw new Error('Assignment ended');
+      return;
+    }
+    const effects=[];
+    configured.set(agent,()=>{for(const dispose of effects.reverse())dispose();configured.delete(agent);});
     const root=agent.id===job.sessionId,assignmentId=job.assignmentId;
     // Native delegation already pins the child's sandbox and non-interactive approval policy.
     if(root&&data.permissionPreset)ctx.permissionPresets.set(agent.session,data.permissionPreset);
     // The native Agent scope owns these effects. Retain its guards if shutdown fails;
     // completed children release them with their scope instead of accumulating controller references.
-    agent.ctx.systemPrompt.section({name:'weft-executor',order:600,interpolate:false,text:()=>`${jobOf(agent)?.instructions??''}${root?'':'\nYou are a delegated worker. Return results to your parent; only the root worker reports or changes the cloud Ticket.'}`});
+    effects.push(agent.ctx.systemPrompt.section({name:'weft-executor',order:600,interpolate:false,text:()=>`${jobOf(agent)?.instructions??''}${root?'':'\nYou are a delegated worker. Return results to your parent; only the root worker reports or changes the cloud Ticket.'}`}));
     const names=[...agent.ctx.tools.view(agent).restrictableNames];
     const allow=names.filter(name=>job.allow.some(pattern=>pattern.endsWith('*')?name.startsWith(pattern.slice(0,-1)):name===pattern));
     const cloudTools=job.tools.filter(tool=>root||tool.name==='orchestrator_read');
-    agent.ctx.tools.restrict({allow});
-    agent.ctx.on('tools/execute',async(execution,next)=>{
+    effects.push(agent.ctx.tools.restrict({allow}));
+    effects.push(agent.ctx.on('tools/execute',async(execution,next)=>{
       const current=jobOf(agent);
       if(execution.agent&&execution.agent!==agent)return next();
       if(!current||current.assignmentId!==assignmentId||current.state==='stopped'||current.stopping)throw new Error('Assignment ended');
@@ -88,10 +97,10 @@ export function createExecutorController({ctx,agentOwner=ctx,file,request=fetch}
         &&(!allow.includes(execution.name)&&!current.allow.some(pattern=>pattern.endsWith('*')?execution.name.startsWith(pattern.slice(0,-1)):execution.name===pattern)))throw new Error('Tool is unavailable to this Executor');
       if(!root&&TOOL_NAMES.has(execution.name)&&execution.name!=='orchestrator_read')throw new Error('Only the root Executor may change the Ticket');
       return next();
-    });
+    }));
     for(const tool of cloudTools){
       if(!TOOL_NAMES.has(tool.name))throw new Error('Unrecognized Executor tool');
-      agent.ctx.tools.register({...tool,output:{schema:{type:'object',additionalProperties:true},render:(_args,value)=>[{type:'text',text:JSON.stringify(value)}]},
+      effects.push(agent.ctx.tools.register({...tool,output:{schema:{type:'object',additionalProperties:true},render:(_args,value)=>[{type:'text',text:JSON.stringify(value)}]},
         execute:async(args,execution)=>{
           const current=jobOf(agent);
           if(!current||current.assignmentId!==assignmentId||current.state==='stopped'||current.stopping)throw new Error('Assignment ended');
@@ -102,7 +111,7 @@ export function createExecutorController({ctx,agentOwner=ctx,file,request=fetch}
             await change(current,{handoff:args.state!=='progress'||!!args.human_action});
           }
           return result;
-        }});
+        }}));
     }
   }
   disposers.push(ctx.on('agent/created',({agent})=>attach(agent)));
@@ -163,8 +172,10 @@ export function createExecutorController({ctx,agentOwner=ctx,file,request=fetch}
     while(agent?.status==='running'&&Date.now()<deadline)await sleep(25,signal);
     if(agent?.status==='running')throw new Error('Agent has not stopped; cancellation will be retried');
     const handle=handles.get(job.sessionId);
-    if(agent&&!handle)throw new Error('Executor Session is owned by another native caller; restart DSH before retrying');
+    // A user may have opened this cold Session before Retry. Drain its work and
+    // remove only our Assignment effects; its native browser owner keeps its handle.
     await handle?.dispose();handles.delete(job.sessionId);
+    if(agent&&!handle)configured.get(agent)?.();
     for(const child of Object.values(job.children??{}))child.active=false;
     await change(job,finish);
   }

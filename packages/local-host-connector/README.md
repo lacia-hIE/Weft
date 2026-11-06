@@ -43,6 +43,11 @@ Existing connector Sessions are backfilled on upgrade/restart, without resuming 
 The task Workspace uses the Session's exact directory; registering only its parent is insufficient.
 Removed historical directories produce a per-task diagnostic rather than disabling all execution.
 
+Connector 0.5.1 lets native DSH open completed or stopped task Sessions without reactivating their cloud
+Assignment. The sidebar, original task directory and files remain available after selection and refresh.
+If a Ticket is explicitly retried while its Session is open, stopping drains the task and removes the
+connector's tools and restrictions while preserving the browser-owned native Agent handle.
+
 The installation instructions below establish the reusable local DSH connection.
 
 A native DSH Host plugin for **DSH 0.2.2-rc.1** (Node 24.9 or newer), installed through the original
@@ -62,8 +67,8 @@ Untested releases remain rejected by both the native installer and the relay.
 2. Install `@laciaproject/dsh-local-host` from the native DSH Plugins page.
    Select **Enable now** when installation completes.
    The downloadable tarball remains available for offline installation by absolute path.
-   CLI: `dsh plugin --profile web add @laciaproject/dsh-local-host@0.5.0`, or for Desktop (fully quit, opened once
-   before) `dsh plugin --profile desktop add @laciaproject/dsh-local-host@0.5.0`.
+   CLI: `dsh plugin --profile web add @laciaproject/dsh-local-host@0.5.1`, or for Desktop (fully quit, opened once
+   before) `dsh plugin --profile desktop add @laciaproject/dsh-local-host@0.5.1`.
 3. Open **Plugins → Weft local connection** (`@laciaproject/dsh-local-host`) on the local DSH page, paste the code
    and select **Save and connect**. The plugin saves settings on this computer;
    no JSON download, manual file editing or restart is needed. Settings survive

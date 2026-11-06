@@ -4,6 +4,9 @@ Application versions use `vX.Y.Z`; local connector versions are independent. See
 
 ## [0.2.2-rc.1](https://github.com/lacia-hIE/Weft/releases/tag/v0.2.2-rc.1) — Unreleased / 未发布
 
+- Local connector `0.5.1` allows opening completed or stopped Superagent task Sessions without reactivating their Assignment or rolling native Session activation back. Task workspaces and Files remain visible after selection and reload; Retry/Stop on a browser-owned native Agent releases only connector-owned Assignment effects.
+- 本地连接插件 `0.5.1` 修复打开已完成或停止的 Superagent 任务时，会话恢复被拒绝、侧栏条目消失及文件栏提示没有目录的问题。浏览历史不会重新派工；对已打开会话重试、停止任务时，仅清理连接插件登记的派工工具和限制，保留原生浏览器持有的 Agent。
+
 - Targets DSH `0.2.2-rc.1` and is compatible with that release only. 0.2.2 changes the Loader, tool executor, Session history, Schedule and preset contracts, so Sessions created under 0.2.1 keep their history but no longer run; the environment's own presets are migrated and republished. The project version now follows the targeted DSH release. Both container images change; publish them before deploying.
 - 适配 DSH `0.2.2-rc.1`，且仅兼容该版本。0.2.2 改变了 Loader、工具执行器、会话历史、Schedule 与预设契约，0.2.1 时期创建的会话保留历史但不能继续运行；环境自己的预设会迁移后重新发布。项目版本改为与所适配的 DSH 版本一致。两份容器镜像均有变化，部署前需发布。
 - Local connector `0.5.0` supports DSH `0.2.2-rc.1` only (Node 24.9 or newer); connector `0.4.0` and earlier accept only 0.2.1. Upgrade DSH and the connector together.

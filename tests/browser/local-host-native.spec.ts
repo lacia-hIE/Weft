@@ -202,7 +202,40 @@ test('published local DSH pairs in native settings, runs Files, Git and PTY and 
   expect(retainedWorkspace.created).toBe(false);expect(retainedWorkspace.workspace.sessionIds).toContain(nativeSession);
   const sessions=await rpc('session/list',{_request:{}});expect(sessions.items.some((row:{sessionId:string})=>row.sessionId===sessionId)).toBe(true);
   expect((await readFile(project+'/notes.md','utf8')).match(/LOCAL_CHANGED_FILE/g)).toHaveLength(1);
-  await page.screenshot({path:testInfo.outputPath('local-dsh-native.png')});expect(errors).toEqual([]);
+  await page.screenshot({path:testInfo.outputPath('local-dsh-native.png')});
+  // Clicking a retained Executor root activates its native Agent. This must
+  // not be mistaken for a new Assignment or roll the Session out of the list.
+  const callsBeforeBrowsing=(await(await request.get('/__test/executor')).json()).modelCalls;
+  const taskPage=await context.newPage();taskPage.on('pageerror',error=>errors.push(error.message));
+  try{
+    await taskPage.goto(base+'/local/web/');
+    const group=taskPage.getByRole('treeitem',{name:'native-proof',exact:true});
+    await expect(group).toBeVisible({timeout:45_000});
+    if(await group.getAttribute('aria-expanded')==='false')await group.click();
+    const row=taskPage.locator(`[data-row-key="session:${nativeSession}"]`);
+    await expect(row).toBeVisible();await row.click();
+    await expect(taskPage.locator('[data-conversation-content]')).toHaveAttribute('data-conversation-session',nativeSession);
+    await expect.poll(async()=>(await rpc('session/state',{request:{sessionId:nativeSession}})).active).toBe(true);
+    await expect(row).toBeVisible();await expect(row).toHaveAttribute('aria-selected','true');
+    const listed=await rpc('session/list',{_request:{}});
+    expect(listed.items.find((item:any)=>item.sessionId===nativeSession)?.cwd).toBe(taskRoot+'/native-proof');
+    const expand=taskPage.getByRole('button',{name:'Open right sidebar',exact:true});
+    if(await expand.isVisible())await expand.click();
+    const filesGuide=taskPage.locator('[data-sidebar-right-guide-entry="files"]');
+    if(!await filesGuide.isVisible())await taskPage.getByRole('button',{name:'New tab',exact:true}).click();
+    await filesGuide.click();
+    const proof=taskPage.locator(`[data-files-path="${taskRoot}/native-proof/executor-proof.txt"]`);
+    await expect(proof).toBeVisible();await proof.getByRole('button').click();
+    await expect(taskPage.getByText('LOCAL_EXECUTOR_FILE_CREATED',{exact:true})).toBeVisible();
+    await expect(taskPage.locator('[data-files-state="no-workspace"]')).toHaveCount(0);
+    await taskPage.reload();
+    await expect(taskPage.getByText('LOCAL_EXECUTOR_FILE_CREATED',{exact:true})).toBeVisible({timeout:45_000});
+    await expect(row).toBeVisible();await expect(row).toHaveAttribute('aria-selected','true');
+    expect((await localState()).jobs.find((job:any)=>job.sessionId===nativeSession).state).toBe('stopped');
+    expect((await(await request.get('/__test/executor')).json()).modelCalls).toBe(callsBeforeBrowsing);
+    await taskPage.screenshot({path:testInfo.outputPath('local-executor-retained-session.png')});
+  }finally{await taskPage.close();}
+  expect(errors).toEqual([]);
 });
 
 function snapshotEndpoint(code:string):string {

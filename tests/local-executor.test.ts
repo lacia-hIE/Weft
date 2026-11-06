@@ -19,8 +19,8 @@ function native() {
     const localTools=new Map<string,any>(),guards:any[]=[],restrictions:string[][]=[],resources:(()=>void)[]=[]
     const agent:any={id:sessionId,session,status:'idle',inbox:{nextTurn:[],nextStep:[]},localTools,guards,restrictions,
       cancel:()=>{cancelled.push(sessionId);agent.status='idle'},
-      ctx:{on:(name:string,callback:any)=>{if(name==='tools/execute')guards.push(callback);return()=>{}},systemPrompt:{section:()=>()=>{}},
-        tools:{view:()=>({restrictableNames:new Set(['read','write','subagent','subagent_fork','wait_agent'])}),restrict:({allow}:{allow:string[]})=>{restrictions.push(allow);return()=>{}},register:(tool:any)=>{localTools.set(tool.name,tool);tools.set(tool.name,tool);const dispose=()=>{localTools.delete(tool.name);if(tools.get(tool.name)===tool)tools.delete(tool.name)};resources.push(dispose);return dispose}}}}
+      ctx:{on:(name:string,callback:any)=>{if(name==='tools/execute')guards.push(callback);return()=>{const index=guards.indexOf(callback);if(index>=0)guards.splice(index,1)}},systemPrompt:{section:()=>()=>{}},
+        tools:{view:()=>({restrictableNames:new Set(['read','write','subagent','subagent_fork','wait_agent'])}),restrict:({allow}:{allow:string[]})=>{restrictions.push(allow);return()=>{const index=restrictions.indexOf(allow);if(index>=0)restrictions.splice(index,1)}},register:(tool:any)=>{localTools.set(tool.name,tool);tools.set(tool.name,tool);const dispose=()=>{localTools.delete(tool.name);if(tools.get(tool.name)===tool)tools.delete(tool.name)};resources.push(dispose);return dispose}}}}
     agents.set(sessionId,agent);await input.setup?.(agent.ctx,agent);await emit('agent/created',{agent});return {agent,dispose:async()=>{for(const dispose of resources)dispose();agents.delete(sessionId)}}
   }
   const runtime={drain:async(roots:any[])=>{for(const root of roots){drained.push(root.id);for(const child of [...agents.values()])if(child.session.header.parentSession===root.id){child.cancel();agents.delete(child.id);await emit('subagent/end',{id:child.id,parentSessionId:root.id,runId:child.id,stopReason:'aborted',local:true})}}}}
@@ -181,6 +181,44 @@ test('retry resumes the same Session under a fresh native root and preserves chi
     assert.deepEqual(controller.snapshot().jobs[0].children.map((child:any)=>child.id).sort(),['new-child','old-child'])
     const saved=JSON.parse(await readFile(file,'utf8'));assert.equal(saved.jobs[id].accepted.includes(attempt),true)
   }finally{await controller.close();await rm(directory,{recursive:true,force:true})}
+})
+
+test('opening an ended task preserves its cwd without restarting work, then Retry drains only Assignment-owned effects',async()=>{
+  const directory=await mkdtemp(join(tmpdir(),'weft-browse-task-')),file=join(directory,'executor.json'),host=native()
+  let stop=false,attempt=assignment
+  const command=()=>({kind:'run',ticketId:ticket,assignmentId:attempt,name:'browse-task',directory:'/workspace/tree',title:'Browse task',instructions:'Task',allow:['read','subagent'],
+    tools:[{name:'orchestrator_report',description:'Report',parameters:{}}],messages:[{id:attempt,text:'Task'}]})
+  const request=async(address:string)=>address.endsWith('/pair')?Response.json({protocol,token}):Response.json({protocol,commands:[stop?{kind:'stop',ticketId:ticket,assignmentId:attempt}:command()],retryAfterMs:1000})
+  const controller=createExecutorController({ctx:host.ctx,file,request})
+  let browser:Awaited<ReturnType<typeof host.ctx.agents.resume>>|undefined
+  try{
+    await controller.pair({code:JSON.stringify({protocol,endpoint,pairingKey}),root:join(directory,'work'),permissionPreset:'read-only'})
+    await controller.configure({accepting:true,maxWorkers:1});await controller.reconnect();await waitFor(()=>host.prompts.length===1)
+    const id=host.prompts[0].sessionId,cwd=host.sessions.get(id).header.cwd
+    stop=true;await controller.reconnect();await waitFor(()=>controller.snapshot().jobs[0]?.state==='stopped')
+    browser=await host.ctx.agents.resume({resumeSessionId:id})
+    const agent=browser.agent
+    assert.equal(agent.session.header.cwd,cwd)
+    assert.ok(host.workspaces.get(cwd)?.sessionIds.has(id))
+    assert.equal(host.prompts.length,1,'opening history never replays the assignment')
+    assert.equal(controller.snapshot().jobs[0].state,'stopped')
+    assert.equal(agent.localTools.size,0,'opening history grants no cloud reporting tools')
+    assert.equal(agent.guards.length,0);assert.equal(agent.restrictions.length,0)
+    assert.equal(host.permissions.length,1,'browsing must not reset native execution permissions')
+    await assert.rejects(host.child(id,'late-child'),/Assignment ended/)
+    await controller.reconnect();await waitFor(()=>controller.snapshot().state==='connected')
+    assert.equal(host.prompts.length,1)
+    for(const next of ['e'.repeat(32),'f'.repeat(32)]){
+      attempt=next;stop=false;await controller.reconnect();await waitFor(()=>host.prompts.length===(next.startsWith('e')?2:3))
+      assert.equal(host.agents.get(id),agent,'Retry uses the already-open native Session')
+      assert.equal(agent.localTools.has('orchestrator_report'),true)
+      assert.equal(agent.guards.length,1);assert.equal(agent.restrictions.length,1)
+      stop=true;await controller.reconnect();await waitFor(()=>controller.snapshot().jobs[0]?.state==='stopped')
+      assert.equal(host.agents.get(id),agent,'cancelling cannot dispose the browser-owned handle')
+      assert.equal(agent.status,'idle');assert.equal(agent.localTools.size,0)
+      assert.equal(agent.guards.length,0);assert.equal(agent.restrictions.length,0)
+    }
+  }finally{await controller.close();await browser?.dispose();await rm(directory,{recursive:true,force:true})}
 })
 
 test('unreadable descendant catalogs block reconnect without replaying child work',async()=>{
