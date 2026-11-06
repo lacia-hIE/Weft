@@ -2,8 +2,8 @@ import React,{useCallback,useEffect,useId,useState,type ReactNode} from 'react';
 import {Button,Input,Switch,Tag} from '@deepseek-ai/dsh-client-ui-primitives';
 import metadata from './package.json' with {type:'json'};
 import {connectionStyles} from './client-styles.ts';
-import {DirectoryBrowser} from '../../deepseek-harness/packages/client/ui-directory-picker-browse/src/client/DirectoryBrowser.tsx';
-import type {DirectoryListing} from '@deepseek-ai/dsh-api-remotes/client';
+import {DirectoryBrowser} from './native-directory.js';
+import type {DirectoryListing} from '@deepseek-ai/dsh-host-directory-picker/types';
 
 const zh={title:'连接设置',description:'通过 Weft 使用本机环境，数据由本地 DSH 管理。',code:'配对码',hint:'在 Weft 首页生成配对码，复制并粘贴到这里。',placeholder:'粘贴配对码',saved:'配置自动保存在本机，无需下载文件。',details:'连接详情',address:'连接地址',hostVersion:'DSH 版本',pair:'保存并连接',reconnect:'重新连接',stop:'停止连接',busy:'正在处理…',failed:'操作失败，请检查配对码或稍后重试。',remote:'请在本机 DSH 页面管理连接。',
   advanced:'高级',legacyNotes:'历史执行约定',legacyNotesHint:'原项目配置保留供已有任务恢复使用；新任务的仓库和工作流程在 Superagent 提示词或技能中约定。',
