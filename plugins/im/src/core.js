@@ -249,7 +249,10 @@ class ImBridge {
       return 'denied';
     }
     const key = `${message.channel}:${message.conversation}`;
-    if (!['new','stop','help','steer','automations','notify'].includes(command) && await this.questions.receive(message)) return 'command';
+    if (!['new','stop','help','steer','automations','notify'].includes(command)) {
+      try {if(await this.questions.receive(message))return 'command';}
+      catch(error){await this.seen.delete(seenKey);throw error;}
+    }
     if (command === 'steer' && !text.replace(/^\/steer\b\s*/i, '').trim()) {
       await this.send(message.channel, message.target, '用法：/steer <补充内容>'); return 'command';
     }

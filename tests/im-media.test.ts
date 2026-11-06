@@ -110,6 +110,18 @@ test('IM attachments pass access checks before downloading, use scoped receipts,
   } finally {await fx.dispose();}
 });
 
+test('an unavailable question lookup leaves the inbound message retryable',async()=>{
+  const fx=await fixture(),receive=fx.bridge.questions.receive.bind(fx.bridge.questions);
+  try{
+    fx.bridge.questions.receive=async()=>{throw new Error('Question Host temporarily unavailable');};
+    await assert.rejects(fx.receive({messageId:'retryable-question',text:'2'}),/temporarily unavailable/);
+    fx.bridge.questions.receive=receive;
+    assert.equal(await fx.receive({messageId:'retryable-question',text:'2'}),'accepted');
+    assert.equal(fx.prompts.length,1);
+    assert.equal(await fx.receive({messageId:'retryable-question',text:'2'}),'duplicate');
+  }finally{await fx.dispose();}
+});
+
 test('channel workspace permissions apply only to newly created Sessions and preserve a binding on rejection', async () => {
   const fx = await fixture(), created: any[] = [];
   let serial = 0;
