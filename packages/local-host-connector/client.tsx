@@ -30,7 +30,7 @@ interface Context {
   sessions:{refresh:()=>Promise<void>;list:{getSnapshot:()=>{byId:Record<string,unknown>}}};
 }
 interface Props {view:'summary'|'page';t:(key:string,values?:Record<string,unknown>)=>string;directory:Directory;}
-export const inject=['slots','locale','uiWorkspace','sessions','remote.directoryPicker'];
+export const inject=['slots','locale','uiWorkspace','sessions','remote','remote.directoryPicker'];
 export function apply(ctx:Context):void {
   const ns='weft.local-host';ctx.effect(()=>ctx.locale.register(ns,{zh:{...zh,...browserZh,executorBrowse:'选择目录'},en:{...en,...browserEn,executorBrowse:'Choose directory'}}),'weft.local-host: locale');
   const settings=()=>({directory:{pick:async()=>{

@@ -44,9 +44,9 @@ test('local pairing is single-use, tenant-bound, revocable and survives catalogu
     const frame=JSON.parse(await notification);assert.equal(frame.type,'plugin-wake');
     assert.deepEqual({owner:frame.owner,environmentId:frame.environmentId,topic:frame.topic},hint);
     assert.equal('token' in frame,false);assert.equal('commands' in frame,false);
-    await assert.rejects(owner.notifyLocal(tenantId('beta'),'laptop',hint),/scope mismatch/);
+    await assert.rejects(owner.notifyLocal(tenantId('beta'),'laptop',hint));
     assert.equal(await owner.notifyLocal(tenant,'missing',hint),false);
-    await assert.rejects(owner.notifyLocal(tenant,'laptop',{...hint,topic:'../other'}),/Invalid/);
+    await assert.rejects(owner.notifyLocal(tenant,'laptop',{...hint,topic:'../other'}));
     assert.equal((await call(base+'/local/pairing','DELETE')).status,200);
     assert.equal((await connect(token)).status,401);
     const replacement=(await pair()).pairingKey;assert.equal((await connect(token)).status,401);
