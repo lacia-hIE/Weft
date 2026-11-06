@@ -93,6 +93,9 @@ import type { ContainerInstance } from '../../workspace/src/object.ts';
 import type { WorkspaceShell } from '../../workspace/src/runtime-choice.ts';
 import { sessionAddress, type SessionScope } from '../../tenant/src/index.ts';
 import sessionRemote from '../../../.generated/official-remotes/packages/api/session-controller/typert.remote-client.js';
+import questionRemote from '../../../.generated/official-remotes/packages/interaction/user-questions/typert.remote-client.js';
+import type {UserQuestionProjectionView} from '@deepseek-ai/dsh-user-questions/types';
+import {conversationalQuestions, validateQuestionAnswer, type HostUserQuestion} from '../../native-plugins/src/user-questions.ts';
 import type { SessionControlFrame, SessionProjectionBaseline } from '@deepseek-ai/dsh-api-session-controller/types';
 import { remoteStream } from '../../harness-runtime/src/remote-stream.ts';
 import { NativeSettings, PRESET_NAMESPACE, LOOP_NAMESPACE, SUBAGENT_NAMESPACE, PERMISSION_NAMESPACE, MARKET_NAMESPACE, MODEL_NAMESPACE, PI_AI_NAMESPACE, WORKSPACE_RUNTIME_NAMESPACE, DEFAULT_MODEL_NAMESPACE, PROFILE_PLUGINS_NAMESPACE } from './native-settings.ts';
@@ -246,6 +249,7 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
     z.uuid().parse(eventId);
     id.parse(agentId);
     if (!(NATIVE_WATERFALLS as readonly string[]).includes(event)) throw new Error('Unknown native waterfall');
+    this.questionScope = scope;
     return this.nativeEvents.waterfall(eventId, event, agentId, request);
   }
   /** Root Agent notifications the official client subscribes to through Remote Events. */
@@ -829,6 +833,13 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
     const live = watching.filter(name => installed.has(name));
     if (live.length) await this.backgroundPackages(scope).dispatchSessionEvent(live, {sessionId, seq});
   }
+  /** A content-free hint through existing durable Session watches; the plugin pulls native state. */
+  async nativeQuestionChanged(scope: ControlScope, sessionId: string): Promise<void> {
+    this.scope(scope); id.parse(sessionId);
+    if (this.lifecycle.mode !== 'active' || this.nativeSessionRoot(scope, sessionId) !== sessionId) return;
+    const watching = this.ctx.storage.sql.exec<{package:string}>('SELECT package FROM weft_session_watches WHERE session_id=?',sessionId).toArray().map(row=>row.package);
+    if (watching.length) await this.backgroundPackages(scope).dispatchSessionEvent(watching,{type:'user-question',sessionId});
+  }
   async nativePackageFollow(scope: ControlScope, receipt: {name: string; digest: string; activationId: string}, raw: unknown): Promise<Response> {
     this.nativePackageAuthorize(scope, receipt, 'sessions');
     const {request} = sessionRemote.methods['session/follow'].input({strict: true}).create().parse({request: raw});
@@ -957,6 +968,25 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
     if (this.nativeSessionRoot(scope, sessionId) !== sessionId) throw new Error('Session is outside this environment or is not a root Session');
     const address = {...scope, sessionId};
     const target = this.env.SESSIONS.getByName(sessionAddress(address));
+    if (method === 'questions' || method === 'answerQuestion') {
+      const input = z.object({sessionId:id,requestId:z.string().min(1).max(256).optional(),answer:z.unknown().optional()}).strict().parse(raw);
+      const projection = await (await target.nativeProjections(address)).json() as {values?:{userQuestions?:UserQuestionProjectionView}} | null;
+      this.nativePackageAuthorize(scope,receipt,'sessions');
+      const open = this.nativeEvents.questions(sessionId);
+      const continued:HostUserQuestion[] = (projection?.values?.userQuestions?.active??[])
+        .filter(question=>question.state==='continued'&&conversationalQuestions(question.questions))
+        .map(question=>({...question,requestId:question.callId}));
+      if (method === 'questions') return [...open,...continued.filter(question=>!open.some(item=>item.callId===question.callId))];
+      if (!input.requestId) throw new Error('Question request identity is required');
+      const args = questionRemote.methods['userQuestions/answer'].input({strict:true}).create().parse({agentId:sessionId,callId:input.requestId,answer:input.answer});
+      if (this.nativeEvents.answerQuestion(sessionId,input.requestId,args.answer)) return true;
+      const question = continued.find(question=>question.requestId===input.requestId);
+      if (!question) return false;
+      validateQuestionAnswer(question.questions,args.answer);
+      const result = await (await target.nativeAgentRemote(address,'userQuestions/answer',args)).json() as {ok:boolean;value?:boolean};
+      if (!result.ok) throw new Error('Native question answer was rejected');
+      return result.value===true;
+    }
     if (method === 'selectModel') {
       const {request} = sessionRemote.methods['session/selectModel'].input({strict: true}).create().parse({request: raw});
       // Bot-specific selection must not change the environment's default model.
@@ -1186,7 +1216,10 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
   async nativeSaveDefaultModel(scope: ControlScope, selected: {provider: string; model: string; reasoningEffort?: string}): Promise<void> {
     await this.settings(scope).saveDefault(selected);
   }
-  private readonly nativeEvents = new NativeEventHub();
+  private questionScope:ControlScope|undefined;
+  private readonly nativeEvents = new NativeEventHub(sessionId=>{
+    if (this.questionScope) this.ctx.waitUntil(this.nativeQuestionChanged(this.questionScope,sessionId).catch(()=>{}));
+  });
   private readonly nativeControl = new NativeStreamHub<SessionControlFrame>();
   private summaries: DurableSessionSummaries | undefined;
   private summaryStore(): DurableSessionSummaries {return this.summaries ??= new DurableSessionSummaries(this.ctx.storage.sql);}

@@ -265,6 +265,7 @@ export class SessionDO extends DurableObject<Env> {
       const owner = controlScope(scope.tenantId, scope.environmentId);
       const pluginsReady = Promise.withResolvers<void>();
       let packageTurn: string | undefined;
+      const questionCalls = new Set<string>();
       void pluginsReady.promise.catch(() => {});
       const host = await NativeSessionHost.open({...runtime.options, onEvent: (event, session) => {
         runtime.options.onEvent?.(event, session);
@@ -272,6 +273,12 @@ export class SessionDO extends DurableObject<Env> {
         if (event.type === 'session/title') this.ctx.waitUntil(this.publishNativeSummary(scope).catch(() => { /* The next turn or rename republishes. */ }));
         // Subagent turns belong to their parent's turn; watchers hear about root turns only.
         if (event.type === 'turn/end' && session.id === scope.sessionId) this.ctx.waitUntil(this.notifyTurnEnded(scope, event.seq).catch(() => { /* Watchers recover from their own cursor. */ }));
+        if (session.id === scope.sessionId) {
+          if (event.type === 'tool/call' && event.data.name === 'ask_user_question') questionCalls.add(event.data.callId);
+          if (event.type === 'tool/result' && questionCalls.delete(event.data.message.toolCallId)
+            || event.type === 'user/message' && event.data.source.kind === 'user-question-reply')
+            this.ctx.waitUntil(this.notifyQuestionChanged(scope).catch(()=>{}));
+        }
       }, beforeAssembly: async () => {
         await pluginsReady.promise; await runtime.options.beforeAssembly?.();
         const live = this.nativeHost;
@@ -329,6 +336,11 @@ export class SessionDO extends DurableObject<Env> {
     await this.nativeHost?.ctx.get('sessionPersistence')?.flush();
     const owner = controlScope(scope.tenantId, scope.environmentId);
     await controlFor(this.env, owner).nativeSessionTurnEnded(owner, scope.sessionId, seq);
+  }
+  private async notifyQuestionChanged(scope: SessionScope): Promise<void> {
+    await this.nativeHost?.ctx.get('sessionPersistence')?.flush();
+    const owner=controlScope(scope.tenantId,scope.environmentId);
+    await controlFor(this.env,owner).nativeQuestionChanged(owner,scope.sessionId);
   }
   private async publishNativeSummary(scope: SessionScope): Promise<void> {
     const group = await (await this.nativeReadSummaryGroup(scope)).text();

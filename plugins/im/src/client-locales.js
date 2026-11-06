@@ -1,4 +1,5 @@
 export const zh = {
+  questionWebUrl:'提问的网页入口', questionWebUrlHint:'可填写当前环境的公开网页地址。保存通用设置时会自动采用当前地址，提问消息将附带网页回答入口。',
   email: '邮箱', emailEmptyTitle: '连接你的邮箱', emailTransport: 'IMAP 收信 · SMTP 回信',
   emailMissing: '请填写邮箱地址、IMAP / SMTP 服务器和密码或授权码。',
   emailGuide: '支持已开启 IMAP/SMTP 的通用邮箱。使用服务商提供的服务器地址、端口和授权码；用户名留空使用邮箱地址。保存并启用即允许自动处理新邮件并回信，仅接收之后的新邮件。默认白名单为空，请在「更多设置 → 访问设置」添加允许的发件人。OAuth2 模式填写访问令牌，到期需手动更新。',
@@ -69,6 +70,7 @@ export const zh = {
   setupHelp: '接入说明', permissions: '插件需要浏览器模块、外部网络、Webhook 路由、持久存储、会话管理和环境后台权限。', botsHint: '每个渠道可以接入多个机器人，各自有独立的凭据、连接、设置和会话。三个渠道均支持扫码；飞书和 QQ 也支持凭据与 HTTP 回调接入，每个机器人有自己的回调地址。',
 };
 export const en = {
+  questionWebUrl:'Web link for questions', questionWebUrlHint:'Use this environment’s public web address. Saving general settings uses the current address when empty and adds a web answer link to question messages.',
   email: 'Email', emailEmptyTitle: 'Connect your mailbox', emailTransport: 'IMAP inbox · SMTP replies',
   emailMissing: 'Enter the email address, IMAP/SMTP servers and passwords or app passwords.',
   emailGuide: 'Use a mailbox with IMAP and SMTP enabled. Enter its servers, ports and password or app password. Blank usernames use the email address. Saving enables automatic replies to future mail only. Add allowed senders under More settings → Access settings. OAuth2 takes an access token; renew it manually when it expires.',

@@ -1,5 +1,7 @@
 import { RemoteError, isRemoteJsonValue } from '@deepseek-ai/dsh-typert-protocol';
 import type { RemoteEventAgentId, RemoteEventClientId, RemoteEventDownlinkFrame, RemoteEventEmitFrame, RemoteEventId, RemoteEventInvocationFrame, RemoteEventResult } from '@weft/upstream/packages/api/gateway/src/stream-protocol.ts';
+import type {AskUserQuestionAnswer, AskUserQuestionRequestEvent} from '@deepseek-ai/dsh-user-questions/types';
+import {conversationalQuestions, validateQuestionAnswer, type HostUserQuestion} from '../../native-plugins/src/user-questions.ts';
 
 interface Observer<T> {
   queue: {frame: T; bytes: number}[];
@@ -89,6 +91,7 @@ interface PendingWaterfall {
  * other deliveries. Pending requests live only in this instance's memory.
  */
 export class NativeEventHub {
+  constructor(private readonly questionChanged: (sessionId: string) => void = () => {}) {}
   private readonly stream = new NativeStreamHub<RemoteEventDownlinkFrame>();
   private readonly clients = new Map<RemoteEventClientId, (frame: RemoteEventDownlinkFrame) => void>();
   private readonly pending = new Map<RemoteEventId, PendingWaterfall>();
@@ -126,11 +129,32 @@ export class NativeEventHub {
           for (const clientId of waterfall.deliveries) this.clients.get(clientId)?.({type: 'cancel', eventId: id});
           waterfall.deliveries.clear();
           resolve(outcome);
+          if (event === 'user-questions/request') this.questionChanged(agentId);
         },
       };
       this.pending.set(id, waterfall);
       for (const [clientId, push] of this.clients) this.deliver(waterfall, clientId, push);
+      if (event === 'user-questions/request') this.questionChanged(agentId);
     });
+  }
+
+  /** A watcher sees native request data without becoming a browser event-stream client. */
+  questions(sessionId: string): HostUserQuestion[] {
+    return [...this.pending.values()].flatMap(({frame}) => {
+      if (frame.agentId !== sessionId || frame.event !== 'user-questions/request') return [];
+      const request = frame.request as unknown as AskUserQuestionRequestEvent;
+      if (!Array.isArray(request.questions) || !conversationalQuestions(request.questions)) return [];
+      return [{requestId: frame.eventId, state: 'open' as const, questions: structuredClone(request.questions),
+        ...(request.wait?.callId ? {callId: request.wait.callId} : {})}];
+    });
+  }
+
+  answerQuestion(sessionId: string, requestId: string, answer: AskUserQuestionAnswer): boolean {
+    const question = this.questions(sessionId).find(question => question.requestId === requestId);
+    if (!question) return false;
+    validateQuestionAnswer(question.questions, answer);
+    this.pending.get(requestId as RemoteEventId)!.settle({kind: 'result', value: answer});
+    return true;
   }
 
   /** The Host listener was cancelled; withdraw every delivery. */

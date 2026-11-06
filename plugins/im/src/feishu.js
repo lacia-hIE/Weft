@@ -154,7 +154,7 @@ async function start(ctx, bot, config) {
     for (const mention of message.mentions ?? []) text = text.replaceAll(mention.key, '');
     const senderId = sender?.sender_id?.open_id ?? '';
     await ctx.im.receive({channel: bot, conversation: message.chat_id, chatId: message.chat_id, sender: senderId, senderName: sender?.name, sentAt: Number(message.create_time) || undefined, group, text, attachments, messageId: message.message_id,
-      target: {chatId: message.chat_id, messageId: message.message_id}});
+      ...(message.parent_id ? {replyTo: message.parent_id} : {}), target: {chatId: message.chat_id, messageId: message.message_id}});
   };
   const account = await qrAccount(ctx, bot, config, {...feishuQr, validate: requestToken, status: () => replyStatus ? {reply: replyStatus} : {}, changed: () => {token.clear(); identity = undefined; replyStatus = undefined;},
     socket: credentials => feishuConnection(credentials, receive)});
@@ -237,19 +237,20 @@ async function start(ctx, bot, config) {
       const uuid = options?.deliveryId ? await requestId(options.deliveryId) : undefined;
       const deliver = async (type, content) => {
         if (target.messageId) {
-          try {await sendMessage(target, type, content, uuid); return;}
+          try {return await sendMessage(target, type, content, uuid);}
           catch { /* A deleted or expired message cannot be replied to; send to the chat instead. */ }
         }
-        await sendMessage({chatId: target.chatId}, type, content, uuid);
+        return sendMessage({chatId: target.chatId}, type, content, uuid);
       };
       // Inline cards use the ordinary message API and need no CardKit write
       // permission. Preserve Markdown for fallback, commands and mirrored turns.
       try {
-        await deliver('interactive', {schema: '2.0', config: {update_multi: true}, body: {elements: [{tag: 'markdown', content: text}]}});
+        const result=await deliver('interactive', {schema: '2.0', config: {update_multi: true}, body: {elements: [{tag: 'markdown', content: text}]}});
         replyStatus = {...replyStatus, mode: 'markdown', checkedAt: Date.now()};
+        return {messageId:result.data?.message_id};
       } catch (error) {
         replyFailure('markdown', error, 'text');
-        await deliver('text', {text});
+        const result=await deliver('text', {text});return {messageId:result.data?.message_id};
       }
     },
   }), `dsh-im ${bot} channel`);

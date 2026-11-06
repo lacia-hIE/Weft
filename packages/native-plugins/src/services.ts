@@ -2,4 +2,4 @@
 export const workerHostServices = ['fs', 'tools', 'timer', 'storage', 'storageDomain', 'weftSql', 'sessionController', 'weftSessionEvents', 'weftManagedSessions', 'weftConnections', 'weftIm', 'webhookRuntime', 'credentials', 'webServer'] as const;
 export const environmentHostServices = ['storage', 'storageDomain', 'weftSql', 'sessionController', 'weftSessionEvents', 'weftManagedSessions', 'weftConnections', 'weftIm', 'webhookRuntime', 'credentials', 'webServer'] as const;
 export type WorkerService = typeof workerHostServices[number];
-export const sessionMethods = ['create', 'prompt', 'cancel', 'rename', 'page', 'projections', 'list', 'modelCatalog', 'selectModel', 'scheduleCatalog'] as const;
+export const sessionMethods = ['create', 'prompt', 'cancel', 'rename', 'page', 'projections', 'list', 'modelCatalog', 'selectModel', 'scheduleCatalog', 'questions', 'answerQuestion'] as const;

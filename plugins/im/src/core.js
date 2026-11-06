@@ -3,9 +3,10 @@ import {defineTool} from '@deepseek-ai/dsh-tools';
 import {MAX_ATTACHMENT_BYTES, MAX_MESSAGE_BYTES, MAX_ATTACHMENTS, fileName, imageType} from './media.js';
 import {background, chunks, requestId, sleep} from './shared.js';
 import {captureContextEnhancementSource, enhanceContextContent, withSentAt} from './reference/context-enhancement.mjs';
+import {ImQuestions} from './questions.js';
 
 const record = {parse: value => value};
-const DOMAIN = {name: 'im_core', version: 2, compatibleVersions: [1], tables: {session_routes: {valueSchema: record}, task_routes: {valueSchema: record}, conversations: {valueSchema: record}, seen: {valueSchema: record}, deliveries: {valueSchema: record}}};
+const DOMAIN = {name: 'im_core', version: 3, compatibleVersions: [1, 2], tables: {questions: {valueSchema: record}, session_routes: {valueSchema: record}, task_routes: {valueSchema: record}, conversations: {valueSchema: record}, seen: {valueSchema: record}, deliveries: {valueSchema: record}}};
 const SEEN_LIMIT = 2000;
 /** A follow stream without frames is reopened, so a missed boundary cannot pin a stream forever. */
 const FOLLOW_IDLE_MS = 600_000;
@@ -18,6 +19,8 @@ const HELP = [
   '/notify <任务 ID> 将任务通知绑定到本聊天',
   '/notify <任务 ID> off 关闭本聊天的该任务通知',
   '/steer <内容> 向当前任务补充指令',
+  '/questions 查看等待你回答的问题',
+  '/answer <提问编号> <答案> 回答指定问题',
   '/help 显示本帮助',
 ].join('\n');
 
@@ -74,13 +77,16 @@ class ImBridge {
       this.sessionRoutes = domain.table('session_routes');
       this.seen = domain.table('seen');
       this.deliveries = domain.table('deliveries');
+      this.questions = new ImQuestions(this, domain.table('questions'));
       ctx.effect(() => ctx.weftSessionEvents.onTurnEnded(event => this.turnEnded(event)), 'dsh-im turn notifications');
+      ctx.effect(() => ctx.weftSessionEvents.onQuestionChanged(({sessionId}) => this.questions.sync(sessionId)), 'dsh-im question notifications');
       for (const [chatKey, row] of this.conversations.entries()) if (!row.automation && !this.sessionRoutes.get(row.sessionId)) await this.sessionRoutes.put(row.sessionId, {chatKey, channel: row.channel, target: row.target, group: row.group});
       queueMicrotask(() => {void this.ready.then(() => this.refreshRoutes()).catch(error => console.warn('dsh-im automation routes:', String(error)));});
       // Replies interrupted by a restart are delivered from their durable cursor.
       for (const [key, row] of this.conversations.entries()) if (row.pending?.length || (row.notified ?? -1) > row.delivered) this.follow(key);
       // Bindings from before turn notifications start syncing at their first notified turn.
       for (const [key, row] of this.conversations.entries()) if (!row.watched) void this.watch(key, row.sessionId);
+      queueMicrotask(() => {void this.ready.then(async () => {for (const sessionId of new Set([...this.conversations.entries()].map(([, row]) => row.sessionId))) await this.questions.sync(sessionId);}).catch(error => console.warn('dsh-im question recovery:', String(error)));});
     });
     void this.ready.catch(() => {});
   }
@@ -96,6 +102,7 @@ class ImBridge {
     void this.ready.then(() => {
       if (this.closed || this.channels.get(name) !== channel) return;
       for (const [key, row] of this.conversations.entries()) if (row.channel === name && row.pending?.length) this.startActivity(key);
+      for (const sessionId of new Set([...this.conversations.entries()].filter(([,row])=>row.channel===name).map(([,row])=>row.sessionId))) void this.questions.sync(sessionId).catch(()=>{});
     });
     return () => {if (this.channels.get(name) === channel) this.channels.delete(name);};
   }
@@ -103,8 +110,9 @@ class ImBridge {
   async send(name, target, text, deliveryId) {
     const channel = this.channels.get(name);
     if (!channel) throw new Error(`IM channel ${name} is not active`);
-    let index = 0;
-    for (const part of chunks(text, channel.maxChars ?? 2000)) await channel.send(target, part, deliveryId ? {deliveryId: `${deliveryId}:${index++}`} : undefined);
+    let index = 0; const receipts=[];
+    for (const part of chunks(text, channel.maxChars ?? 2000)) {const result=await channel.send(target, part, deliveryId ? {deliveryId: `${deliveryId}:${index++}`} : undefined);if(typeof result?.messageId==='string')receipts.push(result.messageId);}
+    return receipts;
   }
 
   /** Only the authenticated calling Session can address its bound chat. */
@@ -146,7 +154,7 @@ class ImBridge {
   }
 
   async startActivity(key) {
-    if (this.activities.has(key)) return;
+    if (this.activities.has(key) || this.questions?.waiting(key)) return;
     const task = background(this.ctx, 'dsh-im activity ' + key, async signal => {
       try {
         while (!signal.aborted) {
@@ -196,6 +204,7 @@ class ImBridge {
   /** Forget one bot's routes before removing its credentials. */
   async clear(channel) {
     await this.ready;
+    await this.questions.clear(channel);
     for (const [key, row] of this.conversations.entries()) if (row.channel === channel) {
       this.followers.get(key)?.abort();
       this.followers.delete(key);
@@ -232,13 +241,14 @@ class ImBridge {
       for (const [key] of oldest) await this.seen.delete(key);
     }
     const text = message.text.trim();
-    const command = /^\/(new|stop|help|steer|automations|notify)\b/i.exec(text)?.[1]?.toLowerCase();
-    const access = channel.access?.(message, !!command);
+    const command = /^\/(new|stop|help|steer|automations|notify|answer|questions)\b/i.exec(text)?.[1]?.toLowerCase();
+    const access = channel.access?.(message, !!command && !['answer','questions'].includes(command));
     if (access?.allowed === false || channel.allows && !channel.allows(message.sender)) {
       await this.send(message.channel, message.target, access?.reason === 'command-not-allowed' ? '你可以与机器人对话，但没有执行命令的权限。' : `尚未授权与此机器人对话。你的 ID：${message.sender}\n请管理员在插件设置中把它加入允许列表。`);
       return 'denied';
     }
     const key = `${message.channel}:${message.conversation}`;
+    if (!['new','stop','help','steer','automations','notify'].includes(command) && await this.questions.receive(message)) return 'command';
     if (command === 'steer' && !text.replace(/^\/steer\b\s*/i, '').trim()) {
       await this.send(message.channel, message.target, '用法：/steer <补充内容>'); return 'command';
     }
@@ -304,7 +314,8 @@ class ImBridge {
     // Durable native prompt provenance lets the Host decorate automatic titles
     // without pinning an opaque sender id as an explicit user rename.
     const id = row.titlePrefix ? `${channel.kind}-${stableId}` : stableId;
-    row = await this.conversations.update(key, current => ({...current, target: message.target, group: !!message.group, pending: [...new Set([...(current.pending ?? []), id])].slice(-32), recent: [...new Set([...(current.recent ?? []), id])].slice(-64)}));
+    row = await this.conversations.update(key, current => ({...current, target: message.target, group: !!message.group, pending: [...new Set([...(current.pending ?? []), id])].slice(-32), recent: [...new Set([...(current.recent ?? []), id])].slice(-64),
+      origins:Object.fromEntries([...Object.entries(current.origins??{}),[id,{sender:message.sender,target:message.target,group:!!message.group}]].slice(-64))}));
     const body = command === 'steer' ? text.replace(/^\/steer\b\s*/i, '') : text;
     const content = message.group && message.senderName ? `${message.senderName}：${body}` : body;
     const captured = captureContextEnhancementSource({botId: channel.botId?.(), getSettings: () => channel.contextEnhancement}, message.group ? 'group' : 'direct', withSentAt(() => ({
@@ -394,6 +405,7 @@ class ImBridge {
   /** A hint only: the cursor decides what is delivered, so repeats and losses are harmless. */
   async turnEnded({sessionId, seq}) {
     await this.ready;
+    await this.questions.sync(sessionId).catch(error=>console.warn('dsh-im question state:',String(error)));
     await this.refreshRoutes();
     for (const [key, row] of [...this.conversations.entries()]) {
       if (row.sessionId !== sessionId || seq <= row.delivered) continue;
@@ -467,7 +479,7 @@ class ImBridge {
               else if (event.type === 'user/message') {
                 // Native message ids differ from RPC ids. Keep requests pending
                 // through turn/end so a restart during generation resumes delivery.
-                const id = event.data?.source?.rpcId ?? event.data?.id;
+                const id = event.data?.source?.kind==='user-question-reply'?`question:${event.data.source.callId}`:event.data?.source?.rpcId ?? event.data?.id;
                 if (current.pending.includes(id)) {consumed.add(id); if (frame.type !== 'snapshot') await this.updateCard(key, '正在思考…');} else foreign.push(event.data);
               } else if (event.type === 'assistant/message') {
                 const text = textOf(event.data?.message);
@@ -523,6 +535,7 @@ export const name = 'dsh-im-core';
 export const provide = 'im';
 export const inject = ['sessionController', 'storageDomain', 'weftSessionEvents', 'fs', 'tools'];
 export const Config = Schema.object({
+  webUrl: Schema.string().default('').description('This environment’s public Weft web address, used only for question links.'),
   agentPreset: Schema.string().description('Agent preset for new conversations; the environment default when empty.'),
   titlePrefix: Schema.boolean().default(true).description('Label automatic titles of new Sessions with their channel.'),
 });

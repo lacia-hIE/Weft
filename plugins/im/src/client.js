@@ -34,8 +34,15 @@ export function hookBase(base = document.baseURI) {
 }
 
 export const name = 'dsh-im-settings';
-export const inject = ['slots', 'locale', 'configForms'];
+export const inject = ['slots', 'locale', 'configForms', 'sessions', 'uiWorkspace'];
 export function apply(ctx) {
+  const requested=new URL(location.href).searchParams.get('weft-session');
+  if(requested&&requested.length<=256)ctx.effect(()=>{
+    const abort=new AbortController();void ctx.sessions.refresh().then(()=>{
+      if(abort.signal.aborted||!ctx.sessions.list.getSnapshot().byId[requested])return;
+      ctx.uiWorkspace.openSession(requested);const url=new URL(location.href);url.searchParams.delete('weft-session');history.replaceState(history.state,'',url);
+    }).catch(()=>{});return()=>abort.abort();
+  },'dsh-im question Session navigation');
   ctx.effect(() => installSessionChannelLogos(), 'dsh-im Session channel logos');
   ctx.effect(() => ctx.locale.register(NS, {zh, en}), 'dsh-im dictionaries');
   const forms = Object.fromEntries(channels.map(channel => [channel, {
@@ -381,10 +388,12 @@ function QrPanel({status, busy, channel, t, onRefresh, onClose}) {
 function GeneralSettings({scope, presets, t}) {
   const form = useForm(scope, t);
   return h('section', {className: 'im-settings', 'aria-label': t('generalSettings')}, h('h3', null, t('generalSettings')),
-    h('form', {className: 'dim-botSettingsTabPanel', onSubmit: async event => {event.preventDefault(); await form.commit();}},
+    h('form', {className: 'dim-botSettingsTabPanel', onSubmit: async event => {event.preventDefault(); await form.commit({webUrl:form.value.webUrl||new URL('.',document.baseURI).href});}},
       presets.available() ? h(PresetSelect, {label: t('defaultPreset'), value: form.value.agentPreset, presets, disabled: form.busy, onChange: id => form.edit('agentPreset', id), t})
         : h(Field, {label: t('defaultPreset'), value: form.value.agentPreset || '', disabled: form.busy, onChange: value => form.edit('agentPreset', value)}),
       h('label', {className: 'im-checkbox'}, h('input', {type: 'checkbox', disabled: form.busy, checked: form.value.titlePrefix !== false, onChange: event => form.edit('titlePrefix', event.target.checked)}), t('titlePrefix')),
+      h(Field,{label:t('questionWebUrl'),value:form.value.webUrl||'',placeholder:new URL('.',document.baseURI).href,disabled:form.busy,onChange:value=>form.edit('webUrl',value)}),
+      h('p',{className:'im-description'},t('questionWebUrlHint')),
       h('p', {className: 'im-description'}, t('newSessionsHint')), h('button', {type: 'submit', className: 'im-button', 'data-kind': 'primary', disabled: form.busy || !form.dirty}, t('save'))),
     h('details', {className: 'im-about'}, h('summary', null, t('setupHelp')), h('p', {className: 'im-description'}, t('permissions')), h('p', {className: 'im-description'}, t('botsHint'))),
     h(Notice, {error: true}, form.error), h(Notice, null, form.message));
