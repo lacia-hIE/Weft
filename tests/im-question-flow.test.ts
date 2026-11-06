@@ -39,7 +39,8 @@ test('a real Worker IM conversation answers the native question without a Web cl
     for(const end=Date.now()+45_000;Date.now()<end;await delay(100)){const value=await read();if(value!==undefined)return value;}
     const sessions=await api.call<{items:{sessionId:string}[]}>('session/list',{_request:{}});
     const pages=await Promise.all(sessions.items.map(row=>api.call('session/page',{request:{address:{kind:'session',sessionId:row.sessionId},maxMessages:10}})));
-    throw new Error(`${label}: ${JSON.stringify({sent,modelBodies,sessions,pages})}`);
+    const records=pages.map(page=>(page as {records:{event:{type:string;data:unknown}}[]}).records.map(({event})=>({type:event.type,...(['user/message','tool/call','tool/result','turn/end'].includes(event.type)?{data:event.data}:{})})));
+    throw new Error(`${label}: ${JSON.stringify({sent,sessions,records,modelCalls:modelBodies.length})}`);
   };
   const configure=async(entry:string,patch:Record<string,unknown>)=>{
     const ns=entryNamespace(plugin.name,entry),form=(await api.call<SettingsDescribeValue>('settings/describe',{})).namespaces.find(row=>row.ns===ns)!;
