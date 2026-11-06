@@ -35,7 +35,12 @@ test('a real Worker IM conversation answers the native question without a Web cl
         +event('content_block_stop',{index:0})+event('message_delta',{delta:{stop_reason:tool?'tool_use':'end_turn'},usage:{output_tokens:3}})+event('message_stop',{}),{headers:{'content-type':'text/event-stream'}});
     }});
   const api=nativeClient(()=>runtime),tenant=tenantId('alpha'),base=`/v1/tenants/${tenant}/environments/default`;
-  const wait=async<T>(read:()=>T|undefined|Promise<T|undefined>,label:string):Promise<T>=>{for(const end=Date.now()+45_000;Date.now()<end;await delay(100)){const value=await read();if(value!==undefined)return value;}throw new Error(`${label}: ${JSON.stringify(sent)}`)};
+  const wait=async<T>(read:()=>T|undefined|Promise<T|undefined>,label:string):Promise<T>=>{
+    for(const end=Date.now()+45_000;Date.now()<end;await delay(100)){const value=await read();if(value!==undefined)return value;}
+    const sessions=await api.call<{items:{sessionId:string}[]}>('session/list',{_request:{}});
+    const pages=await Promise.all(sessions.items.map(row=>api.call('session/page',{request:{address:{kind:'session',sessionId:row.sessionId},maxMessages:10}})));
+    throw new Error(`${label}: ${JSON.stringify({sent,modelBodies,sessions,pages})}`);
+  };
   const configure=async(entry:string,patch:Record<string,unknown>)=>{
     const ns=entryNamespace(plugin.name,entry),form=(await api.call<SettingsDescribeValue>('settings/describe',{})).namespaces.find(row=>row.ns===ns)!;
     await api.call('settings/update',{ns,patch,expectedRevision:form.revision});
@@ -63,7 +68,7 @@ test('a real Worker IM conversation answers the native question without a Web cl
     assert.match(modelBodies.at(-1)!,/Blue/);
     const calls=modelBodies.length;await qq(`/answer ${code} 1`);await delay(500);assert.equal(modelBodies.length,calls,'duplicate answers never start another prompt');
     assert.match(sent.at(-1)!,/已处理或已取消/);
-    // A background plugin remains an answerer when an unrelated Web client delegates its waterfall.
+    // Web and IM answer the same native request; the first accepted answer wins.
     events=await api.events();const ready=await events.next();assert.equal(ready.type,'ready');if(ready.type!=='ready')throw new Error('ready');
     await qq('/new');await qq('ASK_SECOND_QUESTION');
     let invocation:RemoteEventDownlinkFrame;do invocation=await events.next();while(invocation.type!=='waterfall');

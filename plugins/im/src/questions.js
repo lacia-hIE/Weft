@@ -35,9 +35,11 @@ export class ImQuestions {
   matches(chatKey,sender,replyTo) {return [...this.table.entries()].some(([,row])=>row.chatKey===chatKey&&row.sender===sender&&row.receipts?.includes(replyTo));}
   async clear(channel) {for(const [key,row] of this.table.entries())if(row.channel===channel)await this.table.delete(key);}
   sync(sessionId) {
-    const work = (this.syncs.get(sessionId) ?? Promise.resolve()).catch(() => {}).then(() => this.refresh(sessionId));
-    this.syncs.set(sessionId, work);
-    return work.finally(() => {if (this.syncs.get(sessionId) === work) this.syncs.delete(sessionId);});
+    const current=this.syncs.get(sessionId);if(current){current.again=true;return current.pending;}
+    const work={again:false,pending:undefined};
+    work.pending=Promise.resolve().then(async()=>{do{work.again=false;await this.refresh(sessionId);}while(work.again&&!this.bridge.closed);})
+      .finally(()=>{if(this.syncs.get(sessionId)===work)this.syncs.delete(sessionId);});
+    this.syncs.set(sessionId,work);return work.pending;
   }
   async page(sessionId) {
     const page = await this.bridge.ctx.sessionController.page({address: {kind: 'session', sessionId}, maxMessages: 200, turnWindow: {minMessages: 1, minTurns: 1}});
@@ -104,7 +106,7 @@ export class ImQuestions {
     await bridge.updateCard(row.chatKey, '需要你回答问题，请查看聊天中的提问。');
     const receipts = await bridge.send(row.channel, row.target, questionText(row, bridge.config.webUrl), `question:${key}:${row.answers.length}`);
     const current = this.table.get(key);
-    if (current && !current.closed) await this.table.put(key, {...current, receipts: [...new Set([...(current.receipts ?? []), ...receipts])]});
+    if (current && !current.closed) await this.table.put(key, {...current, receipts: [...new Set([...(current.receipts ?? []), ...receipts])].slice(-64)});
   }
   async receive(message) {
     const bridge = this.bridge, chatKey = `${message.channel}:${message.conversation}`, text = message.text.trim();

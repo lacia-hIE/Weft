@@ -1,14 +1,15 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {build} from 'esbuild';
-import {NativeEventHub} from '../packages/control-plane/src/native-events.ts';
 
 const compiled=await build({entryPoints:['plugins/im/src/questions.js'],bundle:true,platform:'node',format:'esm',write:false});
 const {ImQuestions,parseQuestionAnswer}=await import('data:text/javascript;base64,'+Buffer.from(compiled.outputFiles![0]!.text).toString('base64'));
+const host=await build({entryPoints:['packages/control-plane/src/native-events.ts'],bundle:true,platform:'node',format:'esm',write:false,tsconfig:'.generated/upstream.source.tsconfig.json'});
+const {NativeEventHub}=await import('data:text/javascript;base64,'+Buffer.from(host.outputFiles![0]!.text).toString('base64'));
 const questions=[{id:'color',question:'Which color?',options:[{label:'Red'},{label:'Blue'}]}];
 
 test('native question settlement admits one structured answer, cancels Web deliveries and excludes approval requests',async()=>{
-  const changed:string[]=[],hub=new NativeEventHub(id=>changed.push(id)),abort=new AbortController();
+  const changed:string[]=[],hub=new NativeEventHub((id:string)=>changed.push(id)),abort=new AbortController();
   const stream=hub.open(abort.signal)[Symbol.asyncIterator]();
   const ready=(await stream.next()).value as any;
   const pending=hub.waterfall('question-1','user-questions/request','session-a',{questions});
