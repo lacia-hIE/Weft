@@ -7,7 +7,7 @@ export function sessionTurnEnded(raw: unknown): SessionTurnEnded {
   return {sessionId: value.sessionId, seq: value.seq!};
 }
 
-interface Host {watchSession(sessionId: string, watch: boolean): Promise<void>}
+interface Host {watchSession(sessionId: string, watch: boolean, questions?:boolean): Promise<void>}
 
 /**
  * The plugin face of `weftSessionEvents`. Watches persist in the owning
@@ -19,6 +19,7 @@ export class WorkerSessionEvents {
   constructor(private readonly host: Host) {}
   readonly service = {
     watch: (sessionId: string) => this.host.watchSession(String(sessionId), true),
+    watchQuestions: (sessionId: string) => this.host.watchSession(String(sessionId), true, true),
     unwatch: (sessionId: string) => this.host.watchSession(String(sessionId), false),
     onTurnEnded: (handler: (event: SessionTurnEnded) => unknown) => {
       if (typeof handler !== 'function') throw new TypeError('onTurnEnded requires a function');

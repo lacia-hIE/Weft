@@ -32,6 +32,7 @@ export function questionText(row, webUrl) {
 export class ImQuestions {
   constructor(bridge, table) {this.bridge = bridge; this.table = table; this.syncs = new Map();}
   waiting(chatKey) {return [...this.table.entries()].some(([,row])=>row.chatKey===chatKey&&!row.closed);}
+  matches(chatKey,sender,replyTo) {return [...this.table.entries()].some(([,row])=>row.chatKey===chatKey&&row.sender===sender&&row.receipts?.includes(replyTo));}
   async clear(channel) {for(const [key,row] of this.table.entries())if(row.channel===channel)await this.table.delete(key);}
   sync(sessionId) {
     const work = (this.syncs.get(sessionId) ?? Promise.resolve()).catch(() => {}).then(() => this.refresh(sessionId));

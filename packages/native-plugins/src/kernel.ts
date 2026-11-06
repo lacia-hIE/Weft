@@ -50,7 +50,7 @@ interface KernelHost {
     dispatchWebhook(delivery:unknown):Promise<void>;
     createWebhook(operationId:string,delivery:unknown,ruleId:string,request:unknown):Promise<void>;
     cancelWebhook(operationId:string):Promise<void>;
-    watchSession(sessionId: string, watch: boolean): Promise<void>;
+    watchSession(sessionId: string, watch: boolean, questions?:boolean): Promise<void>;
     manageSession(sessionId: string, config: unknown): Promise<void>;
     connectionOpen(connectionId: string, version: string, spec: unknown): Promise<void>;
     connectionCall(connectionId: string, operation: string, argument?: unknown): Promise<unknown>;

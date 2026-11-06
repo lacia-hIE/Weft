@@ -250,7 +250,7 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
     id.parse(agentId);
     if (!(NATIVE_WATERFALLS as readonly string[]).includes(event)) throw new Error('Unknown native waterfall');
     this.questionScope = scope;
-    return this.nativeEvents.waterfall(eventId, event, agentId, request);
+    return this.nativeEvents.waterfall(eventId, event, agentId, request, event==='user-questions/request'&&this.questionWatchers(scope,agentId).length>0);
   }
   /** Root Agent notifications the official client subscribes to through Remote Events. */
   async nativeForwardEvent(scope: ControlScope, event: string, args: readonly unknown[]): Promise<void> {
@@ -794,11 +794,12 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
     return connectionIds.filter(connectionId => this.gatewayShard(receipt.name, connectionId) !== undefined);
   }
   /** Record one package's interest in a root Session's turn ends; see docs/architecture/session-turn-notifications.md. */
-  nativePackageWatchSession(scope: ControlScope, receipt: {name: string; digest: string; activationId: string}, sessionId: string, watch: boolean): void {
+  nativePackageWatchSession(scope: ControlScope, receipt: {name: string; digest: string; activationId: string}, sessionId: string, watch: boolean, questions=false): void {
     this.nativePackageAuthorize(scope, receipt, 'sessions'); id.parse(sessionId);
-    if (!watch) {this.ctx.storage.sql.exec('DELETE FROM weft_session_watches WHERE package=? AND session_id=?', receipt.name, sessionId); return;}
+    if (!watch) {this.ctx.storage.sql.exec('DELETE FROM weft_session_watches WHERE package=? AND session_id=?', receipt.name, sessionId);this.ctx.storage.sql.exec('DELETE FROM weft_question_watches WHERE package=? AND session_id=?',receipt.name,sessionId); return;}
     if (this.nativeSessionRoot(scope, sessionId) !== sessionId) throw new Error('Session is outside this environment');
     this.ctx.storage.sql.exec('INSERT OR IGNORE INTO weft_session_watches (package, session_id) VALUES (?, ?)', receipt.name, sessionId);
+    if(questions)this.ctx.storage.sql.exec('INSERT OR IGNORE INTO weft_question_watches (package,session_id) VALUES (?,?)',receipt.name,sessionId);
   }
   /** One package's hold on a root Session; its next turn reads the configuration through `nativeManagedSession`. */
   nativePackageManageSession(scope: ControlScope, receipt: {name: string; digest: string; activationId: string}, sessionId: string, raw: unknown): void {
@@ -837,8 +838,13 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
   async nativeQuestionChanged(scope: ControlScope, sessionId: string): Promise<void> {
     this.scope(scope); id.parse(sessionId);
     if (this.lifecycle.mode !== 'active' || this.nativeSessionRoot(scope, sessionId) !== sessionId) return;
-    const watching = this.ctx.storage.sql.exec<{package:string}>('SELECT package FROM weft_session_watches WHERE session_id=?',sessionId).toArray().map(row=>row.package);
+    const watching = this.questionWatchers(scope,sessionId);
     if (watching.length) await this.backgroundPackages(scope).dispatchSessionEvent(watching,{type:'user-question',sessionId});
+  }
+  private questionWatchers(scope:ControlScope,sessionId:string):string[] {
+    return this.ctx.storage.sql.exec<{package:string}>('SELECT package FROM weft_question_watches WHERE session_id=?',sessionId).toArray().map(row=>row.package).filter(name=>{
+      const row=this.packages(scope).registry.get(name);return !!row?.enabled&&!!row.approved&&!!row.permissions.sessions&&!!row.permissions.background;
+    });
   }
   async nativePackageFollow(scope: ControlScope, receipt: {name: string; digest: string; activationId: string}, raw: unknown): Promise<Response> {
     this.nativePackageAuthorize(scope, receipt, 'sessions');
@@ -1316,6 +1322,7 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
     });
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS native_child_owners (id TEXT PRIMARY KEY, parent_id TEXT NOT NULL, root_id TEXT NOT NULL)');
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_session_watches (package TEXT NOT NULL, session_id TEXT NOT NULL, PRIMARY KEY(package, session_id)) STRICT');
+    ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_question_watches (package TEXT NOT NULL, session_id TEXT NOT NULL, PRIMARY KEY(package, session_id)) STRICT');
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_managed_sessions (session_id TEXT PRIMARY KEY, package TEXT NOT NULL, config TEXT NOT NULL) STRICT');
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_gateway_connections (package TEXT NOT NULL, connection_id TEXT NOT NULL, shard INTEGER NOT NULL, PRIMARY KEY(package, connection_id)) STRICT');
     ctx.storage.sql.exec(

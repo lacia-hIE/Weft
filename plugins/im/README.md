@@ -1,5 +1,9 @@
 # @weft/dsh-im
 
+原生提问：Agent 调用 `ask_user_question` 时，IM 会及时发送问题和选项。发起人可直接回复编号或自定义文字，多选用逗号分隔，多题逐项收集。`/questions` 查看待回答问题，`/answer <提问编号> <答案>` 指定问题；飞书支持引用提问消息回答。网页与 IM 共用原生请求状态，重复回答不会再启动任务。通用设置中的「提问的网页入口」可附带当前环境链接；保存时留空会使用当前网页地址。当前接入 IM 自身创建的 Worker Host 会话，交给其他插件的机器人和本地 Executor 不由它代管。
+
+Native questions: IM sends questions and choices while the Agent is waiting. The requester may reply with option numbers or custom text; comma-separated numbers select multiple choices, and batches are collected one at a time. Use `/questions` to reopen questions or `/answer <code> <answer>` to select one. Feishu also supports quoted replies. Web and IM settle the same native request, including native late answers. General settings can add an authenticated Web answer link. This bridge covers IM-owned Worker Host Sessions; bot consumers and local Executors retain their own routing. See [Host interfaces and lifecycle](../../docs/architecture/user-questions.md).
+
 This is an incomplete Worker adaptation of dsh-im. See the [three-channel parity checklist](./PARITY.md) for the pinned reference version, implemented behavior and remaining gaps. QR setup and a similar layout do not imply feature parity.
 
 功能对齐尚未完成，完整差距及验收要求见[三渠道功能清单](./PARITY.md)。当前新增「通用 → 排队／插话」「访问 → 私聊／群聊权限与命令权限」「上下文增强 → 来源字段与提示词」；飞书还可设置收到群消息后的响应方式。旧白名单保持兼容，首次修改新权限页时迁移；扫码绑定者保留权限。开放模式必须显式选择，不会在升级时自动扩大已有账号权限。

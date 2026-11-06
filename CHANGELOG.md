@@ -4,6 +4,9 @@ Application versions use `vX.Y.Z`; local connector versions are independent. See
 
 ## [0.2.2-rc.1](https://github.com/lacia-hIE/Weft/releases/tag/v0.2.2-rc.1) — Unreleased / 未发布
 
+- IM `0.11.0` forwards native questions to their originating chat and accepts numbered, custom and sequential batch answers. Web and IM share native settlement; timed questions use the original late-answer path. Generic Worker Host question reads, answers and durable watches use the existing Sessions grant. Permission approvals remain separate.
+- IM `0.11.0` 将原生提问及时发送到来源聊天，支持编号、自定义文字和多题逐项回答。网页与 IM 共用原生回答状态，超时提问沿用原版补答机制；Worker Host 的查询、回答和持久订阅使用既有会话授权。权限审批仍走独立流程。
+
 - Superagent `0.4.2` and local connector `0.5.1` add owner-verified local Session navigation, the original DSH directory chooser for task roots, and advisory dispatch hints over the existing outbound relay. Devices authenticate and fetch commands as before; lost hints and older servers fall back to polling. The cloud plugin requests the existing connections capability.
 - Superagent `0.4.2` 与本地连接插件 `0.5.1` 增加本地任务会话直达、原版任务根目录选择器及经现有出站中继发送的派工提示。本机仍凭原凭据取任务，提示丢失或服务端为旧版本时保留轮询兜底；云端插件使用原有连接授权。
 

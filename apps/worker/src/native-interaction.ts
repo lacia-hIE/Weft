@@ -23,7 +23,11 @@ import { sessionAddress, type SessionScope } from '../../../packages/tenant/src/
 export function forwardNativeNotifications(ctx: Context, env: Env, owner: ControlScope, live: () => boolean): void {
   const control = () => controlFor(env, owner);
   forwardNativeWaterfalls(ctx, NATIVE_WATERFALLS, {
-    forward: (eventId, event, agentId, request) => control().nativeEventWaterfall(owner, eventId, event, agentId, request),
+    forward: async (eventId, event, agentId, request) => {
+      // A background answerer reads provenance and question state from the durable Session.
+      await ctx.sessionPersistence.flush();
+      return control().nativeEventWaterfall(owner, eventId, event, agentId, request);
+    },
     cancel: eventId => control().nativeEventWaterfallCancel(owner, eventId),
   });
   // Registrations while the host opens are not changes a connected client has seen.

@@ -81,6 +81,7 @@ export type NativeWaterfallOutcome =
 interface PendingWaterfall {
   frame: RemoteEventInvocationFrame;
   deliveries: Set<RemoteEventClientId>;
+  holdForWatcher: boolean;
   settle(outcome: NativeWaterfallOutcome): void;
 }
 
@@ -115,7 +116,7 @@ export class NativeEventHub {
   }
 
   /** Forward one Agent-scoped waterfall; the promise settles with the first client outcome. */
-  waterfall(eventId: string, event: string, agentId: string, request: Record<string, unknown>): Promise<NativeWaterfallOutcome> {
+  waterfall(eventId: string, event: string, agentId: string, request: Record<string, unknown>, holdForWatcher = false): Promise<NativeWaterfallOutcome> {
     if (!isRemoteJsonValue(request)) throw new Error('Remote event request must be lossless JSON');
     const id = eventId as RemoteEventId;
     if (this.pending.has(id)) throw new RemoteError('gateway/bad-request', 'Duplicate Remote event identity', {});
@@ -123,6 +124,7 @@ export class NativeEventHub {
       const waterfall: PendingWaterfall = {
         frame: {type: 'waterfall', event, eventId: id, agentId: agentId as RemoteEventAgentId, request},
         deliveries: new Set(),
+        holdForWatcher,
         settle: outcome => {
           if (this.pending.get(id) !== waterfall) return;
           this.pending.delete(id);
@@ -169,7 +171,7 @@ export class NativeEventHub {
     if (!waterfall?.deliveries.has(result.clientId)) return;
     waterfall.deliveries.delete(result.clientId);
     if (result.outcome.kind === 'next') {
-      if (waterfall.deliveries.size === 0) waterfall.settle({kind: 'next'});
+      if (waterfall.deliveries.size === 0 && !waterfall.holdForWatcher) waterfall.settle({kind: 'next'});
     } else waterfall.settle(result.outcome);
   }
 

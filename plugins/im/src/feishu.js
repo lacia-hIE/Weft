@@ -119,7 +119,7 @@ async function start(ctx, bot, config) {
     if (message && handOver) {await handOver(await eventOf(message, sender)); return;}
     if (!message || sender?.sender_type === 'app' || !['text', 'image', 'file', 'post'].includes(message.message_type)) return;
     const group = message.chat_type !== 'p2p';
-    if (group && config.groupResponseMode !== 'all') {
+    if (group && config.groupResponseMode !== 'all' && !ctx.im.isQuestionReply(bot,message.chat_id,sender?.sender_id?.open_id,message.parent_id)) {
       if (!message.mentions?.some(mention => typeof mention.id?.open_id === 'string')) return;
       let self;
       try {self = await botOpenId();}

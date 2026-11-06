@@ -135,7 +135,7 @@ export class EnvironmentPluginCapabilities extends WorkerEntrypoint<Env, {scope:
   async uploadSessionAttachment(sessionId: string, options: unknown, data: Uint8Array): Promise<unknown> {return this.owner().nativePackageAttachment(this.ctx.props.scope, this.ctx.props, sessionId, options, data);}
   async callSession(method: string, request: unknown): Promise<unknown> {return this.owner().nativePackageSession(this.ctx.props.scope, this.ctx.props, method, request);}
   async followSession(request: unknown): Promise<Response> {return this.owner().nativePackageFollow(this.ctx.props.scope, this.ctx.props, request);}
-  async watchSession(sessionId: string, watch: boolean): Promise<void> {return this.owner().nativePackageWatchSession(this.ctx.props.scope, this.ctx.props, sessionId, watch);}
+  async watchSession(sessionId: string, watch: boolean, questions=false): Promise<void> {return this.owner().nativePackageWatchSession(this.ctx.props.scope, this.ctx.props, sessionId, watch, questions);}
   async manageSession(sessionId: string, config: unknown): Promise<void> {return this.owner().nativePackageManageSession(this.ctx.props.scope, this.ctx.props, sessionId, config);}
   async connectionOpen(connectionId: string, version: string, spec: unknown): Promise<void> {return this.owner().nativeConnectionOpen(this.ctx.props.scope, this.ctx.props, connectionId, version, spec);}
   async connectionCall(connectionId: string, operation: 'status' | 'send' | 'update' | 'reconnect' | 'close' | 'mailCheck' | 'mailReply' | 'mailAttachment' | 'notifyLocal', argument?: unknown): Promise<unknown> {return this.owner().nativeConnectionCall(this.ctx.props.scope, this.ctx.props, connectionId, operation, argument);}

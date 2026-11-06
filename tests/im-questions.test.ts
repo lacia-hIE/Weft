@@ -29,6 +29,15 @@ test('native question settlement admits one structured answer, cancels Web deliv
   hub.cancel('permission');await approval;abort.abort();await stream.return?.();
 });
 
+test('a registered question watcher keeps a request answerable after a Web client delegates it',async()=>{
+  const hub=new NativeEventHub(),abort=new AbortController(),stream=hub.open(abort.signal)[Symbol.asyncIterator]();
+  const ready=(await stream.next()).value as any,pending=hub.waterfall('held','user-questions/request','session',{questions},true);
+  await stream.next();hub.result({clientId:ready.clientId,eventId:'held',outcome:{kind:'next'}} as any);
+  assert.equal(hub.questions('session').length,1);
+  assert.equal(hub.answerQuestion('session','held',{answers:[{id:'color',selected:['Red']}]}),true);
+  await pending;abort.abort();await stream.return?.();
+});
+
 function table(initial: [string,any][]=[]){const rows=new Map(initial);return {get:(key:string)=>rows.get(key),entries:()=>rows.entries(),async put(key:string,value:any){rows.set(key,value)},async delete(key:string){rows.delete(key)},async update(key:string,fn:(row:any)=>any){const value=fn(rows.get(key));rows.set(key,value);return value}};}
 function fixture(){
   const sent:{text:string;target:any}[]=[],answers:any[]=[],records=table();

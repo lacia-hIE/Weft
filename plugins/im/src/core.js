@@ -85,7 +85,7 @@ class ImBridge {
       // Replies interrupted by a restart are delivered from their durable cursor.
       for (const [key, row] of this.conversations.entries()) if (row.pending?.length || (row.notified ?? -1) > row.delivered) this.follow(key);
       // Bindings from before turn notifications start syncing at their first notified turn.
-      for (const [key, row] of this.conversations.entries()) if (!row.watched) void this.watch(key, row.sessionId);
+      for (const [key, row] of this.conversations.entries()) void this.watch(key, row.sessionId);
       queueMicrotask(() => {void this.ready.then(async () => {for (const sessionId of new Set([...this.conversations.entries()].map(([, row]) => row.sessionId))) await this.questions.sync(sessionId);}).catch(error => console.warn('dsh-im question recovery:', String(error)));});
     });
     void this.ready.catch(() => {});
@@ -200,6 +200,7 @@ class ImBridge {
   }
 
   async catalog() {return this.ctx.sessionController.modelCatalog({});}
+  isQuestionReply(channel,conversation,sender,replyTo) {return !!replyTo&&this.questions?.matches(`${channel}:${conversation}`,sender,replyTo);}
 
   /** Forget one bot's routes before removing its credentials. */
   async clear(channel) {
@@ -397,7 +398,7 @@ class ImBridge {
   /** Subscribe to the bound Session's turn ends; a failure retries at the next activation. */
   async watch(key, sessionId) {
     try {
-      await this.ctx.weftSessionEvents.watch(sessionId);
+      await this.ctx.weftSessionEvents.watchQuestions(sessionId);
       await this.conversations.update(key, current => current?.sessionId === sessionId ? {...current, watched: true} : current);
     } catch (error) {console.warn(`dsh-im watch ${key}: ${error instanceof Error ? error.message : String(error)}`);}
   }
