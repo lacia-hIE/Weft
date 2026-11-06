@@ -45,7 +45,9 @@ function fixture(){
   let pending:any[]=[{requestId:'live-question',callId:'call-1',state:'open',questions}];
   const origins={'prompt-1':{sender:'alice',target:{chat:'group-a',messageId:'origin'},group:true}};
   const conversations=table([['bot:group-a',{sessionId:'session-a',channel:'bot',pending:['prompt-1'],origins}]]);
-  let events:any[]=[{type:'turn/start'},{type:'user/message',data:{source:{kind:'user',rpcId:'prompt-1'}}},{type:'tool/call',data:{name:'ask_user_question',callId:'call-1'}}];
+  let events:any[]=[{type:'turn/start'},{type:'user/message',data:{source:{kind:'user',rpcId:'prompt-1'}}},
+    {type:'user/message',data:{source:{kind:'runtime-context'}}},{type:'user/message',data:{source:{kind:'time-context'}}},
+    {type:'tool/call',data:{name:'ask_user_question',callId:'call-1'}}];
   const bridge:any={closed:false,config:{webUrl:'https://weft.test/v1/tenants/owner/environments/default/native/'},channels:new Map([['bot',{}]]),conversations,
     ctx:{sessionController:{questions:async()=>pending,page:async()=>({records:events.map(event=>({event}))}),answerQuestion:async(input:any)=>{answers.push(input);pending=[];return true}}},
     async send(_channel:string,target:any,text:string){sent.push({target,text});return ['sent-'+sent.length]},async stopActivity(){},async updateCard(){},startActivity(){},follow(){}};
@@ -84,6 +86,7 @@ test('IM continued questions use native late answers, while a Web answer and /ne
 });
 
 test('multi-question and multi-select answers retain native ids and option labels, and mixed turn provenance is not forwarded',async()=>{
+  assert.deepEqual(parseQuestionAnswer(questions[0],'/skip'),{id:'color',selected:[]});
   assert.deepEqual(parseQuestionAnswer({...questions[0],multiSelect:true},'1, 2'),{id:'color',selected:['Red','Blue']});
   assert.throws(()=>parseQuestionAnswer(questions[0],'1,2'));
   const f=fixture();f.setPending([{requestId:'batch',callId:'call-1',state:'open',questions:[...questions,{id:'detail',question:'Any detail?'}]}]);

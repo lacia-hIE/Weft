@@ -21,7 +21,7 @@ export function validateQuestionAnswer(questions: readonly AskUserQuestionItem[]
   for (const question of questions) {
     const item = answer.answers.find(item => item.id === question.id)!;
     if (new Set(item.selected).size !== item.selected.length || (!question.multiSelect && item.selected.length > 1)
-      || item.selected.some(label => !question.options?.some(option => option.label === label))
-      || (!item.selected.length && !item.custom?.trim())) throw new TypeError('Answer must use offered options or custom text');
+      || item.selected.some(label => !question.options?.some(option => option.label === label)))
+      throw new TypeError('Answer must use offered options or custom text');
   }
 }

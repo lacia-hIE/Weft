@@ -4,6 +4,7 @@ import {requestId} from './shared.js';
 export function parseQuestionAnswer(question, text) {
   const options = question.options ?? [], value = text.trim();
   if (!value) throw new Error('请回复选项编号或填写答案。');
+  if (value === '/skip') return {id:question.id,selected:[]};
   if (options.length && /^\d+(?:\s*[,，、]\s*\d+)*$/.test(value)) {
     const indexes = value.split(/[,，、]/).map(part => Number(part.trim()) - 1);
     if (indexes.some(index => index < 0 || index >= options.length) || new Set(indexes).size !== indexes.length || !question.multiSelect && indexes.length > 1)
@@ -49,7 +50,9 @@ export class ImQuestions {
   route(sessionId, events) {
     const start = events.findLastIndex(event => event.type === 'turn/start');
     if (start < 0) return;
-    const users = events.slice(start).filter(event => event.type === 'user/message' && event.data?.source?.kind !== 'user-question-reply');
+    // DSH logs runtime/time snapshots as user-role messages too. Only actual
+    // user RPCs identify the person; generated context cannot select a route.
+    const users = events.slice(start).filter(event => event.type === 'user/message' && !['runtime-context','time-context','user-question-reply'].includes(event.data?.source?.kind));
     if (!users.length) return;
     const routes = [...this.bridge.conversations.entries()].filter(([, row]) => row.sessionId === sessionId && !row.automation);
     const matches = routes.flatMap(([chatKey, row]) => {
@@ -125,7 +128,7 @@ export class ImQuestions {
       return true;
     }
     const current=own.filter(([,row])=>row.sessionId===bridge.conversations.get(chatKey)?.sessionId);
-    if (!selected && !explicit && !message.replyTo && !text.startsWith('/') && current.length === 1 && !message.attachments?.length) selected = current[0];
+    if (!selected && !explicit && !message.replyTo && (!text.startsWith('/') || text==='/skip') && current.length === 1 && !message.attachments?.length) selected = current[0];
     if (!selected) {
       if (explicit) {await bridge.send(message.channel, message.target, '未找到本聊天中的这条提问，请发送 /questions 查看。'); return true;}
       if (!text.startsWith('/') && current.length > 1) {await bridge.send(message.channel, message.target, '有多个待回答的问题，请引用提问消息，或使用 /answer <提问编号> <答案>。'); return true;}
