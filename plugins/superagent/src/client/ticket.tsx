@@ -133,8 +133,8 @@ export function TicketPage({ id }: { id: string }) {
         message={t('retryConfirm', { title: data.title })}
         onConfirm={() => after(call('POST tickets/:id/retry', { id }))} />}
       {data.sessionId && <SessionButton variant="outline" sessionId={data.sessionId} />}
+      {data.executionComputer?.sessionId&&<LocalSessionButton executorId={data.executionComputer.executorId} sessionId={data.executionComputer.sessionId} online={data.executionComputer.online}/>}
     </PageHead>
-    {data.executionComputer?.sessionId&&<div className="dt-row-actions"><LocalSessionButton executorId={data.executionComputer.executorId} sessionId={data.executionComputer.sessionId} online={data.executionComputer.online}/></div>}
     {error && <LoadState error={error} loading={false} />}
     <div className="dt-row-meta dt-status-line">
       <StageMark state={status.dot} icon={status.icon} label={status.label} />

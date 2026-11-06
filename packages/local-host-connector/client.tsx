@@ -2,7 +2,7 @@ import React,{useCallback,useEffect,useId,useState,type ReactNode} from 'react';
 import {Button,Input,Switch,Tag} from '@deepseek-ai/dsh-client-ui-primitives';
 import metadata from './package.json' with {type:'json'};
 import {connectionStyles} from './client-styles.ts';
-import {DirectoryBrowser} from '../../../deepseek-harness/packages/client/ui-directory-picker-browse/src/client/DirectoryBrowser.tsx';
+import {DirectoryBrowser} from '../../deepseek-harness/packages/client/ui-directory-picker-browse/src/client/DirectoryBrowser.tsx';
 import type {DirectoryListing} from '@deepseek-ai/dsh-api-remotes/client';
 
 const zh={title:'连接设置',description:'通过 Weft 使用本机环境，数据由本地 DSH 管理。',code:'配对码',hint:'在 Weft 首页生成配对码，复制并粘贴到这里。',placeholder:'粘贴配对码',saved:'配置自动保存在本机，无需下载文件。',details:'连接详情',address:'连接地址',hostVersion:'DSH 版本',pair:'保存并连接',reconnect:'重新连接',stop:'停止连接',busy:'正在处理…',failed:'操作失败，请检查配对码或稍后重试。',remote:'请在本机 DSH 页面管理连接。',
@@ -93,7 +93,7 @@ function ExecutorSettings({t,directory}:{t:Props['t'];directory:Directory}):Reac
     </div>
     {remote?<p className="weft-connection-hint">{t('remote')}</p>:<form className="weft-connection-form" onSubmit={event=>{event.preventDefault();void action('configure');}}>
       <p className="weft-connection-hint">{t('executorSource')}</p>
-      <div className="weft-connection-field"><label htmlFor={id+'-root'}>{t('executorRoot')}</label><Input className="weft-connection-input" id={id+'-root'} value={settings.root} placeholder="/path/to/tasks" spellCheck={false} onChange={event=>edit({root:event.target.value})} disabled={busy} required/><Button type="button" size="sm" variant="outline" disabled={busy||choosing} onClick={()=>void choose()}>{t('executorBrowse')}</Button></div>
+      <div className="weft-connection-field"><label htmlFor={id+'-root'}>{t('executorRoot')}</label><div className="weft-directory-control"><Input className="weft-connection-input" id={id+'-root'} value={settings.root} placeholder="/path/to/tasks" spellCheck={false} onChange={event=>edit({root:event.target.value})} disabled={busy} required/><Button type="button" size="sm" variant="outline" disabled={busy||choosing} onClick={()=>void choose()}>{t('executorBrowse')}</Button></div></div>
       <DirectoryBrowser open={picking} busy={busy} listDirectory={listDirectory} createDirectory={directory.create} onOpen={root=>{edit({root});setPicking(false);}} onClose={()=>setPicking(false)} t={t}/>
       <div className="weft-connection-field"><label htmlFor={id+'-preset'}>{t('executorPreset')}</label><select className="weft-connection-select" id={id+'-preset'} value={settings.agentPreset} onChange={event=>edit({agentPreset:event.target.value})} disabled={busy}>
         <option value="">{t('executorDefault')}</option>{settings.agentPreset&&!state.presets?.some(row=>row.id===settings.agentPreset)&&<option value={settings.agentPreset} disabled>{settings.agentPreset}</option>}

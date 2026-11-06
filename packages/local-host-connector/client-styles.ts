@@ -31,6 +31,9 @@ export const connectionStyles=`
 [data-weft-local-connection] .weft-connection-field label { font-size: 13px; line-height: 20px; font-weight: 500; }
 [data-weft-local-connection] .weft-connection-hint { font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary); }
 [data-weft-local-connection] .weft-connection-input { box-sizing: border-box; width: 100%; min-width: 0; margin-top: 4px; }
+[data-weft-local-connection] .weft-directory-control { display: flex; align-items: center; gap: 8px; min-width: 0; margin-top: 4px; }
+[data-weft-local-connection] .weft-directory-control .weft-connection-input { flex: 1; margin-top: 0; }
+[data-weft-local-connection] .weft-directory-control > button { flex-shrink: 0; }
 [data-weft-local-connection] .weft-connection-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding-top: 4px; }
 [data-weft-local-connection] .weft-connection-secondary { display: flex; flex-wrap: wrap; gap: 8px; }
 [data-weft-local-connection] .weft-connection-secondary > button { white-space: nowrap; }
