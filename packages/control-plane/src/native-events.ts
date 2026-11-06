@@ -118,25 +118,26 @@ export class NativeEventHub {
   /** Forward one Agent-scoped waterfall; the promise settles with the first client outcome. */
   waterfall(eventId: string, event: string, agentId: string, request: Record<string, unknown>, holdForWatcher = false): Promise<NativeWaterfallOutcome> {
     if (!isRemoteJsonValue(request)) throw new Error('Remote event request must be lossless JSON');
+    const question=event==='user-questions/request'&&Array.isArray(request.questions)&&conversationalQuestions(request.questions);
     const id = eventId as RemoteEventId;
     if (this.pending.has(id)) throw new RemoteError('gateway/bad-request', 'Duplicate Remote event identity', {});
     return new Promise(resolve => {
       const waterfall: PendingWaterfall = {
         frame: {type: 'waterfall', event, eventId: id, agentId: agentId as RemoteEventAgentId, request},
         deliveries: new Set(),
-        holdForWatcher,
+        holdForWatcher:holdForWatcher&&question,
         settle: outcome => {
           if (this.pending.get(id) !== waterfall) return;
           this.pending.delete(id);
           for (const clientId of waterfall.deliveries) this.clients.get(clientId)?.({type: 'cancel', eventId: id});
           waterfall.deliveries.clear();
           resolve(outcome);
-          if (event === 'user-questions/request') this.questionChanged(agentId);
+          if (question) this.questionChanged(agentId);
         },
       };
       this.pending.set(id, waterfall);
       for (const [clientId, push] of this.clients) this.deliver(waterfall, clientId, push);
-      if (event === 'user-questions/request') this.questionChanged(agentId);
+      if (question) this.questionChanged(agentId);
     });
   }
 

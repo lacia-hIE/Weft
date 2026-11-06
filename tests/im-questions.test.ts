@@ -24,10 +24,12 @@ test('native question settlement admits one structured answer, cancels Web deliv
   hub.result({clientId:ready.clientId,eventId:'question-1',outcome:{kind:'result',value:{answers:[]}}} as any);
   assert.equal(hub.answerQuestion('session-a','question-1',{answers:[]}),false);
   assert.deepEqual(changed,['session-a','session-a']);
-  const approval=hub.waterfall('permission','user-questions/request','session-a',{questions:[{id:'grant',question:'Allow?',intent:{kind:'approval',approve:'Yes',reject:'No'},options:[{label:'Yes'},{label:'No'}]}]});
+  const approval=hub.waterfall('permission','user-questions/request','session-a',{questions:[{id:'grant',question:'Allow?',intent:{kind:'approval',approve:'Yes',reject:'No'},options:[{label:'Yes'},{label:'No'}]}]},true);
   assert.deepEqual(hub.questions('session-a'),[]);
   assert.equal(hub.answerQuestion('session-a','permission',{answers:[{id:'grant',selected:['Yes']}]}),false);
-  hub.cancel('permission');await approval;abort.abort();await stream.return?.();
+  await stream.next();hub.result({clientId:ready.clientId,eventId:'permission',outcome:{kind:'next'}} as any);
+  assert.deepEqual(await approval,{kind:'next'},'an ordinary question watcher cannot hold an unanswered permission request');
+  assert.deepEqual(changed,['session-a','session-a']);abort.abort();await stream.return?.();
 });
 
 test('a registered question watcher keeps a request answerable after a Web client delegates it',async()=>{
