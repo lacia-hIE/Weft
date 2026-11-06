@@ -26,6 +26,7 @@ import {UplinkQueue} from '../../../packages/harness-runtime/src/uplink.ts';
 import {LifecycleGate,guardLifecycle} from '../../../packages/environment-storage/src/lifecycle.ts';
 import {openPermissionWorld} from '../../../packages/native-environment/src/permissions.ts';
 import {readScheduleCatalog, readScheduleHistory, drainDueReminders} from '../../../packages/native-schedule/src/index.ts';
+import {deleteStoredSchedules} from '../../../packages/native-schedule/src/delete.ts';
 import {prepareScheduleTransfer, transferError, type ScheduleTransfer} from '../../../packages/native-schedule/src/transfer.ts';
 import type {ScheduleEditRequest} from '@deepseek-ai/dsh-schedule';
 import questionRemote from '../../../.generated/official-remotes/packages/interaction/user-questions/typert.remote-client.js';
@@ -1051,6 +1052,31 @@ export class SessionDO extends DurableObject<Env> {
     this.assertScope(input);
     const row = this.ctx.storage.sql.exec<{document: string}>('SELECT document FROM weft_schedule_transfers WHERE id=?', id).toArray()[0];
     if (row && (JSON.parse(row.document) as ScheduleTransfer).token === token) this.ctx.storage.sql.exec('DELETE FROM weft_schedule_transfers WHERE id=?', id);
+  }
+
+  /** Retired execution runtimes must not prevent deleting their durable tasks. */
+  async nativeScheduleDelete(input: SessionScope, endpoint: 'schedule/edit' | 'schedule/deleteInactive', raw: unknown): Promise<Response> {
+    this.assertScope(input);
+    const method = scheduleRemote.methods[endpoint];
+    const args = method.input({strict: true}).create().parse(raw);
+    const request = 'request' in args ? args.request as ScheduleEditRequest : undefined;
+    if (request && request.action !== 'delete') throw new RemoteError('gateway/bad-request', 'Expected a Schedule deletion', {});
+    const profile = this.ctx.storage.sql.exec<{agent_document: string}>('SELECT agent_document FROM weft_session_config WHERE id=1').toArray()[0];
+    // Live and current-runtime stores keep the original service's FIFO and notifications.
+    if (!profile || supportsAgentRuntime((JSON.parse(profile.agent_document) as AgentRevision).upstream) || this.nativeHost) return this.nativeAgentRemote(input, endpoint, raw);
+    const outcome = await this.ctx.blockConcurrencyWhile(async () => {
+      try {
+        const {value, changed} = deleteStoredSchedules(this.ctx.storage, request as Extract<ScheduleEditRequest, {action: 'delete'}> | undefined);
+        if (changed && request) {
+          const due = readScheduleCatalog(this.ctx.storage).filter(task => task.status === 'active').map(task => Date.parse(task.scheduledAt));
+          if (due.length) await this.ctx.storage.setAlarm(Math.max(Date.now(), Math.min(...due))); else await this.ctx.storage.deleteAlarm();
+        }
+        await this.ctx.storage.sync();
+        return {ok: true as const, value: method.result.create().parse(value)};
+      } catch (error) {return {ok: false as const, error};}
+    });
+    if (!outcome.ok) throw outcome.error;
+    return Response.json({ok: true, value: outcome.value});
   }
 
   async nativeScheduleRead(input: SessionScope, endpoint: 'schedule/view' | 'schedule/history', raw: unknown): Promise<Response> {

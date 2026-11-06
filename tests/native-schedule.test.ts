@@ -154,3 +154,54 @@ test('retargeting refuses a busy executor without interrupting its user turn or 
     assert.equal(run.lastDelivery.targetSessionId, 'busy-executor', 'the original scheduler remains usable');
   } finally {release(); await follow?.close(); await runtime.dispose();}
 });
+
+test('retired-runtime tasks can be deleted individually and cleaned up without running their Agent', {timeout: 120_000}, async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'weft-schedule-delete-'));
+  let modelCalls = 0;
+  const model = scheduleModel().outbound;
+  const options = {browser: true, scriptPath: 'dist/environment-storage-worker.js', bindings: {MODEL_BACKEND: 'deepseek', DEEPSEEK_API_KEY: 'schedule-fixture', DEEPSEEK_BASE_URL: 'https://schedule-model.test/anthropic'},
+    outbound: (async (request, mf) => {modelCalls++; return model(request, mf);}) as V4FetchHandler};
+  let runtime = createRuntime(directory, options);
+  const api = nativeClient(() => runtime);
+  const scope = {tenantId: tenantId('alpha'), environmentId: 'default', sessionId: 'retired-deletions'};
+  const snapshot = async () => {
+    const stream = await api.stream('session/follow', {request: {address: {kind: 'session', sessionId: scope.sessionId}, activate: false}});
+    try {return await stream.next();} finally {await stream.close();}
+  };
+  const alarm = async () => (await (await runtime.dispatchFetch(url('alpha', '/_fixture/lifecycle'), {method: 'POST', body: JSON.stringify({scope, kind: 'session'})})).json() as {alarm: number | null}).alarm;
+  try {
+    await api.call('session/create', {request: {sessionId: scope.sessionId}});
+    await api.call('session/create', {request: {sessionId: 'current-deletions'}});
+    const create = (sessionId: string, title: string, delayMs = 300_000) => api.call<{id: string; updatedAt: string}>('schedule/create', {request: {title, prompt: 'REMINDER_ALPHA', timing: {kind: 'rrule', rrule: oneShotRule(delayMs)}, target: {kind: 'session', sessionId}}});
+    const single = await create(scope.sessionId, 'Delete this old task');
+    const paused = await create(scope.sessionId, 'Keep paused until explicitly deleted');
+    await api.call('schedule/edit', {request: {id: paused.id, action: 'update', patch: {active: false}}});
+    const active = await create(scope.sessionId, 'Keep active');
+    const ended = await create(scope.sessionId, 'Old ended task', 1500);
+    const currentEnded = await create('current-deletions', 'Current ended task', 1500);
+    for (const end = Date.now() + 20_000; ;) {
+      const tasks = await api.call<{id: string; status: string}[]>('schedule/catalog', {});
+      if ([ended.id, currentEnded.id].every(id => tasks.some(task => task.id === id && task.status === 'ended'))) break;
+      assert.ok(Date.now() < end, 'the fixture tasks end before retirement'); await delay(100);
+    }
+    assert.equal((await runtime.dispatchFetch(url('alpha', '/_fixture/session-revision'), {method: 'POST', body: JSON.stringify({scope, commit: 'b830ec950faba0a46dda564be3e2d854afed94f1', legacySchedules: true})})).status, 200);
+    await runtime.dispose(); runtime = createRuntime(directory, options);
+    const before = await snapshot(), callsBefore = modelCalls;
+    assert.deepEqual(await api.call('schedule/edit', {request: {id: single.id, action: 'delete', expectedUpdatedAt: '2000-01-01T00:00:00.000Z'}}), {id: single.id, code: 'schedule_conflict'});
+    assert.equal((await api.call<{id: string}>('schedule/view', {request: {id: single.id}})).id, single.id);
+    assert.deepEqual(await api.call('schedule/edit', {request: {id: single.id, action: 'delete', expectedUpdatedAt: single.updatedAt}}), {id: single.id, deleted: true});
+    assert.deepEqual(await api.call('schedule/edit', {request: {id: single.id, action: 'delete'}}), {id: single.id, code: 'schedule_not_found'});
+    assert.deepEqual(await api.call('schedule/deleteInactive', {}), {deleted: 2}, 'cleanup spans both current and retired stores');
+    assert.deepEqual((await api.call<{id: string}[]>('schedule/catalog', {})).map(task => task.id).sort(), [active.id, paused.id].sort(), 'cleanup keeps active and paused tasks');
+    assert.deepEqual(await api.call('schedule/deleteInactive', {}), {deleted: 0});
+    assert.notEqual(await alarm(), null, 'another active task keeps its alarm');
+    await api.call('schedule/edit', {request: {id: paused.id, action: 'delete'}});
+    await api.call('schedule/edit', {request: {id: active.id, action: 'delete'}});
+    assert.equal(await alarm(), null, 'removing the final active task clears the retired alarm');
+    assert.equal(modelCalls, callsBefore, 'deletion never runs the retired Agent');
+    assert.deepEqual(await snapshot(), before, 'deleting tasks preserves the old conversation history');
+    await runtime.dispose(); runtime = createRuntime(directory, options);
+    assert.deepEqual(await api.call('schedule/catalog', {}), [], 'deleted tasks remain deleted after restart');
+    assert.deepEqual(await snapshot(), before);
+  } finally {await runtime.dispose(); await rm(directory, {recursive: true, force: true});}
+});

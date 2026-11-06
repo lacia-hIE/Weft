@@ -341,7 +341,10 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
         catalog: sessionId => {const target = session(sessionId); return target.stub.nativeScheduleCatalog(target.scope) as Promise<ScheduleCatalogEntry[]>;},
         call: async sessionId => {
           const target = session(sessionId);
-          const response = endpoint === 'schedule/view' || endpoint === 'schedule/history' ? await target.stub.nativeScheduleRead(target.scope, endpoint, payload.args) : await target.stub.nativeAgentRemote(target.scope, endpoint, payload.args);
+          const deleting = endpoint === 'schedule/deleteInactive' || endpoint === 'schedule/edit' && (payload.args as {request?: {action?: string}}).request?.action === 'delete';
+          const response = endpoint === 'schedule/view' || endpoint === 'schedule/history' ? await target.stub.nativeScheduleRead(target.scope, endpoint, payload.args)
+            : deleting ? await target.stub.nativeScheduleDelete(target.scope, endpoint as 'schedule/edit' | 'schedule/deleteInactive', payload.args)
+            : await target.stub.nativeAgentRemote(target.scope, endpoint, payload.args);
           const result = await response.json() as {ok: boolean; value?: unknown; error?: unknown};
           if (!result.ok) {
             const failure = remoteErrorOf(result.error);
