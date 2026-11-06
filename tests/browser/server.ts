@@ -15,13 +15,21 @@ import {Response as FixtureResponse} from 'miniflare';
 import type {V4FetchHandler} from 'miniflare';
 import {imQrFixture} from '../helpers/im-qr.ts';
 import {localExecutorFixture} from '../helpers/local-executor-fixture.ts';
+import {DATA_LAYOUT_VERSION} from '../../packages/tenant/src/layout.ts';
 
 // Test-only bridge. Production serves directly from the authenticated Worker.
 // Native Access identities are supplied by Miniflare, never application headers.
 const live = process.env.WEFT_BROWSER_LIVE === "1";
 const production = process.env.WEFT_BROWSER_PRODUCTION === "1";
 const localDsh=process.env.WEFT_LOCAL_DSH_TEST==='1';
-const executorFixture=localDsh?await localExecutorFixture(tenantId('alpha')):undefined;
+const executorFixture=localDsh?await localExecutorFixture(tenantId('alpha'),async(environmentId,topic)=>{
+  const namespace=await runtime.getDurableObjectNamespace('TENANTS','alpha');
+  const tenant=tenantId('alpha');
+  const owner=namespace.get(namespace.idFromName(JSON.stringify([DATA_LAYOUT_VERSION,'tenant',tenant]))) as unknown as {
+    notifyLocal(tenant:string,environment:string,hint:{owner:string;environmentId:string;topic:string}):Promise<boolean>;
+  };
+  return owner.notifyLocal(tenant,environmentId,{owner:'@weft/dsh-superagent',environmentId:'default',topic});
+}):undefined;
 let localFixture:ReturnType<typeof startLocalDsh>|undefined;
 const queue = process.env.WEFT_BROWSER_QUEUE === '1' ? modelGate() : undefined;
 const plugins = process.env.WEFT_BROWSER_PLUGINS === '1' ? nativePluginModel() : undefined;

@@ -755,8 +755,14 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
     }
     throw new Error('Every connection gateway shard is full');
   }
-  async nativeConnectionCall(scope: ControlScope, receipt: {name: string; digest: string; activationId: string}, connectionId: string, operation: 'status' | 'send' | 'update' | 'reconnect' | 'close' | 'mailCheck' | 'mailReply' | 'mailAttachment', argument?: unknown): Promise<unknown> {
+  async nativeConnectionCall(scope: ControlScope, receipt: {name: string; digest: string; activationId: string}, connectionId: string, operation: 'status' | 'send' | 'update' | 'reconnect' | 'close' | 'mailCheck' | 'mailReply' | 'mailAttachment' | 'notifyLocal', argument?: unknown): Promise<unknown> {
     this.nativePackageAuthorize(scope, receipt, 'connections');
+    if (operation === 'notifyLocal') {
+      const {environmentId} = z.object({environmentId: id}).strict().parse(argument);
+      if (!/^[\w.-]{1,64}$/.test(connectionId)) throw new Error('Invalid notification topic');
+      return this.env.TENANTS.getByName(tenantAddress(scope.tenantId)).notifyLocal(scope.tenantId, environmentId,
+        {owner: receipt.name, environmentId: scope.environmentId, topic: connectionId});
+    }
     if (operation.startsWith('mail')) this.nativePackageAuthorize(scope, receipt, 'network');
     const shard = this.gatewayShard(receipt.name, connectionId);
     if (shard === undefined) {if (operation === 'status' || operation === 'close') return null; throw new Error('Connection is not open');}
@@ -2055,6 +2061,14 @@ export class TenantDO extends DurableObject<TenantEnvironment> {
       if(request.headers.get('x-weft-protocol')!==LOCAL_PROTOCOL||!supportsDshVersion(request.headers.get('x-dsh-version')))return new Response(`Incompatible local Host version; supported DSH: ${SUPPORTED_DSH_VERSIONS.join(', ')}`,{status:409});
       return this.localRelay.acceptHost(environmentId);
     });
+  }
+  /** Binding-only, tenant-scoped hints; no credentials, commands or arbitrary payloads. */
+  async notifyLocal(tenantId:string,environmentId:string,hint:{owner:string;environmentId:string;topic:string}):Promise<boolean> {
+    this.scope(tenantId);id.parse(environmentId);id.parse(hint.environmentId);
+    if(typeof hint.owner!=='string'||hint.owner.length>214||!/^[@\w./-]+$/.test(hint.owner)||!/^[\w.-]{1,64}$/.test(hint.topic))throw new Error('Invalid local notification');
+    const row=(await this.environmentRows(tenantId)).find(row=>row.id===environmentId);
+    if(row?.kind!=='local'||row.status==='deleted')return false;
+    return this.localRelay.notify(environmentId,hint);
   }
   async localProxy(tenantId:string,environmentId:string,request:Request,path:string):Promise<Response> {
     this.scope(tenantId);id.parse(environmentId);

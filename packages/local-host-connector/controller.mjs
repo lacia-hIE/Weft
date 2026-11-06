@@ -3,7 +3,7 @@ import {dirname} from 'node:path';
 import {connectLocalHost,validateEndpoint} from './transport.mjs';
 
 /** One native plugin instance owns configuration, connection and disposal. */
-export function createController({file,origin,authorize,version,connect=connectLocalHost}) {
+export function createController({file,origin,authorize,version,connect=connectLocalHost,onWake=()=>{}}) {
   let settings,dispose,closed=false,work=Promise.resolve();
   let status={state:'unpaired',changedAt:Date.now()};
   const update=state=>{if(!closed)status={state,changedAt:Date.now(),...(state==='connected'?{connectedAt:Date.now()}:{} )};};
@@ -18,7 +18,7 @@ export function createController({file,origin,authorize,version,connect=connectL
   const start=()=>{
     if(closed||!settings)return;
     validateEndpoint(settings.endpoint);
-    dispose=connect({settings,save,origin,authorize,version,onStatus:update});
+    dispose=connect({settings,save,origin,authorize,version,onStatus:update,onWake});
   };
   const load=async()=>{
     try{

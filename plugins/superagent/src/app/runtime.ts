@@ -65,6 +65,7 @@ export interface HostServices {
   tools: { register(tool: unknown): () => void }
   webServer: { register(route: unknown): () => void }
   weftIm: HostIm
+  weftConnections?: {notifyLocal(environmentId: string, topic: string): Promise<boolean>}
 }
 export type HostContext = Context & HostServices
 
@@ -133,6 +134,7 @@ export class Runtime implements SourceHost {
     const remote: RemoteExecutor = new RemoteExecutor({ store, get engine() { return runtime.engine },
       configuration: ticket => sessions.configuration('worker', ticket), tools: ticket => executorTools(this.toolHost, ticket),
       usedSlots: () => this.executor.slotCount() + remote.activeCount(),
+      notifyLocal: (environmentId,topic) => ctx.weftConnections?.notifyLocal(environmentId,topic) ?? Promise.resolve(false),
       notify: (ticket, state, summary) => { const notice = resultRelay(ticket, state, summary); sessions.relay(notice.id, notice.text) },
       changed: () => { this.drive() } })
     this.executor = new HybridExecutor({ controller: ctx.sessionController, fs: ctx.fs, get engine() { return runtime.engine }, store, effects, health: board.claim('worker'),
@@ -284,8 +286,10 @@ export class Runtime implements SourceHost {
       const end = Date.now() + DRIVE_WINDOW_MS
       try {
         for (;;) {
+          await this.executor.remote.flushWakes()
           await this.passes.pump()
           await this.passes.idle()
+          await this.executor.remote.flushWakes()
           const due = this.effects.nextDue()
           if (due === undefined || due > end || this.stopped.signal.aborted) return
           await new Promise(resolve => setTimeout(resolve, Math.min(DRIVE_STEP_MS, Math.max(50, due - Date.now()))))

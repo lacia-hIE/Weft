@@ -1,6 +1,6 @@
 import {test,expect} from '@playwright/test';
 import {readFile} from 'node:fs/promises';
-import {resolve} from 'node:path';
+import {resolve,dirname} from 'node:path';
 import localHostPackage from '../../packages/local-host-connector/package.json' with {type:'json'};
 test('published local DSH pairs in native settings, runs Files, Git and PTY and recovers through Weft',async({page,request,context},testInfo)=>{
   test.setTimeout(420_000);
@@ -75,7 +75,21 @@ test('published local DSH pairs in native settings, runs Files, Git and PTY and 
   // A full Agent runs in the published native Host, using local model credentials and native file tools.
   const broker=await(await request.get('/__test/executor')).json();
   const taskRoot=resolve(project,'../execution');
-  await page.getByLabel('Task root directory (absolute path)',{exact:true}).fill(taskRoot);
+  await page.getByRole('button',{name:'Choose directory',exact:true}).click();
+  const directory=page.getByRole('dialog',{name:'Select Workspace Directory',exact:true});
+  await expect(directory).toBeVisible();
+  await directory.getByRole('button',{name:'Edit path',exact:true}).click();
+  const pathInput=directory.getByRole('textbox',{name:'Edit path',exact:true});
+  await pathInput.fill(dirname(project));await pathInput.press('Enter');await expect(pathInput).toHaveCount(0);
+  await directory.getByRole('button',{name:'New folder',exact:true}).click();
+  const folder=page.getByRole('dialog',{name:'New folder',exact:true});
+  await folder.getByRole('textbox',{name:'Folder name',exact:true}).fill('execution');
+  await folder.getByRole('button',{name:'Create',exact:true}).click();await expect(folder).toHaveCount(0);
+  await directory.getByRole('button',{name:'Open',exact:true}).click();await expect(directory).toHaveCount(0);
+  await expect(page.getByLabel('Task root directory (absolute path)',{exact:true})).toHaveValue(taskRoot);
+  await page.getByRole('button',{name:'Choose directory',exact:true}).click();await expect(directory).toBeVisible();
+  await directory.getByRole('button',{name:'Cancel',exact:true}).click();
+  await expect(page.getByLabel('Task root directory (absolute path)',{exact:true})).toHaveValue(taskRoot);
   await page.getByRole('combobox',{name:'Execution permission preset',exact:true}).selectOption('danger-full-access');
   await expect(page.getByRole('button',{name:'Add project',exact:true})).toHaveCount(0);
   await page.getByRole('switch',{name:'Accept tasks',exact:true}).check();
@@ -94,7 +108,9 @@ test('published local DSH pairs in native settings, runs Files, Git and PTY and 
   expect((await request.post(base+'/local/web/api/weft-executor',{data:{action:'attach',code:broker.pairingCode}})).status()).toBe(200);
   expect((await context.request.post(executorUrl,{data:{action:'reconnect'}})).status()).toBe(200);
   await expect.poll(async()=>(await(await request.get('/__test/executor')).json()).devices[0]?.projects?.[0]?.name).toBe('Internal CI project');
+  await expect.poll(async()=>(await(await request.get('/__test/executor')).json()).wakeReady,{timeout:30_000}).toBe(true);
   expect((await request.post('/__test/executor',{data:{start:true}})).status()).toBe(200);
+  await expect.poll(async()=>(await(await context.request.get(executorUrl)).json()).jobs.length,{timeout:10_000}).toBe(1);
   try { await expect.poll(async()=>{
     const state=await(await request.get('/__test/executor')).json();
     const ticket=state.tickets[0];
@@ -111,6 +127,7 @@ test('published local DSH pairs in native settings, runs Files, Git and PTY and 
   expect(await readFile(taskRoot+'/native-proof/executor-proof.txt','utf8')).toBe('LOCAL_EXECUTOR_FILE_CREATED\n');
   const worked=await(await request.get('/__test/executor')).json();
   expect(worked.modelCalls).toBeGreaterThanOrEqual(2);
+  expect(worked.notifications).toBeGreaterThan(0);
   await expect.poll(async()=>(await(await context.request.get(executorUrl)).json()).jobs[0]?.state,{timeout:30_000}).toBe('stopped');
   const nativeSession=(await(await context.request.get(executorUrl)).json()).jobs[0].sessionId;
   const workspace=await rpc('workspace/create',{request:{path:taskRoot+'/native-proof'}});
@@ -230,6 +247,10 @@ test('published local DSH pairs in native settings, runs Files, Git and PTY and 
     await expect(taskPage.locator('[data-files-state="no-workspace"]')).toHaveCount(0);
     await taskPage.reload();
     await expect(taskPage.getByText('LOCAL_EXECUTOR_FILE_CREATED',{exact:true})).toBeVisible({timeout:45_000});
+    await expect(row).toBeVisible();await expect(row).toHaveAttribute('aria-selected','true');
+    await taskPage.goto(base+'/local/web/?weft-session='+encodeURIComponent(nativeSession));
+    await expect(taskPage.locator('[data-conversation-content]')).toHaveAttribute('data-conversation-session',nativeSession);
+    await expect(taskPage).not.toHaveURL(/weft-session=/);
     await expect(row).toBeVisible();await expect(row).toHaveAttribute('aria-selected','true');
     expect((await localState()).jobs.find((job:any)=>job.sessionId===nativeSession).state).toBe('stopped');
     expect((await(await request.get('/__test/executor')).json()).modelCalls).toBe(callsBeforeBrowsing);

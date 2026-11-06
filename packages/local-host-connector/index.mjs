@@ -20,11 +20,11 @@ export async function apply(ctx,config={}) {
     const cookie=response.headers.getSetCookie().map(value=>value.split(';',1)[0]).join('; ');
     if(![302,303].includes(response.status)||!cookie)throw new Error('Native DSH browser authentication failed');return cookie;
   };
-  const controller=createController({file,origin,authorize,version});
+  const controller=createController({file,origin,authorize,version,onWake:hint=>executor.wake(hint)});
   ctx.effect(()=>()=>controller.close(),'weft-local-host-connection');
   const agentOwner=ctx.plugin({name:'weft-executor-agents',inject:['agents'],apply(){}});
   await agentOwner;
-  const executor=createExecutorController({ctx,agentOwner:agentOwner.ctx,file:config.executorFile??process.env.WEFT_EXECUTOR_CONFIG??join(homedir(),'.dsh','weft-executor.json')});
+  const executor=createExecutorController({ctx,agentOwner:agentOwner.ctx,connection:()=>controller.snapshot(),file:config.executorFile??process.env.WEFT_EXECUTOR_CONFIG??join(homedir(),'.dsh','weft-executor.json')});
   ctx.effect(function*(){yield agentOwner.dispose;yield()=>executor.close();},'weft-local-executor');
   ctx.effect(()=>ctx.webServer.register({kind:'exact',path:'/api/weft-executor',handler:async(req,res)=>{
     const admission=ctx.connection.admit(req);

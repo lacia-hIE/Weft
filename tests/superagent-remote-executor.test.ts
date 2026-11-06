@@ -9,7 +9,9 @@ import {memorySql} from './helpers/superagent-sql.ts'
 async function harness() {
   const sql = memorySql(), store = new Store(sql)
   let engine: Engine, calls = 0, selected = ''
+  const notifications:{environmentId:string;topic:string}[]=[]
   const remote = new RemoteExecutor({store, get engine() {return engine}, changed() {}, configuration: () => ({instructions: 'Own the task.', allow: ['read', 'bash']}),
+    notifyLocal:async(environmentId,topic)=>{notifications.push({environmentId,topic})},
     tools: ticket => [{name: 'orchestrator_report', description: 'Report', schema: z.object({state: z.enum(['progress', 'ready']), summary: z.string()}), execute: async args => {
       calls++; engine.report(ticket.id, args as {state: 'progress' | 'ready'; summary: string}); return {reported: true}
     }}]})
@@ -30,8 +32,25 @@ async function harness() {
     return store.tickets.list().find(ticket => ticket.origin.triggerId === trigger.id)!
   }
   const sync = (id: string, states: unknown[] = [], accepting = true) => remote.sync(id, {protocol: EXECUTOR_PROTOCOL, accepting, states})
-  return {sql, store, engine, remote, first, second, accept, sync, calls: () => calls}
+  return {sql, store, engine, remote, first, second, accept, sync, notifications, calls: () => calls}
 }
+
+test('local notifications coalesce by authenticated computer and revoked or legacy devices keep polling',async()=>{
+  const h=await harness()
+  try{
+    const reply=h.remote.sync(h.first.id,{protocol:EXECUTOR_PROTOCOL,accepting:true,states:[],localEnvironmentId:'computer-a'})
+    assert.equal(reply.features.localWake,true)
+    const ticket=h.accept('wake'),assignment=latestAssignment(ticket)!
+    for(let i=0;i<5;i++)h.remote.deliver(ticket,assignment)
+    await h.remote.flushWakes()
+    assert.deepEqual(h.notifications,[{environmentId:'computer-a',topic:h.first.id}])
+    h.engine.stopTicket(ticket.id);await h.remote.flushWakes();assert.equal(h.notifications.length,2)
+    h.remote.sync(h.first.id,{protocol:EXECUTOR_PROTOCOL,accepting:true,states:[]})
+    h.accept('legacy');await h.remote.flushWakes();assert.equal(h.notifications.length,2)
+    h.remote.sync(h.first.id,{protocol:EXECUTOR_PROTOCOL,accepting:true,states:[],localEnvironmentId:'computer-a'})
+    h.accept('revoked');h.remote.revoke(h.first.id);await h.remote.flushWakes();assert.equal(h.notifications.length,2)
+  }finally{h.sql.close()}
+})
 
 test('remote placement persists, dispatch is replayable, and only the assigned computer sees a Ticket', async () => {
   const h = await harness()

@@ -98,6 +98,36 @@ test('local Executor opts in separately, retains native prompt identities, and c
   } finally {await controller.close();await rm(directory,{recursive:true,force:true})}
 })
 
+test('local wake hints fetch authenticated work once and cloud rollbacks fall back to the original sync schema',async()=>{
+  const directory=await mkdtemp(join(tmpdir(),'weft-executor-wake-')),file=join(directory,'executor.json'),host=native()
+  await writeFile(file,JSON.stringify({endpoint,token,root:directory,accepting:true,maxWorkers:1,jobs:{}}))
+  const inputs:any[]=[];let armed=false,legacy=false
+  const command={kind:'run',ticketId:ticket,assignmentId:assignment,name:'wake-task',directory:'/workspace/task',title:'Wake task',instructions:'Task',allow:['read'],tools:[],messages:[{id:'wake-input',text:'Task'}]}
+  const request=async(address:string,init:RequestInit)=>{
+    assert.ok(address.endsWith('/sync'));assert.equal((init.headers as Record<string,string>).authorization,`Bearer ${token}`)
+    const input=JSON.parse(String(init.body));inputs.push(input)
+    if(legacy&&input.localEnvironmentId)return Response.json({error:'Unknown field'},{status:400})
+    return Response.json({protocol,...legacy?{}:{features:{localWake:true}},commands:armed?[command]:[],retryAfterMs:30_000})
+  }
+  const controller=createExecutorController({ctx:host.ctx,file,request,connection:()=>({state:'connected',endpoint:'https://weft.example/v1/local-hosts/tenant/computer-a'})})
+  const hint={owner:'@weft/dsh-superagent',environmentId:'default',topic:device}
+  try{
+    await controller.load();await waitFor(()=>inputs.some(input=>input.localEnvironmentId==='computer-a'))
+    assert.equal(inputs[0].localEnvironmentId,undefined,'learn the capability before extending an older strict schema')
+    for(const invalid of [{...hint,topic:crypto.randomUUID()},{...hint,owner:'other'},{...hint,environmentId:'other'}])assert.equal(controller.wake(invalid),false)
+    armed=true
+    for(let i=0;i<100;i++)assert.equal(controller.wake(hint),true)
+    await waitFor(()=>host.prompts.length===1)
+    assert.equal(host.prompts[0].requestId,'wake-input')
+    legacy=true;assert.equal(controller.wake(hint),true)
+    await waitFor(()=>inputs.some((input,index)=>index>2&&input.localEnvironmentId===undefined))
+    await controller.disconnect()
+    assert.equal(host.prompts.length,1,'notifications and a schema fallback never replay accepted prompts')
+    const stored=JSON.parse(await readFile(file,'utf8'));assert.equal(stored.localWake,false)
+    assert.equal(controller.wake(hint),false)
+  }finally{await controller.close();await rm(directory,{recursive:true,force:true})}
+})
+
 test('Executor pairing rejects unrelated, plaintext and credential-bearing endpoints',()=>{
   assert.equal(executorEndpoint(endpoint),endpoint)
   for(const target of [endpoint.replace('https:','http:'),endpoint+'?token=secret',endpoint.replace('weft.example','user:pass@weft.example'),'https://weft.example/v1/local-hosts/t/e'])assert.throws(()=>executorEndpoint(target))

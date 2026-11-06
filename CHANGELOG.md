@@ -4,6 +4,9 @@ Application versions use `vX.Y.Z`; local connector versions are independent. See
 
 ## [0.2.2-rc.1](https://github.com/lacia-hIE/Weft/releases/tag/v0.2.2-rc.1) — Unreleased / 未发布
 
+- Superagent `0.4.2` and local connector `0.5.1` add owner-verified local Session navigation, the original DSH directory chooser for task roots, and advisory dispatch hints over the existing outbound relay. Devices authenticate and fetch commands as before; lost hints and older servers fall back to polling. The cloud plugin requests the existing connections capability.
+- Superagent `0.4.2` 与本地连接插件 `0.5.1` 增加本地任务会话直达、原版任务根目录选择器及经现有出站中继发送的派工提示。本机仍凭原凭据取任务，提示丢失或服务端为旧版本时保留轮询兜底；云端插件使用原有连接授权。
+
 - Local connector `0.5.1` allows opening completed or stopped Superagent task Sessions without reactivating their Assignment or rolling native Session activation back. Task workspaces and Files remain visible after selection and reload; Retry/Stop on a browser-owned native Agent releases only connector-owned Assignment effects.
 - 本地连接插件 `0.5.1` 修复打开已完成或停止的 Superagent 任务时，会话恢复被拒绝、侧栏条目消失及文件栏提示没有目录的问题。浏览历史不会重新派工；对已打开会话重试、停止任务时，仅清理连接插件登记的派工工具和限制，保留原生浏览器持有的 Agent。
 

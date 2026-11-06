@@ -49,6 +49,9 @@ export class WorkerConnections {
   private readonly registered = new Map<string, {kind: 'socket' | 'poll' | 'mail'; handlers: Handlers; connection: Connection}>();
   constructor(private readonly host: Host) {}
   readonly service = {
+    /** Advisory hint only; the local plugin authenticates and fetches its own work. */
+    notifyLocal: async (environmentId: string, topic: string): Promise<boolean> =>
+      await this.host.connectionCall(topic, 'notifyLocal', {environmentId}) as boolean,
     socket: (id: string, handlers: Handlers) => this.register(id, 'socket', handlers),
     poll: (id: string, handlers: Handlers) => this.register(id, 'poll', handlers),
     mail: (id: string, handlers: Handlers) => this.register(id, 'mail', handlers),

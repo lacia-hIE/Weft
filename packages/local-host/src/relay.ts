@@ -53,6 +53,10 @@ export class LocalHostRelay {
     this.ctx.acceptWebSocket(socket,['local-host']);
     return new Response(null,{status:101,webSocket:pair[0]});
   }
+  notify(environmentId:string,hint:{owner:string;environmentId:string;topic:string}):boolean {
+    const socket=this.host(environmentId);if(!socket)return false;
+    try{socket.send(JSON.stringify({type:'plugin-wake',id:crypto.randomUUID(),...hint}));return true;}catch{return false;}
+  }
   async proxy(environmentId:string,request:Request,path:string):Promise<Response> {
     const socket=this.host(environmentId);
     if(!socket)return Response.json({error:'本地 DSH 未连接，请启动本地 DSH 后重试'},{status:503,headers:{'cache-control':'private, no-store'}});

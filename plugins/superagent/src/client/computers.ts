@@ -29,3 +29,15 @@ export async function attachComputer(id: string, credential: {id: string; protoc
   await json(endpoint(id), {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({action: 'attach',
     code: JSON.stringify({protocol: credential.protocol, endpoint: `${hookBase()}/executor/${credential.id}`, pairingKey: credential.pairingKey})})})
 }
+/** Resolve through the authenticated owner's environment catalogue; never trust a device-supplied URL. */
+export async function localSessionAddress(executorId: string, sessionId: string): Promise<string | undefined> {
+  if(!/^[a-f0-9-]{36}$/.test(executorId)||!new RegExp(`^weft-${executorId}-[a-f0-9]{32}$`).test(sessionId))return;
+  const computer=(await connectedComputers()).find(row=>row.executorId===executorId);
+  if(!computer)return;
+  const root=`${tenantBase()}/environments/${encodeURIComponent(computer.id)}/local/web/`;
+  const result=await json<{result:{ok:boolean;value?:{items:{sessionId:string}[]}}}>(root+'api/session/list',{
+    method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({type:'client-request',rpcId:crypto.randomUUID(),method:'session/list',payload:{args:{_request:{}}}}),
+  });
+  if(!result.result.ok||!result.result.value?.items.some(row=>row.sessionId===sessionId))return;
+  const address=new URL(root);address.searchParams.set('weft-session',sessionId);return address.href;
+}

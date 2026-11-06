@@ -48,6 +48,12 @@ Assignment. The sidebar, original task directory and files remain available afte
 If a Ticket is explicitly retried while its Session is open, stopping drains the task and removes the
 connector's tools and restrictions while preserving the browser-owned native Agent handle.
 
+The task-root form reuses DSH’s original directory browser or native desktop picker; selection changes only the draft until Save.
+Cloud Ticket details can open the matching local Session through the authenticated owner’s environment catalogue.
+When connected to Weft, scoped wake hints interrupt the idle polling delay for new work, follow-ups and Stop.
+The local Executor still authenticates and fetches its own commands; hints contain no work or credentials.
+Duplicate hints coalesce, and polling remains the fallback for lost hints, older cloud deployments and standalone Executors.
+
 The installation instructions below establish the reusable local DSH connection.
 
 A native DSH Host plugin for **DSH 0.2.2-rc.1** (Node 24.9 or newer), installed through the original

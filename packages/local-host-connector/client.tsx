@@ -1,7 +1,9 @@
-import React,{useEffect,useId,useState,type ReactNode} from 'react';
+import React,{useCallback,useEffect,useId,useState,type ReactNode} from 'react';
 import {Button,Input,Switch,Tag} from '@deepseek-ai/dsh-client-ui-primitives';
 import metadata from './package.json' with {type:'json'};
 import {connectionStyles} from './client-styles.ts';
+import {DirectoryBrowser} from '../../../deepseek-harness/packages/client/ui-directory-picker-browse/src/client/DirectoryBrowser.tsx';
+import type {DirectoryListing} from '@deepseek-ai/dsh-api-remotes/client';
 
 const zh={title:'连接设置',description:'通过 Weft 使用本机环境，数据由本地 DSH 管理。',code:'配对码',hint:'在 Weft 首页生成配对码，复制并粘贴到这里。',placeholder:'粘贴配对码',saved:'配置自动保存在本机，无需下载文件。',details:'连接详情',address:'连接地址',hostVersion:'DSH 版本',pair:'保存并连接',reconnect:'重新连接',stop:'停止连接',busy:'正在处理…',failed:'操作失败，请检查配对码或稍后重试。',remote:'请在本机 DSH 页面管理连接。',
   advanced:'高级',legacyNotes:'历史执行约定',legacyNotesHint:'原项目配置保留供已有任务恢复使用；新任务的仓库和工作流程在 Superagent 提示词或技能中约定。',
@@ -15,31 +17,59 @@ const en:typeof zh={title:'Connection settings',description:'Use this computer t
   executorPermission:'Execution permission preset',executorLocalDefault:'Use local default permissions',
   executor:'Superagent Executor',executorHint:'Accept tasks from your Weft environment and run the Agent on this computer.',executorCode:'Executor pairing code',executorRoot:'Task root directory (absolute path)',executorPreset:'DSH Agent preset',executorPair:'Pair executor',executorAccept:'Accept tasks',executorMax:'Maximum concurrent tasks',executorSave:'Save execution settings',executorDefault:'Use local default preset',executorUnconfigured:'Not configured',executorReconnect:'Reconnect executor',executorStop:'Disconnect executor',executorReady:'Configured, ready to select in Weft',executorSource:'Save here, then select this connected DSH in Weft → Superagent → Settings → Execution. No additional pairing is needed.',executorSafety:'Agents use this computer’s model, credentials and preset permissions. Directories do not isolate permissions; use a dedicated DSH profile.',
   unpaired:'Not paired',connecting:'Connecting…',connected:'Connected',retrying:'Network interrupted; retrying…',revoked:'Authorization revoked. Pair again in Weft.',incompatible:'Version incompatible. Update DSH or the connector.','pairing-rejected':'Pairing code expired or already used. Generate a new code in Weft.','configuration-error':'Cannot read the connection file. Pair again.',stopped:'Connection stopped'};
+const browserZh={'browser.title':'选择工作区目录','browser.home':'主目录','browser.newFolder':'新建文件夹','browser.folderName':'文件夹名称','browser.createIn':'在\"{name}\"中新建文件夹','browser.untitledFolder':'未命名文件夹','browser.create':'创建','browser.cancel':'取消','browser.open':'打开','browser.editPath':'编辑路径','browser.loading':'加载中…','browser.truncated':'文件夹过多，仅显示开头部分。','browser.showHidden':'显示隐藏文件'};
+const browserEn:typeof browserZh={'browser.title':'Select Workspace Directory','browser.home':'Home','browser.newFolder':'New folder','browser.folderName':'Folder name','browser.createIn':'New folder in \"{name}\"','browser.untitledFolder':'Untitled folder','browser.create':'Create','browser.cancel':'Cancel','browser.open':'Open','browser.editPath':'Edit path','browser.loading':'Loading…','browser.truncated':'Too many folders to list; only the beginning is shown.','browser.showHidden':'Show hidden files'};
+type Directory={pick:()=>Promise<string|null|undefined>;list:(path?:string,signal?:AbortSignal)=>Promise<DirectoryListing>;create:(path:string,name:string)=>Promise<string>};
 type State={state:string;endpoint?:string;hostVersion?:string;configured?:boolean};
 interface Context {
-  locale:{register(ns:string,dictionaries:Record<string,typeof zh>):()=>void;bind(ns:string):(key:keyof typeof zh)=>string};
+  locale:{register(ns:string,dictionaries:Record<string,Record<string,string>>):()=>void;bind(ns:string):(key:string,values?:Record<string,unknown>)=>string};
   slots:{inject(name:string,callback:()=>unknown):unknown;register(spec:object,component:(props:Props)=>ReactNode):unknown};
   effect(callback:()=>unknown,label:string):unknown;
+  uiWorkspace:{listDirectory:Directory['list'];createDirectory:Directory['create'];openSession:(id:string)=>void};
+  remote:{directoryPicker:{pick:()=>Promise<{ok:boolean;value?:string|null;error?:{code:string;message:string;details?:{capability?:string}}}>}};
+  sessions:{refresh:()=>Promise<void>;list:{getSnapshot:()=>{byId:Record<string,unknown>}}};
 }
-interface Props {view:'summary'|'page';t:(key:keyof typeof zh)=>string;}
-export const inject=['slots','locale'];
+interface Props {view:'summary'|'page';t:(key:string,values?:Record<string,unknown>)=>string;directory:Directory;}
+export const inject=['slots','locale','uiWorkspace','sessions','remote.directoryPicker'];
 export function apply(ctx:Context):void {
-  const ns='weft.local-host';ctx.effect(()=>ctx.locale.register(ns,{zh,en}),'weft.local-host: locale');
-  ctx.effect(()=>ctx.slots.inject('plugins.bundle.config',()=>ctx.slots.register({name:'plugins.bundle.config',key:metadata.name,locale:ns,inject:()=>({})},ConnectionCard)),'weft.local-host: bundle settings');
-  ctx.effect(()=>ctx.slots.inject('plugins.row.config',()=>ctx.slots.register({name:'plugins.row.config',key:`${metadata.name}#weft-local-host`,locale:ns,inject:()=>({})},ConnectionCard)),'weft.local-host: component settings');
+  const ns='weft.local-host';ctx.effect(()=>ctx.locale.register(ns,{zh:{...zh,...browserZh,executorBrowse:'选择目录'},en:{...en,...browserEn,executorBrowse:'Choose directory'}}),'weft.local-host: locale');
+  const settings=()=>({directory:{pick:async()=>{
+    const desktop=(globalThis as typeof globalThis&{__DSH_DIRECTORY_PICKER__?:{pick:()=>Promise<string|null>}}).__DSH_DIRECTORY_PICKER__;
+    if(desktop)return desktop.pick();
+    const result=await ctx.remote.directoryPicker.pick();if(result.ok)return result.value??null;
+    if(result.error?.code==='directory-picker/unavailable'&&result.error.details?.capability==='browse')return undefined;
+    throw new Error(result.error?.message??'Directory picker unavailable');
+  },list:(path?:string,signal?:AbortSignal)=>ctx.uiWorkspace.listDirectory(path,signal),create:(path:string,name:string)=>ctx.uiWorkspace.createDirectory(path,name)}});
+  const requested=new URL(location.href).searchParams.get('weft-session');
+  if(requested&&/^weft-[a-f0-9-]{36}-[a-f0-9]{32}$/.test(requested))ctx.effect(()=>{
+    const abort=new AbortController();void ctx.sessions.refresh().then(()=>{
+      if(abort.signal.aborted)return;
+      if(!ctx.sessions.list.getSnapshot().byId[requested])throw new Error('The local task Session is no longer available');
+      ctx.uiWorkspace.openSession(requested);const address=new URL(location.href);address.searchParams.delete('weft-session');history.replaceState(history.state,'',address);
+    }).catch(error=>{if(!abort.signal.aborted)console.warn('Weft local Session navigation:',error);});return()=>abort.abort();
+  },'weft.local-host: task Session navigation');
+  ctx.effect(()=>ctx.slots.inject('plugins.bundle.config',()=>ctx.slots.register({name:'plugins.bundle.config',key:metadata.name,locale:ns,inject:settings},ConnectionCard)),'weft.local-host: bundle settings');
+  ctx.effect(()=>ctx.slots.inject('plugins.row.config',()=>ctx.slots.register({name:'plugins.row.config',key:`${metadata.name}#weft-local-host`,locale:ns,inject:settings},ConnectionCard)),'weft.local-host: component settings');
 }
-function ConnectionCard({view,t}:Props):ReactNode {
+function ConnectionCard({view,t,directory}:Props):ReactNode {
   if(view==='summary')return t('description');
-  return <><ConnectionSettings t={t}/><ExecutorSettings t={t}/></>;
+  return <><ConnectionSettings t={t}/><ExecutorSettings t={t} directory={directory}/></>;
 }
 
 type LocalProject={id:string;name:string;repository:string;verify:string;merge:string;deploy:string};
 type ExecutorState={state:string;configured?:boolean;ready?:boolean;accepting:boolean;root:string;maxWorkers:number;agentPreset:string;permissionPreset?:string;running:number;projects?:LocalProject[];jobs?:{ticketId:string;sessionId:string;state:string;cwd:string}[];presets?:{id:string;name?:string;broken?:string}[]};
 type ExecutionDraft=Pick<ExecutorState,'root'|'agentPreset'|'accepting'|'maxWorkers'> & {permissionPreset:string};
-function ExecutorSettings({t}:{t:Props['t']}):ReactNode {
+function ExecutorSettings({t,directory}:{t:Props['t'];directory:Directory}):ReactNode {
   const [state,setState]=useState<ExecutorState>({state:'unpaired',accepting:false,root:'',maxWorkers:1,agentPreset:'',running:0});
+  const [picking,setPicking]=useState(false),[choosing,setChoosing]=useState(false);
+  const choose=async()=>{
+    if(choosing)return;setChoosing(true);setError('');
+    try{const path=await directory.pick();if(path===undefined)setPicking(true);else if(path!==null)edit({root:path});}
+    catch(error){setError(error instanceof Error?error.message:t('failed'));}finally{setChoosing(false);}
+  };
   const [draft,setDraft]=useState<ExecutionDraft|null>(null),[error,setError]=useState(''),[busy,setBusy]=useState(false);
   const settings=draft??{...state,permissionPreset:state.permissionPreset??'',projects:state.projects??[]};
+  const listDirectory=useCallback((path?:string,signal?:AbortSignal)=>directory.list(path??(settings.root||undefined),signal),[directory,settings.root]);
   const edit=(next:Partial<ExecutionDraft>)=>setDraft({...settings,...next});
   const id=useId(),remote=location.pathname.includes('/local/web/'),endpoint=new URL('api/weft-executor',document.baseURI).href;
   useEffect(()=>{
@@ -63,7 +93,8 @@ function ExecutorSettings({t}:{t:Props['t']}):ReactNode {
     </div>
     {remote?<p className="weft-connection-hint">{t('remote')}</p>:<form className="weft-connection-form" onSubmit={event=>{event.preventDefault();void action('configure');}}>
       <p className="weft-connection-hint">{t('executorSource')}</p>
-      <div className="weft-connection-field"><label htmlFor={id+'-root'}>{t('executorRoot')}</label><Input className="weft-connection-input" id={id+'-root'} value={settings.root} placeholder="/path/to/tasks" spellCheck={false} onChange={event=>edit({root:event.target.value})} disabled={busy} required/></div>
+      <div className="weft-connection-field"><label htmlFor={id+'-root'}>{t('executorRoot')}</label><Input className="weft-connection-input" id={id+'-root'} value={settings.root} placeholder="/path/to/tasks" spellCheck={false} onChange={event=>edit({root:event.target.value})} disabled={busy} required/><Button type="button" size="sm" variant="outline" disabled={busy||choosing} onClick={()=>void choose()}>{t('executorBrowse')}</Button></div>
+      <DirectoryBrowser open={picking} busy={busy} listDirectory={listDirectory} createDirectory={directory.create} onOpen={root=>{edit({root});setPicking(false);}} onClose={()=>setPicking(false)} t={t}/>
       <div className="weft-connection-field"><label htmlFor={id+'-preset'}>{t('executorPreset')}</label><select className="weft-connection-select" id={id+'-preset'} value={settings.agentPreset} onChange={event=>edit({agentPreset:event.target.value})} disabled={busy}>
         <option value="">{t('executorDefault')}</option>{settings.agentPreset&&!state.presets?.some(row=>row.id===settings.agentPreset)&&<option value={settings.agentPreset} disabled>{settings.agentPreset}</option>}
         {state.presets?.map(row=><option key={row.id} value={row.id} disabled={!!row.broken}>{row.name??row.id}{row.broken?' · '+row.broken:''}</option>)}

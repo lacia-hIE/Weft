@@ -9,7 +9,7 @@ import { settingsRoute } from './route.ts'
 import { Earlier, ThreadLine, automatedRuns } from './rows.tsx'
 import { actorName, localized, readableMarkers, reasonLabel, valueLabel, when } from './text.ts'
 import { ActionLink, ConfirmButton, ExternalLink, Hint, KeyValues, LabelValue, LoadState, MarkdownLite, PageHead, Section, SessionButton,
-  StageMark, When } from './widgets.tsx'
+  StageMark, When, LocalSessionButton } from './widgets.tsx'
 
 type Input = TicketPageView['inputs'][number]
 function InputLine({ input, earlier = [] }: { input: Input; earlier?: { id: string; at: string; preview: string }[] }) {
@@ -134,6 +134,7 @@ export function TicketPage({ id }: { id: string }) {
         onConfirm={() => after(call('POST tickets/:id/retry', { id }))} />}
       {data.sessionId && <SessionButton variant="outline" sessionId={data.sessionId} />}
     </PageHead>
+    {data.executionComputer?.sessionId&&<div className="dt-row-actions"><LocalSessionButton executorId={data.executionComputer.executorId} sessionId={data.executionComputer.sessionId} online={data.executionComputer.online}/></div>}
     {error && <LoadState error={error} loading={false} />}
     <div className="dt-row-meta dt-status-line">
       <StageMark state={status.dot} icon={status.icon} label={status.label} />

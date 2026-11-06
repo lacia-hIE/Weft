@@ -5,11 +5,12 @@ import {Engine, key, type Policy, type Trigger} from '../../plugins/superagent/s
 import {RemoteExecutor} from '../../plugins/superagent/src/executor/remote.ts'
 import {memorySql} from './superagent-sql.ts'
 
-export async function localExecutorFixture(tenant='native') {
+export async function localExecutorFixture(tenant='native',notifyLocal?:(environmentId:string,topic:string)=>Promise<boolean>) {
   const sql=memorySql(),store=new Store(sql)
-  let engine:Engine,deviceId='',modelCalls=0,sequence=0,currentTicketId='',released=false,retrying=false
+  let engine:Engine,deviceId='',modelCalls=0,sequence=0,currentTicketId='',released=false,retrying=false,wakeReady=false,notifications=0
   const pending:(()=>void)[]=[]
-  const remote=new RemoteExecutor({store,get engine(){return engine},changed(){},
+  const remote=new RemoteExecutor({store,get engine(){return engine},changed(){void remote.flushWakes()},
+    notifyLocal:async(environmentId,topic)=>{if(await notifyLocal?.(environmentId,topic))notifications++},
     configuration:()=>({instructions:'LOCAL_EXECUTOR_NATIVE_TEST: Own this task. Create the requested proof file, then report ready with orchestrator_report.',allow:['read','write','bash','job_output','job_list','job_kill','subagent','subagent_fork','send_message','list_agents','interrupt_agent','wait_agent']}),
     tools:ticket=>[{name:'orchestrator_report',description:'Report the task result.',schema:z.object({state:z.enum(['progress','ready','failed']),summary:z.string()}),
       execute:async args=>{engine.report(ticket.id,args as {state:'ready';summary:string});return {reported:true}}}],
@@ -61,12 +62,12 @@ export async function localExecutorFixture(tenant='native') {
             engine.receive(trigger);engine.evaluateDue();engine.decide(taskId,{kind:'accept',title:'Native local execution',scope:'Create proof file',reason:'requested'})
             currentTicketId=store.tickets.list().find(ticket=>ticket.origin.triggerId===taskId)!.id
           }
-          return Response.json({pairingCode:JSON.stringify({protocol:pairing.protocol,endpoint:`https://127.0.0.1:4173${prefix}`,pairingKey:pairing.pairingKey}),modelCalls,currentTicketId,tickets:store.tickets.list(),devices:remote.list()})
+          return Response.json({pairingCode:JSON.stringify({protocol:pairing.protocol,endpoint:`https://127.0.0.1:4173${prefix}`,pairingKey:pairing.pairingKey}),modelCalls,currentTicketId,wakeReady,notifications,tickets:store.tickets.list(),devices:remote.list()})
         }
         const operation=path.slice(prefix.length+1),token=authorization.replace(/^Bearer /,'')
         if(operation==='pair')return Response.json(await remote.pair(deviceId,token))
         await remote.authenticate(deviceId,token)
-        if(operation==='sync')return Response.json(remote.sync(deviceId,JSON.parse(body)))
+        if(operation==='sync'){const input=JSON.parse(body);wakeReady=typeof input.localEnvironmentId==='string';return Response.json(remote.sync(deviceId,input))}
         if(operation==='tool')return Response.json(await remote.call(deviceId,JSON.parse(body),new AbortController().signal))
         return Response.json({error:'Not found'},{status:404})
       }catch(error){return Response.json({error:String(error)},{status:400})}

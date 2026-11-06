@@ -18,9 +18,15 @@ async function privateWrite(file,value){
 }
 
 /** One native DSH, one persisted mailbox; reconnects do not replay accepted prompts. */
-export function createExecutorController({ctx,agentOwner=ctx,file,request=fetch}){
+export function createExecutorController({ctx,agentOwner=ctx,file,request=fetch,connection=()=>undefined}){
   let data={accepting:false,maxWorkers:1,jobs:{}},status='unpaired',closed=false,reconciled=true,loop,stop;
   let saving=Promise.resolve(),actions=Promise.resolve();const disposers=[],configured=new WeakMap(),handles=new Map();
+  let wakePending=false,wakeWait;
+  const localEnvironment=()=>{
+    const value=connection();if(value?.state!=='connected'||!value.endpoint||!data.endpoint)return;
+    const local=new URL(value.endpoint),cloud=new URL(data.endpoint);
+    if(local.origin===cloud.origin&&local.pathname.split('/')[3]===cloud.pathname.split('/')[3])return local.pathname.split('/')[4];
+  };
   const save=()=>{const copy=JSON.parse(JSON.stringify(data));return saving=saving.catch(()=>{}).then(()=>privateWrite(file,copy));};
   const serial=run=>{const result=actions.then(run);actions=result.catch(()=>{});return result;};
   const jobOf=agent=>{
@@ -247,8 +253,20 @@ export function createExecutorController({ctx,agentOwner=ctx,file,request=fetch}
         await saving;
         const states=Object.values(data.jobs).filter(job=>job.revision>(job.syncedRevision??-1)).slice(0,100)
           .map(({ticketId,assignmentId,sessionId,revision,state,accepted,read,error,summary})=>({ticketId,assignmentId,sessionId,revision,state,accepted:accepted.slice(-200),read:read.slice(-200),...error?{error}:{},...summary?{summary}:{}}));
-        const reply=await post('sync',{protocol:PROTOCOL,accepting:data.accepting,projects:(data.projects??[]).map(({id,name})=>({id,name})),states},signal);
+        const localEnvironmentId=data.localWake===true?localEnvironment():undefined;
+        const input={protocol:PROTOCOL,accepting:data.accepting,...(localEnvironmentId?{localEnvironmentId}:{}),projects:(data.projects??[]).map(({id,name})=>({id,name})),states};
+        let reply;
+        try{reply=await post('sync',input,signal);}
+        catch(error){
+          // An older cloud deployment has a strict sync schema. A rollback
+          // must keep execution working with polling and the same receipts.
+          if(!localEnvironmentId||error.status!==400)throw error;
+          delete input.localEnvironmentId;reply=await post('sync',input,signal);
+        }
         if(reply.protocol!==PROTOCOL||!Array.isArray(reply.commands))throw new Error('Invalid Executor response');
+        const localWake=reply.features?.localWake===true;
+        if(data.localWake!==localWake){data.localWake=localWake;await save();}
+        if(localWake&&!localEnvironmentId&&localEnvironment())wakePending=true;
         for(const ack of reply.acknowledged??[]){const job=Object.values(data.jobs).find(job=>job.ticketId===ack.ticketId&&job.assignmentId===ack.assignmentId);if(job)job.syncedRevision=ack.revision;}
         if(reply.acknowledged?.length)await save();
         status='connected';
@@ -274,12 +292,20 @@ export function createExecutorController({ctx,agentOwner=ctx,file,request=fetch}
         if(error.status===401||error.status===403){status='revoked';return;}
         status='retrying';
       }
-      await sleep(delay,signal);
+      if(wakePending){wakePending=false;continue;}
+      const interrupt=new AbortController();wakeWait=()=>interrupt.abort();
+      await sleep(delay,AbortSignal.any([signal,interrupt.signal]));wakeWait=undefined;wakePending=false;
     }
   }
   const start=()=>{if(closed||!reconciled||!data.endpoint||stop)return;stop=new AbortController();loop=run(stop.signal);};
   const disconnect=async()=>{stop?.abort();await loop;stop=undefined;status='stopped';};
   return {
+    wake:hint=>{
+      if(!stop||stop.signal.aborted||!localEnvironment()||!data.endpoint)return false;
+      const path=new URL(data.endpoint).pathname.split('/');
+      if(hint.owner!==decodeURIComponent(path[5])||hint.environmentId!==path[4]||hint.topic!==path[7])return false;
+      wakePending=true;wakeWait?.();return true;
+    },
     inspect:async sessionId=>{
       if(!data.jobs[sessionId])throw new Error('Session does not belong to this Executor');
       const signal=AbortSignal.timeout(5000),agent=ctx.agents.get(sessionId);

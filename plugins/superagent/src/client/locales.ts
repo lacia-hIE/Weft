@@ -99,6 +99,8 @@ const TEXT = {
   computerOffline: ['离线', 'Offline'],
   computerStopping: ['等待本机确认停止', 'Awaiting local stop confirmation'],
   computerLocalSession: ['本机执行 Session', 'Local execution Session'],
+  computerOpenSession: ['打开本地会话', 'Open local Session'],
+  computerSessionUnavailable: ['本地环境未连接，或该会话已不存在。请确认本机连接状态。', 'The local environment is disconnected or the Session is no longer available. Check the local connection.'],
   computerUnpaired: ['等待配对', 'Awaiting pairing'],
   computerAccepting: ['可接单', 'Accepting tasks'],
   computerPaused: ['已连接，暂停接单', 'Connected, task acceptance paused'],

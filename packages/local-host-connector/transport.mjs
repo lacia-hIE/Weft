@@ -19,7 +19,7 @@ export function validateEndpoint(value){
   return endpoint;
 }
 /** Outbound-only transport; closing the plugin releases every request and socket. */
-export function connectLocalHost({settings,save,origin,authorize,version,onStatus=()=>{}}) {
+export function connectLocalHost({settings,save,origin,authorize,version,onStatus=()=>{},onWake=()=>{}}) {
   const endpoint=validateEndpoint(settings.endpoint),stop=new AbortController();let socket;
   const task=(async()=>{
     let failures=0;
@@ -37,7 +37,7 @@ export function connectLocalHost({settings,save,origin,authorize,version,onStatu
         const cookie=await authorize();
         const remote=new URL(endpoint.href+'/connect');remote.protocol='wss:';
         socket=new WebSocket(remote,{headers:{authorization:`Bearer ${settings.token}`,'x-weft-protocol':PROTOCOL,'x-dsh-version':version},handshakeTimeout:20_000,maxPayload:MAX_FRAME,followRedirects:false});
-        const outcome=await runTunnel(socket,{origin,cookie,signal:stop.signal,onOpen:()=>{failures=0;onStatus('connected');}});
+        const outcome=await runTunnel(socket,{origin,cookie,signal:stop.signal,onWake,onOpen:()=>{failures=0;onStatus('connected');}});
         if(outcome===401||outcome===403){onStatus('revoked');return;}
         if(outcome===409){onStatus('incompatible');return;}
         if(!stop.signal.aborted)onStatus('retrying');
@@ -47,7 +47,7 @@ export function connectLocalHost({settings,save,origin,authorize,version,onStatu
   })();
   return async()=>{stop.abort();socket?.terminate();await task;};
 }
-export function runTunnel(socket,{origin,cookie,signal,onOpen=()=>{}}) {
+export function runTunnel(socket,{origin,cookie,signal,onOpen=()=>{},onWake=()=>{}}) {
   const active=new Map(),clients=new Map();let heartbeat,alive=true;
   const send=frame=>{if(socket.readyState!==WebSocket.OPEN)throw new Error('Tunnel unavailable');if(socket.bufferedAmount>32*1024*1024){socket.close(1013,'Relay overloaded');throw new Error('Tunnel overloaded');}socket.send(JSON.stringify(frame));};
   const mux=new MuxChannel(send,async(id,text)=>{
@@ -105,6 +105,10 @@ export function runTunnel(socket,{origin,cookie,signal,onOpen=()=>{}}) {
         if(!binary&&data.toString()==='weft:pong'){alive=true;return;}
         if(binary||data.length>MAX_FRAME)throw new Error('Invalid frame');
         const frame=JSON.parse(data.toString());if(typeof frame.id!=='string'||frame.id.length>80)throw new Error('Invalid identity');
+        if(frame.type==='plugin-wake'){
+          if(typeof frame.owner!=='string'||frame.owner.length>214||typeof frame.environmentId!=='string'||!/^[\w-]{1,80}$/.test(frame.environmentId)||typeof frame.topic!=='string'||!/^[\w.-]{1,64}$/.test(frame.topic))throw new Error('Invalid notification');
+          onWake({owner:frame.owner,environmentId:frame.environmentId,topic:frame.topic});return;
+        }
         if(mux.handle(frame))return;
         const state=active.get(frame.id);
         if(state){clearTimeout(state.timer);state.timer=setTimeout(()=>{try{send({type:'error',id:frame.id});}catch{}release(frame.id);},30_000);}

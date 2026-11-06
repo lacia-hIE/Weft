@@ -8,7 +8,7 @@ import { toolParameters } from '../app/tools/parameters.ts'
 import { inputMessage } from './dsh.ts'
 
 export const EXECUTOR_PROTOCOL = 'weft-executor/1'
-interface Device { id: string; name: string; pairHash?: string; expires?: number; tokenHash?: string; seen?: number; accepting?: boolean; projects?: {id: string; name: string}[] }
+interface Device { id: string; name: string; pairHash?: string; expires?: number; tokenHash?: string; seen?: number; accepting?: boolean; localEnvironmentId?: string; projects?: {id: string; name: string}[] }
 interface Message { id: string; text: string; inputs: string[] }
 interface Job { ticketId: string; assignmentId: string; executorId: string; messages: Message[]; accepted: string[];
   revision: number; state: 'queued' | 'dispatched' | 'running' | 'waiting' | 'failed' | 'stopping' | 'stopped'; sessionId?: string; error?: string }
@@ -20,6 +20,7 @@ const secret = () => Array.from(crypto.getRandomValues(new Uint8Array(32)), byte
 const hash = async (value: string) => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))), byte => byte.toString(16).padStart(2, '0')).join('')
 const identity = z.string().regex(/^[a-f0-9]{32}$/), messageId = z.string().min(1).max(180)
 const Sync = z.object({ protocol: z.literal(EXECUTOR_PROTOCOL), accepting: z.boolean(),
+  localEnvironmentId: z.string().regex(/^[\w-]{1,80}$/).optional(),
   projects: z.array(z.object({id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/), name: z.string().trim().min(1).max(80)}).strict()).max(32).default([]),
   states: z.array(z.object({ ticketId: identity, assignmentId: identity, revision: z.number().int().nonnegative(),
     state: z.enum(['running', 'waiting', 'failed', 'stopped']), sessionId: z.string().min(1).max(180),
@@ -34,13 +35,24 @@ export interface RemoteExecutorHost {
   changed(): void
   usedSlots?(): number
   notify?(ticket: Ticket, state: 'waiting' | 'failed', summary: string): void
+  notifyLocal?(environmentId: string, topic: string): Promise<unknown>
 }
 
 export class ExecutorRequestError extends Error {
   constructor(readonly status: number, message: string) { super(message) }
 }
 export class RemoteExecutor implements Executor {
+  private readonly wakes = new Set<string>()
   constructor(private readonly host: RemoteExecutorHost) {}
+  private wake(id: string): void {this.wakes.add(id); queueMicrotask(()=>this.host.changed())}
+  /** Best effort hints coalesce; authenticated sync and persisted receipts remain the authority. */
+  async flushWakes(): Promise<void> {
+    const ids=[...this.wakes];this.wakes.clear()
+    await Promise.allSettled(ids.map(async id=>{
+      const device=this.host.store.get(devices(id))
+      if(device?.tokenHash&&device.localEnvironmentId)await this.host.notifyLocal?.(device.localEnvironmentId,id)
+    }))
+  }
   list() {
     return this.host.store.keys(devices.prefix).map(key => this.host.store.get<Device>(key)!).map(device => ({
       id: device.id, name: device.name, paired: !!device.tokenHash, online: !!device.seen && Date.now() - device.seen < 90_000,
@@ -52,7 +64,7 @@ export class RemoteExecutor implements Executor {
     const previous = this.host.store.get(stopped(ticketId)), executorId = job?.executorId ?? previous?.executorId
     if (!executorId) return undefined
     const device = this.list().find(device => device.id === executorId)
-    return { name: device?.name ?? executorId, online: device?.online ?? false, state: job?.state ?? 'stopped', sessionId: job?.sessionId ?? previous?.sessionId ?? '' }
+    return { executorId, name: device?.name ?? executorId, online: device?.online ?? false, state: job?.state ?? 'stopped', sessionId: job?.sessionId ?? previous?.sessionId ?? '' }
   }
   async create(name: string) {
     if (this.list().length >= 32) throw new ExecutorRequestError(400, 'At most 32 execution computers may be registered')
@@ -89,10 +101,12 @@ export class RemoteExecutor implements Executor {
       recovery: ticket.assignments.length > 1 ? 'Inspect the retained directory, git history and PR before repeating outside actions.' : undefined })
     this.host.store.set(jobs(ticket.id), { ticketId: ticket.id, assignmentId: assignment.id, executorId,
       messages: [{ id: `assignment:${assignment.id}`, text, inputs: [] }], accepted: [], revision: -1, state: 'queued' })
+    this.wake(executorId)
   }
   deliver(ticket: Ticket, assignment: Assignment): void {
     const job = this.job(ticket)
     if (!job || job.assignmentId !== assignment.id || job.state === 'stopping' || job.state === 'stopped') return
+    const previous=job.messages.length
     for (const id of ticket.undelivered) {
       const requestId = `${assignment.id}:${id}`
       if (job.messages.some(message => message.id === requestId)) continue
@@ -103,10 +117,11 @@ export class RemoteExecutor implements Executor {
       if (text !== undefined) job.messages.push({ id: requestId, text, inputs: [id] })
     }
     this.host.store.set(jobs(ticket.id), job)
+    if(job.messages.length>previous)this.wake(job.executorId)
   }
   stop(ticket: Ticket, assignment: Assignment, _reason: string): void {
     const job = this.job(ticket)
-    if (job?.assignmentId === assignment.id) this.host.store.set(jobs(ticket.id), { ...job, state: 'stopping' })
+    if (job?.assignmentId === assignment.id&&job.state!=='stopping') {this.host.store.set(jobs(ticket.id), { ...job, state: 'stopping' });this.wake(job.executorId)}
   }
   activeCount(): number { return this.host.store.tickets.open().filter(ticket => ['dispatched', 'running'].includes(this.job(ticket)?.state ?? '')).length }
   resume(): void {
@@ -121,7 +136,9 @@ export class RemoteExecutor implements Executor {
     store.atomic(() => {
       const device = store.get(devices(id))
       if (!device) throw new ExecutorRequestError(401, 'Executor revoked')
-      store.set(devices(id), { ...device, seen: Date.now(), accepting: input.accepting, projects: input.projects })
+      const current={...device,seen:Date.now(),accepting:input.accepting,projects:input.projects}
+      if(input.localEnvironmentId)current.localEnvironmentId=input.localEnvironmentId;else delete current.localEnvironmentId
+      store.set(devices(id),current)
       for (const state of input.states) {
         const job = store.get(jobs(state.ticketId)), ticket = store.tickets.get(state.ticketId)
         if (!job || job.executorId !== id || job.assignmentId !== state.assignmentId || state.revision <= job.revision) continue
@@ -188,7 +205,7 @@ export class RemoteExecutor implements Executor {
       if (commands.length >= 4) break
     }
     this.host.changed()
-    return { protocol: EXECUTOR_PROTOCOL, commands, acknowledged: input.states.map(state => ({ ticketId: state.ticketId, assignmentId: state.assignmentId, revision: state.revision })), retryAfterMs: commands.length ? 1000 : 15_000 }
+    return { protocol: EXECUTOR_PROTOCOL, features:{localWake:true}, commands, acknowledged: input.states.map(state => ({ ticketId: state.ticketId, assignmentId: state.assignmentId, revision: state.revision })), retryAfterMs: commands.length ? 1000 : 15_000 }
   }
   /** Executor credentials grant only the tools of the current Assignment; router tools are never exposed. */
   async call(id: string, raw: unknown, signal: AbortSignal): Promise<unknown> {

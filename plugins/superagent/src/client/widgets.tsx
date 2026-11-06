@@ -6,9 +6,20 @@ import { Button, Icon, InfoTip, Modal, StateDot, type DotState, type IconName } 
 import { inlines, linkify, markdownBlocks, type Inline } from './markdown.ts'
 import { useAction, usePanel, usePanelData } from './provider.tsx'
 import { settingsRoute, type SettingsGroup } from './route.ts'
+import {localSessionAddress} from './computers.ts'
 import { errorText, fullTime, readableMarkers, setupText, when } from './text.ts'
 
 const external = { target: '_blank', rel: 'noopener noreferrer' } as const
+
+export function LocalSessionButton({executorId,sessionId,online}:{executorId:string;sessionId:string;online:boolean}) {
+  const {t}=usePanel()
+  const action=useAction(async()=>{
+    const address=await localSessionAddress(executorId,sessionId)
+    if(!address)throw new Error(t('computerSessionUnavailable'))
+    location.assign(address)
+  })
+  return <Button variant="outline" size="sm" disabled={!online||action.busy} onClick={()=>void action.run()}>{t('computerOpenSession')}</Button>
+}
 
 export function When({ at }: { at: string | undefined }) {
   const { t } = usePanel()

@@ -4,7 +4,7 @@ import { Runtime, type HostContext } from './app/runtime.ts'
 import { Config, type DeploymentConfig } from './deployment.ts'
 
 export const name = 'dsh-superagent'
-export const inject = ['weftSql', 'sessionController', 'weftSessionEvents', 'weftManagedSessions', 'tools', 'webServer', 'fs', 'timer', 'weftIm']
+export const inject = ['weftSql', 'sessionController', 'weftSessionEvents', 'weftManagedSessions', 'tools', 'webServer', 'fs', 'timer', 'weftIm', 'weftConnections']
 export { Config }
 export async function apply(ctx: Context, config: DeploymentConfig): Promise<void> {
   // A saved repository takes effect by building the Runtime again; all of its state is in the Store. A plugin cannot restart its own fiber here.

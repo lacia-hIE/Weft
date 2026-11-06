@@ -3,7 +3,7 @@
 ## 同一云端环境下的本地执行器
 
 0.3.1 起复用 Weft 已连接的本地 DSH。在本机安装原版 DSH 0.2.2-rc.1 和
-`@laciaproject/dsh-local-host@0.5.0`，先按下文连接一次 Weft；随后在本机插件
+`@laciaproject/dsh-local-host@0.5.1`，先按下文连接一次 Weft；随后在本机插件
 「Superagent 执行器」中配置绝对任务根目录、下拉选择已安装的 Agent 预设及执行权限，
 保存并按需开启「允许接收任务」。模型服务和执行凭据在本机配置。
 
@@ -30,6 +30,15 @@
 查看原任务目录和文件，刷新后保留。打开历史不重新接单、不恢复云端派工工具。
 若在会话打开期间显式重试该工单，停止仍会等待任务、子代理及进程退出，只移除插件登记的派工工具和限制，
 不会销毁原生浏览器持有的 Agent。此前版本受此问题影响时，应升级本机连接插件；只更新云端无法替换本机插件代码。
+
+`0.5.1` 的任务根目录可通过 DSH 原生选择器选择；浏览模式支持现有目录、新建文件夹、输入路径和取消，
+确认目录只更新表单，保存后才修改执行设置。云端工单的「打开本地会话」会核对当前用户已连接的环境及本机会话列表，
+进入对应本地工作台并选择会话；离线或已删除的会话不会跳到别的环境。
+
+派工、追加输入和停止命令可通过已有的出站连接发送更新提示，不新增本机入站端口。
+本机仍携带原执行器凭据拉取任务，提示本身不携带任务、路径、密钥或执行授权。
+同一设备的提示会合并，丢失、旧版服务端或独立配对执行器继续使用原轮询；空闲等待不阻止环境休眠。
+云端 Superagent 需更新到 `0.4.2`，并按原插件审核流程授予「连接」能力。
 
 本地模式只支持 **DSH 0.2.2-rc.1**。本机运行原版 `dsh web` 或
 DeepSeek Harness 桌面 App，安装 `@laciaproject/dsh-local-host` Host 组合包；Weft 提供环境目录、设备配对与出站连接中继。
@@ -93,8 +102,8 @@ HTTP 正文与原版 Mux 消息都按 32 KiB 分块，每条流最多 16 块未�
    0.2.1 及更早版本需要先升级：`npm install -g @deepseek-ai/dsh@0.2.2-rc.1`（Node 24.9+），然后重新启动 DSH。
    在 Weft 首页选择「连接本地 DSH」，输入名称并点击「生成配对码」和「复制配对码」。
 2. 在本地原版 DSH 或桌面 App 的「插件」页添加 npm 包 `@laciaproject/dsh-local-host`，
-   或执行 `dsh plugin --profile web add @laciaproject/dsh-local-host@0.5.0`。桌面 App 也可在完全退出后执行
-   `dsh plugin --profile desktop add @laciaproject/dsh-local-host@0.5.0`（需先打开过一次桌面 App 以初始化 profile）。也可下载
+   或执行 `dsh plugin --profile web add @laciaproject/dsh-local-host@0.5.1`。桌面 App 也可在完全退出后执行
+   `dsh plugin --profile desktop add @laciaproject/dsh-local-host@0.5.1`（需先打开过一次桌面 App 以初始化 profile）。也可下载
    页面提供的 `.tgz`，以其绝对路径安装。它原生声明 `dsh.bundle.patch`。
    安装完成后点击「立即启用」。已装过旧名 `@weft/dsh-local-host` 的用户，应先移除旧包再安装新包；配对文件保留。
 3. 在本机「插件」列表打开「Weft 本地连接」（`@laciaproject/dsh-local-host`）的详情页，直接填写「配对码」并点击「保存并连接」，无需重启。

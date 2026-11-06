@@ -8,6 +8,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {SUPPORTED_DSH_VERSIONS} from '../packages/local-host-connector/compatibility.mjs';
 import {createRuntime,tenantId,url} from './helpers/miniflare.ts';
+import {DATA_LAYOUT_VERSION} from '../packages/tenant/src/layout.ts';
 // Node-only published plugin: no Node transport is imported by the Worker.
 // @ts-expect-error The native plugin is distributed as JavaScript.
 import {runTunnel} from '../packages/local-host-connector/transport.mjs';
@@ -33,6 +34,19 @@ test('local pairing is single-use, tenant-bound, revocable and survives catalogu
     for(const version of SUPPORTED_DSH_VERSIONS){const peer=await connect(token,version);assert.equal(peer.status,101);peer.webSocket!.accept();peer.webSocket!.close();}
     const attached=await connect(token);assert.equal(attached.status,101,attached.status===101?'':await attached.text());attached.webSocket!.accept();
     assert.equal((await(await call(base)).json() as {local:{online:boolean}}).local.online,true);
+    const namespace=await runtime.getDurableObjectNamespace('TENANTS','alpha');
+    const owner=namespace.get(namespace.idFromName(JSON.stringify([DATA_LAYOUT_VERSION,'tenant',tenant]))) as unknown as {
+      notifyLocal(tenant:string,environment:string,hint:{owner:string;environmentId:string;topic:string}):Promise<boolean>;
+    };
+    const hint={owner:'@weft/dsh-superagent',environmentId:'default',topic:crypto.randomUUID()};
+    const notification=new Promise<string>(resolve=>attached.webSocket!.addEventListener('message',event=>resolve(String(event.data)),{once:true}));
+    assert.equal(await owner.notifyLocal(tenant,'laptop',hint),true);
+    const frame=JSON.parse(await notification);assert.equal(frame.type,'plugin-wake');
+    assert.deepEqual({owner:frame.owner,environmentId:frame.environmentId,topic:frame.topic},hint);
+    assert.equal('token' in frame,false);assert.equal('commands' in frame,false);
+    await assert.rejects(owner.notifyLocal(tenantId('beta'),'laptop',hint),/scope mismatch/);
+    assert.equal(await owner.notifyLocal(tenant,'missing',hint),false);
+    await assert.rejects(owner.notifyLocal(tenant,'laptop',{...hint,topic:'../other'}),/Invalid/);
     assert.equal((await call(base+'/local/pairing','DELETE')).status,200);
     assert.equal((await connect(token)).status,401);
     const replacement=(await pair()).pairingKey;assert.equal((await connect(token)).status,401);
