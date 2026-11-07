@@ -22,6 +22,32 @@ export function nativeClient(runtime: () => Runtime, environment = 'default', us
       assert.equal(body.rpcId, 'fixture-rpc');
       return body.result.value as T;
     },
+    async socket<T>(endpoint: string, args: unknown) {
+      const query = new URLSearchParams({payload: JSON.stringify({args})});
+      const response = await runtime().dispatchFetch(url(user, `${base}/sockets/${endpoint}?${query}`), {headers: {upgrade: 'websocket'}});
+      assert.equal(response.status, 101, response.status === 101 ? '' : await response.text());
+      const socket = response.webSocket!;
+      const pending: unknown[] = [];
+      let ended = false;
+      let wake: (() => void) | undefined;
+      const closed = new Promise<number>(resolve => socket.addEventListener('close', event => {ended = true; resolve(event.code); wake?.();}));
+      socket.addEventListener('message', event => {pending.push(JSON.parse(String(event.data))); wake?.();});
+      socket.accept();
+      return {
+        closed,
+        async next(): Promise<T> {
+          while (!pending.length) {
+            assert.equal(ended, false, 'native socket ended before the expected frame');
+            await new Promise<void>(resolve => {wake = resolve;});
+          }
+          wake = undefined;
+          const frame = pending.shift() as {type: string; value: T};
+          assert.equal(frame.type, 'item', JSON.stringify(frame));
+          return frame.value;
+        },
+        async close() {socket.close(); await closed;},
+      };
+    },
     async stream<T>(endpoint: string, args: unknown) {
       const abort = new AbortController();
       const observerId = endpoint === 'workspaceFiles/changes' ? crypto.randomUUID() : undefined;

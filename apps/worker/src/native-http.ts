@@ -228,9 +228,12 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
     if (!passiveNativeStream(match[3]!)) throw new HttpError(404, 'Unsupported passive stream');
   } else if (request.method !== 'POST') throw new HttpError(405, 'Expected POST');
   assertSameOrigin(request);
-  const forwardStream = (url: string, body: unknown) => new Request(url, {
-    method: 'POST', headers: socket ? {upgrade: 'websocket'} : {}, body: JSON.stringify(body), signal: request.signal,
-  });
+  const forwardStream = (address: string, body: unknown) => {
+    if (!socket) return new Request(address, {method: 'POST', body: JSON.stringify(body), signal: request.signal});
+    const url = new URL(address);
+    url.searchParams.set('subscription', JSON.stringify(body));
+    return new Request(url, {headers: {upgrade: 'websocket'}, signal: request.signal});
+  };
   const owner = controlScope(principal.tenantId, environmentId);
   const control = controlFor(env, owner);
   const sessionRoot = (sessionId: string) => cachedRoot(owner, control, sessionId);

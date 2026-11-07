@@ -1384,7 +1384,8 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
   override webSocketError(socket: WebSocket): void {this.nativeSockets.closed(socket);}
 
   override async fetch(request: Request): Promise<Response> {
-    const raw: unknown = await request.json();
+    const raw: unknown = request.headers.get('upgrade')?.toLowerCase() === 'websocket'
+      ? JSON.parse(new URL(request.url).searchParams.get('subscription') ?? 'null') : await request.json();
     if (typeof raw === 'object' && raw !== null && 'operation' in raw && raw.operation === 'native-session-list') {
       const body = z.object({operation: z.literal('native-session-list'), scope: environmentScopeSchema}).strict().parse(raw);
       return this.listNativeSessions(body.scope, request.signal);

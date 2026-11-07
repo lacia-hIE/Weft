@@ -32,7 +32,7 @@ test('ask_user_question reaches the environment Remote Events client and resumes
   const model = questionModel();
   const runtime = createRuntime(undefined, {browser: true, bindings: {MODEL_BACKEND: 'deepseek', DEEPSEEK_API_KEY: 'question-fixture', DEEPSEEK_BASE_URL: 'https://question-model.test/anthropic'}, outbound: model.outbound});
   const api = nativeClient(() => runtime);
-  const events = await api.stream<RemoteEventDownlinkFrame>('$events', {});
+  const events = await api.socket<RemoteEventDownlinkFrame>('$events', {});
   let follow: Awaited<ReturnType<typeof api.follow>> | undefined;
   try {
     const ready = await events.next();

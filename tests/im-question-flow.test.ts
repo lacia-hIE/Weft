@@ -53,7 +53,7 @@ test('a real Worker IM conversation answers the native question without a Web cl
     const response=await runtime.dispatchFetch(url('anonymous',`/v1/plugin-hooks/${tenant}/default/${encodeURIComponent(plugin.name)}/qq`),{method:'POST',headers:{'content-type':'application/json','x-signature-timestamp':timestamp,'x-signature-ed25519':sign(null,Buffer.from(timestamp+body),key).toString('hex')},body});
     assert.equal(response.status,200,await response.text());
   };
-  let events:Awaited<ReturnType<typeof api.events>>|undefined;
+  let events:{next():Promise<RemoteEventDownlinkFrame>;close():Promise<void>}|undefined;
   try{
     const offered=(await api.call<BundleInfo[]>('pluginManager/listBundles',{})).find(row=>row.name===plugin.name)!;
     await api.call('pluginManager/installBundle',{spec:offered.installTarget!.spec,options:{requestId:crypto.randomUUID()}});
@@ -71,7 +71,7 @@ test('a real Worker IM conversation answers the native question without a Web cl
     const calls=modelBodies.length,staleStart=sent.length;await qq(`/answer ${code} 1`);await delay(500);assert.equal(modelBodies.length,calls,'duplicate answers never start another prompt');
     assert.ok(sent.slice(staleStart).some(text=>text.includes('已处理或已取消')));
     // Web and IM answer the same native request; the first accepted answer wins.
-    events=await api.events();const ready=await events.next();assert.equal(ready.type,'ready');if(ready.type!=='ready')throw new Error('ready');
+    events=await api.socket<RemoteEventDownlinkFrame>('$events',{});const ready=await events.next();assert.equal(ready.type,'ready');if(ready.type!=='ready')throw new Error('ready');
     await qq('/new');await qq('ASK_SECOND_QUESTION');
     let invocation:RemoteEventDownlinkFrame;do invocation=await events.next();while(invocation.type!=='waterfall');
     const second=await wait(()=>sent.find(text=>text.includes('Which color should I use?')&&!text.includes(code!)),'second question');

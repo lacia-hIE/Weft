@@ -1181,11 +1181,11 @@ export class SessionDO extends DurableObject<Env> {
     return Reflect.apply(fn, fs, z.array(z.unknown()).max(5).parse(args));
   }
 
-  /** Internal binding transport; external requests are authenticated by the entry Worker. */
   override webSocketMessage(socket: WebSocket): void {this.nativeSockets.message(socket);}
   override webSocketClose(socket: WebSocket): void {this.nativeSockets.closed(socket);}
   override webSocketError(socket: WebSocket): void {this.nativeSockets.closed(socket);}
 
+  /** Internal binding transport; external requests are authenticated by the entry Worker. */
   override async fetch(request: Request): Promise<Response> {
     const pathname = new URL(request.url).pathname;
     if (pathname === SESSION_LOG_EXPORT_PATH) {
@@ -1210,7 +1210,8 @@ export class SessionDO extends DurableObject<Env> {
       const scope = this.assertScope(scopeSchema.parse(JSON.parse(request.headers.get('x-weft-session-scope') ?? 'null')));
       return this.resumeTurns(scope, Number(request.headers.get('last-event-id') ?? '-1'));
     }
-    const raw: unknown = await request.json();
+    const raw: unknown = request.headers.get('upgrade')?.toLowerCase() === 'websocket'
+      ? JSON.parse(new URL(request.url).searchParams.get('subscription') ?? 'null') : await request.json();
     if (typeof raw === 'object' && raw !== null && 'operation' in raw && raw.operation === 'native-subagent') {
       const body = z.object({scope: scopeSchema, operation: z.literal('native-subagent'), endpoint: z.enum(['subagents/prompt', 'subagents/interruptByParent']), args: z.unknown()}).strict().parse(raw);
       this.assertScope(body.scope);
