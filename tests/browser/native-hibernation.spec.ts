@@ -29,9 +29,9 @@ test('native workbench restores hibernated subscriptions without losing history 
   const draft = 'This draft has not been submitted';
   await compose(page, draft);
   const before = carriers.length;
-  // workerd's control API can take ten seconds per object to evict; this
-  // request hibernates two objects and is not an interactive application RPC.
-  expect((await request.post('/__test/native-hibernate', {data: {environment, session}, timeout: 45_000})).status()).toBe(204);
+  // Leave the actual browser feeds open without control-RPC references. A
+  // subsequent mutation must wake the idle Host and restore native carriers.
+  await page.waitForTimeout(15_000);
   await rpc('session/rename', {request: {sessionId: session, title: 'Restored after idle'}});
   await expect(page.getByRole('treeitem', {name: /Restored after idle/}).first()).toBeVisible({timeout: 45_000});
   await expect.poll(() => carriers.length).toBeGreaterThan(before);
