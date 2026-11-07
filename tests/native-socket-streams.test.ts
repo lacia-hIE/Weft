@@ -6,6 +6,24 @@ import {createRuntime, tenantId, url} from './helpers/miniflare.ts';
 import {nativeClient} from './helpers/native.ts';
 import {DATA_LAYOUT_VERSION} from '../packages/tenant/src/layout.ts';
 
+test('concurrent blank reuse and preset selection recover a replaced Host without creating a second Session', {timeout: 90_000}, async () => {
+  const runtime = createRuntime(undefined, {browser: true});
+  const api = nativeClient(() => runtime);
+  try {
+    const {sessionId} = await api.call<SessionCreateValue>('session/create', {request: {sessionId: 'blank-host-race'}});
+    const [first, second, reused] = await Promise.all([
+      api.call<string>('agentPresets/select', {agentId: sessionId, agentPreset: 'minimal'}),
+      api.call<string>('agentPresets/select', {agentId: sessionId, agentPreset: 'minimal'}),
+      api.call<SessionCreateValue>('session/create', {request: {sessionId, agentPreset: 'minimal'}}),
+    ]);
+    assert.equal(first, 'minimal');
+    assert.equal(second, 'minimal');
+    assert.equal(reused.sessionId, sessionId);
+    const state = await api.call<{values: {agentPreset: string}}>('session/projections', {request: {sessionId}});
+    assert.equal(state.values.agentPreset, 'minimal');
+  } finally {await runtime.dispose();}
+});
+
 test('native passive WebSockets deliver live journals and restore a fresh generation after actual workerd hibernation', {timeout: 120_000}, async () => {
   const runtime = createRuntime(undefined, {browser: true});
   const api = nativeClient(() => runtime);

@@ -449,6 +449,8 @@ export class SessionDO extends DurableObject<Env> {
   async nativeSelectPreset(input: SessionScope, preset: string, revision?: number): Promise<string> {
     const scope = this.assertScope(input);
     id.parse(preset);
+    for (let attempt = 0;; attempt++) {
+    try {
     const host = await this.getNativeHost(scope);
     // Take the host's queue on arrival, so a prompt sent after this selection cannot start the turn first.
     const value = await host.reconfigureBlank(preset, () => this.exclusive(async () => {
@@ -481,6 +483,12 @@ export class SessionDO extends DurableObject<Env> {
     await this.getNativeHost(scope);
     await this.publishNativeSummary(scope);
     return value;
+    } catch (error) {
+      // Another blank selection may have retired the host we queued against.
+      // Re-enter its successor's queue, retaining the native post-turn fence.
+      if (!(error instanceof NativeHostReplacedError) || attempt >= 1) throw error;
+    }
+    }
   }
 
   /** Serialize turns across awaits; DO input gates alone do not serialize model I/O. */
