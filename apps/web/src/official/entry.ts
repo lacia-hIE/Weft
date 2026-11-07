@@ -44,7 +44,11 @@ function transport(base: string): ClientTransportHooks {
       return response;
     },
     async *openStream(endpoint, payload, signal, uplink) {
-      if (uplink === undefined && passiveNativeStream(endpoint)) {
+      if (passiveNativeStream(endpoint)) {
+        // Generated native methods supply an input queue even for read-only
+        // streams. The reviewed endpoint contract, not queue presence, selects
+        // the carrier. Closing this unused queue also rejects accidental sends.
+        await uplink?.[Symbol.asyncIterator]().return?.();
         yield* socketStream(base, endpoint, payload, signal);
         return;
       }

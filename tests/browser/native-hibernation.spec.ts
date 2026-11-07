@@ -25,10 +25,13 @@ test('native workbench restores hibernated subscriptions without losing history 
   await expect(page.getByText('Tenant: '+tenantId, {exact: true})).toBeVisible({timeout: 45_000});
   const {items} = await rpc('session/list', {_request: {}});
   const session: string = items[0].sessionId;
+  await expect.poll(async () => (await rpc('session/list', {_request: {}})).items.find((item: {sessionId: string}) => item.sessionId === session)?.running).toBe(false);
   const draft = 'This draft has not been submitted';
   await compose(page, draft);
   const before = carriers.length;
-  expect((await request.post('/__test/native-hibernate', {data: {environment, session}})).status()).toBe(204);
+  // workerd's control API can take ten seconds per object to evict; this
+  // request hibernates two objects and is not an interactive application RPC.
+  expect((await request.post('/__test/native-hibernate', {data: {environment, session}, timeout: 45_000})).status()).toBe(204);
   await rpc('session/rename', {request: {sessionId: session, title: 'Restored after idle'}});
   await expect(page.getByRole('treeitem', {name: /Restored after idle/}).first()).toBeVisible({timeout: 45_000});
   await expect.poll(() => carriers.length).toBeGreaterThan(before);
