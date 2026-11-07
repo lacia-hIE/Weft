@@ -29,7 +29,7 @@ test('native passive WebSockets deliver live journals and restore a fresh genera
         while (!items.length) await new Promise<void>(resolve => {notify = resolve;});
         notify = undefined;
         const value = items.shift() as {type: string; value: T};
-        assert.equal(value.type, 'item', JSON.stringify(value));
+        assert.equal(value.type, 'item', `${endpoint}: ${JSON.stringify(value)}`);
         return value.value;
       },
     };

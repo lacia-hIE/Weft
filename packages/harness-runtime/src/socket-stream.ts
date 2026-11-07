@@ -27,7 +27,9 @@ export class NativeSocketStreams {
     };
     const fail = (error: unknown) => {
       if (!abort.signal.aborted) {
-        const failure = remoteErrorOf(error) ?? {code: 'gateway/internal', message: 'Remote stream failed', details: {}};
+        const remote = remoteErrorOf(error);
+        if (!remote) console.warn('weft.native.subscription.failed', error);
+        const failure = remote ?? {code: 'gateway/internal', message: 'Remote stream failed', details: {}};
         try {socket.send(JSON.stringify({type: 'error', error: {code: failure.code, message: failure.message, details: failure.details}}));} catch {}
       }
     };
