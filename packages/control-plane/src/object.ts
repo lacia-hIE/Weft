@@ -1,3 +1,4 @@
+import {NativeSocketStreams} from '../../harness-runtime/src/socket-stream.ts';
 import type {ScheduleEditRequest} from '@deepseek-ai/dsh-schedule';
 import type {ScheduleTransfer} from '../../native-schedule/src/transfer.ts';
 import {initialSessionPermissionSchema} from '../../native-plugins/src/session-contracts.ts';
@@ -153,6 +154,7 @@ export const tenantAddress = (tenantId: string): string =>
 /** Environment-local Harness configuration, revisions and discoverable sessions. */
 abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
   protected readonly lifecycle:LifecycleGate;
+  private readonly nativeSockets: NativeSocketStreams;
   nativeRegisterResource(scope:ControlScope,kind:'session'|'workspace',resourceId:string):void {
     this.lifecycle.maintenance(()=>{
     this.scope(scope);id.parse(resourceId);
@@ -180,7 +182,7 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
     this.lifecycle.transition('suspended',operation);
     return this.lifecycle.maintenance(async()=>{
       if(at!==null && await this.ctx.storage.get('weft_paused_alarm')===undefined)await this.ctx.storage.put('weft_paused_alarm',at);
-      this.nativeEvents.close();this.nativeControl.close();this.lifecycle.closeStreams();
+      this.nativeSockets.close();this.nativeEvents.close();this.nativeControl.close();this.lifecycle.closeStreams();
       await this.environmentPackages?.dispose();this.environmentPackages=undefined;
       // A stopped environment keeps no sockets; its packages reopen them when it resumes.
       await this.closeGatewayConnections(scope);
@@ -1310,6 +1312,7 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
     super(ctx, env);
     this.ctx=lifecycle.state(this.ctx);ctx=this.ctx;
     this.lifecycle=lifecycle;
+    this.nativeSockets = new NativeSocketStreams(ctx);
     if(lifecycle.mode==='deleted'){lifecycle.finishBoot();return;}
     // Every environment-owned record is local; activation never waits for D1.
     environmentScopeOf(ctx.id.name);
@@ -1376,6 +1379,10 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
       }
     }
   }
+  override webSocketMessage(socket: WebSocket): void {this.nativeSockets.message(socket);}
+  override webSocketClose(socket: WebSocket): void {this.nativeSockets.closed(socket);}
+  override webSocketError(socket: WebSocket): void {this.nativeSockets.closed(socket);}
+
   override async fetch(request: Request): Promise<Response> {
     const raw: unknown = await request.json();
     if (typeof raw === 'object' && raw !== null && 'operation' in raw && raw.operation === 'native-session-list') {
@@ -1399,15 +1406,21 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
       // Long-lived environment streams live here: a stateless entry request that only awaits
       // non-I/O promises is cancelled by the runtime as hung.
       const abort = new AbortController();
-      if (request.signal.aborted) abort.abort();
-      else request.signal.addEventListener('abort', () => abort.abort(), {once: true});
-      return openEnvironmentStream(body.endpoint, body.args, abort);
+      const socket = request.headers.get('upgrade')?.toLowerCase() === 'websocket';
+      if (!socket) {
+        if (request.signal.aborted) abort.abort();
+        else request.signal.addEventListener('abort', () => abort.abort(), {once: true});
+      }
+      return openEnvironmentStream(body.endpoint, body.args, abort, socket ? this.nativeSockets : undefined);
     }
     const body = z.object({operation: z.enum(['native-events','native-workspaces','native-session-control']), scope: environmentScopeSchema}).strict().parse(raw);
     this.scope(body.scope);
     const abort = new AbortController();
-    if (request.signal.aborted) abort.abort();
-    else request.signal.addEventListener('abort', () => abort.abort(), {once: true});
+    const socket = request.headers.get('upgrade')?.toLowerCase() === 'websocket';
+    if (!socket) {
+      if (request.signal.aborted) abort.abort();
+      else request.signal.addEventListener('abort', () => abort.abort(), {once: true});
+    }
     if (body.operation === 'native-session-control') {
       const owner = body.scope;
       const source = this.nativeControl.open(abort.signal, async () => {
@@ -1417,9 +1430,11 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
         return {type: 'baseline', value: {projections}};
       });
       const codec = sessionRemote.methods['session/control'].result.create();
+      if (socket) return this.nativeSockets.open(source, abort, value => codec.parse(value));
       return remoteStream(source, abort, value => codec.parse(value));
     }
-    return remoteStream(body.operation === 'native-events' ? this.nativeEvents.open(abort.signal) : this.workspaces(body.scope).follow(abort.signal), abort);
+    const source = body.operation === 'native-events' ? this.nativeEvents.open(abort.signal) : this.workspaces(body.scope).follow(abort.signal);
+    return socket ? this.nativeSockets.open(source, abort) : remoteStream(source, abort);
   }
   private latest(agentId: string): AgentRevision | undefined {
     return this.agents().latest(agentId);

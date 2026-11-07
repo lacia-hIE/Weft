@@ -85,6 +85,15 @@ const server = createSecureServer({key: readFileSync(keyFile), cert: readFileSyn
       const {channel, mode} = JSON.parse(Buffer.concat(input).toString()) as {channel: 'qq' | 'feishu'; mode: 'wait' | 'confirm' | 'expire' | 'deny' | 'invalid'};
       imGateway.mode(channel, mode); response.writeHead(204); response.end(); return;
     }
+    if (request.url === '/__test/native-hibernate' && request.method === 'POST') {
+      const chunks: Buffer[] = []; for await (const part of request) chunks.push(Buffer.from(part));
+      const {environment, session} = JSON.parse(Buffer.concat(chunks).toString()) as {environment: string; session: string};
+      const tenant = tenantId('alpha');
+      const {sessionAddress} = await import('../../packages/tenant/src/index.ts');
+      await runtime.unsafeEvictDurableObject('alpha', 'SessionDO', {name: sessionAddress({tenantId: tenant, environmentId: environment, sessionId: session}), webSockets: 'hibernate'});
+      await runtime.unsafeEvictDurableObject('alpha', 'EnvironmentDO', {name: JSON.stringify([DATA_LAYOUT_VERSION, 'environment', tenant, environment]), webSockets: 'hibernate'});
+      response.writeHead(204); response.end(); return;
+    }
     if(localDsh&&request.url==='/__test/local-host'){
       const fixture=await localFixture;response.writeHead(200,{'content-type':'application/json'});response.end(JSON.stringify({project:fixture?.project,base:fixture?.base,localUrl:fixture?.localUrl,pairingCode:fixture?.pairingCode,bundlePath:fixture?.bundlePath}));return;
     }

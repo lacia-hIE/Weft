@@ -5,6 +5,7 @@ import type { ClientTransportHooks } from '@deepseek-ai/dsh-client-connection/cl
 import { createParser } from 'eventsource-parser';
 import { z } from 'zod';
 import { installEnvironmentStorage } from './storage.ts';
+import {passiveNativeStream, socketStream} from './socket-stream.ts';
 import '@weft/upstream/packages/client/ui-theme/src/styles/brand-font.css';
 
 const failure = z.object({code: z.string(), message: z.string(), details: z.record(z.string(), z.unknown())});
@@ -43,6 +44,10 @@ function transport(base: string): ClientTransportHooks {
       return response;
     },
     async *openStream(endpoint, payload, signal, uplink) {
+      if (uplink === undefined && passiveNativeStream(endpoint)) {
+        yield* socketStream(base, endpoint, payload, signal);
+        return;
+      }
       const observer = endpoint === 'workspaceFiles/changes' ? {
         observerId: crypto.randomUUID(),
         sessionId: z.object({args: z.object({workspaceFileScopeId: z.string()})}).parse(payload).args.workspaceFileScopeId,

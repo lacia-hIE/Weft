@@ -1,5 +1,6 @@
 import type { ControlScope } from '../../../packages/control-plane/src/contracts.ts';
 import { z } from 'zod';
+import {passiveNativeStream} from '../../../packages/harness-runtime/src/stream-carrier.ts';
 import { SessionId } from '@deepseek-ai/dsh-session';
 import { RemoteError, remoteErrorOf } from '@deepseek-ai/dsh-typert-protocol';
 import type {} from '@weft/upstream/packages/api/gateway/src/remote-error-codes.ts';
@@ -218,11 +219,18 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
     }
     return Response.json(graph, {headers: {'cache-control': 'private, no-store'}});
   }
-  const match = /^\/v1\/tenants\/([^/]+)\/native\/(api|streams)\/(.+)$/.exec(pathname);
+  const match = /^\/v1\/tenants\/([^/]+)\/native\/(api|streams|sockets)\/(.+)$/.exec(pathname);
   if (!match) return undefined;
   if (match[1] !== principal.tenantId) throw new HttpError(403, 'Tenant access denied');
-  if (request.method !== 'POST') throw new HttpError(405, 'Expected POST');
+  const socket = match[2] === 'sockets';
+  if (socket) {
+    if (request.method !== 'GET' || request.headers.get('upgrade')?.toLowerCase() !== 'websocket') throw new HttpError(426, 'Expected WebSocket upgrade');
+    if (!passiveNativeStream(match[3]!)) throw new HttpError(404, 'Unsupported passive stream');
+  } else if (request.method !== 'POST') throw new HttpError(405, 'Expected POST');
   assertSameOrigin(request);
+  const forwardStream = (url: string, body: unknown) => new Request(url, {
+    method: 'POST', headers: socket ? {upgrade: 'websocket'} : {}, body: JSON.stringify(body), signal: request.signal,
+  });
   const owner = controlScope(principal.tenantId, environmentId);
   const control = controlFor(env, owner);
   const sessionRoot = (sessionId: string) => cachedRoot(owner, control, sessionId);
@@ -240,8 +248,10 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
     return session(root);
   };
   try {
-    const raw = await readJson(request, endpoint === 'session/prompt' || endpoint === 'subagents/prompt' ? IMAGE_PROMPT_BODY_BYTES : endpoint === 'fileUploads/upload' ? 8 * 1024 * 1024 : 65_536);
-    if (match[2] === 'streams') {
+    const socketPayload = socket ? new URL(request.url).searchParams.get('payload') : undefined;
+    if (socket && (!socketPayload || socketPayload.length > 8192)) throw new HttpError(400, 'Invalid native subscription payload');
+    const raw = socket ? JSON.parse(socketPayload!) : await readJson(request, endpoint === 'session/prompt' || endpoint === 'subagents/prompt' ? IMAGE_PROMPT_BODY_BYTES : endpoint === 'fileUploads/upload' ? 8 * 1024 * 1024 : 65_536);
+    if (match[2] === 'streams' || socket) {
       if (endpoint === 'workspaceFiles/changes') {
         const observerId = z.uuid().parse(request.headers.get('x-weft-observer-id'));
         const args = fileRemote.methods[endpoint].input({strict: true}).create().parse(payloadSchema.parse(raw).args);
@@ -252,16 +262,14 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
       }
       if (endpoint === '$events') {
         z.object({args: z.object({}).strict()}).strict().parse(raw);
-        return await control.fetch(new Request('https://environment.internal/native-events', {method: 'POST', body: JSON.stringify({operation: 'native-events', scope: owner}), signal: request.signal}));
+        return await control.fetch(forwardStream('https://environment.internal/native-events', {operation: 'native-events', scope: owner}));
       }
       if (endpoint === 'workspace/follow') {
         workspaceRemote.methods[endpoint].input({strict: true}).create().parse(payloadSchema.parse(raw).args);
-        return await control.fetch(new Request('https://environment.internal/native-workspaces', {method: 'POST', body: JSON.stringify({operation: 'native-workspaces', scope: owner}), signal: request.signal}));
+        return await control.fetch(forwardStream('https://environment.internal/native-workspaces', {operation: 'native-workspaces', scope: owner}));
       }
       if (environmentRemoteFor(endpoint)) {
-        return await control.fetch(new Request('https://environment.internal/native-environment-stream', {
-          method: 'POST', body: JSON.stringify({operation: 'native-environment-stream', scope: owner, endpoint, args: payloadSchema.parse(raw).args}), signal: request.signal,
-        }));
+        return await control.fetch(forwardStream('https://environment.internal/native-environment-stream', {operation: 'native-environment-stream', scope: owner, endpoint, args: payloadSchema.parse(raw).args}));
       }
       const streamRemote = agentRemoteFor(endpoint);
       if (streamRemote && endpoint !== 'userQuestions/attachWait') {
@@ -281,15 +289,13 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
       }
       if (endpoint === 'session/control') {
         sessionRemote.methods[endpoint].input({strict: true}).create().parse(payloadSchema.parse(raw).args);
-        return await control.fetch(new Request('https://environment.internal/native-control', {method: 'POST', body: JSON.stringify({operation: 'native-session-control', scope: owner}), signal: request.signal}));
+        return await control.fetch(forwardStream('https://environment.internal/native-control', {operation: 'native-session-control', scope: owner}));
       }
       if (endpoint !== 'session/follow') throw new RemoteError('gateway/method-unavailable', 'Remote stream is not connected yet', {endpoint});
       const payload = payloadSchema.parse(raw);
       const args = sessionRemote.methods['session/follow'].input({strict: true}).create().parse(payload.args);
       const target = args.request.address.kind === 'session' ? session(args.request.address.sessionId) : await parentSession(args.request.address.parentSessionId);
-      return await target.stub.fetch(new Request('https://session.internal/native-follow', {
-        method: 'POST', body: JSON.stringify({scope: target.scope, operation: 'native-follow', args}), signal: request.signal,
-      }));
+      return await target.stub.fetch(forwardStream('https://session.internal/native-follow', {scope: target.scope, operation: 'native-follow', args}));
     }
     const envelope = clientRequestSchema.parse(raw);
     rpcId = envelope.rpcId;

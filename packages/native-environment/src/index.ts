@@ -6,6 +6,7 @@ import { RemoteError } from '@deepseek-ai/dsh-typert-protocol';
 import { CredentialProvider, type CredentialInfo, type CredentialRecord, type CredentialRecordEntry, type CredentialRecordInfo, type CredentialRef, type ResolvedCredential } from '@deepseek-ai/dsh-credentials';
 import { invokeAgentRemote, openRemoteStream } from '../../harness-runtime/src/remote-dispatch.ts';
 import { remoteStream } from '../../harness-runtime/src/remote-stream.ts';
+import type {NativeSocketStreams} from '../../harness-runtime/src/socket-stream.ts';
 
 /** Environment-wide official services that hold no Session state, opened per request. */
 export async function openEnvironmentServices(): Promise<Context> {
@@ -23,12 +24,13 @@ export function environmentRemoteFor(endpoint: string) {
 }
 
 /** One stream method of the environment services, disposed with its stream. */
-export async function openEnvironmentStream(endpoint: string, args: unknown, abort: AbortController): Promise<Response> {
+export async function openEnvironmentStream(endpoint: string, args: unknown, abort: AbortController, sockets?: NativeSocketStreams): Promise<Response> {
   const info = environmentRemoteFor(endpoint);
   if (!info) throw new RemoteError('gateway/method-unavailable', 'Remote stream is not connected yet', {endpoint});
   const services = await openEnvironmentServices();
   try {
     const stream = openRemoteStream(services, info, endpoint, args, abort.signal);
+    if (sockets) return await sockets.open(stream.items, abort, stream.parse, () => services.fiber.dispose());
     return remoteStream(stream.items, abort, stream.parse, () => services.fiber.dispose());
   } catch (error) {await services.fiber.dispose(); throw error;}
 }

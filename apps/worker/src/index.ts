@@ -1,3 +1,4 @@
+import {NativeSocketStreams} from '../../../packages/harness-runtime/src/socket-stream.ts';
 import scheduleRemote from '../../../.generated/official-remotes/packages/schedule/schedule/typert.remote-client.js';
 import {initialSessionPermissionSchema} from '../../../packages/native-plugins/src/session-contracts.ts';
 import { DurableObject, WorkerEntrypoint } from 'cloudflare:workers';
@@ -174,6 +175,7 @@ export class ConnectionGatewayDO extends ConnectionGateway<Env> {
 
 export class SessionDO extends DurableObject<Env> {
   private readonly lifecycle:LifecycleGate;
+  private readonly nativeSockets: NativeSocketStreams;
   private lifecycleRegistration:Promise<void>|undefined;
   private lifecycleRegistered=false;
   private lifecycleAdmit(input:unknown):Promise<void>|void {
@@ -195,6 +197,7 @@ export class SessionDO extends DurableObject<Env> {
     this.lifecycle.transition('suspended',operation);
     await this.lifecycle.maintenance(async()=>{
       if(at!==null && await this.ctx.storage.get('weft_paused_alarm')===undefined)await this.ctx.storage.put('weft_paused_alarm',at);
+      this.nativeSockets.close();
       this.lifecycle.closeStreams();
       for(const abort of this.requests.values())abort.abort();
       for(const queue of this.uplinks.values())queue.end();this.uplinks.clear();
@@ -414,6 +417,7 @@ export class SessionDO extends DurableObject<Env> {
     super(ctx, env);
     this.ctx=lifecycle.state(this.ctx);ctx=this.ctx;
     this.lifecycle=lifecycle;
+    this.nativeSockets = new NativeSocketStreams(ctx);
     if(lifecycle.mode==='deleted'){lifecycle.finishBoot();return;}
     initializeSessionStorage(ctx.storage);
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_webhook_bootstrap (id INTEGER PRIMARY KEY CHECK(id=1),seed TEXT NOT NULL)');
@@ -1178,6 +1182,10 @@ export class SessionDO extends DurableObject<Env> {
   }
 
   /** Internal binding transport; external requests are authenticated by the entry Worker. */
+  override webSocketMessage(socket: WebSocket): void {this.nativeSockets.message(socket);}
+  override webSocketClose(socket: WebSocket): void {this.nativeSockets.closed(socket);}
+  override webSocketError(socket: WebSocket): void {this.nativeSockets.closed(socket);}
+
   override async fetch(request: Request): Promise<Response> {
     const pathname = new URL(request.url).pathname;
     if (pathname === SESSION_LOG_EXPORT_PATH) {
@@ -1291,11 +1299,16 @@ export class SessionDO extends DurableObject<Env> {
       const args = sessionRemote.methods['session/follow'].input({strict: true}).create().parse(envelope.args);
       await this.assertNativeHistoryOwner(scope, args.request.address);
       const abort = new AbortController();
-      if (request.signal.aborted) abort.abort(request.signal.reason);
-      request.signal.addEventListener('abort', () => abort.abort(), {once: true});
+      const socket = request.headers.get('upgrade')?.toLowerCase() === 'websocket';
+      if (!socket) {
+        if (request.signal.aborted) abort.abort(request.signal.reason);
+        request.signal.addEventListener('abort', () => abort.abort(), {once: true});
+      }
       const reader = await this.getReader();
       const codec = sessionRemote.methods['session/follow'].result.create();
-      return remoteStream(reader.history.follow(args.request, abort.signal), abort, value => codec.parse(value));
+      const source = reader.history.follow(args.request, abort.signal);
+      if (socket) return this.nativeSockets.open(source, abort, value => codec.parse(value));
+      return remoteStream(source, abort, value => codec.parse(value));
     }
     const payload = z.object({ scope: scopeSchema, text: z.string().min(1).max(8000), persona: z.string().max(4000), requestId: z.uuid(), workspaceId: workspaceIdSchema.optional(), agent: agentBindingSchema.optional() }).strict().parse(raw);
     this.assertScope(payload.scope);

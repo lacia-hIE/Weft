@@ -84,7 +84,7 @@ export class LifecycleGate {
 
 /** Keep public RPC and internal async callbacks on the same generation. */
 export function guardLifecycle(type:{prototype:object},admit?:(owner:any,args:unknown[])=>Promise<void>|void):void {
-  const skipped=new Set(['constructor','nativeLifecycle','nativeCopyRelease','nativeRegisterResource','releaseCopy','alarm']);
+  const skipped=new Set(['constructor','nativeLifecycle','nativeCopyRelease','nativeRegisterResource','releaseCopy','alarm','webSocketMessage','webSocketClose','webSocketError']);
   let prototype=type.prototype;
   while(prototype && prototype!==Object.prototype){
     for(const name of Object.getOwnPropertyNames(prototype)){
