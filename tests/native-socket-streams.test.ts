@@ -49,7 +49,7 @@ test('native passive WebSockets deliver live journals and restore a fresh genera
         break;
       }
     }
-    const jobs = await open('job/list', {sessionId});
+    const jobs = await open('job/list', {request: {sessionId}});
     assert.deepEqual((await jobs.next<{jobs: unknown[]}>()).jobs, []);
 
     // No polling or HTTP follow is allowed to keep this object resident.
