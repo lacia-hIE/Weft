@@ -1271,13 +1271,17 @@ export class SessionDO extends DurableObject<Env> {
       const info = agentRemoteFor(envelope.endpoint);
       if (!info) throw new RemoteError('gateway/method-unavailable', 'Remote stream is not connected yet', {endpoint: envelope.endpoint});
       const abort = new AbortController();
-      if (request.signal.aborted) abort.abort(request.signal.reason);
-      request.signal.addEventListener('abort', () => abort.abort(), {once: true});
+      const socket = request.headers.get('upgrade')?.toLowerCase() === 'websocket';
+      if (!socket) {
+        if (request.signal.aborted) abort.abort(request.signal.reason);
+        request.signal.addEventListener('abort', () => abort.abort(), {once: true});
+      }
       const host = await this.getNativeHost(scope);
       const uplink = envelope.streamId ? this.uplink(envelope.streamId) : undefined;
       uplink?.claim();
       abort.signal.addEventListener('abort', () => { if (envelope.streamId) {uplink?.end(); this.uplinks.delete(envelope.streamId);} }, {once: true});
       const stream = openRemoteStream(host.ctx, info, envelope.endpoint, envelope.args, abort.signal, uplink);
+      if (socket) return this.nativeSockets.open(stream.items, abort, stream.parse);
       return remoteStream(stream.items, abort, stream.parse, () => { if (envelope.streamId) {uplink?.end(); this.uplinks.delete(envelope.streamId);} });
     }
     if (typeof raw === 'object' && raw !== null && 'operation' in raw && raw.operation === 'native-question-wait') {

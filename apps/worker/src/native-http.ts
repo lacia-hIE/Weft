@@ -279,9 +279,7 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
         const args = payloadSchema.parse(raw).args;
         const target = session(await sessionRoot(remoteAgentId(streamRemote, endpoint, args)) ?? remoteAgentId(streamRemote, endpoint, args));
         const streamId = request.headers.get('x-weft-stream-id') ?? undefined;
-        return await target.stub.fetch(new Request('https://session.internal/native-agent-stream', {
-          method: 'POST', body: JSON.stringify({scope: target.scope, operation: 'native-agent-stream', endpoint, args, ...(streamId ? {streamId: z.uuid().parse(streamId)} : {})}), signal: request.signal,
-        }));
+        return await target.stub.fetch(forwardStream('https://session.internal/native-agent-stream', {scope: target.scope, operation: 'native-agent-stream', endpoint, args, ...(streamId ? {streamId: z.uuid().parse(streamId)} : {})}));
       }
       if (endpoint === 'userQuestions/attachWait') {
         const args = questionRemote.methods[endpoint].input({strict: true}).create().parse(payloadSchema.parse(raw).args);

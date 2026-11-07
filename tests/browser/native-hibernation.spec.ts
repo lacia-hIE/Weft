@@ -7,7 +7,7 @@ test('native workbench restores hibernated subscriptions without losing history 
   const passiveFetches: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
   page.on('websocket', socket => carriers.push(socket.url()));
-  page.on('request', req => {if (/\/native\/streams\/(?:\$events|session\/(?:follow|control)|workspace\/follow|remoteAccess\/follow)/.test(req.url())) passiveFetches.push(req.url());});
+  page.on('request', req => {if (/\/native\/streams\/(?:\$events|session\/(?:follow|control)|workspace\/follow|remoteAccess\/follow|job\/list)/.test(req.url())) passiveFetches.push(req.url());});
   const {tenantId} = await (await request.get('/v1/me')).json() as {tenantId: string};
   const environment = 'hibernate-'+crypto.randomUUID().slice(0, 8);
   const base = `/v1/tenants/${tenantId}/environments/${environment}`;

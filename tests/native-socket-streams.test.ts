@@ -40,15 +40,24 @@ test('native passive WebSockets deliver live journals and restore a fresh genera
     const follow = await open('session/follow', args);
     assert.equal((await follow.next<SessionFollowFrame>()).type, 'snapshot');
     await api.call('session/rename', {request: {sessionId, title: 'Before hibernation'}});
-    const changed = await follow.next<SessionFollowFrame>();
-    assert.notEqual(changed.type, 'snapshot', 'a live physical generation has only one opening snapshot');
-    assert.match(JSON.stringify(changed), /Before hibernation/);
+    for (;;) {
+      const changed = await follow.next<SessionFollowFrame>();
+      assert.notEqual(changed.type, 'snapshot', 'a live physical generation has only one opening snapshot');
+      // Native activation can commit end-seed before the requested rename.
+      if (changed.type === 'event' && changed.event.type === 'session/title') {
+        assert.match(JSON.stringify(changed), /Before hibernation/);
+        break;
+      }
+    }
+    const jobs = await open('job/list', {sessionId});
+    assert.deepEqual((await jobs.next<{jobs: unknown[]}>()).jobs, []);
 
     // No polling or HTTP follow is allowed to keep this object resident.
     // workerd naturally evicts an idle object after ten seconds.
     await setTimeout(15_000);
     await api.call('session/rename', {request: {sessionId, title: 'After hibernation'}});
     assert.equal(await follow.closed, 1012, 'evicted native iterators request original Client generation recovery');
+    assert.equal(await jobs.closed, 1012, 'an empty job roster must not pin the Session either');
     const restored = await open('session/follow', args);
     const snapshot = await restored.next<SessionFollowFrame>();
     assert.equal(snapshot.type, 'snapshot');

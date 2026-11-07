@@ -4,6 +4,9 @@ Application versions use `vX.Y.Z`; local connector versions are independent. See
 
 ## [0.2.2-rc.1](https://github.com/lacia-hIE/Weft/releases/tag/v0.2.2-rc.1) — Unreleased / 未发布
 
+- Passive browser feeds use hibernatable WebSockets for native events, history, session control, workspaces, access and job rosters. Cold wakes restore original DSH stream generations without reloading the page. Agent execution, terminals and IM keep their existing lifetimes; actual savings depend on activity and other open resources.
+- 网页的原生事件、会话历史、状态、工作区、访问权限和任务列表订阅改用可休眠 WebSocket；唤醒时沿用 DSH 的流恢复机制，无须刷新页面。Agent、终端和 IM 保持原有运行生命周期，实际节省取决于活跃任务及其他打开的资源。见 [DO 空闲订阅设计](docs/architecture/durable-object-idle.md)。
+
 - IM `0.11.0` forwards native questions to their originating chat and accepts numbered, custom and sequential batch answers. Web and IM share native settlement; timed questions use the original late-answer path. Generic Worker Host question reads, answers and durable watches use the existing Sessions grant. Permission approvals remain separate.
 - IM `0.11.0` 将原生提问及时发送到来源聊天，支持编号、自定义文字和多题逐项回答。网页与 IM 共用原生回答状态，超时提问沿用原版补答机制；Worker Host 的查询、回答和持久订阅使用既有会话授权。权限审批仍走独立流程。
 

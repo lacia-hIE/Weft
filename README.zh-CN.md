@@ -244,6 +244,7 @@ Weft 使用 `vX.Y.Z` Tag；本地连接插件独立使用 `dsh-local-host-vX.Y.Z
 - [真实进程与 PTY](docs/architecture/workspace-processes.md)
 - [Git 项目与工作区](docs/architecture/workspace-git.md)
 - [原版插件安装](docs/validation/package-installation.md)
+- [DO 空闲订阅与成本边界](docs/architecture/durable-object-idle.md)
 
 `docs/validation/` 记录各项能力的实现与历史验证过程；当前使用方式以本 README 和部署指南为准。
 

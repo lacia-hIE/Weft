@@ -184,6 +184,7 @@ Project releases require complete CI for the exact commit on `main`. GitHub sour
 - [Environments](docs/architecture/agent-environments.md) and [environment copying](docs/architecture/environment-copy.md)
 - [Processes and PTYs](docs/architecture/workspace-processes.md)
 - [Browser performance](docs/architecture/browser-performance.md)
+- [Durable Object idle subscriptions and cost boundaries](docs/architecture/durable-object-idle.md)
 - [Upstream compatibility](docs/architecture/upstream-compatibility.md)
 
 Most detailed deployment and architecture documents are currently in Chinese. `docs/validation/` contains implementation and historical validation records; use the README and deployment guide for current instructions.
