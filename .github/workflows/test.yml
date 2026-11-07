@@ -114,6 +114,8 @@ jobs:
         run: npx tsx --test tests/dynamic-worker-identity.test.ts tests/dynamic-worker-observation.test.ts tests/dynamic-worker-observability.test.ts
       - name: Native IM user question smoke checks
         run: npx tsx --test --test-concurrency=1 --test-timeout=180000 tests/im-questions.test.ts tests/im-question-flow.test.ts
+      - name: Native subscription hibernation and access boundaries
+        run: npx tsx --test --test-concurrency=1 --test-timeout=180000 tests/native-socket-streams.test.ts
       - name: Mail protocol and durable gateway smoke checks
         run: npx tsx --test --test-concurrency=1 --test-timeout=300000 tests/im-email.test.ts tests/mail-gateway.test.ts
       - name: Pack test inputs

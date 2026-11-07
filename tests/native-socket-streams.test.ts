@@ -4,7 +4,6 @@ import {setTimeout} from 'node:timers/promises';
 import type {SessionCreateValue, SessionFollowFrame} from '@deepseek-ai/dsh-api-session-controller/types';
 import {createRuntime, tenantId, url} from './helpers/miniflare.ts';
 import {nativeClient} from './helpers/native.ts';
-import {sessionAddress} from '../packages/tenant/src/index.ts';
 import {DATA_LAYOUT_VERSION} from '../packages/tenant/src/layout.ts';
 
 test('native passive WebSockets deliver live journals and restore a fresh generation after actual workerd hibernation', {timeout: 120_000}, async () => {
@@ -72,7 +71,7 @@ test('native passive WebSockets deliver live journals and restore a fresh genera
 });
 
 test('passive socket upgrades preserve owner, origin, endpoint and paused-environment boundaries', {timeout: 90_000}, async () => {
-  const runtime = createRuntime(undefined, {browser: true});
+  const runtime = createRuntime();
   const api = nativeClient(() => runtime);
   const base = `/v1/tenants/${tenantId('alpha')}/environments/default`;
   const path = base+'/native/sockets/$events?'+new URLSearchParams({payload: '{"args":{}}'});
