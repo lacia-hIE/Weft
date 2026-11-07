@@ -1,7 +1,8 @@
 import type { Context } from '@deepseek-ai/cordis';
 import type { Agent } from '@deepseek-ai/dsh-agent';
 import { SessionId } from '@deepseek-ai/dsh-session';
-import { RemoteError } from '@deepseek-ai/dsh-typert-protocol';
+import { RemoteError, type RemoteInvocation } from '@deepseek-ai/dsh-typert-protocol';
+import {Peer} from '@deepseek-ai/dsh-client-connection';
 
 /** The generated Remote descriptor fields the direct Agent dispatcher reads. */
 interface RemoteParameter { name: string; wire?: string; source: string; lookup?: string }
@@ -53,17 +54,22 @@ function bind(ctx: Context, info: RemoteInfo, endpoint: string, raw: unknown, si
   if ((method.mode === 'stream') !== (mode === 'stream')) throw new RemoteError('gateway/method-unavailable', `Remote method requires the ${method.mode === 'stream' ? 'stream' : 'RPC'} carrier`, {endpoint});
   const args = method.input({strict: true}).create().parse(raw);
   const scope = receivers.get(ctx)?.get(method.service) ?? ctx;
+  // These adapters run behind the authenticated environment-owner boundary.
+  // Use the native Peer lifetime and complete invocation contract, including
+  // caller identity read by RemoteAccess and other principal-aware services.
+  const peer = new Peer(scope, {principal: {kind: 'owner'}, interactions: 'none'});
+  const cancellation = AbortSignal.any([signal, peer.signal]);
   // Like the gateway, the call runs on a Service view whose `ctx.invocation` carries this call and its client uplink.
   const codec = method.uplink?.codec.create();
-  const invocation = {request: {namespace: endpoint.slice(0, endpoint.indexOf('/')), method: endpoint.slice(endpoint.indexOf('/') + 1), args}, signal, uplinkWindow: undefined,
-    uplink: () => {
+  const invocation: RemoteInvocation = {request: {namespace: endpoint.slice(0, endpoint.indexOf('/')), method: endpoint.slice(endpoint.indexOf('/') + 1), args}, service: method.service, peer, signal: cancellation, uplinkWindow: undefined,
+    uplink: <In>() => {
       if (!uplink || !codec) throw new RemoteError('gateway/method-unavailable', 'This Remote call has no client uplink', {endpoint});
-      return (async function* () { for await (const item of uplink) yield codec.parse(item); })();
+      return (async function* () { for await (const item of uplink) yield codec.parse(item); })() as AsyncIterable<In>;
     }};
   const receiver: unknown = scope.extend({invocation} as never).get(method.service as never);
   const implementation = method.implementation ?? endpoint.slice(endpoint.indexOf('/') + 1);
   const fn: unknown = receiver && typeof receiver === 'object' ? Reflect.get(receiver, implementation) : undefined;
-  if (typeof fn !== 'function') throw new RemoteError('gateway/method-unavailable', 'Remote Service is not mounted in this environment', {endpoint});
+  if (typeof fn !== 'function') {void peer.dispose(); throw new RemoteError('gateway/method-unavailable', 'Remote Service is not mounted in this environment', {endpoint});}
   const parameters: unknown[] = method.parameters.map(parameter => {
     if (parameter.source === 'json') return args[parameter.wire ?? parameter.name];
     const id = args[parameter.wire ?? parameter.name];
@@ -71,18 +77,26 @@ function bind(ctx: Context, info: RemoteInfo, endpoint: string, raw: unknown, si
     if (!agent) throw new RemoteError('session/not-found', 'Session not found', {sessionId: SessionId(String(id))});
     return agent;
   });
-  if (method.cancellation !== undefined) parameters.push(signal);
-  return {codec: method.result.create(), call: () => Reflect.apply(fn, receiver, parameters) as unknown};
+  if (method.cancellation !== undefined) parameters.push(cancellation);
+  return {codec: method.result.create(), peer, call: () => Reflect.apply(fn, receiver, parameters) as unknown};
 }
 
 /** Invoke one unary Remote method on the root Context's Service. */
 export async function invokeAgentRemote(ctx: Context, info: RemoteInfo, endpoint: string, raw: unknown, signal: AbortSignal): Promise<unknown> {
   const bound = bind(ctx, info, endpoint, raw, signal, 'unary');
-  return bound.codec.parse(await bound.call());
+  try {return bound.codec.parse(await bound.call());}
+  finally {await bound.peer.dispose();}
 }
 
 /** Open one stream Remote method with the same binding. */
 export function openRemoteStream(ctx: Context, info: RemoteInfo, endpoint: string, raw: unknown, signal: AbortSignal, uplink?: AsyncIterable<unknown>): {items: AsyncIterable<unknown>; parse(value: unknown): unknown} {
   const bound = bind(ctx, info, endpoint, raw, signal, 'stream', uplink);
-  return {items: bound.call() as AsyncIterable<unknown>, parse: value => bound.codec.parse(value)};
+  let source: AsyncIterable<unknown>;
+  try {source = bound.call() as AsyncIterable<unknown>;}
+  catch (error) {void bound.peer.dispose(); throw error;}
+  const items = (async function* () {
+    try {yield* source;}
+    finally {await bound.peer.dispose();}
+  })();
+  return {items, parse: value => bound.codec.parse(value)};
 }
