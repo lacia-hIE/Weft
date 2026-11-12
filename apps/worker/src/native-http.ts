@@ -24,6 +24,8 @@ import {environmentRemoteFor} from '../../../packages/native-environment/src/ind
 import {isMarketEndpoint} from '../../../packages/native-environment/src/market.ts';
 import {openPermissionWorld} from '../../../packages/native-environment/src/permissions.ts';
 import permissionRemote from '../../../.generated/official-remotes/packages/interaction/permission-presets/typert.remote-client.js';
+import webRemote from '../../../.generated/official-remotes/packages/web/web/typert.remote-client.js';
+import {listWebProviders} from '../../../packages/native-environment/src/web-providers.ts';
 import {remoteAgentId} from '../../../packages/harness-runtime/src/remote-dispatch.ts';
 import questionRemote from '../../../.generated/official-remotes/packages/interaction/user-questions/typert.remote-client.js';
 import {FILE_UPLOAD_PATH} from '@weft/upstream/packages/client/file-upload/src/protocol.ts';
@@ -317,6 +319,12 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
       try {
         return Response.json({type: 'server-response', rpcId, result: {ok: true, value: method.result.create().parse(world.catalog())}}, {headers: {'cache-control': 'private, no-store'}});
       } finally { await world.ctx.fiber.dispose(); }
+    }
+    if (endpoint === 'web/listProviders') {
+      // The official Web search settings page lists the providers its menus offer.
+      const method = webRemote.methods[endpoint];
+      method.input({strict: true}).create().parse(payload.args);
+      return Response.json({type: 'server-response', rpcId, result: {ok: true, value: method.result.create().parse(await listWebProviders())}}, {headers: {'cache-control': 'private, no-store'}});
     }
     if (endpoint === '$stream/input') {
       // Ordered client uplink for one open bidirectional stream, delivered to the object that opened it.

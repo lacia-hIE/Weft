@@ -1,8 +1,9 @@
 # Durable Object idle subscriptions
 
-Weft's browser uses hibernatable WebSockets for six passive native feeds:
-`$events`, `session/follow`, `session/control`, `workspace/follow` and
-`remoteAccess/follow` and `job/list`. The native codecs, service implementations, snapshots,
+Weft's browser uses hibernatable WebSockets for seven passive native feeds:
+`$events`, `session/follow`, `session/control`, `workspace/follow`,
+`remoteAccess/follow`, `job/list` and `terminal/watch` (the Session terminal
+roster DSH 0.2.2-rc.2's sidebar watches). The native codecs, service implementations, snapshots,
 journals and Client connection supervisor remain owned by DSH. This is a Host
 carrier adapter, not a replacement plugin protocol or a second Agent runtime.
 The original POST/SSE routes remain available to existing API consumers.

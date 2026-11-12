@@ -69,6 +69,9 @@ test('native passive WebSockets deliver live journals and restore a fresh genera
     }
     const jobs = await open('job/list', {request: {sessionId}});
     assert.deepEqual((await jobs.next<{jobs: unknown[]}>()).jobs, []);
+    // DSH 0.2.2-rc.2's sidebar watches the Session's terminal roster; it must not pin the object either.
+    const terminals = await open('terminal/watch', {sessionId});
+    assert.deepEqual(await terminals.next<unknown[]>(), []);
 
     // No polling or HTTP follow is allowed to keep this object resident.
     // workerd naturally evicts an idle object after ten seconds.
@@ -76,6 +79,7 @@ test('native passive WebSockets deliver live journals and restore a fresh genera
     await api.call('session/rename', {request: {sessionId, title: 'After hibernation'}});
     assert.equal(await follow.closed, 1012, 'evicted native iterators request original Client generation recovery');
     assert.equal(await jobs.closed, 1012, 'an empty job roster must not pin the Session either');
+    assert.equal(await terminals.closed, 1012, 'an empty terminal roster must not pin the Session either');
     const restored = await open('session/follow', args);
     const snapshot = await restored.next<SessionFollowFrame>();
     assert.equal(snapshot.type, 'snapshot');

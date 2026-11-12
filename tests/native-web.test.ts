@@ -6,6 +6,7 @@ import { createRuntime } from './helpers/miniflare.ts';
 import { nativeClient } from './helpers/native.ts';
 
 const searchKeys: string[] = [];
+const searchApiCalls: {path: string; key: string}[] = [];
 
 /** Model HTTP and the fetched page are scripted; web_fetch, its policy and the HTML conversion are original. */
 function webModel(target: string, tool = 'web_fetch') {
@@ -19,6 +20,11 @@ function webModel(target: string, tool = 'web_fetch') {
         {type: 'web_search_tool_result', tool_use_id: 'srv', content: [{type: 'web_search_result', url: 'https://result.test/a', title: 'SearchResultAlpha', encrypted_content: '', page_age: null}]},
         {type: 'text', text: 'summary'},
       ]});
+    }
+    // DSH 0.2.2-rc.2's default Search API, under the origin of the environment's DeepSeek endpoint.
+    if (url.origin === 'https://web-model.test' && url.pathname === '/v1/tools/search') {
+      searchApiCalls.push({path: url.pathname, key: request.headers.get('authorization') ?? ''});
+      return Response.json({results: [{url: 'https://result.test/a', title: 'SearchResultAlpha', snippet: 'Search API result', date: null}]});
     }
     if (url.origin === 'https://page.test') return new Response('<html><body><h1>Release notes</h1><p>PageBodyAlpha</p></body></html>', {headers: {'content-type': 'text/html; charset=utf-8'}});
     if (url.origin !== 'https://web-model.test') throw new Error(`Unexpected web fixture outbound request ${request.url}`);
@@ -37,10 +43,11 @@ function webModel(target: string, tool = 'web_fetch') {
   return {outbound};
 }
 
-async function fetchTurn(target: string, tool = 'web_fetch'): Promise<string> {
+async function fetchTurn(target: string, tool = 'web_fetch', web?: Record<string, unknown>): Promise<string> {
   const runtime = createRuntime(undefined, {browser: true, bindings: {MODEL_BACKEND: 'deepseek', DEEPSEEK_API_KEY: 'web-fixture', DEEPSEEK_BASE_URL: 'https://web-model.test/anthropic'}, outbound: webModel(target, tool).outbound});
   const api = nativeClient(() => runtime);
   try {
+    if (web) await api.call('settings/update', {ns: 'web', patch: web});
     await api.call('session/create', {request: {sessionId: 'web'}});
     const follow = await api.follow('web');
     assert.equal((await follow.next()).type, 'snapshot');
@@ -66,9 +73,12 @@ test('web_fetch refuses non-public IP literal targets before any request', {time
   assert.doesNotMatch(result, /PageBodyAlpha/);
 });
 
-test('web_search queries DeepSeek with the environment model key resolved through the native credential seam', {timeout: 90_000}, async () => {
-  const result = await fetchTurn('weft release', 'web_search');
-  assert.match(result, /SearchResultAlpha/);
+test('web_search uses the environment DeepSeek endpoint and model key resolved through the native credential seam', {timeout: 120_000}, async () => {
+  // rc.2 defaults to the Search API at the configured DeepSeek origin, never the official host with a custom key.
+  assert.match(await fetchTurn('weft release', 'web_search'), /SearchResultAlpha/);
+  assert.deepEqual(searchApiCalls, [{path: '/v1/tools/search', key: 'Bearer web-fixture'}]);
+  // Legacy Messages search stays selectable and uses the same endpoint and key.
+  assert.match(await fetchTurn('weft release', 'web_search', {searchProvider: 'deepseek-official'}), /SearchResultAlpha/);
   assert.deepEqual(searchKeys, ['web-fixture'], 'the search request carries the key saved in the environment Models settings');
 });
 
@@ -102,7 +112,8 @@ test('rc.2 Search and Fetch APIs use native settings and credentials, and reject
   base.outbound=(request,miniflare)=> (nextTool==='web_fetch'?fetchModel:searchModel)(request,miniflare);
   try{
     await api.call('credentials/set',{ref:'WEB_API_KEY',value:'direct-api-key'});
-    await api.call('settings/update',{ns:'web-deepseek-api',patch:{apiKeyEnv:'WEB_API_KEY',baseURL:'https://web-api.test/v1',count:4}});
+    // rc.2 gives each capability its own endpoint and key reference.
+    await api.call('settings/update',{ns:'web-deepseek-api',patch:{searchApiKeyEnv:'WEB_API_KEY',searchBaseURL:'https://web-api.test/v1',fetchApiKeyEnv:'WEB_API_KEY',fetchBaseURL:'https://web-api.test/v1',count:4}});
     await api.call('settings/update',{ns:'web',patch:{searchProvider:'deepseek-search-api',fetchProvider:'deepseek-fetch-api'}});
     assert.doesNotMatch(JSON.stringify(await api.call('settings/describe',{})),/direct-api-key/);
     assert.match(await run('api-search','web_search'),/NativeSearchAPI/);
@@ -111,4 +122,16 @@ test('rc.2 Search and Fetch APIs use native settings and credentials, and reject
     assert.equal(calls[1]!.path,'/v1/fetch');assert.equal(calls[1]!.body.url,'https://page.test/api');
     redirect=true;const rejected=await run('api-redirect','web_search');assert.match(rejected,/302/);assert.doesNotMatch(rejected,/Credential redirect was followed/);
   }finally{await runtime.dispose();}
+});
+
+test('web/listProviders reports the official search and fetch providers for the native settings menus', {timeout: 90_000}, async () => {
+  const runtime = createRuntime(undefined, {browser: true});
+  const api = nativeClient(() => runtime);
+  try {
+    const value = await api.call<{search: {id: string}[]; fetch: {id: string}[]}>('web/listProviders', {});
+    assert.deepEqual(value.search.map(row => row.id).sort(), ['deepseek-official', 'deepseek-search-api']);
+    assert.deepEqual(value.fetch.map(row => row.id).sort(), ['deepseek-fetch-api', 'http']);
+  } finally {
+    await runtime.dispose();
+  }
 });

@@ -63,10 +63,15 @@ async function* redacted(stream: AsyncIterable<StreamChunk>): AsyncGenerator<Str
  * world's `credentials` service. Provider failures are redacted for every route.
  * @returns a function that commits new effective settings sections to the running entries.
  */
+/** Package name of the official DeepSeek API-key route, as the original profile names its entry. */
+const DEEPSEEK_PACKAGE = '@deepseek-ai/dsh-llm-deepseek-api-key';
+
 export async function mountNativeModels(ctx: Context, sections: ModelSections): Promise<(next: ModelSections) => Promise<void>> {
   ctx.on('llm/stream', (_options, next) => redacted(next()));
-  const loader = await workerdLoader(ctx, {'llm-deepseek-api-key': LlmDeepSeekApiKey, 'llm-pi-ai': LlmPiAi});
-  await createEntry(loader, {id: DEEPSEEK_ENTRY, name: 'cordis:llm-deepseek-api-key', config: structuredClone(sections.deepseek)});
+  // DSH 0.2.2-rc.2's DeepSeek Search/Fetch API finds the API-key route's endpoint and key by this entry's id
+  // and package name; under any other name it falls back to the official base and sends DEEPSEEK_API_KEY there.
+  const loader = await workerdLoader(ctx, {[DEEPSEEK_PACKAGE]: LlmDeepSeekApiKey, 'llm-pi-ai': LlmPiAi});
+  await createEntry(loader, {id: DEEPSEEK_ENTRY, name: DEEPSEEK_PACKAGE, config: structuredClone(sections.deepseek)});
   await createEntry(loader, {id: PI_AI_ENTRY, name: 'cordis:llm-pi-ai', config: structuredClone(sections.piAi)});
   let current = JSON.stringify(sections);
   return async next => {

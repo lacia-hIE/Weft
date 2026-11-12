@@ -46,6 +46,9 @@ rc.1（`66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db`）→ rc.2 的审查覆盖完�
 | Web search：`deepseek-official` 搜索 provider 改名为 `deepseek-search-api`，凭据改为有序来源；移除 Exa 与 Perplexity 搜索插件 | 预设检查世界使用新 provider 名；Weft 未接入被移除的搜索插件 |
 | 子代理用户控制改为只指明目标会话（`subagents/interruptByUser`、`subagents/prompt` 不再带父会话）；`waitForChildren` 改为 `waitForTreeWork` | 入口按子会话找到所属树的根 SessionDO，并在其中校验目标确属该树 |
 | 内置预设给 `tool-subagent-control` 加上 `interrupt: false`，子代理与团队模式默认不提供 `interrupt_agent` | 目录改用该插件的原版 Config 校验并带配置挂载，复制官方预设发布的自定义预设也能通过校验 |
+| Web 搜索设置页改为按 `web/listProviders` 列出的 provider 选择，并按能力分设计费、端点与密钥（`searchBaseURL` / `searchApiKeyEnv`、`fetch*`） | 入口在临时世界中挂载原版 `web` 与三个固定的 provider 行后回答 `web/listProviders`；该世界不搜索也不抓取 |
+| DeepSeek Search / Fetch API 按入口 id 与包名（`@deepseek-ai/dsh-llm-deepseek-api-key`）寻找 API-key 模型路由，找不到时退回官方地址并发送 `DEEPSEEK_API_KEY` | Weft 的模型入口改用原版包名注册，Search / Fetch 跟随环境所配 DeepSeek 端点的 origin（`/v1/tools`），不会把自定义端点的密钥发往官方地址 |
+| 侧栏终端以 `terminal/watch` 流订阅会话终端列表 | 与 `job/list` 一样走可休眠 WebSocket；未改时这条常开 HTTP 流会让 SessionDO 无法休眠 |
 | `BundleInfo.updatable` 改为 `update` | 各插件清单不再输出该字段 |
 | `workspaceFiles/search` 新增；ripgrep 路径解析移入 `dsh-util-ripgrep` | 原生文件 Host 转发搜索；构建时在新位置替换 ripgrep 路径解析，仍使用容器镜像里的 `rg` |
 | 插件市场导入 `dsh-plugin-manager` 的 `pinnedGitOrigin` | 构建时只引入纯函数 `install-spec.ts`，不把 Node 插件管理器打进 Worker |
