@@ -45,6 +45,7 @@ rc.1（`66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db`）→ rc.2 的审查覆盖完�
 | `workspace-dependencies` 管理桌面版主 Python 运行时 | 列为不适用 |
 | Web search：`deepseek-official` 搜索 provider 改名为 `deepseek-search-api`，凭据改为有序来源；移除 Exa 与 Perplexity 搜索插件 | 预设检查世界使用新 provider 名；Weft 未接入被移除的搜索插件 |
 | 子代理用户控制改为只指明目标会话（`subagents/interruptByUser`、`subagents/prompt` 不再带父会话）；`waitForChildren` 改为 `waitForTreeWork` | 入口按子会话找到所属树的根 SessionDO，并在其中校验目标确属该树 |
+| 内置预设给 `tool-subagent-control` 加上 `interrupt: false`，子代理与团队模式默认不提供 `interrupt_agent` | 目录改用该插件的原版 Config 校验并带配置挂载，复制官方预设发布的自定义预设也能通过校验 |
 | `BundleInfo.updatable` 改为 `update` | 各插件清单不再输出该字段 |
 | `workspaceFiles/search` 新增；ripgrep 路径解析移入 `dsh-util-ripgrep` | 原生文件 Host 转发搜索；构建时在新位置替换 ripgrep 路径解析，仍使用容器镜像里的 `rg` |
 | 插件市场导入 `dsh-plugin-manager` 的 `pinnedGitOrigin` | 构建时只引入纯函数 `install-spec.ts`，不把 Node 插件管理器打进 Worker |

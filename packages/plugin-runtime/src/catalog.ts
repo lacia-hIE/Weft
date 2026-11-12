@@ -76,7 +76,6 @@ async function mountSkills(ctx: Context, config: Record<string, unknown>): Promi
 
 /** The original modules are compiled into the Worker, never fetched at runtime. */
 const SkillCatalogBundle = {name: 'workerd-skill-filesystem', Config: z.object({}), inject: ['workingDirectory'], apply: mountSkillCatalog};
-const SubagentControlBundle = {...SubagentControl, Config: z.object({})};
 const CommandCompactBundle = {...CommandCompact, Config: z.object({})};
 const PlanModeConfig = z.object({section: z.string().required()});
 const CommandGoalBundle = {...CommandGoal, Config: z.object({})};
@@ -259,11 +258,12 @@ const entries: Entry[] = [
     mount: async (ctx, config) => {await ctx.plugin(Subagent, Subagent.Config(config as unknown as Subagent.Config));},
   },
   {
-    id: 'tool-subagent-control', module: SubagentControlBundle, title: '子 Agent 控制',
-    description: '官方 send_message 与 interrupt_agent 工具。',
-    workspace: true, schema: SubagentControlBundle.Config, defaults: {},
-    validate: config => {SubagentControlBundle.Config(config);},
-    mount: async ctx => {await ctx.plugin(SubagentControl);},
+    // DSH 0.2.2-rc.2 presets set `interrupt: false`: interrupt_agent stays off for subagents and Team mode.
+    id: 'tool-subagent-control', module: SubagentControl, title: '子 Agent 控制',
+    description: '官方 list_agents、wait_agent、send_message 与可选的 interrupt_agent 工具。',
+    workspace: true, schema: SubagentControl.Config, defaults: {interrupt: false},
+    validate: config => {SubagentControl.Config(config as SubagentControl.Config);},
+    mount: async (ctx, config) => {await ctx.plugin(SubagentControl, SubagentControl.Config(config as SubagentControl.Config));},
   },
   {
     id: "tool-todo",
