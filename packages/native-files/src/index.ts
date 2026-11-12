@@ -53,8 +53,18 @@ export async function createNativeFileHost(storage: DurableObjectStorage, scope:
         try {
           let value: unknown;
           switch (endpoint) {
-            case 'workspaceFiles/list': value = await ctx.workspaceFiles.list(owner, args.path, signal); break;
-            case 'workspaceFiles/stat': value = await ctx.workspaceFiles.stat(owner, args.path, signal); break;
+            case 'workspaceFiles/list': {
+              const input = remote.methods[endpoint].input({strict: true}).create().parse(raw);
+              value = await ctx.workspaceFiles.list(owner, input.path, signal); break;
+            }
+            case 'workspaceFiles/stat': {
+              const input = remote.methods[endpoint].input({strict: true}).create().parse(raw);
+              value = await ctx.workspaceFiles.stat(owner, input.path, signal); break;
+            }
+            case 'workspaceFiles/search': {
+              const input = remote.methods[endpoint].input({strict: true}).create().parse(raw);
+              value = await ctx.workspaceFiles.search(owner, input.request, signal); break;
+            }
             case 'workspaceFiles/read': {
               const input = remote.methods[endpoint].input({strict: true}).create().parse(raw);
               value = await ctx.workspaceFiles.read(owner, input.path, input.range, signal); break;
@@ -70,7 +80,7 @@ export async function createNativeFileHost(storage: DurableObjectStorage, scope:
             }
           }
           return fullResponse(RpcId(rpcId), {ok: true, value: method.result.create().parse(value)});
-        } catch (error) {return fileError(error, args.path);}
+        } catch (error) {return fileError(error, 'path' in args ? args.path : '.');}
       },
       async changes(raw: unknown, abort: AbortController, dispose = () => ctx.fiber.dispose()): Promise<Response> {
         const method = remote.methods['workspaceFiles/changes'];

@@ -6,17 +6,18 @@ import {tmpdir} from 'node:os';
 import {createRuntime, tenantId, url} from './helpers/miniflare.ts';
 import {nativeClient} from './helpers/native.ts';
 import {nativeTeamModel} from './helpers/native-team-model.ts';
-import type {BundleInfo, ChangeResult} from '@deepseek-ai/dsh-plugin-manager/types';
+import type {BundleInfo} from '@deepseek-ai/dsh-plugin-manager/types';
 
-const bundle = '@deepseek-ai/dsh-experimental-agent-team-profile';
-const client = '@deepseek-ai/dsh-experimental-client-ui-agent-team';
-test('official patch installs real Team tools, persists roster/tasks, restores peer inboxes and preserves frozen Sessions', {timeout: 180000}, async () => {
+const retired = '@deepseek-ai/dsh-experimental-agent-team-profile';
+const client = '@deepseek-ai/dsh-client-ui-agent-team';
+const taskTools = ['team_task_create', 'team_task_list', 'team_task_get', 'team_task_update'];
+
+test('Team mode is a per-root-Session selection: real task tools, persisted board, named teammates and cold peer inboxes', {timeout: 180000}, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'weft-teams-'));
   const model = nativeTeamModel();
   const options = {bindings: {MODEL_BACKEND: 'deepseek', DEEPSEEK_API_KEY: 'team-fixture', DEEPSEEK_BASE_URL: 'https://team-model.test/anthropic'}, outbound: model.outbound};
   let runtime = createRuntime(directory, options);
   const api = nativeClient(() => runtime);
-  const other = nativeClient(() => runtime, 'default', 'beta');
   const boot = async () => {
     const response = await runtime.dispatchFetch(url('alpha', `/v1/tenants/${tenantId('alpha')}/environments/default/native/plugins/boot`));
     assert.equal(response.headers.get('cache-control'), 'private, no-store');
@@ -29,58 +30,54 @@ test('official patch installs real Team tools, persists roster/tasks, restores p
       for (;;) {const frame = await follow.next(); if (frame.type === 'event' && frame.event.type === 'turn/end') break;}
     } finally {await follow.close();}
   };
-  type TeamView = {members: {id: string; name: string; phase: string}[]; tasks: {id: string; subject: string; revision: number}[]};
-  const projection = async () => (await api.call<{values: {agentTeam: TeamView}}>('session/projections', {request: {sessionId: 'team-lead'}})).values.agentTeam;
+  type Views = {agentTeam: {enabled: boolean; tasks: {id: string; subject: string; revision: number; writeScopes: string[]}[]}; subagentCatalog: {id: string; name?: string}[]};
+  const views = async (sessionId = 'team-lead') => (await api.call<{values: Views}>('session/projections', {request: {sessionId}})).values;
+  const observed = (marker: string) => model.observations.filter(row => !row.child && row.body.includes(marker));
   try {
-    assert.equal((await boot()).entries.some(row => row.id === client), false);
-    await api.call('session/create', {request: {sessionId: 'old-session', agentPreset: 'standard'}});
-    const available = (await api.call<BundleInfo[]>('pluginManager/listBundles', {})).find(row => row.name === bundle)!;
-    assert.equal(available.installed, false); assert.ok(available.installTarget);
-    const wrong = await api.call<ChangeResult>('pluginManager/installBundle', {spec: bundle+'@99.0.0'});
-    assert.equal(wrong.application, 'failed');
-    const privateSource = await api.call<{status: string}>('pluginManager/inspect', {spec: bundle, options: {registry: 'https://private.invalid'}});
-    assert.equal(privateSource.status, 'refused');
-    const install = await api.call<ChangeResult>('pluginManager/installBundle', {spec: available.installTarget.spec, options: {registry: 'https://registry.npmjs.org/'}});
-    assert.equal(install.application, 'applied'); assert.equal(install.enabled, true);
+    // Agent Teams ships in the base and Web bundles; the former optional bundle is gone.
     assert.equal((await boot()).entries.some(row => row.id === client), true);
-    assert.equal((await other.call<BundleInfo[]>('pluginManager/listBundles', {})).find(row => row.name === bundle)?.installed, false);
-    const inventory = await api.call<{entries: {moduleName: string; enabled: boolean; fiberPhase: unknown}[]}>('pluginInventory/list', {});
-    const declared = inventory.entries.filter(row => row.moduleName.startsWith('@deepseek-ai/dsh-experimental-'));
-    assert.equal(declared.length, 3);
-    assert.ok(declared.every(row => row.enabled && row.fiberPhase === null));
-    const presets = await api.call<unknown>('agentPresets/list', {});
-    assert.doesNotMatch(JSON.stringify(presets), /waiting for agentTeams|Preset services require isolate realms/);
+    assert.equal((await api.call<BundleInfo[]>('pluginManager/listBundles', {})).some(row => row.name === retired), false);
+
     await api.call('session/create', {request: {sessionId: 'team-lead', agentPreset: 'standard'}});
+    await api.call('session/create', {request: {sessionId: 'solo', agentPreset: 'standard'}});
+    assert.equal((await views()).agentTeam.enabled, false, 'new Sessions default to Team mode off');
+    await run('team-lead', 'BEFORE_TEAM');
+    assert.ok(observed('BEFORE_TEAM').every(row => taskTools.every(name => !row.tools.includes(name))));
+
+    await api.call('agentTeams/setEnabled', {agentId: 'team-lead', enabled: true});
+    assert.equal((await views()).agentTeam.enabled, true);
     await run('team-lead', 'CREATE_TEAM');
-    let team = await projection();
-    assert.equal(team.members.find(row => row.name === 'reviewer')?.phase, 'active');
-    assert.equal(team.tasks[0]?.subject, 'Review plugin integration');
-    const childId = team.members.find(row => row.name === 'reviewer')!.id;
-    const rootCalls = model.observations.filter(row => !row.child);
-    assert.ok(rootCalls.some(row => row.tools.includes('spawn_teammate')));
-    assert.ok(rootCalls.every(row => !row.tools.includes('subagent') && !row.tools.includes('subagent_fork')));
-    assert.ok(rootCalls.every(row => row.tools.filter(name => name === 'send_message').length === 1));
-    await run('old-session', 'FROZEN_BEFORE_INSTALL');
-    assert.equal(model.observations.find(row => row.body.includes('FROZEN_BEFORE_INSTALL'))?.tools.includes('spawn_teammate'), false);
+    const lead = observed('CREATE_TEAM');
+    assert.ok(lead.some(row => taskTools.every(name => row.tools.includes(name))));
+    assert.ok(lead.some(row => row.body.includes('Agent Teams is available in this session')), 'Team policy reaches the system prompt');
+    let state = await views();
+    assert.equal(state.agentTeam.tasks[0]?.subject, 'Review plugin integration');
+    assert.deepEqual(state.agentTeam.tasks[0]?.writeScopes, ['packages/native-bundles']);
+    const childId = state.subagentCatalog.find(row => row.name === 'reviewer')?.id;
+    assert.ok(childId, 'the teammate is a named subagent of the root');
+
+    // The selection belongs to one root Session.
+    assert.equal((await views('solo')).agentTeam.enabled, false);
+    await run('solo', 'SOLO_SESSION');
+    assert.ok(observed('SOLO_SESSION').every(row => taskTools.every(name => !row.tools.includes(name))));
+    assert.equal((await api.raw('agentTeams/setEnabled', {agentId: childId, enabled: false})).result.error !== undefined, true, 'only the root changes Team mode');
+
     await runtime.dispose(); runtime = createRuntime(directory, options);
-    // Read-only cold projection must restore the official fold without starting an Agent.
-    team = await projection();
-    assert.equal(team.members.find(row => row.name === 'reviewer')?.id, childId);
-    assert.equal(team.tasks[0]?.revision, 1);
+    // A read-only cold projection restores the board and selection without starting an Agent.
+    state = await views();
+    assert.equal(state.agentTeam.enabled, true);
+    assert.equal(state.agentTeam.tasks[0]?.revision, 1);
+    assert.equal(state.subagentCatalog.find(row => row.name === 'reviewer')?.id, childId);
     await run('team-lead', 'MESSAGE_TEAM');
     for (let attempt = 0; attempt < 150 && !model.observations.some(row => !row.child && row.body.includes('REVIEWER_ACK')); attempt++) await new Promise(resolve => setTimeout(resolve, 100));
     assert.ok(model.observations.some(row => row.child && row.body.includes('WAKE_TEAM')), 'a peer send cold-restores the teammate inbox');
-    assert.ok(model.observations.some(row => !row.child && row.body.includes('REVIEWER_ACK')), 'the teammate can send a real peer message back to its Lead');
-    const disabled = await api.call<ChangeResult>('pluginManager/setBundleEnabled', {name: bundle, enabled: false});
-    assert.equal(disabled.application, 'applied');
-    assert.equal((await boot()).entries.some(row => row.id === client), false);
-    await api.call('session/create', {request: {sessionId: 'after-disable', agentPreset: 'standard'}});
-    await run('after-disable', 'AFTER_DISABLE');
-    assert.equal(model.observations.find(row => row.body.includes('AFTER_DISABLE'))?.tools.includes('spawn_teammate'), false);
-    assert.equal((await projection()).members.find(row => row.name === 'reviewer')?.id, childId);
-    assert.equal((await api.call<ChangeResult>('pluginManager/removeBundle', {name: bundle})).changed, true);
-    await runtime.dispose(); runtime = createRuntime(directory, options);
-    assert.equal((await api.call<BundleInfo[]>('pluginManager/listBundles', {})).find(row => row.name === bundle)?.installed, false);
-    assert.equal((await projection()).tasks[0]?.subject, 'Review plugin integration');
+    assert.ok(model.observations.some(row => !row.child && row.body.includes('REVIEWER_ACK')), 'the teammate can message its Lead back');
+
+    await api.call('agentTeams/setEnabled', {agentId: 'team-lead', enabled: false});
+    await run('team-lead', 'AFTER_DISABLE');
+    assert.ok(observed('AFTER_DISABLE').every(row => taskTools.every(name => !row.tools.includes(name))));
+    state = await views();
+    assert.equal(state.agentTeam.enabled, false);
+    assert.equal(state.agentTeam.tasks[0]?.subject, 'Review plugin integration', 'turning Team mode off keeps the task board');
   } finally {await runtime.dispose(); await rm(directory, {recursive: true, force: true});}
 });

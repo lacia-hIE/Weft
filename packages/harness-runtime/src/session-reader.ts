@@ -5,7 +5,7 @@ import Sessions, { type Session, type SessionEvent, type SessionId } from '@deep
 import Projections from '@deepseek-ai/dsh-session-projection';
 import Title from '@deepseek-ai/dsh-session-title';
 import {installDurableSessionQuery} from '../../native-query/src/index.ts';
-import {teamProjectionDefinition} from '@weft/upstream/packages/experimental/agent-team/src/projection.ts';
+import {teamProjectionDefinition} from '@weft/upstream/packages/team/agent-team/src/projection.ts';
 import type { AssistantStreamFrame, Agent } from '@deepseek-ai/dsh-agent';
 import { modelSelectionProjectionDefinition } from '@deepseek-ai/dsh-agent';
 import AgentRegistry from '@deepseek-ai/dsh-agent';

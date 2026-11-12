@@ -13,9 +13,9 @@
 
 ## 宿主接线
 
-`session/page` 与 `session/follow` 先定位物理所属 SessionDO，再由原版历史控制器验证子会话地址。投影与图片读取同样校验所属范围，再读取相应逻辑 Session。`subagents/prompt` 和 `subagents/interruptByParent` 使用官方生成的参数、结果 codec，调用实际子 Agent 服务；内部 Fetch 携带取消信号，错误保留原版 Remote code。冷或已经结束的 interrupt 沿用原版的接受但无操作语义，不创建虚假的运行状态。
+`session/page` 与 `session/follow` 先定位物理所属 SessionDO，再由原版历史控制器验证子会话地址。投影与图片读取同样校验所属范围，再读取相应逻辑 Session。`subagents/prompt` 和 `subagents/interruptByUser` 使用官方生成的参数、结果 codec，调用实际子 Agent 服务。DSH 0.2.2-rc.2 起这两个用户控制只指明目标子会话：入口按子会话找到所属树的根 SessionDO，并在其中校验目标确属该树；内部 Fetch 携带取消信号，错误保留原版 Remote code。冷或已经结束的 interrupt 沿用原版的接受但无操作语义，不创建虚假的运行状态。
 
-流式帧按实际产生它的 Agent 转发；超时计时器按 Session 分开管理。宿主通过原版 `waitForChildren` 跟踪正在推进的后代，父 Agent 暂时空闲时仍保留真实后台工作。
+流式帧按实际产生它的 Agent 转发；超时计时器按 Session 分开管理。宿主通过原版 `waitForTreeWork` 跟踪正在推进的后代，父 Agent 暂时空闲时仍保留真实后台工作。
 
 归档通过实际运行时的原版 `workspace/session-activity` 查询根 turn 与子 Agent 活动。默认拒绝归档仍有工作的会话；显式选择停止工作时先持久化归档，再通过原版 `workspace/session-stop` 通知各服务取消自己的工作。
 

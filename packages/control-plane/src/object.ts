@@ -104,7 +104,7 @@ import {readNativePresets, type CompositionEndpoint} from '../../native-composit
 import {profileDefinitions} from '../../harness-profile/src/index.ts';
 import {manageNativePlugins} from '../../native-composition/src/manager.ts';
 import {OfficialBundleRegistry} from '../../native-bundles/src/registry.ts';
-import {availableBundleStates, composeBundleProfile, optionalBundleInfo, optionalBundlePlugins, TEAM_CLIENT, TEAM_BUNDLE} from '../../native-bundles/src/catalog.ts';
+import {availableBundleStates, composeBundleProfile, optionalBundleInfo, optionalBundlePlugins} from '../../native-bundles/src/catalog.ts';
 import {environmentPlugins} from '../../native-composition/src/extensions.ts';
 import {Context} from '@deepseek-ai/cordis';
 import {NativePluginPlatform} from '../../native-plugins/src/platform.ts';
@@ -526,7 +526,7 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
   async nativeProfile(scope: ControlScope, preset: string | undefined, revision?: number): Promise<Response> {
     this.scope(scope); this.ensureDefault(); this.ensureNativePresets();
     const value = await this.agent(scope, preset ?? this.presetDefault(scope), revision);
-    return Response.json({value: value?.spec.disabled ? undefined : value ? composeBundleProfile(value, this.officialBundles().list()) : undefined});
+    return Response.json({value: value?.spec.disabled ? undefined : value ? composeBundleProfile(value, availableBundleStates(this.officialBundles().list())) : undefined});
   }
   async nativePresetIds(scope: ControlScope): Promise<string[]> {return (await this.state(scope)).agents.filter(row => !row.spec.disabled).map(row => row.spec.id);}
   /**
@@ -538,10 +538,6 @@ abstract class HarnessStateDO extends DurableObject<HarnessEnvironment> {
   private presetReadsVersion = '';
   private officialBundleRegistry: OfficialBundleRegistry | undefined;
   private officialBundles(): OfficialBundleRegistry {return this.officialBundleRegistry ??= new OfficialBundleRegistry(this.ctx.storage);}
-  async nativeOfficialBundleClients(scope: ControlScope): Promise<string[]> {
-    this.scope(scope);
-    return availableBundleStates(this.officialBundles().list()).some(row => row.name === TEAM_BUNDLE && row.enabled) ? [TEAM_CLIENT] : [];
-  }
   private packageInstaller: PackageInstaller | undefined;
   private packages(scope: ControlScope): PackageInstaller {
     this.scope(scope);

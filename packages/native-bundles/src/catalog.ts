@@ -1,14 +1,18 @@
-import {applyEntryPatches, type PatchOptions} from '@deepseek-ai/cordis-plugin-include';
-import type {EntryOptions} from '@deepseek-ai/cordis-plugin-loader';
+import type {PatchOptions} from '@deepseek-ai/cordis-plugin-include';
 import type {AgentRevision} from '../../control-plane/src/contracts.ts';
 import type {BundleInfo, PluginInfo, PluginEntryId} from '@deepseek-ai/dsh-plugin-manager/types';
 import type {PluginLocalizedMeta} from '@deepseek-ai/dsh-package-manifest';
 import definitions from '../../../.generated/official-optional-bundles.json';
 import metadata from '../../../.generated/plugin-meta.json';
 
-export const TEAM_BUNDLE = '@deepseek-ai/dsh-experimental-agent-team-profile';
-export const TEAM_CLIENT = '@deepseek-ai/dsh-experimental-client-ui-agent-team';
-export const optionalBundles = definitions;
+/**
+ * Official bundles that no longer exist upstream. DSH 0.2.2-rc.2 folded Agent
+ * Teams into the base and Web bundles, so its former optional selection is
+ * removed when the environment's registry opens, as the original profile
+ * loader does.
+ */
+export const RETIRED_BUNDLES: readonly string[] = ['@deepseek-ai/dsh-experimental-agent-team-profile'];
+export const optionalBundles: ReadonlyArray<{name: string; version: string; description: string; upstream: string; digest: string; patch: PatchOptions[]}> = definitions as never;
 export interface BundleState {name: string; version: string; digest: string; enabled: boolean}
 const entryId = (name: string, id: string): PluginEntryId => `official-bundle:${name}:${id}` as PluginEntryId;
 const metaOf = (name: string) => (metadata.packages as Record<string, PluginLocalizedMeta>)[name];
@@ -24,40 +28,33 @@ export function availableBundleStates(states: readonly BundleState[]): BundleSta
   return states.filter(state => optionalBundles.some(bundle => bundle.name === state.name && bundle.version === state.version && bundle.digest === state.digest));
 }
 
-/** Apply the upstream patch, then separate root services and browser rows from preset tools. */
+/**
+ * An optional official bundle applies only through a reviewed runtime adapter.
+ * None ships with this deployment's upstream, so a profile is returned as
+ * published and an enabled selection is refused rather than silently ignored.
+ */
 export function composeBundleProfile(profile: AgentRevision, states: readonly BundleState[]): AgentRevision {
-  let rows: EntryOptions[] = profile.spec.plugins.map(row => ({id: row.id, config: structuredClone(row.config), name: 'cordis:'+row.id, ...(row.disabled === undefined ? {} : {disabled: row.disabled})}));
   for (const state of states.filter(row => row.enabled)) {
     const bundle = shippedBundle(state.name);
     if (!bundle || bundle.version !== state.version || bundle.digest !== state.digest) throw new Error('Official bundle version unavailable; reinstall the deployment version');
-    if (bundle.name !== TEAM_BUNDLE) throw new Error('Official bundle has no runtime adapter');
-    const patches = bundle.patch as PatchOptions[];
-    // Minimal/custom presets need the original globally declared delegation
-    // targets as disabled placeholders. The patch still runs unchanged.
-    for (const patch of bundle.patch) {
-      if ('id' in patch && !rows.some(row => row.id === patch.id)) rows.push({id: patch.id, name: 'cordis:'+patch.id, disabled: true});
-    }
-    rows = applyEntryPatches(rows, patches, (message, ...args) => {throw new Error(`Official bundle patch failed: ${message} ${args.join(' ')}`);});
+    throw new Error('Official bundle has no runtime adapter');
   }
-  return {...profile, spec: {...profile.spec, plugins: rows.map(row => {
-    if (row.id === undefined || row.group || typeof row.disabled !== 'boolean' && row.disabled !== undefined) throw new Error('Unsupported official bundle row');
-    return {id: row.id, config: (row.config ?? {}) as Record<string, unknown>, ...(row.disabled === undefined ? {} : {disabled: row.disabled})};
-  })}};
+  return profile;
 }
 
 export function optionalBundleInfo(states: readonly BundleState[]): BundleInfo[] {
   return optionalBundles.map(bundle => {
     const state = states.find(row => row.name === bundle.name);
     const compatible = !state || availableBundleStates([state]).length === 1;
-    const inserts = bundle.patch.flatMap(row => 'insert' in row ? row.insert : []);
+    const inserts = bundle.patch.flatMap(row => 'insert' in row && Array.isArray(row.insert) ? row.insert as {id: string; name: string}[] : []);
     return {name: bundle.name, version: state?.version ?? bundle.version, description: bundle.description,
       ...(metaOf(bundle.name) ? {meta: metaOf(bundle.name)!} : {}), official: true,
       availability: state ? 'profile' : 'missing', installed: Boolean(state), enabled: compatible && (state?.enabled ?? false),
-      installTarget: {spec: `${bundle.name}@${bundle.version}`, version: bundle.version}, optional: false, removable: Boolean(state), updatable: false,
+      installTarget: {spec: `${bundle.name}@${bundle.version}`, version: bundle.version}, optional: false, removable: Boolean(state),
       rows: inserts.map(row => ({rowId: row.id, moduleName: row.name,
         ...(metaOf(row.name) ? {meta: metaOf(row.name)!} : {}),
         ...(state ? {entryId: entryId(bundle.name, row.id)} : {})})),
-      overrides: bundle.patch.flatMap(row => 'id' in row ? [row.id] : []),
+      overrides: bundle.patch.flatMap(row => 'id' in row && typeof row.id === 'string' ? [row.id] : []),
       ...(!compatible ? {error: {code: 'incompatible-version' as const, diagnostic: 'Reinstall the version included in this deployment.'}} : {}),
     };
   });

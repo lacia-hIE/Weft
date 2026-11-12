@@ -30,7 +30,7 @@ export const nativeShellPlatform = {
       return {contents: source, loader: 'ts', resolveDir: resolve(path, '..')};
     });
     // The official file search spawns ripgrep from the workspace container image instead of an npm binary.
-    builder.onLoad({filter: /packages\/fs\/tool-fs-search\/src\/search-core\.ts$/}, async ({path}) => {
+    builder.onLoad({filter: /packages\/util\/ripgrep\/src\/index\.ts$/}, async ({path}) => {
       const source = (await import('node:fs')).readFileSync(path, 'utf8');
       const start = source.indexOf('export function resolveRgPath(): Promise<string> {');
       const end = source.indexOf('\n}\n', start);

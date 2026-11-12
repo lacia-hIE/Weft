@@ -13,16 +13,17 @@ export function nativeTeamModel() {
     const called = (name: string) => body.messages.some(row => row.role === 'assistant' && Array.isArray(row.content) && row.content.some(block => block.type === 'tool_use' && block.name === name));
     observations.push({child, tools: body.tools?.map(row => row.name) ?? [], body: JSON.stringify(body)});
     let name: string | undefined, input: object = {};
-    if (!child && users.includes('CREATE_TEAM') && !called('spawn_teammate')) {
-      name = 'spawn_teammate'; input = {name: 'reviewer', description: 'Review the shared workspace', prompt: 'TEAM_CHILD_SEED', context: 'fresh'};
+    // DSH 0.2.2-rc.2 Teams: teammates are named subagents, messages address them by name, and the root is `lead`.
+    if (!child && users.includes('CREATE_TEAM') && !called('subagent')) {
+      name = 'subagent'; input = {name: 'reviewer', description: 'Review the workspace', prompt: 'TEAM_CHILD_SEED'};
     } else if (!child && users.includes('CREATE_TEAM') && !called('team_task_create')) {
       name = 'team_task_create'; input = {subject: 'Review plugin integration', description: 'Inspect the shared implementation', write_scopes: ['packages/native-bundles']};
     } else if (!child && users.includes('MESSAGE_TEAM') && !called('send_message')) {
-      name = 'send_message'; input = {target: 'reviewer', message: 'WAKE_TEAM'};
+      name = 'send_message'; input = {agent: 'reviewer', message: 'WAKE_TEAM'};
     } else if (child && users.includes('WAKE_TEAM') && !called('send_message')) {
-      name = 'send_message'; input = {target: 'lead', message: 'REVIEWER_ACK'};
+      name = 'send_message'; input = {agent: 'lead', message: 'REVIEWER_ACK'};
     }
-    // An old, frozen Session must not receive new Team tools.
+    // A Session with Team mode off must not receive the task-board tools.
     if (name && !body.tools?.some(tool => tool.name === name)) name = undefined;
     const text = child ? history.includes('WAKE_TEAM') ? 'TEAM_CHILD_AWAKE' : 'TEAM_CHILD_DONE' : 'TEAM_LEAD_DONE';
     return new Response(event('message_start', {message: {usage: {input_tokens: 10, output_tokens: 0}}})

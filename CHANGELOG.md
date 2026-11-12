@@ -2,7 +2,22 @@
 
 Application versions use `vX.Y.Z`; local connector versions are independent. See [release policy](docs/releases.md). Entries describe released behavior; planned work does not imply availability.
 
-## [0.2.2-rc.1](https://github.com/lacia-hIE/Weft/releases/tag/v0.2.2-rc.1) — Unreleased / 未发布
+## [0.2.2-rc.2](https://github.com/lacia-hIE/Weft/releases/tag/v0.2.2-rc.2) — Unreleased / 未发布
+
+- Targets DSH `0.2.2-rc.2`. rc.2 reads 0.2.2-rc.1 Session logs in place, so Sessions created under Weft 0.2.2-rc.1 keep running on their saved composition. Presets are republished for the new runtime; 0.2.1 Sessions still do not run. Both container images change; publish them before deploying.
+- 适配 DSH `0.2.2-rc.2`。rc.2 可原地读取 0.2.2-rc.1 的会话日志，因此 Weft 0.2.2-rc.1 时期创建的会话按保存的配置继续运行；预设会以新运行时重新发布；0.2.1 时期的会话仍不能运行。两份容器镜像均有变化，部署前需发布。
+
+- Agent Teams is now built in, following upstream, which moved it from the optional `@deepseek-ai/dsh-experimental-agent-team-profile` bundle into the base bundle. Team mode is a per-conversation switch in the original conversation menu, off by default. Teammates are named subagents, and the shared task board is kept when Team mode is turned off. An environment's former bundle selection is removed automatically.
+- Agent Teams 改为内置能力：上游把它从可选组合包 `@deepseek-ai/dsh-experimental-agent-team-profile` 并入 base bundle，Weft 随之调整。团队模式是原版会话菜单中按会话保存的开关，默认关闭；队友即具名子代理，关闭团队模式时共享任务板保留。环境里原有的组合包选择会自动移除。
+
+- The default Web search provider follows upstream to the DeepSeek Search API (`deepseek-search-api`), sent to the configured DeepSeek endpoint's `/v1/tools`. Legacy Messages search (`deepseek-official`) stays selectable in Web search settings for endpoints that do not serve the Search API.
+- Web 搜索默认 provider 随上游改为 DeepSeek Search API（`deepseek-search-api`），请求发往所配置 DeepSeek 端点的 `/v1/tools`。端点不提供 Search API 时，可在 Web 搜索设置中改回旧版 Messages 搜索（`deepseek-official`）。
+
+- Upstream's Office toolkit (`office-kit`, which replaces `office-to-pdf`, with `tool-office` and `skill-office`) needs a LibreOffice Container that Weft does not provide yet. `tool-office` stays listed but disabled in the standard and PTC presets; Office/PDF text extraction through Workers AI is unchanged.
+- 上游 Office 工具包（取代 `office-to-pdf` 的 `office-kit`，以及 `tool-office`、`skill-office`）需要 Weft 尚未提供的 LibreOffice Container。`tool-office` 在标准与 PTC 预设中列出但停用；经 Workers AI 的 Office/PDF 文本提取不受影响。
+
+- Local connector `0.5.1` supports DSH `0.2.2-rc.1` and `0.2.2-rc.2`; `0.5.0` supports rc.1 only. Upgrade the connector before upgrading local DSH.
+- 本地连接插件 `0.5.1` 支持 DSH `0.2.2-rc.1` 与 `0.2.2-rc.2`；`0.5.0` 只支持 rc.1。升级本机 DSH 前先升级连接插件。
 
 - Passive browser feeds use hibernatable WebSockets for native events, history, session control, workspaces, access and job rosters. Cold wakes restore original DSH stream generations without reloading the page. Agent execution, terminals and IM keep their existing lifetimes; actual savings depend on activity and other open resources.
 - 网页的原生事件、会话历史、状态、工作区、访问权限和任务列表订阅改用可休眠 WebSocket；唤醒时沿用 DSH 的流恢复机制，无须刷新页面。Agent、终端和 IM 保持原有运行生命周期，实际节省取决于活跃任务及其他打开的资源。见 [DO 空闲订阅设计](docs/architecture/durable-object-idle.md)。
@@ -15,6 +30,8 @@ Application versions use `vX.Y.Z`; local connector versions are independent. See
 
 - Local connector `0.5.1` allows opening completed or stopped Superagent task Sessions without reactivating their Assignment or rolling native Session activation back. Task workspaces and Files remain visible after selection and reload; Retry/Stop on a browser-owned native Agent releases only connector-owned Assignment effects.
 - 本地连接插件 `0.5.1` 修复打开已完成或停止的 Superagent 任务时，会话恢复被拒绝、侧栏条目消失及文件栏提示没有目录的问题。浏览历史不会重新派工；对已打开会话重试、停止任务时，仅清理连接插件登记的派工工具和限制，保留原生浏览器持有的 Agent。
+
+## [0.2.2-rc.1](https://github.com/lacia-hIE/Weft/releases/tag/v0.2.2-rc.1) — 2026-11-05
 
 - Targets DSH `0.2.2-rc.1` and is compatible with that release only. 0.2.2 changes the Loader, tool executor, Session history, Schedule and preset contracts, so Sessions created under 0.2.1 keep their history but no longer run; the environment's own presets are migrated and republished. The project version now follows the targeted DSH release. Both container images change; publish them before deploying.
 - 适配 DSH `0.2.2-rc.1`，且仅兼容该版本。0.2.2 改变了 Loader、工具执行器、会话历史、Schedule 与预设契约，0.2.1 时期创建的会话保留历史但不能继续运行；环境自己的预设会迁移后重新发布。项目版本改为与所适配的 DSH 版本一致。两份容器镜像均有变化，部署前需发布。

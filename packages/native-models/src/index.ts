@@ -1,7 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis';
 import * as LlmDeepSeekApiKey from '@deepseek-ai/dsh-llm-deepseek-api-key';
 import * as LlmPiAi from '@deepseek-ai/dsh-llm-pi-ai';
-import { LlmError, type StreamChunk } from '@deepseek-ai/dsh-llm';
+import { LlmError, type BuiltinLlmFailureCode, type StreamChunk } from '@deepseek-ai/dsh-llm';
 import { createEntry, workerdLoader } from '../../native-profile/src/loader.ts';
 
 /** Profile entry ids of the official model providers; each id is also its settings namespace. */
@@ -14,7 +14,7 @@ export interface ModelSections {
   piAi: Record<string, unknown>;
 }
 
-const messages: Record<string, string> = {
+const messages: Partial<Record<BuiltinLlmFailureCode, string>> = {
   AUTH: 'Model provider rejected its configured credential',
   QUOTA: 'Model provider quota is exhausted',
   RATE_LIMIT: 'Model provider rate limit reached',
@@ -34,7 +34,8 @@ const messages: Record<string, string> = {
 
 /** Remove provider-controlled messages and causes before the Harness persists a failure. */
 export function safeProviderError(error: unknown): LlmError {
-  const code = error instanceof LlmError && Object.hasOwn(messages, error.code) ? error.code : 'PROVIDER_ERROR';
+  // Every listed code is a built-in failure code; anything else is reported as UNKNOWN with fixed text.
+  const code: BuiltinLlmFailureCode = error instanceof LlmError && Object.hasOwn(messages, error.code) ? error.code as BuiltinLlmFailureCode : 'UNKNOWN';
   return new LlmError(messages[code] ?? 'Model provider request failed', code);
 }
 
@@ -49,7 +50,7 @@ async function* redacted(stream: AsyncIterable<StreamChunk>): AsyncGenerator<Str
     for await (const chunk of stream) {
       if (chunk.type === 'finish' && (chunk.reason.kind === 'error' || chunk.reason.kind === 'aborted')) {
         const failure = chunk.reason.failure;
-        yield {...chunk, reason: {...chunk.reason, failure: {...failure, message: messages[failure.code] ?? 'Model provider request failed'}}};
+        yield {...chunk, reason: {...chunk.reason, failure: {...failure, message: (messages as Record<string, string>)[failure.code] ?? 'Model provider request failed'}}};
       } else yield chunk;
     }
   } catch (error) { throw safeProviderError(error); }

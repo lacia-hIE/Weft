@@ -8,13 +8,14 @@ import sessionFeedbackRemote from '../../../.generated/official-remotes/packages
 import sessionReferenceRemote from '../../../.generated/official-remotes/packages/context/session-reference/typert.remote-client.js';
 import jobRemote from '../../../.generated/official-remotes/packages/api/job-controller/typert.remote-client.js';
 import terminalRemote from '../../../.generated/official-remotes/packages/api/terminal-controller/typert.remote-client.js';
+import teamRemote from '../../../.generated/official-remotes/packages/team/agent-team/typert.remote-client.js';
 import type { RemoteInfo } from '../../../packages/harness-runtime/src/remote-dispatch.ts';
 
 /** Official Agent-scoped Remote services that live on a SessionDO's native root. */
 const sessionServices: RemoteInfo = {methods: {'skills/list': sessionRemote.methods['skills/list'], 'fileReferences/list': sessionRemote.methods['fileReferences/list']}};
 // `schedule/catalog` spans every Session of the environment and is aggregated by the entry Worker.
 const { 'schedule/catalog': _catalog, ...sessionSchedule } = scheduleRemote.methods;
-const remotes: readonly RemoteInfo[] = [commandRemote, questionRemote, goalRemote, sessionServices, {methods: sessionSchedule}, messageFeedbackRemote, sessionFeedbackRemote, sessionReferenceRemote, jobRemote, terminalRemote];
+const remotes: readonly RemoteInfo[] = [commandRemote, questionRemote, goalRemote, sessionServices, {methods: sessionSchedule}, messageFeedbackRemote, sessionFeedbackRemote, sessionReferenceRemote, jobRemote, terminalRemote, teamRemote];
 
 export function agentRemoteFor(endpoint: string): RemoteInfo | undefined {
   return remotes.find(info => Object.hasOwn(info.methods, endpoint));

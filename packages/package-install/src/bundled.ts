@@ -26,7 +26,7 @@ export function bundledPackage(spec: string): ResolvedPackage | undefined {
 export function bundledPackageInfo(installed: (name: string) => boolean): BundleInfo[] {
   return bundledPackages.filter(row => !installed(row.name)).map(row => ({
     name: row.name, version: row.version, description: row.description, official: true, availability: 'missing', installed: false, enabled: false,
-    installTarget: {spec: `${row.name}@${row.version}`, version: row.version}, optional: false, removable: false, updatable: false,
+    installTarget: {spec: `${row.name}@${row.version}`, version: row.version}, optional: false, removable: false,
     rows: row.rows.map(item => ({rowId: item.rowId, moduleName: item.moduleName})), overrides: [],
   }));
 }

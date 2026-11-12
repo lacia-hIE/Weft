@@ -2,7 +2,7 @@
 
 ## 同一云端环境下的本地执行器
 
-0.3.1 起复用 Weft 已连接的本地 DSH。在本机安装原版 DSH 0.2.2-rc.1 和
+0.3.1 起复用 Weft 已连接的本地 DSH。在本机安装原版 DSH 0.2.2-rc.2（或 rc.1）和
 `@laciaproject/dsh-local-host@0.5.1`，先按下文连接一次 Weft；随后在本机插件
 「Superagent 执行器」中配置绝对任务根目录、下拉选择已安装的 Agent 预设及执行权限，
 保存并按需开启「允许接收任务」。模型服务和执行凭据在本机配置。
@@ -40,7 +40,7 @@
 同一设备的提示会合并，丢失、旧版服务端或独立配对执行器继续使用原轮询；空闲等待不阻止环境休眠。
 云端 Superagent 需更新到 `0.4.2`，并按原插件审核流程授予「连接」能力。
 
-本地模式只支持 **DSH 0.2.2-rc.1**。本机运行原版 `dsh web` 或
+本地模式支持 **DSH 0.2.2-rc.1 与 0.2.2-rc.2**（连接插件 0.5.1；0.5.0 只支持 rc.1）。本机运行原版 `dsh web` 或
 DeepSeek Harness 桌面 App，安装 `@laciaproject/dsh-local-host` Host 组合包；Weft 提供环境目录、设备配对与出站连接中继。
 会话、预设、模型凭据、工作区、Git、终端和插件均由本地 Host 管理。
 
@@ -50,12 +50,12 @@ Client Modules 两者一致，因此无需单独的桌面版本。关闭窗口�
 Weft 中的环境显示离线，Host 重新启动后自动重连。仅依赖 Electron 私有 IPC 的能力（账号登录窗口、更新提示、原生拖放）
 不经过 Weft 中转。
 
-截至 2026-11-04，本次适配目标为 `0.2.2-rc.1`，它要求 Node 24.9 或更高。执行 `npm install -g @deepseek-ai/dsh@0.2.2-rc.1`；
+截至 2026-11-11，推荐版本为 `0.2.2-rc.2`（npm `next` 标签），它要求 Node 24.9 或更高。执行 `npm install -g @deepseek-ai/dsh@0.2.2-rc.2`；
 桌面 App 按自身渠道更新。0.2.2 相对 0.2.1 有破坏性变化，因此不再支持 0.2.1 各版本。
-已安装旧连接插件的用户需同时升级 DSH 与连接插件到 **0.5.0**（0.4.0 及更早版本只接受 0.2.1）；
-已有配对配置及本地数据可以保留。插件安装器、Host 和中继使用同一份明确的
-版本清单，未审查的后续版本会被拒绝。CI 安装该 npm 原版，以 `web` 与 `desktop` profile 验证原生
-文件、Git、PTY、界面配对和刷新恢复。云端运行时也已升级为 `upstream.lock.json` 固定的 0.2.2-rc.1。
+连接插件 **0.5.1** 接受 rc.1 与 rc.2，0.5.0 只接受 rc.1，0.4.0 及更早版本只接受 0.2.1；
+升级 DSH 前先升级连接插件，已有配对配置及本地数据可以保留。插件安装器、Host 和中继使用同一份明确的
+版本清单，未审查的后续版本会被拒绝。CI 分别安装这两个 npm 原版，以 `web` 与 `desktop` profile 验证原生
+文件、Git、PTY、界面配对和刷新恢复。云端运行时已升级为 `upstream.lock.json` 固定的 0.2.2-rc.2。
 
 ## 部署者配置 Cloudflare Access
 
@@ -98,8 +98,8 @@ HTTP 正文与原版 Mux 消息都按 32 KiB 分块，每条流最多 16 块未�
 
 ## 用户安装
 
-1. 本机先运行 DSH `0.2.2-rc.1` 的 `dsh web`，或打开同版本的 DeepSeek Harness 桌面 App。
-   0.2.1 及更早版本需要先升级：`npm install -g @deepseek-ai/dsh@0.2.2-rc.1`（Node 24.9+），然后重新启动 DSH。
+1. 本机先运行 DSH `0.2.2-rc.2`（或 `0.2.2-rc.1`）的 `dsh web`，或打开同版本的 DeepSeek Harness 桌面 App。
+   0.2.1 及更早版本需要先升级：`npm install -g @deepseek-ai/dsh@0.2.2-rc.2`（Node 24.9+），然后重新启动 DSH。
    在 Weft 首页选择「连接本地 DSH」，输入名称并点击「生成配对码」和「复制配对码」。
 2. 在本地原版 DSH 或桌面 App 的「插件」页添加 npm 包 `@laciaproject/dsh-local-host`，
    或执行 `dsh plugin --profile web add @laciaproject/dsh-local-host@0.5.1`。桌面 App 也可在完全退出后执行

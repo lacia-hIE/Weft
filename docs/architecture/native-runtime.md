@@ -43,7 +43,7 @@ Workspace 同时注册三种后端，由 `workspace.runtime.exec(source, {backen
 
 | 后端 id | 实现 | 用途 |
 | --- | --- | --- |
-| `container-shell` | `@cloudflare/computer/backends/container-legacy`，Container 运行 `computerd`，由按规格划分的 `WorkspaceContainer*DO` 托管、WorkspaceDO 驱动 | 真实 Linux：bash、git、ripgrep、node 22、python 3；`tool-fs-search`；`workspace-changes`（git 快照与每轮改动卡片）；后续接 `office-to-pdf` |
+| `container-shell` | `@cloudflare/computer/backends/container-legacy`，Container 运行 `computerd`，由按规格划分的 `WorkspaceContainer*DO` 托管、WorkspaceDO 驱动 | 真实 Linux：bash、git、ripgrep、node 22、python 3；`tool-fs-search`；`workspace-changes`（git 快照与每轮改动卡片）；后续接 `office-kit`（Office 渲染、转换与重算） |
 | `worker-shell` | `@cloudflare/computer/backends/worker-shell`（现有） | 低延迟 bash 与 Terminal，无需容器 |
 | `worker-javascript` | `@cloudflare/computer/backends/worker-javascript` | 隔离的 ESM 执行，可读写工作区文件 |
 

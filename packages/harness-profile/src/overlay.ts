@@ -93,6 +93,8 @@ export const MOUNTED_BY_WEFT: Record<string, string> = {
   'spill-local': 'workspace spill store (packages/workspace/src/spill.ts)',
   'authorization': 'native-plugins', 'plugin-package-inventory-deepseek': 'native-composition',
   'cordis-client-runner': 'native-plugins (its browser module is in the Boot Graph)',
+  // Team mode is a saved per-root-Session selection that defaults off; both rows mount with the Session's subagents.
+  'agent-team': 'native-bundles team runtime', 'tool-agent-team': 'native-bundles team runtime',
 };
 
 /** Node host providers and the Cloudflare implementation that serves each service. */
@@ -106,6 +108,9 @@ export const PLATFORM: Record<string, string> = {
   'typert-gateway': 'Worker HTTP gateway', 'webserver': 'Worker HTTP gateway', 'web-runtime': 'Worker HTTP gateway',
   'web-startup': 'Worker HTTP gateway', 'connection': 'Worker HTTP gateway', 'api-remotes': 'Worker HTTP gateway',
   'modules': 'Boot Graph', 'client-hmr': 'immutable Worker deployment', 'file-upload': 'Worker HTTP gateway',
+  // Its settings-driven fleet would spawn stdio servers; the environment's `mcp-servers` settings mount
+  // the same original `dsh-mcp-client` per remote server in every Session.
+  'mcp-manager': 'environment MCP servers (packages/native-mcp)',
 };
 
 /** Rows with no role in a Web deployment. */
@@ -114,12 +119,14 @@ export const NOT_APPLICABLE: Record<string, string> = {
   'open-in-app': 'desktop applications', 'harness-dev-context': 'harness development checkout', 'pwsh-sandbox': 'Windows PowerShell',
   'tool-pwsh': 'Windows PowerShell', 'tool-plugin-manager': 'disabled in the official profile',
   'fs-observation-policy': 'disabled in the official profile; file mutations need no prior read',
+  'workspace-dependencies': 'Desktop primary Python runtime',
 };
 
 /** Rows waiting for a Cloudflare service (see docs/architecture/external-services.md). */
 export const EXTERNAL: Record<string, string> = {
-  'office-to-pdf': 'LibreOffice Container', 'deepseek-account': 'platform OAuth callback', 'llm-deepseek-account': 'platform OAuth callback',
-  'account-controller': 'platform OAuth callback',
+  'office-kit': 'LibreOffice Container', 'deepseek-account': 'platform OAuth callback', 'llm-deepseek-account': 'platform OAuth callback',
+  // Its skills direct the model to office-kit's render, convert and recalculate tools.
+  'skill-office': 'LibreOffice Container (office-kit)',
 };
 
 /** Rows whose Weft provider does not exist yet. */

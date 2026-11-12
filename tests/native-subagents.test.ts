@@ -45,14 +45,15 @@ test('native delegation owns real child logs, live history, browser continuation
     let frameSeen = false;
     for (;;) {const frame = await child.next(); if (frame.type === 'assistant-stream') frameSeen = true; if (frame.type === 'event' && frame.event.type === 'turn/end') break;}
     assert.equal(frameSeen, true, 'child assistant frames must retain their real producer');
-    const foreign = await nativeClient(() => runtime, 'default', 'beta').raw('subagents/prompt', {request: {parentSessionId: 'parent', childSessionId: childId, mode: 'continuable', delivery: 'queue', requestId: 'forged-user', content: [{type: 'text', text: 'foreign'}]}});
+    const foreign = await nativeClient(() => runtime, 'default', 'beta').raw('subagents/prompt', {request: {childSessionId: childId, delivery: 'queue', requestId: 'forged-user', content: [{type: 'text', text: 'foreign'}]}});
     assert.equal(foreign.result.error?.code, 'subagent/not-found');
     await api.call('session/create', {request: {sessionId: 'unrelated'}});
     const references = await api.call<{sessionId: string; displayTitle: string}[]>('sessionReferenceResolver/candidates', {agentId: 'unrelated', query: ''});
     assert.equal(references.find(item => item.sessionId === childId)?.displayTitle, 'Native delegated task', 'cross-root reference discovery preserves the original child label');
-    const unrelated = await api.raw('subagents/prompt', {request: {parentSessionId: 'unrelated', childSessionId: childId, mode: 'continuable', delivery: 'queue', requestId: 'forged-parent', content: [{type: 'text', text: 'foreign'}]}});
-    assert.equal(unrelated.result.ok, false);
-    await api.call('subagents/prompt', {request: {parentSessionId: 'parent', childSessionId: childId, mode: 'continuable', delivery: 'queue', requestId: 'child-follow', content: [{type: 'text', text: 'CHILD_FOLLOW_BETA'}]}});
+    // DSH 0.2.2-rc.2 addresses user controls to the target alone; a root Session is not a subagent target.
+    const root = await api.raw('subagents/prompt', {request: {childSessionId: 'unrelated', delivery: 'queue', requestId: 'not-a-child', content: [{type: 'text', text: 'foreign'}]}});
+    assert.equal(root.result.ok, false);
+    await api.call('subagents/prompt', {request: {childSessionId: childId, delivery: 'queue', requestId: 'child-follow', content: [{type: 'text', text: 'CHILD_FOLLOW_BETA'}]}});
     for (;;) {const frame = await child.next(); if (frame.type === 'event' && frame.event.type === 'turn/end') break;}
     const projection = await api.call<unknown>('session/projections', {request: {sessionId: childId}});
     assert.match(JSON.stringify(projection), /continuable/);
@@ -81,7 +82,7 @@ test('native delegation owns real child logs, live history, browser continuation
     assert.match(strFromU8(childOnly[SESSION_LOG_FILENAME]!), /CHILD_FOLLOW_REPLY/);
     assert.doesNotMatch(strFromU8(childOnly[SESSION_LOG_FILENAME]!), /PARENT_TASK/);
     assert.ok((await api.call<{items: {agentAvailable: boolean}[]}>('session/list', {_request: {}})).items.every(item => !item.agentAvailable));
-    await api.call('subagents/prompt', {request: {parentSessionId: 'parent', childSessionId: childId, mode: 'continuable', delivery: 'queue', requestId: 'child-after-restart', content: [{type: 'text', text: 'CHILD_FOLLOW_BETA after restart'}]}});
+    await api.call('subagents/prompt', {request: {childSessionId: childId, delivery: 'queue', requestId: 'child-after-restart', content: [{type: 'text', text: 'CHILD_FOLLOW_BETA after restart'}]}});
     for (;;) {const frame = await child.next(); if (frame.type === 'event' && frame.event.type === 'turn/end') break;}
     assert.ok(provider.observations.filter(entry => entry.child).length >= 3);
   } finally {provider.release(); await child?.close(); await parent?.close(); await runtime.dispose(); await rm(directory, {recursive: true, force: true});}
@@ -113,7 +114,7 @@ test('native fork seeds completed parent history and native interrupt cancels th
     const snapshot = await child.next(); assert.equal(snapshot.type, 'snapshot');
     assert.match(JSON.stringify(snapshot), /COMPLETED_PARENT_PRELUDE/);
     assert.doesNotMatch(JSON.stringify(snapshot), /PARENT_TASK: fork a native task/, 'the in-flight parent turn is not inherited');
-    assert.deepEqual(await api.call('subagents/interruptByParent', {parentSessionId: 'parent', childSessionId: childId, mode: 'continuable'}), {accepted: true});
+    assert.deepEqual(await api.call('subagents/interruptByUser', {childSessionId: childId}), {accepted: true});
     provider.release();
     for (;;) {const frame = await child.next(); if (frame.type === 'event' && frame.event.type === 'turn/end') {assert.equal((frame.event.data as {reason: {kind: string}}).reason.kind, 'aborted'); break;}}
     await api.call('settings/update', {ns: 'subagent', patch: {maxDepth: 0, maxActiveSubagents: 1}, expectedRevision: 0});

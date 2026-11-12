@@ -10,7 +10,7 @@ Weft brings the original DeepSeek Harness agent loop, Web UI and Cordis plugin s
 
 Deploy to your own Cloudflare account, bring your model API keys, and control access through Cloudflare Access. Each user can maintain multiple environments with their own configuration, credentials, plugins and workspaces.
 
-Weft is an independent adaptation of [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness). It currently targets **DSH `0.2.2-rc.1`**, pinned by commit in [`upstream.lock.json`](upstream.lock.json). The frontend, Remote ABI, plugins and runtime are built from the same upstream source. See [compatibility](docs/architecture/upstream-compatibility.md) for upgrade boundaries.
+Weft is an independent adaptation of [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness). It currently targets **DSH `0.2.2-rc.2`**, pinned by commit in [`upstream.lock.json`](upstream.lock.json). The frontend, Remote ABI, plugins and runtime are built from the same upstream source. See [compatibility](docs/architecture/upstream-compatibility.md) for upgrade boundaries.
 
 ## What you can do
 
@@ -21,13 +21,13 @@ Weft is an independent adaptation of [DeepSeek Harness](https://github.com/deeps
 | Environment lifecycle | Rename, suspend, resume and delete; copy configuration and persistent files with progress and retry |
 | Persistent conversations | History, search, queues, cancellation and recovery |
 | Model providers | Configure DeepSeek, OpenAI, Anthropic and other providers in native Models settings |
-| Native agent features | Standard, PTC, minimal and creative presets, commands, plans, goals, skills and subagents |
+| Native agent features | Standard, PTC, minimal and creative presets, commands, plans, goals, skills, subagents and Agent Teams |
 | Linux execution | Git, Node.js, Python, real subprocesses and interactive PTYs in containers |
 | Worker tasks and documents | Recoverable JavaScript tasks, native approvals and Office/PDF/image text extraction using Workers AI |
 | Native Cordis bundles | Install npm packages declaring `dsh.bundle.patch`, or review and load agent-written plugins |
 | Local DSH connection | Use your local Host's workbench, files, plugins and terminals through an outbound connection |
 
-Environment copies exclude conversation history, managed credentials and running processes. Local Host connections support DSH `0.2.2-rc.1`, from `dsh web` or DeepSeek Harness Desktop.
+Environment copies exclude conversation history, managed credentials and running processes. Local Host connections support DSH `0.2.2-rc.1` and `0.2.2-rc.2` (connector `0.5.1`), from `dsh web` or DeepSeek Harness Desktop.
 
 ## Quick start
 
@@ -145,7 +145,18 @@ Creative mode can also produce Host and Client Cordis plugins. Host code runs be
 
 Third-party bundles can also use an environment-owned Worker Host for persistent domain state, background callbacks, approved HTTPS requests, scoped Session Controller operations and plugin-authenticated Webhook routes. Review these permissions in the existing package details. See [Worker Host services and limits](docs/architecture/worker-host-plugins.md); this does not provide a complete Node host.
 
-The built-in [`@weft/dsh-superagent`](plugins/superagent/README.md) plugin adapts the dsh-superagent research prototype to the Worker Host: it watches one GitHub repository, turns authorized requests into tickets under a Policy, works on each in its own Session and answers in the original conversation. It does not require a container.
+### Built-in plugins
+
+The deployment ships these bundles. Install them from **Plugins** and approve each version in its bundle review; no npm registry is used.
+
+| Plugin | Version | What it does |
+| --- | --- | --- |
+| [`@weft/dsh-im`](plugins/im/README.md) | 0.11.0 | Connects Feishu, WeChat, QQ and email conversations to Sessions. Native questions are sent to the originating chat and answered there with numbers or text |
+| [`@weft/dsh-superagent`](plugins/superagent/README.md) | 0.4.2 | Adapts the dsh-superagent research prototype to the Worker Host: watches one GitHub repository, turns authorized requests into tickets under a Policy, works on each in its own Session and answers in the original conversation. It does not require a container. Tasks can also run on a connected local DSH, with task Session navigation and the original directory chooser |
+
+The local connector [`@laciaproject/dsh-local-host`](docs/deployment/local-host.md) is versioned separately on npm (`0.5.1`).
+
+Official DSH plugins come from the pinned upstream. In DSH 0.2.2-rc.2, **Agent Teams** moved from an optional bundle into the base bundle. Team mode is now a switch in the conversation menu, off by default and saved per conversation. Teammates are named subagents sharing a task board. Upstream's Office toolkit (`office-kit`, `tool-office`, `skill-office`) is listed but waits for a LibreOffice Container. Web search defaults to the DeepSeek Search API, and legacy Messages search remains selectable. See the [release notes](docs/releases/v0.2.2-rc.2.md).
 
 ## Limits compared with local DSH
 
@@ -153,7 +164,7 @@ The built-in [`@weft/dsh-superagent`](plugins/superagent/README.md) plugin adapt
 - Container replacement ends processes and PTYs. Commands are not replayed automatically.
 - Container-local dependencies are outside the persistent volume and are unavailable to Worker file tools.
 - Plugins needing native extensions, unsupported Node APIs or services without a bridge may not work. `nodejs_compat` does not supply a complete local Node host.
-- Port previews, Office-to-PDF conversion and additional local Host services are not fully integrated.
+- Port previews, the Office toolkit (rendering, conversion and recalculation need LibreOffice), platform account sign-in and additional local Host services are not fully integrated.
 
 ## Contribute
 
@@ -172,7 +183,7 @@ Tests run on pull requests, the `ci` branch and manual dispatch. They cover buil
 
 ## Versions and releases
 
-Weft uses **`vX.Y.Z`** tags. The local connector independently uses **`dsh-local-host-vX.Y.Z`**; its npm version is not the Weft version. The current project version is `0.2.2-rc.1`, aligned with the DSH release it targets. During 0.x development, release notes describe compatibility changes and required deployment steps. The upstream DSH version is pinned separately.
+Weft uses **`vX.Y.Z`** tags. The local connector independently uses **`dsh-local-host-vX.Y.Z`**; its npm version is not the Weft version. The current project version is `0.2.2-rc.2`, aligned with the DSH release it targets. During 0.x development, release notes describe compatibility changes and required deployment steps. The upstream DSH version is pinned separately.
 
 [Changelog](CHANGELOG.md) · [GitHub Releases](https://github.com/lacia-hIE/Weft/releases) · [Release procedure](docs/releases.md).
 

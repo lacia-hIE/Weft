@@ -36,7 +36,7 @@ test('inventory covers the pinned official profile and durable management retire
     const description = (id: string) => JSON.stringify(globals.find(row => row.entryId === id)?.meta?.description);
     assert.match(description('subprocess'), /Platform replacement/);
     assert.match(description('session-projection-cache'), /Not implemented/);
-    assert.match(description('office-to-pdf'), /Not connected/);
+    assert.match(description('office-kit'), /Not connected/);
     assert.match(description('tool-bash'), /Agent presets/);
     assert.match(description('agent-loop'), /Mounted by Weft/);
     assert.equal(globals.find(row => row.entryId === 'ui-settings-account')?.enabled, false);
@@ -44,7 +44,7 @@ test('inventory covers the pinned official profile and durable management retire
     assert.ok(inventory.entries.filter(row => row.entryId === 'preset-standard' || row.entryId === 'preset-cordis').every(row => row.fiberPhase === 'active'));
     assert.equal(inventory.agentPresets?.find(row => row.id === 'cordis')?.rows.find(row => row.entryId === 'tool-todo')?.fiberPhase, 'active');
     const bundles = await api.call<BundleInfo[]>('pluginManager/listBundles', {});
-    assert.deepEqual(bundles.map(bundle => bundle.name), ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', '@weft/harness-profile', '@weft/dsh-im', '@weft/dsh-superagent', '@deepseek-ai/dsh-experimental-agent-team-profile', '@weft/worker-javascript', '@weft/worker-documents', '@weft/worker-task-management']);
+    assert.deepEqual(bundles.map(bundle => bundle.name), ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', '@weft/harness-profile', '@weft/dsh-im', '@weft/dsh-superagent', '@weft/worker-javascript', '@weft/worker-documents', '@weft/worker-task-management']);
     assert.equal(bundles.find(bundle => bundle.name === '@weft/harness-profile')?.rows.length, 4);
     assert.deepEqual(bundles.filter(bundle => bundle.installed).flatMap(bundle => bundle.rows.map(row => row.rowId)).sort(), inventory.entries.map(row => row.entryId).sort());
     const plugins = await api.call<PluginInfo[]>('pluginManager/listPlugins', {});
@@ -93,7 +93,7 @@ test('management guards protect the selected default, preserve environment bound
     assert.equal((await other.call<PluginInventorySnapshot>('pluginInventory/list', {})).entries.find(row => row.entryId === 'preset-standard')?.enabled, true);
     assert.equal((await api.raw('settings/update', {ns: 'agent-preset-registry', patch: {selectedDefault: 'standard'}})).result.error?.code, 'settings/rejected');
     assert.equal((await api.call<ChangeResult>('pluginManager/setPluginEnabled', {id: 'preset-unknown', enabled: true})).error?.code, 'unknown-plugin');
-    for (const id of ['llm', 'mcp-resources', 'office-to-pdf', 'ui-settings-account']) assert.equal((await api.call<ChangeResult>('pluginManager/setPluginEnabled', {id, enabled: true})).error?.code, 'management-required');
+    for (const id of ['llm', 'mcp-resources', 'office-kit', 'ui-settings-account']) assert.equal((await api.call<ChangeResult>('pluginManager/setPluginEnabled', {id, enabled: true})).error?.code, 'management-required');
     assert.equal((await api.call<ChangeResult>('pluginManager/removeBundle', {name: '@weft/harness-profile'})).error?.code, 'management-required');
     assert.equal((await api.call<ChangeResult>('pluginManager/setBundleEnabled', {name: '@deepseek-ai/dsh-base', enabled: false})).error?.code, 'management-required');
     assert.equal((await api.call<{status: string}>('pluginManager/inspect', {spec: '@some/unsupported-bundle'})).status, 'refused');

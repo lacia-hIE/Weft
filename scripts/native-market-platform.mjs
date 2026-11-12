@@ -49,6 +49,9 @@ export const nativeMarketPlatform = {
       for (const [before, after] of [
         ["import { evaluatePluginCompatibility, getDshRuntimeVersion } from '@deepseek-ai/dsh-app-boot'\n",
           `import { evaluatePluginCompatibility } from ${JSON.stringify(resolve(appBoot, 'src/plugin-compatibility.ts'))}\nconst getDshRuntimeVersion = (): string => ${JSON.stringify(version)}\n`],
+        // Only the pure install-spec helper; the Node plugin manager's operations are never bundled.
+        ["import { pinnedGitOrigin } from '@deepseek-ai/dsh-plugin-manager'\n",
+          `import { pinnedGitOrigin } from ${JSON.stringify(resolve(appBoot, '../plugin-manager/src/install-spec.ts'))}\n`],
         ["response = await fetch(url, { signal, redirect: 'error', headers: { accept: 'application/json' } })",
           "response = await fetch(url, { signal, redirect: 'manual', headers: { accept: 'application/json' } })"],
       ]) {

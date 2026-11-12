@@ -208,16 +208,7 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
     if (auxiliary[2] === 'open-in-app/apps') return Response.json({apps: []}, {headers: {'cache-control': 'private, no-store'}});
     const asset = await env.UI.fetch(new Request(new URL('/harness/boot.json', request.url)));
     if (!asset.ok) return asset;
-    const graph = await asset.json() as {rev: string; entries: {id: string}[]; batches: {entries: string[]}[]};
-    const teamClient = '@deepseek-ai/dsh-experimental-client-ui-agent-team';
-    const owner = controlScope(principal.tenantId, environmentId);
-    const clients = await controlFor(env, owner).nativeOfficialBundleClients(owner);
-    if (!clients.includes(teamClient)) {
-      graph.entries = graph.entries.filter(row => row.id !== teamClient);
-      graph.batches = graph.batches.filter(row => !row.entries.includes(teamClient));
-      graph.rev += '-without-teams';
-    }
-    return Response.json(graph, {headers: {'cache-control': 'private, no-store'}});
+    return new Response(asset.body, {headers: {'content-type': 'application/json', 'cache-control': 'private, no-store'}});
   }
   const match = /^\/v1\/tenants\/([^/]+)\/native\/(api|streams|sockets)\/(.+)$/.exec(pathname);
   if (!match) return undefined;
@@ -305,8 +296,9 @@ export async function handleNativeRequest(request: Request, env: Env, principal:
     if (Object.hasOwn(subagentRemote.methods, endpoint)) {
       const method = subagentRemote.methods[endpoint as SubagentEndpoint];
       const args = method.input({strict: true}).create().parse(payload.args);
-      const parentId = 'request' in args ? args.request.parentSessionId : args.parentSessionId;
-      const target = await parentSession(parentId);
+      // User controls name only the target; the SessionDO of its tree root hosts it.
+      const childId = 'request' in args ? args.request.childSessionId : args.childSessionId;
+      const target = await parentSession(childId);
       const response = await target.stub.fetch(new Request('https://session.internal/native-subagent', {
         method: 'POST', body: JSON.stringify({scope: target.scope, operation: 'native-subagent', endpoint, args}), signal: request.signal,
       }));

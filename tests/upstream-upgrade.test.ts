@@ -10,11 +10,13 @@ import {migratePresetSpec} from '../packages/control-plane/src/preset-migration.
 import upstream from '../upstream.lock.json';
 import type {SessionCreateValue,SessionFollowFrame} from '@deepseek-ai/dsh-api-session-controller/types';
 
-/** Sources of DSH 0.2.1-alpha.4 and 0.2.1-rc.2 through rc.5, which 0.2.2-rc.1 no longer runs. */
+/** Sources of DSH 0.2.1-alpha.4 and 0.2.1-rc.2 through rc.5, which 0.2.2 no longer runs. */
+const rc1='66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db';
 const retired=['86a402200d95fecef4529d969836f1fe13c6cb0d','687f282e8625c6b8d11ff58211a90524be2e4317','1f81c047fc48fa190a683e469daa699857e9afe8','504a01a9578abc2c6f1fb896b1dc322c9fe24f66','b830ec950faba0a46dda564be3e2d854afed94f1'];
-test('only the pinned 0.2.2-rc.1 runtime is admitted',()=>{
-  assert.equal(upstream.commit,'66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db');
+test('the pinned 0.2.2-rc.2 runtime also runs 0.2.2-rc.1 revisions, and nothing older',()=>{
+  assert.equal(upstream.commit,'ddac96760b6edf8fa0fe17cbdcf0b512f4c12b2c');
   assert.ok(supportsAgentRuntime(upstream.commit));
+  assert.ok(supportsAgentRuntime(rc1),'rc.2 reads rc.1 Session logs in place');
   for(const source of retired)assert.equal(supportsAgentRuntime(source),false,source);
   assert.equal(supportsAgentRuntime('an-earlier-upstream'),false);assert.equal(supportsAgentRuntime('future-unreviewed-runtime'),false);
 });
@@ -52,7 +54,7 @@ test('new Sessions skip blank Sessions retained from an incompatible runtime and
   }finally{await runtime.dispose();await rm(directory,{recursive:true,force:true});}
 });
 
-test('a Session retained from 0.2.1-rc.5 keeps its history but no longer runs, while its custom preset moves to rc.1',{timeout:120_000},async()=>{
+test('a Session retained from 0.2.1-rc.5 keeps its history but no longer runs, while its custom preset moves to the current runtime',{timeout:120_000},async()=>{
   const previous='b830ec950faba0a46dda564be3e2d854afed94f1';
   const directory=await mkdtemp(join(tmpdir(),'weft-upstream-'));
   const options={browser:true,scriptPath:'dist/environment-storage-worker.js'};
@@ -98,4 +100,35 @@ test('presets published under 0.2.1 drop the merged list_agents row and keep sub
     {id:'tool-todo',config:{}},
   ]);
   assert.equal(spec.plugins.length,4,'the published revision is not modified');
+});
+
+test('a Session created under 0.2.2-rc.1 keeps running on 0.2.2-rc.2',{timeout:120_000},async()=>{
+  const directory=await mkdtemp(join(tmpdir(),'weft-upstream-rc1-'));
+  const options={browser:true,scriptPath:'dist/environment-storage-worker.js'};
+  let runtime=createRuntime(directory,options);const api=nativeClient(()=>runtime);
+  const sessionId='rc1-session';
+  const prompt=async(text:string)=>{
+    const stream=await api.follow(sessionId);assert.equal((await stream.next()).type,'snapshot');
+    try {
+      await api.call('session/prompt',{request:{sessionId,requestId:crypto.randomUUID(),mode:'queue',content:[{type:'text',text}]}});
+      for(;;){const frame=await stream.next();if(frame.type==='event'&&frame.event.type==='turn/end'){assert.equal((frame.event.data as {reason?:{kind:string}}).reason?.kind,'completed');break;}}
+    }finally{await stream.close();}
+  };
+  try {
+    await api.call('session/create',{request:{sessionId}});await prompt('UNDER_RC1');
+    const seeded=await runtime.dispatchFetch(url('alpha','/_fixture/session-revision'),{method:'POST',body:JSON.stringify({scope:{tenantId:tenantId('alpha'),environmentId:'default',sessionId},commit:rc1})});
+    assert.equal(seeded.status,200);
+    await runtime.dispose();runtime=createRuntime(directory,options);
+    await prompt('AFTER_UPGRADE');
+  }finally{await runtime.dispose();await rm(directory,{recursive:true,force:true});}
+});
+
+test('presets composed with the former optional Team bundle drop its rows; Teams is a root composition in rc.2',()=>{
+  const spec={id:'custom',name:'Custom',persona:'',workspaceId:'default',allowClientPlugins:false,plugins:[
+    {id:'agent-team',config:{maxTasks:256}},
+    {id:'tool-agent-team',config:{freshProvider:'spawn',forkProvider:'fork'}},
+    {id:'ui-agent-team',config:{}},
+    {id:'tool-todo',config:{}},
+  ]};
+  assert.deepEqual(migratePresetSpec(spec).plugins,[{id:'tool-todo',config:{}}]);
 });

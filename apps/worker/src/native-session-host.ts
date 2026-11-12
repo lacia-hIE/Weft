@@ -67,7 +67,7 @@ export class NativeSessionHost {
     const drive = async () => {
       do {
         await this.agent.whenIdle();
-        await this.ctx.get('subagents')?.waitForChildren(this.agent);
+        await this.ctx.get('subagents')?.waitForTreeWork(this.agent);
         await this.ctx.get('sessionPersistence')?.flush();
       } while (!this.closed && running());
       this.changed();

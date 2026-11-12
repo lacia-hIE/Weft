@@ -51,8 +51,8 @@ const declarationOnlyPackages = {
   '@deepseek-ai/dsh-api-gateway': 'packages/api/gateway/src/index.ts',
   // Keep each Host class and its internal imports on the same declaration
   // boundary. Runtime builds still resolve the unmodified original sources.
-  '@deepseek-ai/dsh-experimental-agent-team': 'packages/experimental/agent-team/src/index.ts',
-  '@deepseek-ai/dsh-experimental-tool-agent-team': 'packages/experimental/tool-agent-team/src/index.ts',
+  '@deepseek-ai/dsh-agent-team': 'packages/team/agent-team/src/index.ts',
+  '@deepseek-ai/dsh-tool-agent-team': 'packages/team/tool-agent-team/src/index.ts',
   '@deepseek-ai/dsh-subagent': 'packages/subagent/subagent/src/index.ts',
   '@deepseek-ai/dsh-subagent/internal': 'packages/subagent/subagent/src/internal.ts',
   '@deepseek-ai/dsh-agent-preset-registry': 'packages/preset/agent-preset-registry/src/index.ts',
@@ -154,7 +154,8 @@ writeFileSync(resolve(output, 'plugin-meta.json'), JSON.stringify(pluginMeta) + 
 
 // Optional official bundles are admitted from this exact clean checkout only.
 // Persist both patch and provenance; runtime installs never fetch or evaluate YAML.
-const optionalBundles = ['agent-team-profile'].map(id => {
+// DSH 0.2.2-rc.2 moved Agent Teams into the base bundle; no optional official bundle remains.
+const optionalBundles = [].map(id => {
   const directory = resolve(checkout, 'packages/experimental', id);
   const manifest = JSON.parse(readFileSync(resolve(directory, 'package.json'), 'utf8'));
   const patchPath = manifest.dsh?.bundle?.patch;

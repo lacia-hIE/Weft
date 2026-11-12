@@ -9,8 +9,10 @@ export function prepareAttachmentHelpers(upstreamDirectory) {
   writeFileSync('.generated/official-file-reference.ts', "import {join} from 'node:path';\nimport {AttachmentError} from '@deepseek-ai/dsh-attachment';\nimport type {FileAttachmentRef} from '@deepseek-ai/dsh-attachment';\n" + files.slice(start, end));
   const commands = readFileSync(resolve(upstreamDirectory, 'packages/api/session-controller/src/commands.ts'), 'utf8');
   const from = commands.indexOf('function resolvePromptFileReceipts(');
-  const to = commands.indexOf('\nfunction hasPromptRequest(', from);
-  if (from < 0 || to < 0) throw new Error('Upstream prompt receipt resolution changed; review attachment admission');
+  // The resolver ends at the next top-level declaration, or at the end of the module.
+  const next = from < 0 ? -1 : commands.slice(from + 1).search(/\n(?:export )?(?:async )?(?:function|class|const|interface|type) /);
+  const to = next < 0 ? commands.trimEnd().length : from + 1 + next;
+  if (from < 0 || !commands.slice(from, to).trimEnd().endsWith('\n}')) throw new Error('Upstream prompt receipt resolution changed; review attachment admission');
   writeFileSync('.generated/official-prompt-files.ts', "import {RemoteError} from '@deepseek-ai/dsh-typert-protocol';\nimport type {AttachmentAdmissionPart, FileAttachmentRef} from '@deepseek-ai/dsh-attachment';\nimport type {FileUploadReceiptId, StagedAttachment} from '@deepseek-ai/dsh-client-file-upload/types';\nimport type {SessionPromptRequest} from '@deepseek-ai/dsh-api-session-controller/types';\nexport " + commands.slice(from, to) + '\n');
   const imageStore = readFileSync(resolve(upstreamDirectory, 'packages/attachment/attachment-local/src/store.ts'), 'utf8');
   const nameFrom = imageStore.indexOf('function displayName(');

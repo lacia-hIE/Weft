@@ -20,7 +20,10 @@ export const PRESET_PROVIDED: Record<string, string> = {
  * for them (`ESSENTIAL_PENDING`) they stay enabled, and the registry reports
  * the preset as unavailable until the provider lands.
  */
-export const PRESET_PENDING: Record<string, string> = {};
+export const PRESET_PENDING: Record<string, string> = {
+  // Its tools are admitted only after an Office skill loads, and the skill and `officeKit` wait for the same Container.
+  'tool-office': 'the LibreOffice Container (office-kit)',
+};
 
 /** Pending rows a preset cannot do without. */
 const ESSENTIAL_PENDING = new Set<string>();

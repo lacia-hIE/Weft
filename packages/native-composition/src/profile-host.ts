@@ -50,7 +50,7 @@ export async function readNativePresets(profiles: AgentRevision[], defaultId: st
     await ctx.plugin(Tools);
     await ctx.plugin(Agents);
     await ctx.plugin(Goals);
-    await ctx.plugin(WebRuntime, {searchProvider: 'deepseek-official', fetchProvider: 'http'});
+    await ctx.plugin(WebRuntime, {searchProvider: 'deepseek-search-api', fetchProvider: 'http'});
     await mountWorkspace(ctx);
     // Composition inspection never executes; the shell rows only need their services present.
     const inspectOnly = () => Promise.reject(new Error('Preset inspection does not execute commands'));
@@ -58,7 +58,7 @@ export async function readNativePresets(profiles: AgentRevision[], defaultId: st
     await mountNativeSubagentProviders(ctx, {maxDepth: 1, maxActiveSubagents: 8});
     // This real persistence provider opens no handles in an inspection world;
     // no Agents, Sessions or writers are created here.
-    if (storage) {await ctx.plugin(SqliteSessionPersistence, {storage}); await mountOfficialTeam(ctx, profiles);}
+    if (storage) {await ctx.plugin(SqliteSessionPersistence, {storage}); await mountOfficialTeam(ctx);}
     // Without a loader the runtime is present for PTC and workflow rows but runs nothing.
     await ctx.plugin(WorkerPtcRuntime, {cwd: '/workspace'});
     const registry = await mountNativeComposition(ctx, profiles.map(nativePresetDefinition), defaultId, profiles.filter(profile => profile.spec.disabled).map(profile => profile.spec.id));
@@ -79,7 +79,7 @@ export async function readNativePresets(profiles: AgentRevision[], defaultId: st
         : {...entry, patchId: entry.entryId})] satisfies PluginInfo[];
       else value = [...officialBundles(globals), {name: profileManifest.name, version: profileManifest.version, description: profileManifest.description,
         meta: {title: {en: 'Agent presets', zh: 'Agent 预设'}},
-        availability: 'installation', official: false, installed: Object.hasOwn(profileDescriptor.dependencies, profileManifest.name), enabled: profileDescriptor.dsh.profile.bundles.includes(profileManifest.name), optional: false, removable: false, updatable: false, readOnlyReason: 'management-required',
+        availability: 'installation', official: false, installed: Object.hasOwn(profileDescriptor.dependencies, profileManifest.name), enabled: profileDescriptor.dsh.profile.bundles.includes(profileManifest.name), optional: false, removable: false, readOnlyReason: 'management-required',
         rows: profileEntries.map(entry => {
           const actual = entries.find(row => row.entryId === entry.id);
           return {rowId: entry.id, moduleName: entry.name, ...(actual ? {entryId: actual.entryId, ...(actual.meta ? {meta: actual.meta} : {})} : {})};

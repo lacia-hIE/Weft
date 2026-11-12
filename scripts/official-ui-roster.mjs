@@ -45,6 +45,8 @@ export const WEB_UNAVAILABLE_CLIENTS = {
   // Models sign-in needs DeepSeek platform OAuth (a loopback callback). Without it the sidebar keeps the
   // official single Settings button.
   '@deepseek-ai/dsh-client-ui-settings-account': 'DeepSeek platform account sign-in',
+  // Account notices (balance and promotions) come from the signed-in DeepSeek platform account.
+  '@deepseek-ai/dsh-client-ui-account-notifications': 'DeepSeek platform account sign-in',
 };
 
 export function officialUiRoster(upstreamDirectory, {profile = 'all'} = {}) {
@@ -99,9 +101,6 @@ export function officialUiRoster(upstreamDirectory, {profile = 'all'} = {}) {
   // Weft serves browse/create through NativeWorkspaces, so compose the original
   // browse Client explicitly into both builds and the Web Boot Graph.
   names.add('@deepseek-ai/dsh-client-ui-directory-picker-browse');
-  // Build optional official Clients too. The authenticated environment Boot
-  // endpoint selects whether to activate them; static assets alone grant nothing.
-  names.add('@deepseek-ai/dsh-experimental-client-ui-agent-team');
   const visit = (name) => {
     const record = packages.get(name);
     if (!record?.manifest.dsh?.client)

@@ -1,4 +1,4 @@
-import {availableBundleStates, namesOfficialBundle, optionalBundleInfo, shippedBundle, type BundleState} from './catalog.ts';
+import {availableBundleStates, namesOfficialBundle, optionalBundleInfo, RETIRED_BUNDLES, shippedBundle, type BundleState} from './catalog.ts';
 import type {ChangeResult, PluginSpecInspection} from '@deepseek-ai/dsh-plugin-manager/types';
 
 const warning = 'Applies to new Sessions. Existing Sessions retain their frozen composition. Refresh the workbench to update official browser plugins.';
@@ -7,6 +7,7 @@ const warning = 'Applies to new Sessions. Existing Sessions retain their frozen 
 export class OfficialBundleRegistry {
   constructor(private readonly storage: DurableObjectStorage) {
     storage.sql.exec('CREATE TABLE IF NOT EXISTS weft_official_bundles (name TEXT PRIMARY KEY, document TEXT NOT NULL)');
+    for (const name of RETIRED_BUNDLES) storage.sql.exec('DELETE FROM weft_official_bundles WHERE name=?', name);
   }
   list(): BundleState[] {
     return this.storage.sql.exec<{document: string}>('SELECT document FROM weft_official_bundles ORDER BY name').toArray().map(row => JSON.parse(row.document) as BundleState);
@@ -14,6 +15,7 @@ export class OfficialBundleRegistry {
   bundles() {return optionalBundleInfo(this.list());}
   importConfiguration(rows: BundleState[]): void {
     for(const row of rows) {
+      if(RETIRED_BUNDLES.includes(row.name)) continue;
       const bundle=shippedBundle(row.name);
       if(!bundle || bundle.digest!==row.digest || bundle.version!==row.version) throw new Error('Copied official bundle is unavailable in this deployment');
       this.storage.sql.exec('INSERT INTO weft_official_bundles VALUES (?,?) ON CONFLICT(name) DO UPDATE SET document=excluded.document',row.name,JSON.stringify(row));

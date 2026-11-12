@@ -6,6 +6,7 @@ import AgentPreset from '@deepseek-ai/dsh-agent-preset';
 import {profileDefinitions, profileEntry, presetEntryId} from '../../harness-profile/src/index.ts';
 import {prebuiltPluginModules, type PluginSelection} from '../../plugin-runtime/src/catalog.ts';
 const compositions = new WeakSet<Context>();
+const TEAM_ROWS = new Set(['agent-team', 'tool-agent-team', 'ui-agent-team']);
 
 export async function replaceNativePreset(ctx: Context, definition: PresetDefinition): Promise<void> {
   if (!compositions.has(ctx)) throw new Error('Native composition is not mounted');
@@ -35,15 +36,16 @@ const presetGroups = [
   // Weft's skill catalog service rides with the skill rows, private to the preset.
   {id: 'skills', members: ['skill-filesystem', 'tool-skill'], isolate: {skills: true}},
   {id: 'persistent-shell', members: ['pty', 'terminal-bash', 'persistent-bash'], isolate: {terminals: true}},
-  {id: 'delegation', members: ['tool-agent-team', 'tool-subagent-control', 'tool-subagent', 'tool-subagent-fork', 'workflow-ptc', 'tool-workflow'], isolate: {workflowEngine: true}},
+  {id: 'delegation', members: ['tool-subagent-control', 'tool-subagent', 'tool-subagent-fork', 'workflow-ptc', 'tool-workflow'], isolate: {workflowEngine: true}},
 ] as const;
 
 export function nativePresetDefinition(profile: {spec: {id: string; name: string; plugins: PluginSelection[]; allowClientPlugins?: boolean}}): PresetDefinition {
   const row = (plugin: PluginSelection) => ({id: plugin.id, name: 'cordis:'+plugin.id, config: plugin.config, ...(plugin.disabled ? {disabled: true} : {})});
   const plugins: Array<PresetDefinition['plugins'][number]> = [];
   for (const plugin of profile.spec.plugins) {
-    // Root service and browser activation are owned by the bundle adapters.
-    if (plugin.id === 'agent-team' || plugin.id === 'ui-agent-team') continue;
+    // Agent Teams is a root composition since DSH 0.2.2-rc.2 (see native-bundles/runtime.ts);
+    // revisions composed under the former optional bundle still name its rows.
+    if (TEAM_ROWS.has(plugin.id)) continue;
     const group = presetGroups.find(item => (item.members as readonly string[]).includes(plugin.id));
     if (!group) {plugins.push(row(plugin)); continue;}
     if (plugins.some(entry => entry.id === group.id)) continue;

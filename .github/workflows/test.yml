@@ -32,7 +32,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        dsh: ['0.2.2-rc.1']
+        dsh: ['0.2.2-rc.1', '0.2.2-rc.2']
         # Desktop's Host child boots the same release with its own profile; Electron itself is not needed.
         profile: [web, desktop]
     env:

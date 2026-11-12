@@ -213,7 +213,7 @@ export async function sessionRuntime(env: Env, storage: DurableObjectStorage, sc
       if (profile) {
         if (presentation) refreshSubagents = await mountNativeSubagents(ctx, storage, context.subagents as unknown as SubagentLimits);
         if (presentation) await mountNativeInteraction(ctx, env, storage, scope, owner, {models: context.models as EnvironmentModels, ...(context.permissionDefault === undefined ? {} : {permissionDefault: context.permissionDefault})});
-        if (presentation) await mountOfficialTeam(ctx, [profile]);
+        if (presentation) await mountOfficialTeam(ctx);
         if (presentation) {await mountNativeComposition(ctx, [nativePresetDefinition(profile)], profile.spec.id); composition = ctx;}
         // Without preset realms the persona row's text is the root prefix; the root owns that prompt section.
         else await mountPlugins(ctx, profile.spec.plugins.filter(plugin => plugin.id !== 'persona'));

@@ -464,7 +464,7 @@ export class SessionDO extends DurableObject<Env> {
       if (current.spec.id === profile.spec.id && current.revision === profile.revision && JSON.stringify(current.spec) === JSON.stringify(profile.spec)) return profile.spec.id;
       this.ctx.storage.sql.exec('INSERT INTO weft_pending_preset VALUES (1,?) ON CONFLICT(id) DO UPDATE SET document=excluded.document', JSON.stringify({beforeSeq: host.agent.session.seq - 1, profile}));
       try {
-        await mountOfficialTeam(host.ctx, [profile]);
+        await mountOfficialTeam(host.ctx);
         await replaceNativePreset(host.ctx, nativePresetDefinition(profile));
         const selected = await host.ctx.agentPresets.select(host.agent, preset);
         await host.ctx.sessionPersistence.flush();
@@ -835,23 +835,31 @@ export class SessionDO extends DurableObject<Env> {
     }
   }
 
+  /** User controls name only the target Session; it must belong to the tree this SessionDO hosts. */
+  private async assertNativeSubagentTarget(scope: SessionScope, childSessionId: string): Promise<void> {
+    const owner = controlScope(scope.tenantId, scope.environmentId);
+    if (childSessionId === scope.sessionId || await controlFor(this.env, owner).nativeSessionRoot(owner, childSessionId) !== scope.sessionId) {
+      throw new RemoteError('subagent/unauthorized', 'Subagent is outside this session owner', {childSessionId: SessionId(childSessionId)});
+    }
+  }
+
   private async invokeSubagent(input: SessionScope, endpoint: SubagentEndpoint, raw: unknown, signal: AbortSignal) {
     const scope = this.assertScope(input);
     if (!Object.hasOwn(subagentRemote.methods, endpoint)) throw new RemoteError('gateway/method-unavailable', 'Unknown subagent method', {endpoint});
     const method = subagentRemote.methods[endpoint];
     if (endpoint === 'subagents/prompt') {
       const args = subagentRemote.methods[endpoint].input({strict: true}).create().parse(raw);
-      await this.assertNativeHistoryOwner(scope, {kind: 'subagent', parentSessionId: args.request.parentSessionId, childSessionId: args.request.childSessionId});
+      await this.assertNativeSubagentTarget(scope, args.request.childSessionId);
       const host = await this.getNativeHost(scope);
       const value = await host.ctx.subagents.prompt(args.request, signal);
       await host.ctx.sessionPersistence.flush();
       return method.result.create().parse(value);
     }
-    const args = subagentRemote.methods['subagents/interruptByParent'].input({strict: true}).create().parse(raw);
-    await this.assertNativeHistoryOwner(scope, {kind: 'subagent', parentSessionId: args.parentSessionId, childSessionId: args.childSessionId});
+    const args = subagentRemote.methods['subagents/interruptByUser'].input({strict: true}).create().parse(raw);
+    await this.assertNativeSubagentTarget(scope, args.childSessionId);
     // Preserve native interrupt semantics: a cold or settled target is a no-op.
     const service = this.nativeHost?.ctx.subagents ?? (await this.getReader()).ctx.subagents;
-    const value = service.interruptByParent(args.childSessionId, args.parentSessionId, args.mode);
+    const value = service.interruptByUser(args.childSessionId);
     return method.result.create().parse(value);
   }
 
@@ -1221,7 +1229,7 @@ export class SessionDO extends DurableObject<Env> {
     const raw: unknown = request.headers.get('upgrade')?.toLowerCase() === 'websocket'
       ? JSON.parse(new URL(request.url).searchParams.get('subscription') ?? 'null') : await request.json();
     if (typeof raw === 'object' && raw !== null && 'operation' in raw && raw.operation === 'native-subagent') {
-      const body = z.object({scope: scopeSchema, operation: z.literal('native-subagent'), endpoint: z.enum(['subagents/prompt', 'subagents/interruptByParent']), args: z.unknown()}).strict().parse(raw);
+      const body = z.object({scope: scopeSchema, operation: z.literal('native-subagent'), endpoint: z.enum(['subagents/prompt', 'subagents/interruptByUser']), args: z.unknown()}).strict().parse(raw);
       this.assertScope(body.scope);
       try {return Response.json({ok: true, value: await this.invokeSubagent(body.scope, body.endpoint, body.args, request.signal)});}
       catch (error) {

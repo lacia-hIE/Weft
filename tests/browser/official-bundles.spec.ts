@@ -1,46 +1,45 @@
 import {test, expect} from '@playwright/test';
 import {sendPrompt} from './compose.ts';
 
-test('official Team bundle card installs, selects its browser module and persists enablement', async ({page, request}) => {
+test('built-in Agent Teams: the conversation menu saves Team mode per Session and the retired bundle card is gone', async ({page, request}) => {
   const {tenantId} = await (await request.get('/v1/me')).json();
   const environment = 'teams-'+crypto.randomUUID().slice(0, 8);
   const base = `/v1/tenants/${tenantId}/environments/${environment}/native`;
   expect((await request.post(`/v1/tenants/${tenantId}/environments`, {data: {id: environment, name: environment}})).status()).toBe(201);
-  const rpc = async (method: string, args: unknown) => {
-    const answer = await (await request.post(base+'/api/'+method, {data: {type: 'client-request', rpcId: crypto.randomUUID(), method, payload: {args}}})).json();
-    expect(answer.result.ok, JSON.stringify(answer)).toBe(true);
-    return answer.result.value;
-  };
+  // DSH 0.2.2-rc.2 ships the Team browser module in the official Web bundle.
+  const boot = await (await request.get(base+'/plugins/boot')).json();
+  expect(boot.entries.some((row: {id: string}) => row.id === '@deepseek-ai/dsh-client-ui-agent-team')).toBe(true);
+
   await page.goto('/agents/'+environment);
   await page.getByRole('button', {name: 'Continue', exact: true}).click({timeout: 45000});
   await page.getByRole('button', {name: 'Plugins', exact: true}).click({timeout: 45000});
-  const card = page.locator('[data-plugin-package="@deepseek-ai/dsh-experimental-agent-team-profile"]');
-  await expect(card).toBeVisible();
-  await expect(card.getByRole('switch')).not.toBeChecked();
-  await card.getByRole('switch').click();
-  const dialog = page.getByRole('dialog');
-  await expect(dialog).toBeVisible();
-  // The official catalog switch opens the progress dialog and installs immediately.
-  await expect.poll(async () => (await rpc('pluginManager/listBundles', {})).find((row: {name: string}) => row.name === '@deepseek-ai/dsh-experimental-agent-team-profile')?.enabled).toBe(true);
-  await page.reload();
-  await page.getByRole('button', {name: 'New session', exact: true}).first().click({timeout: 45000});
-  // New session is the draft composer; the original header belongs to a real conversation.
-  await sendPrompt(page, 'Verify the official Team panel');
-  await page.getByRole('treeitem').filter({hasText: 'Verify the official Team panel'}).click({timeout: 45000});
-  const teamAction = page.getByRole('button', {name: 'Agent team', exact: true});
-  await teamAction.click({timeout: 45000});
-  const teamPanel = page.getByRole('dialog', {name: 'Agent team', exact: true});
-  await expect(teamPanel.getByRole('heading', {name: /^Members/})).toBeVisible();
-  await expect(teamPanel.getByText('No shared tasks yet. Create them through the conversation.', {exact: true})).toBeVisible();
+  await expect(page.locator('[data-plugin-package="@deepseek-ai/dsh-experimental-agent-team-profile"]')).toHaveCount(0);
   await page.keyboard.press('Escape');
-  await page.getByRole('button', {name: 'Plugins', exact: true}).click({timeout: 45000});
-  await expect(card.getByRole('switch')).toBeChecked();
-  const boot = await (await request.get(base+'/plugins/boot')).json();
-  expect(boot.entries.some((row: {id: string}) => row.id === '@deepseek-ai/dsh-experimental-client-ui-agent-team')).toBe(true);
-  await card.getByRole('switch').click();
-  await expect(card.getByRole('switch')).not.toBeChecked();
+
+  await page.getByRole('button', {name: 'New session', exact: true}).first().click({timeout: 45000});
+  await sendPrompt(page, 'Verify the Team mode switch');
+  const conversation = page.getByRole('treeitem').filter({hasText: 'Verify the Team mode switch'});
+  await conversation.click({timeout: 45000});
+  const teamSwitch = async () => {
+    await page.getByRole('button', {name: /^Select model, current /}).click({timeout: 45000});
+    return page.getByRole('switch', {name: 'Enable agent teamwork', exact: true});
+  };
+  let toggle = await teamSwitch();
+  await expect(toggle).not.toBeChecked();
+  await toggle.click();
+  await expect(toggle).toBeChecked();
+  await page.keyboard.press('Escape');
+
+  // The selection is saved in the root Session, so it survives a reload.
   await page.reload();
-  await page.getByRole('button', {name: 'Plugins', exact: true}).click({timeout: 45000});
-  await expect(card.getByRole('switch')).not.toBeChecked();
-  await expect(page.getByRole('button', {name: 'Agent team', exact: true})).toHaveCount(0);
+  await conversation.click({timeout: 45000});
+  toggle = await teamSwitch();
+  await expect(toggle).toBeChecked();
+  // After the Session has used its model, turning Team mode off asks for confirmation.
+  await toggle.click();
+  const confirm = page.getByRole('dialog', {name: 'Disable agent teamwork?', exact: true});
+  await confirm.getByRole('button', {name: 'Disable', exact: true}).click({timeout: 45000});
+  await expect(confirm).toHaveCount(0);
+  toggle = await teamSwitch();
+  await expect(toggle).not.toBeChecked();
 });

@@ -16,7 +16,7 @@ Weft 将原版 Agent Loop、Web UI 与 Cordis 插件体系接入 Cloudflare Work
 
 DeepSeek Harness 提供了 Agent 的执行逻辑、交互界面和插件生态。Weft 负责把这些能力接入云端运行环境：身份认证、持久存储、工作区文件、容器进程，以及插件的构建与授权。
 
-项目优先复用原版服务和界面，平台适配集中在本仓库中。当前适配 **DSH `0.2.2-rc.1`**，由 [`upstream.lock.json`](upstream.lock.json) 固定提交，构建时获取并校验；不需要手动修改上游源码。原版前端、Remote ABI、插件与运行时从同一份源码构建，升级边界见[兼容性说明](docs/architecture/upstream-compatibility.md)。
+项目优先复用原版服务和界面，平台适配集中在本仓库中。当前适配 **DSH `0.2.2-rc.2`**，由 [`upstream.lock.json`](upstream.lock.json) 固定提交，构建时获取并校验；不需要手动修改上游源码。原版前端、Remote ABI、插件与运行时从同一份源码构建，升级边界见[兼容性说明](docs/architecture/upstream-compatibility.md)。
 
 Weft 适合希望自行托管 Web 编程助手、通过浏览器访问远程工作区，或在同一部署中维护多个独立 Agent 环境的开发者。
 
@@ -30,13 +30,13 @@ Weft 适合希望自行托管 Web 编程助手、通过浏览器访问远程工�
 | 环境复制 | 复制配置和持久工作区文件，支持进度与失败续传；会话、受管凭据和运行状态不继承 |
 | 持久会话 | 保存对话与执行记录，支持历史、搜索、排队、取消和恢复 |
 | 多模型接入 | 通过原版 Models 设置配置 DeepSeek、OpenAI、Anthropic 等提供商 |
-| 原版 Agent 能力 | 标准、PTC、极简与创造预设，以及命令、Plan、Goal、Skills 和子 Agent 等服务 |
+| 原版 Agent 能力 | 标准、PTC、极简与创造预设，以及命令、Plan、Goal、Skills、子 Agent 和 Agent Teams 等服务 |
 | Linux 工作区 | 在容器中使用 git、Node.js、Python、真实进程与 PTY 交互终端 |
 | 文件与附件 | 读写和搜索工作区，上传文件、处理图片并查看会话附件 |
 | Worker 数据与文档处理 | 可恢复的 JavaScript 任务、原版审批流程，以及通过 Cloudflare Workers AI 将 Office、PDF、图片等内容提取为 Markdown |
 | Cordis 插件 | 从 npm 安装原版 bundle，或在创造模式下由 Agent 编写插件，审核后加载 |
 | 用户隔离 | 使用 Cloudflare Access 身份，将数据与运行权限限定在所属用户和环境 |
-| 本地 DSH 环境 | 安装原生 Host 连接插件，通过出站连接在 Web 使用本机的会话、插件、文件与终端；支持 DSH `0.2.2-rc.1` 的 `dsh web` 和桌面 App |
+| 本地 DSH 环境 | 安装原生 Host 连接插件，通过出站连接在 Web 使用本机的会话、插件、文件与终端；支持 DSH `0.2.2-rc.1` 与 `0.2.2-rc.2`（连接插件 `0.5.1`）的 `dsh web` 和桌面 App |
 
 本地模式从首页「连接本地 DSH」开始，复制配对码，在本机 DSH 的插件页安装
 `@laciaproject/dsh-local-host`，粘贴配对码并点击「保存并连接」。配置由插件保存，无需下载 JSON。
@@ -199,7 +199,18 @@ Cloudflare 提供官方 [Deploy to Cloudflare](https://developers.cloudflare.com
 
 第三方包还可使用环境级 Worker Host，获得原版 domain 持久状态、后台回调、获准的 HTTPS 请求、本环境会话操作和插件自行验签的 Webhook 入口。权限沿用包详情审核，具体接口与限制见[Worker Host 服务](docs/architecture/worker-host-plugins.md)。
 
-内置插件 [`@weft/dsh-superagent`](plugins/superagent/README.md) 把 dsh-superagent 研究原型适配到 Worker Host：监听一个 GitHub 仓库，按策略把授权的请求变成工单，在独立 Session 中执行并回到原对话交付，不要求容器。
+### 内置插件
+
+以下组合包随部署提供，在 **Plugins** 中安装，并在组合包审核中批准各个版本；不经过 npm registry。
+
+| 插件 | 版本 | 作用 |
+| --- | --- | --- |
+| [`@weft/dsh-im`](plugins/im/README.md) | 0.11.0 | 把飞书、微信、QQ 与邮件会话接入 Session；原生提问发送到来源聊天，可直接回复编号或文字作答 |
+| [`@weft/dsh-superagent`](plugins/superagent/README.md) | 0.4.2 | 把 dsh-superagent 研究原型适配到 Worker Host：监听一个 GitHub 仓库，按策略把授权的请求变成工单，在独立 Session 中执行并回到原对话交付，不要求容器。也可派给已连接的本地 DSH 执行，支持任务会话直达与原版目录选择器 |
+
+本地连接插件 [`@laciaproject/dsh-local-host`](docs/deployment/local-host.md) 在 npm 上独立发布版本（`0.5.1`）。
+
+原版 DSH 插件来自固定的上游。DSH 0.2.2-rc.2 把 **Agent Teams** 从可选组合包并入 base bundle：团队模式现在是会话菜单中的开关，默认关闭，按会话保存；队友即具名子代理，共用一块任务板。上游 Office 工具包（`office-kit`、`tool-office`、`skill-office`）已列出，但需等待 LibreOffice Container。Web 搜索默认使用 DeepSeek Search API，仍可改选旧版 Messages 搜索。详见[发版说明](docs/releases/v0.2.2-rc.2.md)。
 
 ## 与本地 DSH 的差异
 
@@ -209,7 +220,7 @@ Weft 保留原版交互与插件声明，但运行能力取决于 Cloudflare 宿
 - **进程状态**：容器重启后不恢复已有进程、PTY 或终端内存状态，命令不会自动重放。
 - **本地依赖**：容器缓存不属于持久文件卷，Worker 和文件侧栏看不到这些本地依赖文件。
 - **插件兼容性**：依赖 Node 内置模块、原生扩展或未桥接服务的插件可能无法运行；不支持的能力会明确拒绝。
-- **待适配能力**：端口预览、Office 转 PDF、平台账号登录及更多本地宿主服务尚未完整接入。
+- **待适配能力**：端口预览、Office 工具包（渲染、转换与重算需要 LibreOffice）、平台账号登录及更多本地宿主服务尚未完整接入。
 
 ## 开发与贡献
 
@@ -233,7 +244,7 @@ Weft 保留原版交互与插件声明，但运行能力取决于 Cloudflare 宿
 
 ## 版本与发布
 
-Weft 使用 `vX.Y.Z` Tag；本地连接插件独立使用 `dsh-local-host-vX.Y.Z`，其 npm 版本不等于 Weft 版本。当前 Weft 为 `0.2.2-rc.1`，与所适配的 DSH 版本对齐，仍处于 0.x 开发阶段，兼容变化与操作要求写入发版说明。上游 DSH 版本由 `upstream.lock.json` 单独固定。
+Weft 使用 `vX.Y.Z` Tag；本地连接插件独立使用 `dsh-local-host-vX.Y.Z`，其 npm 版本不等于 Weft 版本。当前 Weft 为 `0.2.2-rc.2`，与所适配的 DSH 版本对齐，仍处于 0.x 开发阶段，兼容变化与操作要求写入发版说明。上游 DSH 版本由 `upstream.lock.json` 单独固定。
 
 [更新记录](CHANGELOG.md) · [GitHub Releases](https://github.com/lacia-hIE/Weft/releases) · [发布流程](docs/releases.md)。项目 Release 必须指向在 `ci` 完成全部测试的同一提交，不会附带私有配置或可直接用于生产的构建产物。
 
