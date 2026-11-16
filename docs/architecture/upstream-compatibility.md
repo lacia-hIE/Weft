@@ -1,8 +1,8 @@
 # Harness 兼容性与维护
 
-当前目标为 **DSH `0.2.2-rc.2`**，提交 `ddac96760b6edf8fa0fe17cbdcf0b512f4c12b2c`。这是固定的适配基线，不随 npm `latest` 或上游分支自动更新；云端内核、原版前端和 Remote ABI 一起升级。
+当前目标为 **DSH `0.2.2-rc.3`**，提交 `38a6a5c965aa99ab525161efb7cc5cf1fe62fced`。这是固定的适配基线，不随 npm `latest` 或上游分支自动更新；云端内核、原版前端和 Remote ABI 一起升级。
 
-0.2.2 相对 0.2.1 含破坏性变化，云端运行时不执行 0.2.1 来源的修订。rc.2 可以原地读取 rc.1 的会话日志，因此 rc.1 时期创建的会话在 rc.2 运行时继续运行（见下文）。本地 Host 连接插件 0.5.1 接受 `0.2.2-rc.1` 与 `0.2.2-rc.2`，0.5.0 只接受 rc.1。连接协议仍为 3。CI 对这两个版本分别启动 npm 发布的原版 Web Host，并以 `desktop` profile 验证桌面 Host 启动方式、原生文件、Git、PTY 与刷新恢复；它们要求 Node 24.9 或更高。`engines.dsh` 仍是安装器、Host、中继及 UI 共用的精确清单，不接受未经审查的后续版本。
+0.2.2 相对 0.2.1 含破坏性变化，云端运行时不执行 0.2.1 来源的修订。rc.2 可以原地读取 rc.1 的会话日志，rc.3 不改会话与持久化契约，因此 rc.1、rc.2 时期创建的会话在 rc.3 运行时继续运行（见下文）。本地 Host 连接插件 0.5.2 接受 `0.2.2-rc.1`、`0.2.2-rc.2` 与 `0.2.2-rc.3`，0.5.1 接受 rc.1 与 rc.2，0.5.0 只接受 rc.1。连接协议仍为 3。CI 对这三个版本分别启动 npm 发布的原版 Web Host，并以 `desktop` profile 验证桌面 Host 启动方式、原生文件、Git、PTY 与刷新恢复；它们要求 Node 24.9 或更高。`engines.dsh` 仍是安装器、Host、中继及 UI 共用的精确清单，不接受未经审查的后续版本。
 
 upstream.lock.json 固定 commit。服务端插件、模型协议、浏览器内核、UI 控件与样式从同一份源码构建。prepare-upstream.mjs 保留用户现有 checkout，必要时使用独立固定副本；所有公共及内部导入均指向同一副本。管理的副本若版本不匹配或有 tracked 修改则停止。升级需显式审查兼容契约。
 
@@ -32,6 +32,20 @@ Weft 实现 Access、DO 存储、Workspace FileSystem、凭据、HTTP/SSE 和发
 vendor 使用独立声明；上游 repeat-tool-reminder 的 broad-union 类型问题、仅类型引用的 Node Gateway 也通过声明边界消费。生产仍打包原始模块，Weft 核心代码保持严格检查，相关行为由 workerd 测试覆盖。
 
 Cordis 兼容不自动提供浏览器、Node 主机、进程或真实 Shell 能力。扩展任意生态包时先判定宿主需求，建立适配与验收后加入目录。
+
+## 0.2.2-rc.2 → 0.2.2-rc.3 的兼容范围
+
+rc.2（`ddac96760b6edf8fa0fe17cbdcf0b512f4c12b2c`）→ rc.3 的审查覆盖完整 Git diff。上游只有一个功能提交（实验性组合包 DeepSeek 对话导入）和 CI 修复；Session、持久化、工具、预设、模型协议与 Loader 均未改动，Session V4 存储格式不变。`packages/harness-runtime/src/revision.ts` 因此把 rc.2 与 rc.1 都列为已审查来源，两者的修订与会话在 rc.3 运行时继续执行，不重新发布。
+
+| 上游变化 | Weft 适配 |
+| --- | --- |
+| 新增实验性可选组合包 `@deepseek-ai/dsh-deepseek-chat-import`（进入 `OPTIONAL_BUNDLES`、`MORE_BUNDLES` 与 `EXPERIMENTAL_BUNDLES`，官方 profile 不含）：上传 DeepSeek 官网导出的 zip，Host 在内存中解压后把每段对话写成会话 | 不进入可选组合包目录。它依赖 Host 级 `sessionPersistence` / `workspaceRegistry` 一次写入多个会话，并在内存中缓存最大 512 MiB 的归档；Weft 的会话各自由 SessionDO 持久化，Worker 内存上限为 128 MB。见[官方组合包](../validation/official-bundles.md#deepseek-对话导入dsh-022-rc3未提供) |
+| 侧栏新增 `sidebar.session.action` HOC 插槽，包住「新会话」行 | 原版 `ui-sidebar` 随 Boot Graph 加载；Weft 不占用该插槽，无占用者时按原版直接渲染 |
+| 工作区选择器发布为可复用的 `workspace.picker` Component Factory，新增 `workspace.picker.directoryFlow` 子插槽，两个目录选择器都填入 | Weft 组合的原版 `ui-directory-picker-browse` 一并填入新插槽，经 `NativeWorkspaces` 浏览与新建目录，不需额外适配 |
+| `session-log-export` 导出遇到 `ATTACHMENT_NOT_FOUND` / `INVALID_ATTACHMENT_REF` 时跳过该附件，在归档中写入 `attachments-missing.txt`；文件流在写入条目前先读取首块 | 沿用原版实现。Weft 附件存储对缺失对象抛出原版 `AttachmentError` 与 `ATTACHMENT_NOT_FOUND`，因此缺失附件不再使整个导出失败 |
+| `tool-cordis` API 目录新增 `deepseekChatImport` 条目；新增上传图标 | 仅文档与图标，随原版构建 |
+
+依赖方面上游只为该组合包新增 `fflate`，Weft 不打包该组合包，依赖不变。两份容器镜像标签因固定提交变化而更新。
 
 ## 0.2.2-rc.1 → 0.2.2-rc.2 的兼容范围
 

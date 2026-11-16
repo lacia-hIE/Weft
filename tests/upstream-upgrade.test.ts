@@ -12,11 +12,13 @@ import type {SessionCreateValue,SessionFollowFrame} from '@deepseek-ai/dsh-api-s
 
 /** Sources of DSH 0.2.1-alpha.4 and 0.2.1-rc.2 through rc.5, which 0.2.2 no longer runs. */
 const rc1='66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db';
+const rc2='ddac96760b6edf8fa0fe17cbdcf0b512f4c12b2c';
 const retired=['86a402200d95fecef4529d969836f1fe13c6cb0d','687f282e8625c6b8d11ff58211a90524be2e4317','1f81c047fc48fa190a683e469daa699857e9afe8','504a01a9578abc2c6f1fb896b1dc322c9fe24f66','b830ec950faba0a46dda564be3e2d854afed94f1'];
-test('the pinned 0.2.2-rc.2 runtime also runs 0.2.2-rc.1 revisions, and nothing older',()=>{
-  assert.equal(upstream.commit,'ddac96760b6edf8fa0fe17cbdcf0b512f4c12b2c');
+test('the pinned 0.2.2-rc.3 runtime also runs 0.2.2-rc.2 and rc.1 revisions, and nothing older',()=>{
+  assert.equal(upstream.commit,'38a6a5c965aa99ab525161efb7cc5cf1fe62fced');
   assert.ok(supportsAgentRuntime(upstream.commit));
-  assert.ok(supportsAgentRuntime(rc1),'rc.2 reads rc.1 Session logs in place');
+  assert.ok(supportsAgentRuntime(rc2),'rc.3 changes no Session or persistence contract');
+  assert.ok(supportsAgentRuntime(rc1),'rc.2 and rc.3 read rc.1 Session logs in place');
   for(const source of retired)assert.equal(supportsAgentRuntime(source),false,source);
   assert.equal(supportsAgentRuntime('an-earlier-upstream'),false);assert.equal(supportsAgentRuntime('future-unreviewed-runtime'),false);
 });
@@ -102,11 +104,11 @@ test('presets published under 0.2.1 drop the merged list_agents row and keep sub
   assert.equal(spec.plugins.length,4,'the published revision is not modified');
 });
 
-test('a Session created under 0.2.2-rc.1 keeps running on 0.2.2-rc.2',{timeout:120_000},async()=>{
-  const directory=await mkdtemp(join(tmpdir(),'weft-upstream-rc1-'));
+for(const [release,source] of [['0.2.2-rc.1',rc1],['0.2.2-rc.2',rc2]] as const)test(`a Session created under ${release} keeps running on 0.2.2-rc.3`,{timeout:120_000},async()=>{
+  const directory=await mkdtemp(join(tmpdir(),'weft-upstream-rc-'));
   const options={browser:true,scriptPath:'dist/environment-storage-worker.js'};
   let runtime=createRuntime(directory,options);const api=nativeClient(()=>runtime);
-  const sessionId='rc1-session';
+  const sessionId=`session-${release.replaceAll(".","-")}`;
   const prompt=async(text:string)=>{
     const stream=await api.follow(sessionId);assert.equal((await stream.next()).type,'snapshot');
     try {
@@ -115,8 +117,8 @@ test('a Session created under 0.2.2-rc.1 keeps running on 0.2.2-rc.2',{timeout:1
     }finally{await stream.close();}
   };
   try {
-    await api.call('session/create',{request:{sessionId}});await prompt('UNDER_RC1');
-    const seeded=await runtime.dispatchFetch(url('alpha','/_fixture/session-revision'),{method:'POST',body:JSON.stringify({scope:{tenantId:tenantId('alpha'),environmentId:'default',sessionId},commit:rc1})});
+    await api.call('session/create',{request:{sessionId}});await prompt('BEFORE_UPGRADE');
+    const seeded=await runtime.dispatchFetch(url('alpha','/_fixture/session-revision'),{method:'POST',body:JSON.stringify({scope:{tenantId:tenantId('alpha'),environmentId:'default',sessionId},commit:source})});
     assert.equal(seeded.status,200);
     await runtime.dispose();runtime=createRuntime(directory,options);
     await prompt('AFTER_UPGRADE');

@@ -15,4 +15,13 @@ DSH 0.2.2-rc.2 把 Agent Teams 从实验性可选组合包 `@deepseek-ai/dsh-exp
 
 Plugins 页仍支持安装部署预编译目录中的官方 `dsh.bundle.patch` 组合包：构建从锁定、干净的上游 checkout 读取原始 manifest 和 patch，记录版本、commit 与 patch 的 SHA-256；环境 SQLite 原子保存安装选择。名称不带版本时固定解析为当前部署版本，其他版本、安装脚本和替换 registry 一律拒绝。
 
-DSH 0.2.2-rc.2 没有需要单独安装的官方组合包，所以目录为空。每个可选组合包都要先有审查过的运行时适配，没有适配时拒绝启用，不会静默忽略。这不是任意官方或第三方 bundle 的通用运行器：新增组合包前必须验证它的宿主服务、工具及 Client 依赖。
+目录目前为空。每个可选组合包都要先有审查过的运行时适配，没有适配时拒绝启用，不会静默忽略。这不是任意官方或第三方 bundle 的通用运行器：新增组合包前必须验证它的宿主服务、工具及 Client 依赖。
+
+## DeepSeek 对话导入（DSH 0.2.2-rc.3，未提供）
+
+DSH 0.2.2-rc.3 新增实验性可选组合包 `@deepseek-ai/dsh-deepseek-chat-import`：侧栏「新会话」旁的上传入口接收 DeepSeek 官网导出的 `deepseek_data-*.zip`，由 Host 在内存中解压（默认上限 512 MiB），把每段对话写成所选工作区中的一个会话。Weft 暂不提供该组合包，目录中不列出：
+
+- 它依赖 Host 级的 `sessionPersistence`、`workspaceRegistry` 与 `connection` 上传路由，在同一个进程里写入多个会话。Weft 的每个会话由各自的 SessionDO 持久化，入口 Worker 没有可以一次写入多个会话的会话存储。
+- 上传在内存中缓存整个归档；Worker 的内存上限为 128 MB，远小于原版默认的 512 MiB。
+
+接入需要一条把归档放在 R2、逐个对话创建 SessionDO 并写入原版事件的适配路径，并按原版测试覆盖失败原因与进度。在此之前组合包不进入目录；侧栏新增的 `sidebar.session.action` 插槽没有占用者，「新会话」行按原版直接渲染。
