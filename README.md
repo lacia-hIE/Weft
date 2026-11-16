@@ -10,7 +10,7 @@ Weft brings the original DeepSeek Harness agent loop, Web UI and Cordis plugin s
 
 Deploy to your own Cloudflare account, bring your model API keys, and control access through Cloudflare Access. Each user can maintain multiple environments with their own configuration, credentials, plugins and workspaces.
 
-Weft is an independent adaptation of [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness). It currently targets **DSH `0.2.2-rc.2`**, pinned by commit in [`upstream.lock.json`](upstream.lock.json). The frontend, Remote ABI, plugins and runtime are built from the same upstream source. See [compatibility](docs/architecture/upstream-compatibility.md) for upgrade boundaries.
+Weft is an independent adaptation of [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness). It currently targets **DSH `0.2.2-rc.3`**, pinned by commit in [`upstream.lock.json`](upstream.lock.json). The frontend, Remote ABI, plugins and runtime are built from the same upstream source. See [compatibility](docs/architecture/upstream-compatibility.md) for upgrade boundaries.
 
 ## What you can do
 
@@ -27,7 +27,7 @@ Weft is an independent adaptation of [DeepSeek Harness](https://github.com/deeps
 | Native Cordis bundles | Install npm packages declaring `dsh.bundle.patch`, or review and load agent-written plugins |
 | Local DSH connection | Use your local Host's workbench, files, plugins and terminals through an outbound connection |
 
-Environment copies exclude conversation history, managed credentials and running processes. Local Host connections support DSH `0.2.2-rc.1` and `0.2.2-rc.2` (connector `0.5.1`), from `dsh web` or DeepSeek Harness Desktop.
+Environment copies exclude conversation history, managed credentials and running processes. Local Host connections support DSH `0.2.2-rc.1`, `0.2.2-rc.2` and `0.2.2-rc.3` (connector `0.5.2`), from `dsh web` or DeepSeek Harness Desktop.
 
 ## Quick start
 
@@ -154,9 +154,9 @@ The deployment ships these bundles. Install them from **Plugins** and approve ea
 | [`@weft/dsh-im`](plugins/im/README.md) | 0.11.0 | Connects Feishu, WeChat, QQ and email conversations to Sessions. Native questions are sent to the originating chat and answered there with numbers or text |
 | [`@weft/dsh-superagent`](plugins/superagent/README.md) | 0.4.2 | Adapts the dsh-superagent research prototype to the Worker Host: watches one GitHub repository, turns authorized requests into tickets under a Policy, works on each in its own Session and answers in the original conversation. It does not require a container. Tasks can also run on a connected local DSH, with task Session navigation and the original directory chooser |
 
-The local connector [`@laciaproject/dsh-local-host`](docs/deployment/local-host.md) is versioned separately on npm (`0.5.1`).
+The local connector [`@laciaproject/dsh-local-host`](docs/deployment/local-host.md) is versioned separately on npm (`0.5.2`).
 
-Official DSH plugins come from the pinned upstream. In DSH 0.2.2-rc.2, **Agent Teams** moved from an optional bundle into the base bundle. Team mode is now a switch in the conversation menu, off by default and saved per conversation. Teammates are named subagents sharing a task board. Upstream's Office toolkit (`office-kit`, `tool-office`, `skill-office`) is listed but waits for a LibreOffice Container. Web search defaults to the DeepSeek Search API, and legacy Messages search remains selectable. See the [release notes](docs/releases/v0.2.2-rc.2.md).
+Official DSH plugins come from the pinned upstream. **Agent Teams** is built in: Team mode is a switch in the conversation menu, off by default and saved per conversation, and teammates are named subagents sharing a task board. Upstream's Office toolkit (`office-kit`, `tool-office`, `skill-office`) is listed but waits for a LibreOffice Container. Web search defaults to the DeepSeek Search API, and legacy Messages search remains selectable. DSH 0.2.2-rc.3's experimental **DeepSeek chat import** bundle is not offered yet: it buffers an export of up to 512 MiB in memory and writes many Sessions through one Host-wide Session store, while Weft keeps each Session in its own Durable Object. See the [release notes](docs/releases/v0.2.2-rc.3.md).
 
 ## Limits compared with local DSH
 
@@ -183,7 +183,7 @@ Tests run on pull requests, the `ci` branch and manual dispatch. They cover buil
 
 ## Versions and releases
 
-Weft uses **`vX.Y.Z`** tags. The local connector independently uses **`dsh-local-host-vX.Y.Z`**; its npm version is not the Weft version. The current project version is `0.2.2-rc.2`, aligned with the DSH release it targets. During 0.x development, release notes describe compatibility changes and required deployment steps. The upstream DSH version is pinned separately.
+Weft uses **`vX.Y.Z`** tags. The local connector independently uses **`dsh-local-host-vX.Y.Z`**; its npm version is not the Weft version. The current project version is `0.2.2-rc.3`, aligned with the DSH release it targets. During 0.x development, release notes describe compatibility changes and required deployment steps. The upstream DSH version is pinned separately.
 
 [Changelog](CHANGELOG.md) · [GitHub Releases](https://github.com/lacia-hIE/Weft/releases) · [Release procedure](docs/releases.md).
 

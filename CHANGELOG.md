@@ -2,7 +2,21 @@
 
 Application versions use `vX.Y.Z`; local connector versions are independent. See [release policy](docs/releases.md). Entries describe released behavior; planned work does not imply availability.
 
-## [0.2.2-rc.2](https://github.com/lacia-hIE/Weft/releases/tag/v0.2.2-rc.2) — Unreleased / 未发布
+## [0.2.2-rc.3](https://github.com/lacia-hIE/Weft/releases/tag/v0.2.2-rc.3) — Unreleased / 未发布
+
+- Targets DSH `0.2.2-rc.3`. rc.3 changes no Session, persistence, tool or preset contract, so Sessions created under Weft 0.2.2-rc.2 or 0.2.2-rc.1 keep running on their saved composition. Presets are republished for the new runtime with unchanged rows; 0.2.1 Sessions still do not run. Both container image tags change; publish them before deploying.
+- 适配 DSH `0.2.2-rc.3`。rc.3 未改动会话、持久化、工具或预设契约，因此 Weft 0.2.2-rc.2 与 0.2.2-rc.1 时期创建的会话按保存的配置继续运行；预设以新运行时重新发布，行内容不变；0.2.1 时期的会话仍不能运行。两份容器镜像标签均有变化，部署前需发布。
+
+- Session log export follows upstream: a missing attachment is listed in `attachments-missing.txt` instead of failing the whole export. The sidebar New-session row and the workspace picker follow the upstream redesign.
+- 会话日志导出随上游调整：缺失的附件列入 `attachments-missing.txt`，不再使整个导出失败。侧栏「新会话」行与工作区选择器随上游改版。
+
+- Upstream's experimental DeepSeek chat import bundle (`@deepseek-ai/dsh-deepseek-chat-import`) is not offered: it buffers exports of up to 512 MiB in memory and writes many Sessions through one Host-wide Session store, which Weft's per-Session Durable Objects and 128 MB Worker memory do not provide. See [official bundles](docs/validation/official-bundles.md).
+- 上游实验性组合包 DeepSeek 对话导入（`@deepseek-ai/dsh-deepseek-chat-import`）暂不提供：它在内存中缓存最大 512 MiB 的导出文件，并通过 Host 级的单一会话存储写入多个会话；Weft 的会话各自保存在 Durable Object 中，Worker 内存上限为 128 MB。见[官方组合包](docs/validation/official-bundles.md)。
+
+- Local connector `0.5.2` supports DSH `0.2.2-rc.1`, `0.2.2-rc.2` and `0.2.2-rc.3`; `0.5.1` supports rc.1 and rc.2 only. Upgrade the connector before upgrading local DSH.
+- 本地连接插件 `0.5.2` 支持 DSH `0.2.2-rc.1`、`0.2.2-rc.2` 与 `0.2.2-rc.3`；`0.5.1` 只支持 rc.1 与 rc.2。升级本机 DSH 前先升级连接插件。
+
+## [0.2.2-rc.2](https://github.com/lacia-hIE/Weft/releases/tag/v0.2.2-rc.2) — 2026-11-12
 
 - Targets DSH `0.2.2-rc.2`. rc.2 reads 0.2.2-rc.1 Session logs in place, so Sessions created under Weft 0.2.2-rc.1 keep running on their saved composition. Presets are republished for the new runtime; 0.2.1 Sessions still do not run. Both container images change; publish them before deploying.
 - 适配 DSH `0.2.2-rc.2`。rc.2 可原地读取 0.2.2-rc.1 的会话日志，因此 Weft 0.2.2-rc.1 时期创建的会话按保存的配置继续运行；预设会以新运行时重新发布；0.2.1 时期的会话仍不能运行。两份容器镜像均有变化，部署前需发布。
