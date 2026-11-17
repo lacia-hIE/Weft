@@ -21,6 +21,12 @@ const text = (data: Uint8Array) => new TextDecoder().decode(data);
 const zero = (): ProcessOffsets => ({stdout: 0, stderr: 0, control: 0});
 const secret = 'weft-process-integration-test';
 const pause = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+/** Attaches the container's state and output to a startup failure, which CI otherwise loses when the container is removed. */
+const withContainerLogs = async (error: unknown, docker: (...args: string[]) => Promise<{stdout: string; stderr: string}>, name: string) => {
+  const state = await docker('inspect', '-f', '{{json .State}}', name).then(r => r.stdout.trim(), e => String(e));
+  const logs = await docker('logs', '--tail', '200', name).then(r => r.stdout + r.stderr, e => String(e));
+  return new Error(`${error instanceof Error ? error.message : String(error)}\ncontainer state: ${state}\ncontainer logs:\n${logs}`, {cause: error});
+};
 const readAll = async (stream: Readable) => {const chunks: Buffer[] = []; for await (const chunk of stream) chunks.push(Buffer.from(chunk)); return Buffer.concat(chunks);};
 
 /** Opt-in Docker + FUSE + original dsh subprocess runtime, without a production deployment. */
@@ -37,7 +43,7 @@ test('real processes, PTYs, sandbox, reconnect and durable file synchronization'
     const processPort = await port(8081), computerPort = await port(8080);
     for (let attempt = 0;; attempt++) {
       try {await docker('exec', name, 'mountpoint', '-q', '/workspace'); if ((await fetch(`http://127.0.0.1:${processPort}/health`)).ok) break;}
-      catch (error) {if (attempt > 100) throw error;}
+      catch (error) {if (attempt > 100) throw await withContainerLogs(error, docker, name);}
       await pause(100);
     }
     const connect = async (owner = 'session-a', endpoint = processPort, auth = secret) => {

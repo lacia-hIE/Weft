@@ -54,7 +54,12 @@ test('computerd keeps dependency trees local and supports shallow clone when a f
     const deadline = Date.now() + 20_000;
     for (;;) {
       try {await docker('exec', name, 'mountpoint', '-q', '/workspace'); break;}
-      catch (error) {if (Date.now() >= deadline) throw error; await new Promise(resolve => setTimeout(resolve, 200));}
+      catch (error) {
+        if (Date.now() < deadline) {await new Promise(resolve => setTimeout(resolve, 200)); continue;}
+        const state = await docker('inspect', '-f', '{{json .State}}', name).then(r => r.stdout.trim(), e => String(e));
+        const logs = await docker('logs', '--tail', '200', name).then(r => r.stdout + r.stderr, e => String(e));
+        throw new Error(`${error instanceof Error ? error.message : String(error)}\ncontainer state: ${state}\ncontainer logs:\n${logs}`, {cause: error});
+      }
     }
     const {stdout} = await docker('exec', name, 'python3', '-c', `
 import json, os, pathlib, sqlite3, subprocess
