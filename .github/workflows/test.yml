@@ -148,8 +148,15 @@ jobs:
           path: deepseek-harness
           key: upstream-${{ hashFiles('upstream.lock.json') }}
       - run: npm run upstream:prepare
+      # Ubuntu 26.04 hosts ship an AppArmor profile that attaches to every exec of
+      # fusermount3 by path, including inside unconfined containers, and only
+      # allows mounts under $HOME, /tmp, /mnt and the like; computerd's mount of
+      # /workspace is then denied with EACCES ("fuse failed"). Cloudflare
+      # Containers have no such profile, so unload it on the runner.
       - name: Enable FUSE
-        run: test -c /dev/fuse || sudo modprobe fuse
+        run: |
+          test -c /dev/fuse || sudo modprobe fuse
+          if [ -f /etc/apparmor.d/fusermount3 ]; then sudo apparmor_parser -R /etc/apparmor.d/fusermount3; fi
       - name: Build the tested container locally on the runner
         run: node scripts/workspace-container.mjs --local
       - name: Select the matching local image
