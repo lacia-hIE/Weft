@@ -13,7 +13,7 @@ Application versions use `vX.Y.Z`; local connector versions are independent. See
 - Local connector `0.5.2` also accepts DSH `0.2.2-rc.4`.
 - 本地连接插件 `0.5.2` 同时接受 DSH `0.2.2-rc.4`。
 
-## [0.2.2-rc.3](https://github.com/lacia-hIE/Weft/releases/tag/v0.2.2-rc.3) — Unreleased / 未发布
+## 0.2.2-rc.3 — Not released separately; included in 0.2.2-rc.4 / 未单独发布，并入 0.2.2-rc.4
 
 - Targets DSH `0.2.2-rc.3`. rc.3 changes no Session, persistence, tool or preset contract, so Sessions created under Weft 0.2.2-rc.2 or 0.2.2-rc.1 keep running on their saved composition. Presets are republished for the new runtime with unchanged rows; 0.2.1 Sessions still do not run. Both container image tags change; publish them before deploying.
 - 适配 DSH `0.2.2-rc.3`。rc.3 未改动会话、持久化、工具或预设契约，因此 Weft 0.2.2-rc.2 与 0.2.2-rc.1 时期创建的会话按保存的配置继续运行；预设以新运行时重新发布，行内容不变；0.2.1 时期的会话仍不能运行。两份容器镜像标签均有变化，部署前需发布。
