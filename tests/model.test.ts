@@ -199,6 +199,27 @@ test('truncated or malformed provider streams fail and preserve a readable sessi
   }
 });
 
+test('a DeepSeek content refusal fails the turn once with a fixed CONTENT_REFUSED message', async () => {
+  const explanation = 'provider-controlled explanation: image 1 was blocked';
+  const refusal = textPrefix + event('content_block_stop', { index: 0 })
+    + event('message_delta', { delta: { stop_reason: 'refusal', stop_details: { explanation } }, usage: { output_tokens: 9 } }) + event('message_stop');
+  let count = 0;
+  const runtime = createRuntime(undefined, { bindings, outbound: async () => { count++; return streamResponse(refusal); } });
+  try {
+    const response = await send(runtime, 'alpha', 'refused', 'hello');
+    assert.equal(response.status, 502, await response.clone().text());
+    const raw = await response.text();
+    assert.equal((JSON.parse(raw) as { code: string }).code, 'CONTENT_REFUSED');
+    const events = await readEvents(runtime, 'refused');
+    const end = events.events.at(-1)?.data.reason as { kind?: string; error?: { code?: string; message?: string } } | undefined;
+    assert.equal(end?.kind, 'error');
+    assert.equal(end?.error?.code, 'CONTENT_REFUSED');
+    assert.equal(end?.error?.message, 'Model provider refused to answer under its content safety review');
+    assert.ok(!(raw + JSON.stringify(events)).includes(explanation), 'provider text is not persisted or returned');
+    assert.equal(count, 1, 'the default retry policy does not retry a refusal');
+  } finally { await runtime.dispose(); }
+});
+
 test('user model settings are exclusive and never fall back across users', async () => {
   const keys: string[] = [];
   const runtime = createRuntime(undefined, { bindings: { ...bindings, TENANT_MODEL_CONFIG_JSON: JSON.stringify({
