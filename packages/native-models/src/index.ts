@@ -20,6 +20,7 @@ const messages: Partial<Record<BuiltinLlmFailureCode, string>> = {
   RATE_LIMIT: 'Model provider rate limit reached',
   INVALID_REQUEST: 'Model provider rejected the request',
   CONTEXT_WINDOW_EXCEEDED: 'Model context window exceeded',
+  CONTENT_REFUSED: 'Model provider refused to answer under its content safety review',
   TIMEOUT: 'Model provider stream timed out',
   ABORTED: 'Model request was cancelled',
   MALFORMED_RESPONSE: 'Model provider returned an invalid stream',

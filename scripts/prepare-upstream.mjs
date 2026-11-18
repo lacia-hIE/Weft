@@ -155,7 +155,7 @@ writeFileSync(resolve(output, 'plugin-meta.json'), JSON.stringify(pluginMeta) + 
 // Optional official bundles are admitted from this exact clean checkout only.
 // Persist both patch and provenance; runtime installs never fetch or evaluate YAML.
 // DSH 0.2.2-rc.2 moved Agent Teams into the base bundle. DSH 0.2.2-rc.3's optional DeepSeek chat
-// import has no Weft runtime adapter (see docs/validation/official-bundles.md), so none is admitted.
+// import (unchanged in rc.4) has no Weft runtime adapter (see docs/validation/official-bundles.md), so none is admitted.
 const optionalBundles = [].map(id => {
   const directory = resolve(checkout, 'packages/experimental', id);
   const manifest = JSON.parse(readFileSync(resolve(directory, 'package.json'), 'utf8'));

@@ -1,8 +1,8 @@
 # Harness 兼容性与维护
 
-当前目标为 **DSH `0.2.2-rc.3`**，提交 `38a6a5c965aa99ab525161efb7cc5cf1fe62fced`。这是固定的适配基线，不随 npm `latest` 或上游分支自动更新；云端内核、原版前端和 Remote ABI 一起升级。
+当前目标为 **DSH `0.2.2-rc.4`**，提交 `3f321d32bfe382212a8ed8785c1d47a5a300aa23`。这是固定的适配基线，不随 npm `latest` 或上游分支自动更新；云端内核、原版前端和 Remote ABI 一起升级。
 
-0.2.2 相对 0.2.1 含破坏性变化，云端运行时不执行 0.2.1 来源的修订。rc.2 可以原地读取 rc.1 的会话日志，rc.3 不改会话与持久化契约，因此 rc.1、rc.2 时期创建的会话在 rc.3 运行时继续运行（见下文）。本地 Host 连接插件 0.5.2 接受 `0.2.2-rc.1`、`0.2.2-rc.2` 与 `0.2.2-rc.3`，0.5.1 接受 rc.1 与 rc.2，0.5.0 只接受 rc.1。连接协议仍为 3。CI 对这三个版本分别启动 npm 发布的原版 Web Host，并以 `desktop` profile 验证桌面 Host 启动方式、原生文件、Git、PTY 与刷新恢复；它们要求 Node 24.9 或更高。`engines.dsh` 仍是安装器、Host、中继及 UI 共用的精确清单，不接受未经审查的后续版本。
+0.2.2 相对 0.2.1 含破坏性变化，云端运行时不执行 0.2.1 来源的修订。rc.2 可以原地读取 rc.1 的会话日志，rc.3 不改会话与持久化契约，rc.4 只新增 `CONTENT_REFUSED` 失败码，因此 rc.1 至 rc.3 时期创建的会话在 rc.4 运行时继续运行（见下文）。本地 Host 连接插件 0.5.2 接受 `0.2.2-rc.1` 至 `0.2.2-rc.4`，0.5.1 接受 rc.1 与 rc.2，0.5.0 只接受 rc.1。连接协议仍为 3。CI 对这四个版本分别启动 npm 发布的原版 Web Host，并以 `desktop` profile 验证桌面 Host 启动方式、原生文件、Git、PTY 与刷新恢复；它们要求 Node 24.9 或更高。`engines.dsh` 仍是安装器、Host、中继及 UI 共用的精确清单，不接受未经审查的后续版本。
 
 upstream.lock.json 固定 commit。服务端插件、模型协议、浏览器内核、UI 控件与样式从同一份源码构建。prepare-upstream.mjs 保留用户现有 checkout，必要时使用独立固定副本；所有公共及内部导入均指向同一副本。管理的副本若版本不匹配或有 tracked 修改则停止。升级需显式审查兼容契约。
 
@@ -32,6 +32,18 @@ Weft 实现 Access、DO 存储、Workspace FileSystem、凭据、HTTP/SSE 和发
 vendor 使用独立声明；上游 repeat-tool-reminder 的 broad-union 类型问题、仅类型引用的 Node Gateway 也通过声明边界消费。生产仍打包原始模块，Weft 核心代码保持严格检查，相关行为由 workerd 测试覆盖。
 
 Cordis 兼容不自动提供浏览器、Node 主机、进程或真实 Shell 能力。扩展任意生态包时先判定宿主需求，建立适配与验收后加入目录。
+
+## 0.2.2-rc.3 → 0.2.2-rc.4 的兼容范围
+
+rc.3（`38a6a5c965aa99ab525161efb7cc5cf1fe62fced`）→ rc.4 的审查覆盖完整 Git diff 与上游 `docs/upgrade-guide/v0.2.2-rc.3/deepseek-refusal-code`。除版本号外只有两处源码变化；Session V4 存储格式、工具、预设与 Loader 均未改动。`CONTENT_REFUSED` 只会出现在 rc.4 之后写入的失败记录中，旧日志不含该值，`packages/harness-runtime/src/revision.ts` 因此把 rc.3、rc.2 与 rc.1 都列为已审查来源，它们的修订与会话在 rc.4 运行时继续执行，不重新发布。
+
+| 上游变化 | Weft 适配 |
+| --- | --- |
+| `llm-deepseek` 收到 `stop_reason: "refusal"` 时先报告已计费用量，再以新增的 `CONTENT_REFUSED` 失败（此前为 `MALFORMED_RESPONSE`），错误消息附带提供方说明（如被拦截的图片）。默认重试策略不重试；Web 撤回已流式显示的回复，Session 在 `assistant/attempt` 中保留它，模型历史不含这段回复 | `packages/native-models` 的失败脱敏表新增 `CONTENT_REFUSED`，固定文案为 “Model provider refused to answer under its content safety review”。提供方说明属于提供方控制的文本，与其他失败一样不持久化、不返回；失败码保留，重试与 Web 行为随原版。`tests/model.test.ts` 覆盖只请求一次、失败码与脱敏 |
+| `llm` 的 `LLM_FAILURE_CODES` 新增 `CONTENT_REFUSED`（无 `retryChoice`） | 类型随原版；Weft 不另设重试规则 |
+| 实验性 `liveshare` 隧道 Worker 继承 Host 的 `ELECTRON_RUN_AS_NODE` | Weft 不组合 liveshare，无需适配 |
+
+依赖没有变化。两份容器镜像标签因固定提交变化而更新。
 
 ## 0.2.2-rc.2 → 0.2.2-rc.3 的兼容范围
 
