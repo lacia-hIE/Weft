@@ -2,7 +2,7 @@ import Schema from '@deepseek-ai/schemastery';
 import {defineTool} from '@deepseek-ai/dsh-tools';
 import {MAX_ATTACHMENT_BYTES, MAX_MESSAGE_BYTES, MAX_ATTACHMENTS, fileName, imageType} from './media.js';
 import {background, chunks, requestId, sleep} from './shared.js';
-import {captureContextEnhancementSource, enhanceContextContent, withSentAt} from './reference/context-enhancement.mjs';
+import {captureContextEnhancementSource, enhanceContextContent, withSentAt, INJECTED_CONTEXT_TAGS} from './reference/context-enhancement.mjs';
 import {ImQuestions} from './questions.js';
 
 const record = {parse: value => value};
@@ -328,11 +328,27 @@ class ImBridge {
     }), message.sentAt));
     const mode = command === 'steer' || channel.busyMessageMode === 'steer' && channel.access?.(message, true)?.allowed !== false ? 'steer' : 'queue';
     try {
-      const attachments = message.attachments ?? [], parts = [];
+      // Read only after access, deduplication, local commands and native answers.
+      // A missing quote must not discard the user's new message.
+      let reply, replyPrefix = '';
+      if (message.replyTo && channel.readReply) {
+        try {reply = await channel.readReply(message);} catch { /* The quote may be deleted or outside the app's permissions. */ }
+        const quoted = {messageId: message.replyTo, ...(reply ? {senderId: reply.senderId, text: reply.text} : {unavailable: true})};
+        const json = JSON.stringify(quoted).replace(/[<>&]/g, character => ({'<': '\\u003c', '>': '\\u003e', '&': '\\u0026'})[character]);
+        replyPrefix = `${INJECTED_CONTEXT_TAGS.replyOpen}${json}${INJECTED_CONTEXT_TAGS.replyClose}\n\n`;
+      }
+      const quotedAttachments = reply?.attachments ?? [];
+      const attachments = [...quotedAttachments, ...(message.attachments ?? [])], parts = [];
       if (attachments.length > MAX_ATTACHMENTS) throw new Error('每条消息最多 10 个附件。');
       let total = 0;
       for (const attachment of attachments) {
-        const data = await attachment.load();
+        let data;
+        try {data = await attachment.load();}
+        catch (error) {
+          if (!quotedAttachments.includes(attachment)) throw error;
+          parts.push({type: 'text', text: `引用附件读取失败：${fileName(attachment.name)}`});
+          continue;
+        }
         total += data.byteLength;
         if (data.byteLength > MAX_ATTACHMENT_BYTES || total > MAX_MESSAGE_BYTES) throw new Error('单个附件最多 10 MiB，每条消息合计最多 20 MiB。');
         const uploaded = await this.ctx.sessionController.uploadAttachment(row.sessionId, {name: fileName(attachment.name), image: !!attachment.image, mediaType: imageType(data) ?? ''}, data);
@@ -340,7 +356,7 @@ class ImBridge {
         if (uploaded.image) parts.push(uploaded.image);
         if (uploaded.imageError) parts.push({type: 'text', text: uploaded.imageError});
       }
-      const prompt = enhanceContextContent(content || (parts.length ? '请查看附件。' : ''), captured);
+      const prompt = enhanceContextContent(replyPrefix + (content || (parts.length ? '请查看附件。' : '')), captured);
       this.startActivity(key);
       await this.ctx.sessionController.prompt({sessionId: row.sessionId, requestId: id, mode, content: [{type: 'text', text: prompt}, ...parts]});
     } catch (error) {

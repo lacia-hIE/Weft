@@ -117,6 +117,12 @@ test('the deployment-bundled IM plugin bridges Feishu, QQ and WeChat conversatio
       const record = () => sent.push({host: target.hostname, path: target.pathname + target.search, body, authorization: request.headers.get('authorization')});
       if (target.hostname === 'open.feishu.cn') {
         if (target.pathname === '/open-apis/auth/v3/tenant_access_token/internal') return Response.json({code: 0, tenant_access_token: body.app_id === 'cli_second' ? 'feishu-second-token' : 'feishu-token', expire: 7200});
+        if (target.pathname === '/open-apis/im/v1/messages/om_original') {
+          record();
+          assert.equal(request.method, 'GET');
+          return Response.json({code: 0, data: {items: [{message_id: 'om_original', chat_id: 'oc_chat', msg_type: 'text',
+            sender: {id: 'ou_original_author'}, body: {content: JSON.stringify({text: 'QUOTED_ORIGINAL_CONTENT'})}}]}});
+        }
         if (target.pathname === '/open-apis/bot/v3/info') {record(); return Response.json(botIdentityAvailable ? {code: 0, bot: {open_id: 'ou_fixture_bot'}} : {code: 1});}
         if (target.pathname.includes('/resources/')) return new Response(attachmentBytes);
         record();
@@ -254,9 +260,9 @@ test('the deployment-bundled IM plugin bridges Feishu, QQ and WeChat conversatio
       return await response.json() as {challenge: string};
     }, 'Feishu route');
     assert.deepEqual(challenge, {challenge: 'feishu-challenge'});
-    const feishu = async (messageId: string, openId: string, raw = false, messageText = '请帮忙', group = false, mentions: {key: string; id: {open_id?: string}; name?: string}[] = []) => {
+    const feishu = async (messageId: string, openId: string, raw = false, messageText = '请帮忙', group = false, mentions: {key: string; id: {open_id?: string}; name?: string}[] = [], parentId = '') => {
       const event = {schema: '2.0', header: {event_id: crypto.randomUUID(), event_type: 'im.message.receive_v1', token: 'feishu-verify', app_id: 'cli_fixture'},
-        event: {sender: {sender_id: {open_id: openId}, sender_type: 'user'}, message: {message_id: messageId, chat_id: group ? 'oc_group' : 'oc_chat', chat_type: group ? 'group' : 'p2p', message_type: messageId === 'om_file' ? 'file' : 'text', mentions, content: JSON.stringify(messageId === 'om_file' ? {file_key: 'file-fixture', file_name: 'feishu.txt'} : {text: messageText})}}};
+        event: {sender: {sender_id: {open_id: openId}, sender_type: 'user'}, message: {message_id: messageId, chat_id: group ? 'oc_group' : 'oc_chat', chat_type: group ? 'group' : 'p2p', message_type: messageId === 'om_file' ? 'file' : 'text', mentions, content: JSON.stringify(messageId === 'om_file' ? {file_key: 'file-fixture', file_name: 'feishu.txt'} : {text: messageText}), ...(parentId ? {parent_id: parentId} : {})}}};
       const iv = randomBytes(16), cipher = createCipheriv('aes-256-cbc', createHash('sha256').update('feishu-encrypt').digest(), iv);
       const body = JSON.stringify({encrypt: Buffer.concat([iv, cipher.update(JSON.stringify(event)), cipher.final()]).toString('base64')});
       const timestamp = String(Math.floor(Date.now() / 1000)), nonce = 'nonce-' + messageId;
@@ -281,6 +287,13 @@ test('the deployment-bundled IM plugin bridges Feishu, QQ and WeChat conversatio
     assert.equal((await feishu('om_1', 'ou_allowed')).status, 200, 'A redelivered event is acknowledged');
     await feishu('om_file', 'ou_allowed');
     await waitFor(() => sent.find(row => row.path === '/open-apis/im/v1/messages/om_file/reply'), 'Feishu file prompt');
+    await feishu('om_quote', 'ou_allowed', false, 'Explain this quote', false, [], 'om_original');
+    await waitFor(() => sent.find(row => row.path === '/open-apis/im/v1/messages/om_quote/reply'), 'Feishu quoted prompt');
+    const quotedPage = await currentPage(readonlySession.sessionId);
+    const quotedPrompt = quotedPage.records.filter(record => record.event.type === 'user/message').map(record => JSON.stringify(record.event.data)).find(text => text.includes('Explain this quote'))!;
+    assert.match(quotedPrompt, /QUOTED_ORIGINAL_CONTENT/);
+    assert.match(quotedPrompt, /dsh_im_reply_to/);
+    assert.equal(sent.filter(row => row.path === '/open-apis/im/v1/messages/om_original').length, 1);
     await feishu('om_2', 'ou_stranger');
     const denied = await waitFor(() => sent.find(row => row.path === '/open-apis/im/v1/messages/om_2/reply'), 'Feishu denial');
     assert.match(JSON.parse(denied.body.content as string).body.elements[0].content as string, /ou_stranger/);

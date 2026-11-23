@@ -4,6 +4,10 @@
 
 Native questions: IM sends questions and choices while the Agent is waiting. The requester may reply with option numbers or custom text; comma-separated numbers select multiple choices, and batches are collected one at a time. Use `/questions` to reopen questions or `/answer <code> <answer>` to select one. Feishu also supports quoted replies. Web and IM settle the same native request, including native late answers. General settings can add an authenticated Web answer link. This bridge covers IM-owned Worker Host Sessions; bot consumers and local Executors retain their own routing. See [Host interfaces and lifecycle](../../docs/architecture/user-questions.md).
 
+飞书引用消息（0.11.1）：普通 IM 会话会读取直接引用的原消息，将文字、富文本、卡片文字及图片／文件交给 Agent，无需开启「上下文增强」。先检查访问权限和消息去重，再读取引用；引用附件与新消息附件共用数量、大小限制。原消息撤回、无读取权限或读取失败时，仍发送新消息并标记引用不可用。群聊仍遵循仅 @／全部响应设置。此行为适用于 IM 自身管理的会话，分配给其他插件的机器人仍由接收插件处理。更新部署并升级 IM 插件后生效。
+
+Feishu quoted messages (0.11.1): IM-owned Sessions read the immediate parent, including text, rich text, card text and image/file attachments, independently of context enhancement. Reads follow access checks and deduplication; quoted and new attachments share admission limits. Missing, withdrawn or unreadable quotes do not discard the new message. Group response rules still apply. Bots assigned to another plugin retain that plugin's handling. Deploy the updated build and upgrade the IM bundle to enable this behavior.
+
 This is an incomplete Worker adaptation of dsh-im. See the [three-channel parity checklist](./PARITY.md) for the pinned reference version, implemented behavior and remaining gaps. QR setup and a similar layout do not imply feature parity.
 
 功能对齐尚未完成，完整差距及验收要求见[三渠道功能清单](./PARITY.md)。当前新增「通用 → 排队／插话」「访问 → 私聊／群聊权限与命令权限」「上下文增强 → 来源字段与提示词」；飞书还可设置收到群消息后的响应方式。旧白名单保持兼容，首次修改新权限页时迁移；扫码绑定者保留权限。开放模式必须显式选择，不会在升级时自动扩大已有账号权限。

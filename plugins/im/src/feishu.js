@@ -26,6 +26,17 @@ async function signed(request, body, encryptKey) {
   return hex(await sha256(message)) === header(request, 'x-lark-signature');
 }
 
+/** Text from both the flattened read-API card and JSON card elements. */
+function cardText(value) {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) return value.map(cardText).filter(Boolean).join(value.some(Array.isArray) ? '\n' : '');
+  if (!value || typeof value !== 'object') return '';
+  if (['text', 'a', 'button'].includes(value.tag) && typeof value.text === 'string') return value.text;
+  if (['plain_text', 'lark_md', 'markdown'].includes(value.tag)) return value.content ?? '';
+  return [value.title ?? value.header?.title, value.text, value.elements ?? value.body?.elements, value.columns, value.fields]
+    .map(cardText).filter(Boolean).join('\n');
+}
+
 /** Plain text of a Feishu message body, with mentions written as `@name`. */
 function messageText(type, raw, mentions) {
   let content;
@@ -36,7 +47,8 @@ function messageText(type, raw, mentions) {
     const post = content.content ? content : content.zh_cn ?? content.en_us ?? Object.values(content)[0];
     const line = items => items.map(item => item.tag === 'text' || item.tag === 'a' ? item.text ?? '' : item.tag === 'at' ? `@${item.user_name ?? ''}` : item.tag === 'img' ? '[图片]' : '').join('');
     text = [post?.title ?? '', ...(post?.content ?? []).map(line)].filter(Boolean).join('\n');
-  } else if (type === 'image') text = '[图片]';
+  } else if (type === 'interactive') text = cardText(content) || '[卡片]';
+  else if (type === 'image') text = '[图片]';
   else if (type === 'file') text = `[文件] ${content.file_name ?? ''}`.trim();
   else text = `[${type}]`;
   for (const mention of mentions ?? []) if (mention.key) text = text.replaceAll(mention.key, mention.name ? `@${mention.name}` : '');
@@ -112,6 +124,22 @@ async function start(ctx, bot, config) {
       ...(message.root_id ? {rootId: message.root_id} : {}), ...(message.parent_id ? {parentId: message.parent_id} : {}), ...(message.thread_id ? {threadId: message.thread_id} : {}),
       target: {chatId: message.chat_id, messageId: message.message_id}};
   };
+  const attachmentsOf = message => {
+    const content = JSON.parse(message.content), resources = [];
+    if (message.message_type === 'image') resources.push({key: content.image_key, image: true, name: 'image'});
+    if (message.message_type === 'file') resources.push({key: content.file_key, image: false, name: content.file_name});
+    if (message.message_type === 'post') {
+      const post = content.content ? content : content.zh_cn ?? content.en_us ?? Object.values(content)[0];
+      for (const line of post?.content ?? []) for (const item of line) if (item.tag === 'img') resources.push({key: item.image_key, image: true, name: 'image'});
+    }
+    return resources.map(resource => ({name: fileName(resource.name), image: resource.image,
+      async load() {
+        if (!resource.key) throw new Error('飞书附件缺少资源标识。');
+        const base = HOSTS[account.credentials()?.domain] ?? HOSTS.feishu;
+        const path = `/open-apis/im/v1/messages/${encodeURIComponent(message.message_id)}/resources/${encodeURIComponent(resource.key)}?type=${resource.image ? 'image' : 'file'}`;
+        return readDownload(await fetch(base + path, {headers: {authorization: `Bearer ${await token.get()}`}, redirect: 'manual', signal: AbortSignal.timeout(30_000)}));
+      }}));
+  };
   let handOver;
   const receive = async payload => {
     if (payload.header?.event_type !== 'im.message.receive_v1') return;
@@ -128,9 +156,6 @@ async function start(ctx, bot, config) {
     }
     let text = '', content;
     try {content = JSON.parse(message.content); text = String(content.text ?? '');} catch {return;}
-    const resources = [];
-    if (message.message_type === 'image') resources.push({key: content.image_key, image: true, name: 'image'});
-    if (message.message_type === 'file') resources.push({key: content.file_key, image: false, name: content.file_name});
     if (message.message_type === 'post') {
       const post = content.content ? content : content.zh_cn ?? content.en_us ?? Object.values(content)[0];
       const lines = [post?.title ?? ''];
@@ -138,19 +163,12 @@ async function start(ctx, bot, config) {
         let value = '';
         for (const item of line) {
           if (item.tag === 'text' || item.tag === 'a') value += item.text ?? '';
-          if (item.tag === 'img') resources.push({key: item.image_key, image: true, name: 'image'});
         }
         lines.push(value);
       }
       text = lines.join('\n');
     }
-    const attachments = resources.map(resource => ({name: fileName(resource.name), image: resource.image,
-      async load() {
-        if (!resource.key) throw new Error('飞书附件缺少资源标识。');
-        const base = HOSTS[account.credentials()?.domain] ?? HOSTS.feishu;
-        const path = `/open-apis/im/v1/messages/${encodeURIComponent(message.message_id)}/resources/${encodeURIComponent(resource.key)}?type=${resource.image ? 'image' : 'file'}`;
-        return readDownload(await fetch(base + path, {headers: {authorization: `Bearer ${await token.get()}`}, redirect: 'manual', signal: AbortSignal.timeout(30_000)}));
-      }}));
+    const attachments = attachmentsOf(message);
     for (const mention of message.mentions ?? []) text = text.replaceAll(mention.key, '');
     const senderId = sender?.sender_id?.open_id ?? '';
     await ctx.im.receive({channel: bot, conversation: message.chat_id, chatId: message.chat_id, sender: senderId, senderName: sender?.name, sentAt: Number(message.create_time) || undefined, group, text, attachments, messageId: message.message_id,
@@ -162,7 +180,8 @@ async function start(ctx, bot, config) {
   if (!config.enabled) {account.launch(); return;}
   const api = async (path, body, method = 'POST') => {
     for (let retry = 0; ; retry++) {
-      const response = await fetch(`${HOSTS[account.credentials()?.domain] ?? HOSTS.feishu}${path}`, {method, headers: {'content-type': 'application/json; charset=utf-8', authorization: `Bearer ${await token.get()}`}, body: JSON.stringify(body)});
+      const response = await fetch(`${HOSTS[account.credentials()?.domain] ?? HOSTS.feishu}${path}`, {method, headers: {'content-type': 'application/json; charset=utf-8', authorization: `Bearer ${await token.get()}`}, body: JSON.stringify(body),
+        ...(method === 'GET' ? {redirect: 'manual', signal: AbortSignal.timeout(10_000)} : {})});
       const value = await response.json().catch(() => ({}));
       // 99991663/99991661: the tenant token expired or is invalid.
       if ((value.code === 99991663 || value.code === 99991661) && retry === 0) {token.clear(); continue;}
@@ -192,6 +211,14 @@ async function start(ctx, bot, config) {
   ctx.effect(() => ctx.im.channel(bot, {kind: 'feishu',
     ...channelSettings(config, () => account.owner(), () => account.credentials()?.appId),
     maxChars: config.maxChars,
+    async readReply(message) {
+      const value = await api(`/open-apis/im/v1/messages/${encodeURIComponent(message.replyTo)}`, undefined, 'GET');
+      const item = value.data?.items?.find(item => item.message_id === message.replyTo && item.chat_id === message.chatId);
+      if (!item) throw new Error('Feishu quoted message is unavailable');
+      if (item.deleted) return {text: '[消息已撤回]'};
+      return {senderId: item.sender?.id, text: messageText(item.msg_type, item.body?.content, item.mentions),
+        attachments: attachmentsOf({message_id: item.message_id, message_type: item.msg_type, content: item.body?.content})};
+    },
     async startReply(target, uuid) {
       try {
         const response = await api('/open-apis/cardkit/v1/cards', {type: 'card_json', data: JSON.stringify({schema: '2.0',
